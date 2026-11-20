@@ -3129,7 +3129,7 @@ class LibraryService:
         candidates = self._adept_inventory_candidates(row, profiles, profile_references)
         if not candidates:
             raise AttentionRequired("Associez un profil ADEPT à l’identité.", code="adept_profile_required")
-        runtime = self._kobo_adapter()
+        runtime = self._required_plugin_service("runtime.kobo-adept")
         if not callable(getattr(runtime, "loan_inventories", None)):
             raise AttentionRequired("Runtime Kobo-Adept 1.2.2 requis.", code="adept_inventory_unavailable")
         inventory = runtime.loan_inventories([self._adept_profile_name(p) for p in candidates])
@@ -3165,7 +3165,7 @@ class LibraryService:
                 if len(selected) != 1:
                     raise AttentionRequired("Profil sélectionné incompatible avec la liaison d’origine.", code="adept_origin_profile_missing")
                 profile = selected[0]; name = self._adept_profile_name(profile)
-                loans = self._kobo_adapter().loans(name)["loans"]
+                loans = self._required_plugin_service("runtime.kobo-adept").loans(name)["loans"]
                 matches = [loan for loan in loans if loan["id"] == loan_id]
                 if len(matches) != 1:
                     raise AttentionRequired("Le prêt sélectionné a disparu ou est ambigu. Actualisez la liste.", code="adept_loan_selection_stale")
@@ -3359,8 +3359,8 @@ class LibraryService:
             return dict(self._kobo_adept_state_cache)
 
         try:
-            adapter = self._kobo_adapter()
-        except ProviderConfigurationError:
+            adapter = self._required_plugin_service("runtime.kobo-adept")
+        except (ProviderConfigurationError, AttentionRequired):
             # Adapter discovery can fail with executable paths, profile names
             # or provider-controlled messages. Public runtime state must not
             # echo raw exception text to Settings, Diagnostics or cache.
