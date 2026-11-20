@@ -37,7 +37,7 @@ def public_card():
     ).items[0]
     return replace(
         base, title=PRODUCT["fields"]["title"],
-        friendly_url=PRODUCT_URL, record_id="numilog:public:1171334",
+        friendly_url=PRODUCT_URL, id="numilog:public:1171334", record_id="numilog:public:1171334",
         source_provider="numilog-catalog", source_credential="__public__",
         source_collection="public_catalog", owned=False, downloadable=False,
         download_url=None,

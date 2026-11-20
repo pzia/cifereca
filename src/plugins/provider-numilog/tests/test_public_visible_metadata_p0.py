@@ -121,7 +121,7 @@ def test_public_and_owned_merges_preserve_labels_without_changing_artifact_or_ri
     from cifereca_numilog_enrichment import merge_attested_owned_public_detail
     source = 'https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=loup'
     card = parse_public_search((ROOT/'observed_search-loup-0.html').read_text(), source).items[0]
-    public = replace(card, title=TITLE, record_id='numilog:public:1171334',
+    public = replace(card, title=TITLE, id='numilog:public:1171334', record_id='numilog:public:1171334',
                      friendly_url=URL, source_provider='numilog-catalog',
                      metadata={'source_url':source, 'source_item_id':'1171334'})
     detail = parse_public_detail_jsonld(fixture(), URL)

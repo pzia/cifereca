@@ -418,12 +418,14 @@ def parse_public_detail_jsonld(html, product_url):
 
 def validate_public_detail_item(item):
     """Check source, account boundary, product identity and search provenance."""
-    from cifereca.plugin_api import ProviderCapabilityError
+    from cifereca.plugin_api import ProviderCapabilityError, SearchResult
     from cifereca_numilog_public import _query
 
     error = "Numilog public : detail_evidence_conflict"
-    url = getattr(item, "friendly_url", None)
-    metadata = getattr(item, "metadata", None)
+    if type(item) is not SearchResult:
+        raise ProviderCapabilityError(error)
+    url = item.friendly_url
+    metadata = item.metadata
     if (type(url) is not str
             or public_book_url(url, base_url="https://www.numilog.com/") != url
             or type(metadata) is not dict
@@ -432,12 +434,15 @@ def validate_public_detail_item(item):
             or getattr(item, "source_collection", None) != "public_catalog"
             or getattr(item, "scenario", None) != "NUMILOG_PUBLIC"
             or getattr(item, "docbase", None) != "NUMILOG"
+            or item.medium != "digital"
+            or item.source_account_id is not None
             or getattr(item, "owned", None) is not False
             or getattr(item, "downloadable", None) is not False
             or getattr(item, "download_url", None) is not None):
         raise ProviderCapabilityError(error)
     product_id = urlsplit(url).path.split("/")[1]
     if (getattr(item, "record_id", None) != "numilog:public:" + product_id
+            or item.id != item.record_id
             or metadata.get("source_item_id") != product_id):
         raise ProviderCapabilityError(error)
     try:
