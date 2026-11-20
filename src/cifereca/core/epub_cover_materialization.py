@@ -225,15 +225,15 @@ class EpubCoverPhysicalCache:
                 if (not stat.S_ISREG(info.st_mode)
                         or not 0 < info.st_size <= _MAX_EPUB_BYTES):
                     return None
+                def stamp(value):
+                    return (value.st_dev, value.st_ino, value.st_size,
+                            value.st_mtime_ns, value.st_ctime_ns)
+
                 def unchanged():
-                    current = os.fstat(stream.fileno())
-                    return (
-                        current.st_dev, current.st_ino, current.st_size,
-                        current.st_mtime_ns, current.st_ctime_ns,
-                    ) == (
-                        info.st_dev, info.st_ino, info.st_size,
-                        info.st_mtime_ns, info.st_ctime_ns,
-                    )
+                    # A stable open inode alone does not attest that the
+                    # authorized Placement still names this exact file.
+                    return (stamp(os.fstat(stream.fileno())) == stamp(info)
+                            and stamp(os.stat(source_path, follow_symlinks=False)) == stamp(info))
 
                 # Never hash a growing file beyond its admitted size. Read
                 # at most one extra byte to distinguish growth from EOF.
