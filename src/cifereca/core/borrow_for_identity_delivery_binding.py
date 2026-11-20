@@ -6,6 +6,8 @@ This read-only check does not attest bytes, confer a right or authorize a copy.
 """
 from __future__ import annotations
 
+import json
+
 from .borrow_action_scope import borrow_claim_key
 
 
@@ -28,7 +30,6 @@ def lender_delivery_binding(service, account, notice, placement):
     key = borrow_claim_key(account, notice)
     if key is None:
         return False
-    receipt_before = storage.loan_borrow_state(key)
     with storage._lock:
         db = storage._connect()
         if db.in_transaction:
@@ -69,11 +70,15 @@ def lender_delivery_binding(service, account, notice, placement):
             ).fetchall()
             if rows != [(pid, artifact)]:
                 return False
-    # The normal lender claim is the exact cycle; a different loan of the
-    # same edition is not the claimed delivery. Confirmed claims are durable.
-    receipt = storage.loan_borrow_state(key)
-    return (receipt == receipt_before and type(receipt) is dict
-            and receipt.get("status") == "confirmed"
-            and receipt.get("request_accepted") is True
-            and receipt.get("verification") == "positive_active_loan"
-            and receipt.get("verified_loan_id") == right)
+            # Bind the exact durable claim in the SAME read snapshot.
+            raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            if raw is None or type(raw[0]) is not str or not 0 < len(raw[0]) <= 4096:
+                return False
+            receipt = json.loads(raw[0])
+            return (type(receipt) is dict and type(receipt.get("schema")) is int
+                    and receipt["schema"] == 1 and receipt.get("operation") == "loan.borrow"
+                    and type(receipt.get("operation_id")) is str and bool(receipt["operation_id"])
+                    and receipt.get("status") == "confirmed"
+                    and receipt.get("request_accepted") is True
+                    and receipt.get("verification") == "positive_active_loan"
+                    and receipt.get("verified_loan_id") == right)
