@@ -122,6 +122,7 @@ class ConvergenceOutcome:
     status: OutcomeStatus
     reason: str
     artifact_id: str = ""
+    placement_id: str = ""
 
 
 def _source_policy_generation_current(storage, scope, expected_revision: str) -> bool:
@@ -660,7 +661,7 @@ def execute_admitted_convergence(
                 ),
                 "canonical_delivery_recovered" if was_recovered
                 else "canonical_delivery_committed",
-                published.artifact_id,
+                published.artifact_id, published.placement_id,
             ))
         except Cancelled:
             trace.emit(key, phase, "failed")
