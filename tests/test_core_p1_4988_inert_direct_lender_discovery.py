@@ -229,3 +229,48 @@ def test_composed_choice_label_cannot_collide_with_literal_profile_label(harness
     assert result[0].label.startswith("Choix 1/3 · ")
     assert all(account.credential_id not in row.label for row in result)
     assert session.calls == 0
+
+
+def test_earlier_lender_mutated_during_later_discovery_cannot_be_recaptured(harness):
+    service, account, session = harness
+    first = _candidate(collection="collection-a").notice
+    second = _candidate(collection="collection-b").notice
+    original = service._plugin_manager.status
+    calls = []
+
+    def status(plugin_id):
+        calls.append(plugin_id)
+        if len(calls) == 2:
+            first.record_id = "another-record"
+        return original(plugin_id)
+
+    service._plugin_manager.status = status
+    assert _discover(service, first, second) == ()
+    assert len(calls) == 2 and session.calls == 0
+
+
+@pytest.mark.parametrize("mutation", ["record", "account", "epoch", "aba"])
+def test_lender_label_disambiguation_cannot_reissue_receipt(harness, monkeypatch, mutation):
+    from cifereca.core import borrow_for_identity_discovery as discovery
+
+    service, account, session = harness
+    first = _candidate(collection="collection-a").notice
+    second = _candidate(collection="collection-b").notice
+    original = discovery._label_lenders
+
+    def label(rows):
+        if mutation in {"record", "aba"}:
+            first.record_id = "another-record"
+        elif mutation == "account":
+            account.is_primary = False
+        else:
+            service._source_context_epoch += 2
+        try:
+            return original(rows)
+        finally:
+            if mutation == "aba":
+                first.record_id = "record-1"
+
+    monkeypatch.setattr(discovery, "_label_lenders", label)
+    assert _discover(service, first, second) == ()
+    assert session.calls == 0
