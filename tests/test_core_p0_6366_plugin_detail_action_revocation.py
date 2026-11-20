@@ -19,6 +19,14 @@ class FakeButton:
     def __init__(self, title):
         self.title = title
         self._clicked = None
+        self.sensitive = True
+        self.tooltip = ""
+
+    def set_sensitive(self, value):
+        self.sensitive = value
+
+    def set_tooltip_text(self, text):
+        self.tooltip = text
 
     def connect(self, signal, callback):
         assert signal == "clicked"
@@ -37,7 +45,7 @@ class FakeLinkButton(FakeButton):
         self.opened = []
 
     def set_tooltip_text(self, _text):
-        pass
+        self.tooltip = _text
 
     def connect(self, signal, callback):
         assert signal == "activate-link"

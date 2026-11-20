@@ -855,17 +855,22 @@ class DetailPanel(Gtk.Box):
                         "activate-link",
                         lambda clicked: getattr(
                             clicked, "_cifereca_action_context_revoked", False,
+                        ) is True or getattr(
+                            clicked, "_cifereca_action_state_blocked", False,
                         ) is True,
                     )
                 elif callable(action.callback):
                     button = self.window.action_button(str(action.title), str(action.icon_name))
                     def activate_cached(clicked, cb=action.callback):
-                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                        if (getattr(clicked, "_cifereca_action_context_revoked", False)
+                                or getattr(clicked, "_cifereca_action_state_blocked", False)):
                             return
                         return cb()
                     button.connect("clicked", activate_cached)
                 else:
                     continue
+                from cifereca.gui.detail_action_state import apply_detail_action_state
+                apply_detail_action_state(button, action)
                 identifier = f"book-cache:{plugin_id}:{action.id}"
                 button._cifereca_action_id = identifier
                 button._cifereca_action_priority = 35

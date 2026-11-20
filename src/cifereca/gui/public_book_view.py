@@ -213,6 +213,8 @@ class PublicBookMasterDetailView:
                     "activate-link",
                     lambda clicked: getattr(
                         clicked, "_cifereca_action_context_revoked", False,
+                    ) is True or getattr(
+                        clicked, "_cifereca_action_state_blocked", False,
                     ) is True,
                 )
             else:
@@ -220,7 +222,8 @@ class PublicBookMasterDetailView:
                 callback = getattr(action, "callback", None)
                 if callable(callback):
                     def activate(clicked, cb=callback, action_id=str(action.id)):
-                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                        if (getattr(clicked, "_cifereca_action_context_revoked", False)
+                                or getattr(clicked, "_cifereca_action_state_blocked", False)):
                             return
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
@@ -244,6 +247,8 @@ class PublicBookMasterDetailView:
                             window._youth_return_focus = None
                         return result
                     button.connect("clicked", activate)
+            from cifereca.gui.detail_action_state import apply_detail_action_state
+            apply_detail_action_state(button, action)
             button._cifereca_action_id = str(action.id)
             buttons.append(button)
         panel.add_actions(buttons)
