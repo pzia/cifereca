@@ -212,15 +212,72 @@ def _naming(scope, path, signature, description, *, opf=None):
     return name, "rename_advice_only"
 
 
-def review_organizer_file(scope, artifact_id, row, description):
+def _classified_path(scope, path, name, details):
+    """Layout advice for one ordinary Acquisitions file, not a move plan.
+
+    Keep the validated filename from the existing naming policy. A missing
+    directory is a possible layout, not a grant to create it. A separate
+    maintenance transaction must still qualify all operational references.
+    """
+    owner = scope.root / scope.directory
+    relative = path.relative_to(owner)
+    if len(relative.parts) != 2 or relative.parts[0] != "Acquisitions":
+        return None, "classified_source_not_admitted"
+    if details is None or details[3] not in ("Livres", "BD-Manga", "Documents") or not name:
+        return None, "classified_evidence_unavailable"
+    authors = details[1]
+    if len(authors) != 1:
+        return None, "classified_author_unverified"
+    author = authors[0]
+    if (not _text(author, 255) or len(author.encode("utf-8")) > 255
+            or author != author.strip() or author.startswith(".")
+            or "/" in author or chr(92) in author
+            or not author.isprintable()):
+        return None, "classified_author_unverified"
+    target = owner / details[3] / author / name
+    with scope.storage._lock:
+        db = scope.storage._connect()
+        if db.in_transaction:
+            return None, "classified_target_unverified"
+        with db:
+            if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
+                          (str(target),)).fetchone() is not None:
+                return None, "classified_target_occupied"
+    fd = None
+    try:
+        fd = _open_root(owner)
+        for component in (details[3], author):
+            try:
+                child = os.open(component, os.O_RDONLY | os.O_DIRECTORY |
+                                os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            except FileNotFoundError:
+                return str(target.relative_to(owner)), "classified_directory_missing"
+            os.close(fd)
+            fd = child
+        try:
+            os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return str(target.relative_to(owner)), "classified_layout_advice_only"
+        return None, "classified_target_occupied"
+    except OSError:
+        return None, "classified_target_unverified"
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def review_organizer_file(scope, artifact_id, row, description, *, allow_classified_path=False):
     """One exact local filename observation shared with the read-only audit."""
     pid, raw, state, digest, size, media_format = row
     path = _ordinary_path(scope, raw)
 
-    def result(current, name, reason, verified_path=None, category=None):
+    def result(current, name, reason, verified_path=None, category=None,
+               layout=None, layout_reason=None):
         return ({"placement": pid, "current": current, "proposed_name": name,
                  "reason": reason, "category_advice": category,
-                 "category_evidence": "verified_opf_type_claim" if category else None}, verified_path)
+                 "category_evidence": "verified_opf_type_claim" if category else None,
+                 "classified_path_advice": layout,
+                 "classified_path_reason": layout_reason}, verified_path)
 
     if path is None:
         return result(None, None, "excluded_or_unverified_path")
@@ -239,9 +296,12 @@ def review_organizer_file(scope, artifact_id, row, description):
                 details = read_verified_epub_details(path, signature)
             name, reason = _naming(scope, path, signature, description,
                                    opf=details[:2] if details is not None else None)
+            layout, layout_reason = (None, None)
+            if allow_classified_path:
+                layout, layout_reason = _classified_path(scope, path, name, details)
             recheck()
         return result(relative, name, reason, path,
-                      details[3] if details is not None else None)
+                      details[3] if details is not None else None, layout, layout_reason)
     except (OSError, ValueError, TypeError, RuntimeError):
         return result(relative, None, "physical_unverified")
 
@@ -266,7 +326,10 @@ def _group(scope, group):
     files = []
     named = {}
     for row in rows:
-        file, verified_path = review_organizer_file(scope, group.artifact_id, row, descriptions[row[0]])
+        file, verified_path = review_organizer_file(
+            scope, group.artifact_id, row, descriptions[row[0]],
+            allow_classified_path=group.status == "unique" and len(rows) == 1,
+        )
         files.append(file)
         if verified_path is not None:
             named[row[0]] = verified_path
