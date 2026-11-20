@@ -224,7 +224,7 @@ def test_sru_record_loss_is_not_a_clean_catalogue_window(monkeypatch, defect):
         assert page.partial is True and page.catalogue_complete is None
         # A duplicate ARK from two different SRU record positions is not
         # a unique public occurrence, even when the overwritten row agrees.
-        expected = 0 if defect == "duplicate" else 1
+        expected = 0 if defect in {"duplicate", "nested"} else 1
         assert len(page.results) == len(page.public_notices) == expected
         assert len(calls) == 1
     finally:
