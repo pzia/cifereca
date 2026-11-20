@@ -267,3 +267,74 @@ def test_nested_symlink_parent_does_not_create_inside_foreign_scope(tmp_path):
     with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_stage_scope_invalid"):
         publish(staged, work_dir=work, library_target_dir=alias / "profile" / "provider")
     assert list(outside.iterdir()) == [] and staged.exists()
+
+
+def test_fifo_substituted_before_source_open_cannot_block_worker(tmp_path, monkeypatch):
+    staged, work, library = _stage(tmp_path)
+    original = os.open
+    swapped = []
+
+    def open_candidate(path, flags, *args, **kwargs):
+        if Path(path) == Path(staged.name) and kwargs.get("dir_fd") is not None and not swapped:
+            staged.rename(work / "original.epub")
+            os.mkfifo(staged)
+            swapped.append(True)
+            # Never allow the test itself to hang on a regression.
+            assert flags & os.O_NONBLOCK
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_candidate)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_stage_changed"):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert swapped == [True]
+    assert stat.S_ISFIFO(staged.lstat().st_mode)
+    assert (work / "original.epub").read_bytes() == b"synthetic provider bytes"
+    assert not list(library.iterdir())
+
+
+def test_same_size_mutation_with_restored_mtime_during_copy_is_refused(tmp_path, monkeypatch):
+    staged, work, library = _stage(tmp_path, data=b"PAYLOAD A")
+    library.mkdir(parents=True)
+    first = staged.stat()
+    real_fsync = os.fsync
+    changed = []
+
+    def modify(fd):
+        if not changed and stat.S_ISREG(os.fstat(fd).st_mode):
+            staged.write_bytes(b"PAYLOAD B")
+            os.utime(staged, ns=(first.st_atime_ns, first.st_mtime_ns))
+            assert staged.stat().st_ctime_ns != first.st_ctime_ns
+            changed.append(True)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", modify)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_stage_changed"):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert changed == [True]
+    assert staged.read_bytes() == b"PAYLOAD B"
+    assert not list(library.iterdir())
+
+
+def test_private_stage_link_count_rechecked_after_destination_collision(tmp_path, monkeypatch):
+    staged, work, library = _stage(tmp_path)
+    library.mkdir(parents=True)
+    previous = library / staged.name
+    previous.write_bytes(b"older loan")
+    alias = work / "unexpected-alias.epub"
+    real_link = os.link
+    attempts = []
+
+    def link(src, dst, **kwargs):
+        attempts.append(dst)
+        if len(attempts) == 1:
+            real_link(staged, alias)
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", link)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_stage_changed"):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert attempts == [staged.name]
+    assert staged.samefile(alias)
+    assert staged.read_bytes() == b"synthetic provider bytes"
+    assert list(library.iterdir()) == [previous]
+    assert previous.read_bytes() == b"older loan"
