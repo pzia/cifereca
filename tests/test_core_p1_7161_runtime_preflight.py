@@ -64,7 +64,7 @@ def test_unavailable_or_revoked_never_grants_capability(scenario, kwargs):
     assert all("private token" not in str(row) for row in calls)
 
 
-@pytest.mark.parametrize("name", ["", " a", "-x", "a\\n", "x" * 129, None])
+@pytest.mark.parametrize("name", ["", " a", "-x", "a\n", "x" * 129, None])
 def test_malformed_cli_name_is_refused_without_runtime_call(name):
     service, lease, calls = fixture()
     with pytest.raises(ValueError, match="^canonical_adept_preflight_invalid$"):
