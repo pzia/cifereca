@@ -7,12 +7,14 @@ returns; aggregate work uses the very same broker and shared admission.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from threading import RLock
 
+from ..plugin_api import Cancelled
 from ..task_admission import SharedTaskAdmission
 from ..task_queue import TaskPriority
 from ..task_runtime import TaskBrokerImpl
-from .notice_c_work_pump import PublicNoticeWorkPump
+from .notice_c_work_pump import DispatchTick, PublicNoticeWorkPump
 from .notice_c_fetch_execution import PublicFetchExecution
 from .notice_c_purchase_execution import PurchaseIntentExecution
 
@@ -27,6 +29,40 @@ def validate_notice_work_admission(admission):
             or (admission.max_per_scope is not None
                 and admission.max_per_scope < 3)):
         raise ValueError("notice_work_invalid_runtime_admission")
+
+
+@dataclass(frozen=True, slots=True)
+class NoticeWorkProgress:
+    """Process-local documentary dispatch counters, not an inventory total.
+
+    A scan may be partial or deferred; a worker reporting current need not
+    have changed the canonical document. Nothing here represents downloads,
+    acquisitions, eligible backlog size or an exhaustive completion percentage.
+    """
+
+    scan_active: bool
+    hint_pending: bool
+    documentary_revision: int
+    scans_completed: int
+    scans_failed: int
+    scans_cancelled: int
+    admission_refusals: int
+    rows_examined: int
+    corrupt_rows: int
+    deferred_scans: int
+    workers_submitted: int
+    workers_current: int
+    workers_retry: int
+    workers_error: int
+    workers_skipped: int
+    workers_cancelled: int
+
+    @property
+    def workers_running_or_queued(self):
+        return self.workers_submitted - (
+            self.workers_current + self.workers_retry + self.workers_error
+            + self.workers_skipped + self.workers_cancelled
+        )
 
 
 class NoticeWorkRuntime:
@@ -50,6 +86,13 @@ class NoticeWorkRuntime:
         self._hint_pending = False
         self._observer = None
         self._documentary_revision = 0
+        self._progress = dict.fromkeys((
+            "scans_completed", "scans_failed", "scans_cancelled",
+            "admission_refusals", "rows_examined", "corrupt_rows",
+            "deferred_scans", "workers_submitted", "workers_current",
+            "workers_retry", "workers_error", "workers_skipped",
+            "workers_cancelled",
+        ), 0)
         self._pump = PublicNoticeWorkPump(
             storage, broker, clock=clock, on_committed=self._notify,
             replay_registry=replay_registry,
@@ -118,6 +161,18 @@ class NoticeWorkRuntime:
         """Cheap in-memory invalidation watermark; never a source credential."""
         with self._lock:
             return None if self._closed else self._documentary_revision
+
+    def progress_snapshot(self):
+        """Nonblocking read of this runtime only; no SQLite, transport or GTK."""
+        with self._lock:
+            if self._closed:
+                return None
+            return NoticeWorkProgress(
+                scan_active=self._scan is not None,
+                hint_pending=self._hint_pending,
+                documentary_revision=self._documentary_revision,
+                **self._progress,
+            )
 
     def _notify_purchase(self):
         with self._lock:
@@ -199,6 +254,7 @@ class NoticeWorkRuntime:
                     "task broker already closed", "executor already closed",
                 }:
                     self._hint_pending = True
+                    self._progress["admission_refusals"] += 1
                     return None
                 raise
             self._scan = handle
@@ -210,13 +266,52 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed:
                 return None
-        return self._pump.tick(control=control)
+        outcome = self._pump.tick(control=control)
+        if type(outcome) is DispatchTick:
+            with self._lock:
+                if not self._closed:
+                    self._progress["scans_completed"] += 1
+                    self._progress["rows_examined"] += outcome.examined
+                    self._progress["corrupt_rows"] += outcome.corrupt
+                    self._progress["deferred_scans"] += int(outcome.deferred)
+                    self._progress["workers_submitted"] += len(outcome.handles)
+                    # Add all submissions before a callback can run inline
+                    # for an already completed Future. No new work queue.
+                    for worker in outcome.handles:
+                        worker.add_done_callback(self._worker_finished)
+        return outcome
+
+    def _worker_finished(self, handle):
+        # The callback only runs on a completed Future; never waits for
+        # another worker. Count the bridge's closed outcomes, not attempts
+        # or canonical rows, and never reflect arbitrary exception text.
+        try:
+            outcome = handle.result()
+        except Cancelled:
+            counter = "workers_cancelled"
+        except Exception:
+            counter = "workers_error"
+        else:
+            counter = {
+                "current": "workers_current",
+                "transient_failure": "workers_retry",
+                "error": "workers_error",
+            }.get(outcome, "workers_skipped") if type(outcome) is str else "workers_error"
+        with self._lock:
+            if not self._closed:
+                self._progress[counter] += 1
 
     def _scan_finished(self, handle):
         with self._lock:
             if self._scan is not handle:
                 return
             self._scan = None
+            try:
+                handle.result()
+            except Cancelled:
+                self._progress["scans_cancelled"] += 1
+            except Exception:
+                self._progress["scans_failed"] += 1
             # The old scan may still hold its admission until its worker
             # exits. A refusal is nonblocking and does not consume a job.
             if self._hint_pending and not self._closed:
