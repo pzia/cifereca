@@ -379,6 +379,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
         label = "offline" if offline else "cold"
         route_timings = {}
         route_started = {}
+        narrow_context = {}
 
         def show_route(route):
             route_started[(route, "list")] = monotonic()
@@ -493,6 +494,22 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             capture("00-notice-c-" + route + "-" + variant + "-" + label)
             if variant == "list":
                 report["local_c_stage"] = label + "_" + route + "_detail"
+                if page._narrow_master_detail:
+                    assert page.page_header.get_visible()
+                    assert page.toolbar.get_visible()
+                    if route == "search":
+                        assert page.header_actions.get_parent() is page
+                        assert page.header_actions.get_mapped()
+                    narrow_context[route] = {
+                        "window_width": window.get_width(),
+                        "sidebar_visible": bool(window.sidebar.get_visible()),
+                    }
+                    if route == "library":
+                        # Exercise the actual label and refresh port, without
+                        # modifying the documentary data behind the fixture.
+                        narrow_context[route]["original_summary"] = page._documentary_summary.get_text()
+                        page.set_documentary_summary("1 notice témoin")
+                        assert page._documentary_summary.get_visible()
                 route_started[(route, "detail")] = monotonic()
                 page.selection.set_selected(0)
                 assert page.selection.get_selected_item() is row
@@ -504,7 +521,32 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     route, page, row, "detail", monotonic() + 8,
                 )))
                 return
-            if page._narrow_master_detail and page._narrow_detail_visible:
+            if route in narrow_context:
+                receipt = narrow_context[route]
+                assert page._narrow_master_detail and page._narrow_detail_visible
+                assert not page.page_header.get_mapped()
+                assert not page.toolbar.get_mapped()
+                assert not window.sidebar.get_visible()
+                assert page.detail_back.get_mapped()
+                if route == "search":
+                    assert not page.header_actions.get_mapped()
+                if route == "library":
+                    assert not page._documentary_summary.get_mapped()
+                    page.set_documentary_summary("2 notices témoins")
+                    assert not page._documentary_summary.get_visible()
+                page.detail_back.emit("clicked")
+                assert not page._narrow_detail_visible
+                assert page.page_header.get_visible() and page.toolbar.get_visible()
+                assert bool(window.sidebar.get_visible()) == receipt["sidebar_visible"]
+                assert page.selection.get_selected_item() is row
+                if route == "search":
+                    assert page.header_actions.get_visible()
+                if route == "library":
+                    assert page._documentary_summary.get_visible()
+                    assert page._documentary_summary.get_text() == "2 notices témoins"
+                    page.set_documentary_summary(receipt.pop("original_summary"))
+                receipt["returned"] = True
+            elif page._narrow_master_detail and page._narrow_detail_visible:
                 page.detail_back.emit("clicked")
             index = routes.index(route)
             if index < len(routes) - 1:
@@ -522,6 +564,11 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             assert stats["ui_decode_recent_count"] >= 1
             assert stats["n3_url_ok_recent_count"] == (0 if offline else 1)
             assert len(route_timings) == 12
+            # A wide geometry is not evidence of the narrow transition.
+            report["notice_c_narrow_context_" + label] = narrow_context
+            if set(narrow_context) == set(routes):
+                assert all(value["returned"] for value in narrow_context.values())
+                report["checks"]["P0_3684_narrow_six_views_" + label] = True
             # Real GdkPixbuf preview worker, not the Pillow baseline adapter.
             # A single C and a fixed preview size: creation only on cold N3,
             # reuse after restart; samples count executions, not subscribers.
