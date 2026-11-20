@@ -511,6 +511,17 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             assert stats["ui_decode_recent_count"] >= 1
             assert stats["n3_url_ok_recent_count"] == (0 if offline else 1)
             assert len(route_timings) == 12
+            # Real GdkPixbuf preview worker, not the Pillow baseline adapter.
+            # A single C and a fixed preview size: creation only on cold N3,
+            # reuse after restart; samples count executions, not subscribers.
+            assert stats["preview_created"] == (0 if offline else 1)
+            assert stats["preview_fallback"] == 0
+            assert stats["preview_hit"] >= 1
+            assert stats["preview_worker_created_recent_count"] == stats["preview_created"]
+            assert stats["preview_worker_hit_recent_count"] == stats["preview_hit"]
+            assert stats["preview_worker_fallback_recent_count"] == 0
+            assert "preview_worker_hit_recent_p95_ms" in stats
+            assert ("preview_worker_created_recent_p95_ms" in stats) is (not offline)
             # Report only fixed numeric metrics; no source, URI, path,
             # document key or account. Empty samples have no percentile.
             def select_metrics(values, prefixes):
