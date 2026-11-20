@@ -57,6 +57,41 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertEqual(set(literal), self.module._BOOK_DETAIL_STAGES)
         self.assertLessEqual(set(literal) - {"activation", "callback_other"}, definitions)
 
+    def test_notice_c_cover_and_six_view_failure_checkpoints_are_closed(self):
+        scenario = "book-detail-1366"
+        private = self.root / scenario / scenario / "screen.json"
+        private.parent.mkdir(parents=True)
+        self.write([{"scenario": scenario, "returncode": 1}])
+        for cover, local in (
+            ("seed", "setup"),
+            ("cold_web_choices", "cold_search_detail"),
+            ("offline_search_list", "offline_recommendations_list"),
+            ("complete", "invalidated_n2_warm_n3"),
+        ):
+            with self.subTest(cover=cover, local=local):
+                private.write_text(json.dumps({
+                    "notice_c_cover_stage": cover, "local_c_stage": local,
+                    "error": "PRIVATE", "title": "PRIVATE",
+                }), encoding="utf-8")
+                result = self.module.safe_summary(self.source)["results"][0]
+                self.assertEqual(result["book_detail_notice_c_cover_stage"], cover)
+                self.assertEqual(result["book_detail_local_c_stage"], local)
+                self.assertNotIn("PRIVATE", repr(result))
+        for bad in ("PRIVATE", "cold_web_choices\\nPRIVATE", True, 17, None, {"a": "b"}):
+            private.write_text(json.dumps({
+                "notice_c_cover_stage": bad, "local_c_stage": bad,
+            }), encoding="utf-8")
+            result = self.module.safe_summary(self.source)["results"][0]
+            self.assertNotIn("book_detail_notice_c_cover_stage", result)
+            self.assertNotIn("book_detail_local_c_stage", result)
+        self.write([{"scenario": scenario, "returncode": 0}])
+        private.write_text(json.dumps({
+            "notice_c_cover_stage": "seed", "local_c_stage": "setup",
+        }), encoding="utf-8")
+        result = self.module.safe_summary(self.source)["results"][0]
+        self.assertNotIn("book_detail_notice_c_cover_stage", result)
+        self.assertNotIn("book_detail_local_c_stage", result)
+
     def test_success_and_failure_only_export_allowlisted_fields(self):
         secret = "PRIVATE-BEARER-TOKEN-HOME-USER-ACSM-URL"
         self.write([
