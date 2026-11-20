@@ -7,7 +7,7 @@ from ..core.borrow_for_identity_discovery import possible_lender_matches
 def present_normal_lender_choice(panel, *, item, rows, current, service,
                                  identity, identity_id, account_epoch,
                                  source_epoch, Adw, TaskPriority, control=None):
-    """One menu and one separate confirmation; Core alone owns the loan claim."""
+    """Choose among multiple candidates, then require explicit confirmation."""
     window = panel.window
     execute = getattr(service, "execute_normal_lender_borrow_for_current_identity", None)
     if (not callable(execute) or not current()
@@ -98,20 +98,15 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         except Exception:
             failed(None)
 
-    def selected(_dialog, response):
+    def present_confirmation(candidate):
         nonlocal stage
         if not owns("choose"):
-            return
-        if not dialog_current() or type(response) is not str:
-            release()
-            return
-        choices = {f"choice-{i}": row for i, row in enumerate(rows)}
-        candidate = choices.get(response)
-        if not possible_lender_matches(
+            return False
+        if not dialog_current() or not possible_lender_matches(
                 candidate, item, requesting_identity_id=identity_id,
         ):
             release()
-            return
+            return False
         stage = "confirm"
         try:
             menu = Adw.MessageDialog.new(
@@ -124,8 +119,18 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             menu.add_response("borrow", "Emprunter sur ce profil")
             menu.connect("response", lambda _dialog, value: confirmed(candidate, value))
             menu.present()
+            return True
         except Exception:
             release()
+            return False
+
+    if len(rows) == 1:
+        return present_confirmation(rows[0])
+
+    choices = {f"choice-{i}": row for i, row in enumerate(rows)}
+
+    def selected(_dialog, response):
+        present_confirmation(choices.get(response) if type(response) is str else None)
 
     try:
         menu = Adw.MessageDialog.new(
@@ -133,8 +138,8 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             "Choix local uniquement : offre et quota non vérifiés.",
         )
         menu.add_response("cancel", "Annuler")
-        for i, row in enumerate(rows):
-            menu.add_response(f"choice-{i}", row.label)
+        for response, row in choices.items():
+            menu.add_response(response, row.label)
         menu.connect("response", selected)
         if not dialog_current():
             release()
@@ -150,7 +155,8 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
                                 identity, identity_id, account_epoch, source_epoch):
     """Attach an optional consent entry to the existing shared detail action bar."""
     window = panel.window
-    if (not callable(getattr(panel, "_actions", None))
+    if (type(rows) is not tuple or not 1 <= len(rows) <= 64
+            or not callable(getattr(panel, "_actions", None))
             or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))):
         return False
     try:
@@ -178,7 +184,8 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
         except Exception:
             return False
 
-    button = action_button("Choisir un profil prêteur…", "system-users-symbolic")
+    label = f"Emprunter avec {rows[0].label}…" if len(rows) == 1 else "Emprunter sur et avec…"
+    button = action_button(label, "system-users-symbolic")
     button._cifereca_action_id = "choose-normal-lender"
     button.connect("clicked", lambda control: present_normal_lender_choice(
         panel, item=item, rows=rows, current=current, service=service,
