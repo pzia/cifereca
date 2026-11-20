@@ -13,6 +13,7 @@ class Button:
         self.visible = False
 
     def get_parent(self): return self.parent
+    def set_valign(self, value): self.valign = value
     def get_visible(self): return self.visible
     def set_visible(self, value): self.visible = value
     def measure(self, *_): return (self.width, self.width, -1, -1)
@@ -46,7 +47,7 @@ def bar():
     tree = ast.parse(path.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'AdaptiveActionBar')
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
-               and n.name in {'_layout_overflow', '_move_button'}]
+               and n.name in {'_layout_overflow', '_move_button', 'append'}]
     owner = ast.ClassDef(name='Bar', bases=[], keywords=[], body=methods, decorator_list=[])
     class Content:
         def set_label(self, value): self.label = value
@@ -55,6 +56,8 @@ def bar():
     ns = {
         'Gtk': NS(
             Orientation=NS(HORIZONTAL=0),
+            Align=NS(CENTER=0),
+            Button=Button,
             AccessibleProperty=NS(LABEL=1),
             Image=NS(new_from_icon_name=lambda name: NS(label='', icon_name=name)),
         ),
@@ -198,3 +201,37 @@ def test_p1_3687_full_caption_remains_if_all_actions_fit_without_menu():
     assert not obj.overflow_button.visible
     assert obj.box.children == [primary, secondary]
     assert occupied(obj) <= budget
+
+
+def test_late_contextual_action_preserves_priority_when_toolbar_grows():
+    obj = bar()
+    obj._layout_overflow(410)
+    original = list(obj._buttons)
+    late = Button(120)
+    late._cifereca_action_label = "Action tardive"
+    obj.append(late)
+    # The newly evaluated action is initially on the toolbar. Older
+    # secondary actions must return from the popover *before* it.
+    obj._layout_overflow(1400)
+    assert obj.box.children == original + [late]
+    assert obj.overflow_box.children == []
+    assert not obj.overflow_button.visible
+    assert occupied(obj) <= 1400
+
+
+def test_late_actions_keep_exact_identity_and_priority_on_partial_growth():
+    obj = bar()
+    obj._layout_overflow(410)
+    original = list(obj._buttons)
+    late = [Button(120), Button(120)]
+    for button in late:
+        button._cifereca_action_label = "Action tardive"
+        obj.append(button)
+    for budget in (650, 410, 1500, 300, 650):
+        obj._layout_overflow(budget)
+        count = obj._overflow_visible_count
+        assert obj.box.children == (original + late)[:count] + (
+            [obj.overflow_button] if count < len(original + late) else []
+        )
+        assert obj.overflow_box.children == (original + late)[count:]
+        assert occupied(obj) <= budget
