@@ -226,3 +226,115 @@ def test_epub_physical_cache_baseline(tmp_path, monkeypatch, capsys, size):
             print("COVER_EPUB_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
     finally:
         loader.close()
+
+
+@pytest.mark.parametrize("size", (16, 256))
+def test_shared_n3_independent_n2_concurrency_baseline(tmp_path, monkeypatch, capsys, size):
+    """Eight exact documents per URL, deterministic overlap without sleeps."""
+    from tests.test_core_p0_2435_preview_baseline import _process_io
+
+    monkeypatch.setattr(cover_loader, "cache_dir", lambda: tmp_path)
+    batch = 8
+    urls = [f"https://shared.example.test/{i}.png" for i in range(size // batch)]
+    release = {url: Event() for url in urls}
+    transfers = []
+
+    def response(req):
+        url = str(req.url)
+        assert req.method == "GET" and url in release
+        transfers.append(url)
+        assert release[url].wait(10), "bounded mock GET was not released"
+        return httpx.Response(200, content=PNG, headers={"content-type": "image/png"})
+
+    loader = cover_loader.CoverLoader(max_workers=2)
+    old = loader.client
+    loader.client = httpx.Client(transport=httpx.MockTransport(response), trust_env=False)
+    old.close()
+    service = DocumentCoverService(loader)
+    documents = [CoverDocumentScope(
+        kind="public_catalogue", identity_id=None, provider_id="fixture-cover",
+        credential_id="__public__", source_key=f"notice-c:shared:{i}",
+    ) for i in range(size)]
+    snapshots = [CoverSourceSnapshot(
+        scope=doc, revision=1, snapshot_complete=True,
+        candidates=(candidate(urls[i // batch], tier="catalog", source="notice-c",
+                              evidence_id=doc.source_key),),
+    ) for i, doc in enumerate(documents)]
+    report = {"documents": size, "unique_media": len(urls), "batch": batch,
+              "workers": 2, "transport": "mock_httpx_barrier",
+              "gtk_paint_measured": False, "physical_io_measured": False,
+              "phases": {}}
+    try:
+        for snapshot in snapshots:
+            service.register(snapshot)
+
+        def phase(name, *, expected_misses, cold):
+            before, media_before = service.stats(), loader.stats()
+            io_before = _process_io()
+            cpu, wall = process_time_ns(), perf_counter_ns()
+            durations = []
+            for offset in range(0, size, batch):
+                url = urls[offset // batch]
+                entries = []
+                for doc in documents[offset:offset + batch]:
+                    ready, values, started = Event(), [], perf_counter_ns()
+
+                    def deliver(value, ready=ready, values=values, started=started):
+                        values.append((value, (perf_counter_ns() - started) / 1e6))
+                        ready.set()
+
+                    handle = service.get_cover(doc, "detail", deliver)
+                    assert handle.source_uri == url
+                    entries.append((handle, ready, values))
+                # Prevent an early physical HIT from hiding a duplicated
+                # in-flight GET. No transport wait on the submitting thread.
+                release[url].set()
+                for handle, ready, values in entries:
+                    assert ready.wait(10)
+                    assert len(values) == 1
+                    value, duration = values[0]
+                    assert value == loader._path(url)
+                    durations.append(duration)
+                    handle.cancel()
+                assert loader._path(url).read_bytes() == PNG
+            elapsed = (perf_counter_ns() - wall) / 1e6
+            cpu_ms = (process_time_ns() - cpu) / 1e6
+            io_after = _process_io()
+            after, media = service.stats(), loader.stats()
+            unique = len(urls)
+            assert after["n2_miss"] - before["n2_miss"] == expected_misses
+            assert after["n2_hit"] - before["n2_hit"] == size - expected_misses
+            assert after["n1_selected_count"] - before["n1_selected_count"] == expected_misses
+            assert media["download_ok"] - media_before["download_ok"] == (unique if cold else 0)
+            assert media["deduplicated"] - media_before["deduplicated"] == (size - unique if cold else 0)
+            assert media["cache_hit_valid"] - media_before["cache_hit_valid"] == (0 if cold else size)
+            written = media["n3_url_published_bytes"] - media_before["n3_url_published_bytes"]
+            assert written == (unique * len(PNG) if cold else 0)
+            assert media["download_failed"] == 0 and media["ui_decode_count"] == 0
+            report["phases"][name] = {
+                "callback_latency": dist(durations),
+                "wall_ms": round(elapsed, 3), "process_cpu_ms": round(cpu_ms, 3),
+                "rss_highwater_kib_linux": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                "n2_misses": expected_misses, "n2_hits": size - expected_misses,
+                "n3_gets": unique if cold else 0,
+                "n3_coalesced": size - unique if cold else 0,
+                "n3_logical_published_bytes": written,
+                "process_io_delta": {key: io_after[key] - io_before[key]
+                                     for key in io_before.keys() & io_after.keys()},
+            }
+
+        phase("cold_shared_media", expected_misses=size, cold=True)
+        phase("warm_shared_media", expected_misses=0, cold=False)
+        # One exact decision per shared URL changes, without changing its
+        # physical image or the seven sibling documentary decisions.
+        for snapshot in snapshots[::batch]:
+            service.register(replace(snapshot, revision=2))
+        phase("targeted_revision_warm_media", expected_misses=len(urls), cold=False)
+        assert sorted(transfers) == sorted(urls)
+        with capsys.disabled():
+            print("COVER_SHARED_N3_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
+    finally:
+        for event in release.values():
+            event.set()
+        service.close()
+        loader.close()

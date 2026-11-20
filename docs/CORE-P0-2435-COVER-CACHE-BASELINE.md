@@ -22,3 +22,20 @@ La phase chaude valide le média adressé sans rouvrir l'EPUB. Assertions : 1 re
 depuis le corpus connu et les restaurations attestées ; ils ne sont pas des octets de disque mesurés.
 La sortie des deux benchmarks est aussi imprimée hors capture pytest pour réception CI ciblée.
 N4/preview réels, petite/grande bibliothèque réelle, parallélisme ou gain après optimisation restent à recevoir.
+
+
+## Extension N2 indépendantes / N3 mutualisé
+
+Même commande, 16 et 256 DocumentRef distincts, huit notices par URL
+(2 et 32 médias). Deux workers inchangés. Le MockTransport attend une
+barrière explicite avant de retourner les octets : les huit demandes
+concourantes ne peuvent pas masquer un double GET derrière un HIT déjà chaud.
+Trois phases : N2/N3 froids, chauds, puis nouvelle révision sur une seule
+notice par groupe et média inchangé. Assertions : 16/256 décisions, 2/32 GET
+et 14/224 coalescences à froid ; aucun GET supplémentaire ; 2/32 MISS N2
+lors de l'invalidation ciblée et tous les autres HIT. La sortie
+COVER_SHARED_N3_BASELINE documente p50/p95/max callback, CPU, RSS cumulatif,
+octets logiques publiés et compteurs /proc/self/io si disponibles.
+Les délais incluent la barrière et la queue : aucune comparaison de SLA avec
+la série séquentielle. Corpus synthétique, pas de GTK ni d'I/O physique
+mesurés. Ne pas déduire une identité documentaire du partage N3.
