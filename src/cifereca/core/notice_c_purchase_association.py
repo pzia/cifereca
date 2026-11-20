@@ -197,7 +197,8 @@ def _exact_receipt_source_txn(db, value, candidate):
     return True
 
 
-def reattest_current_purchase_association(storage, job_ref, snapshot, candidate, *, now):
+def reattest_current_purchase_association(storage, job_ref, snapshot, candidate, *, now,
+                                         report_change=False):
     """Rebind identical same-read association to fresh A, without a GET.
 
     Revalidate the exact prior public source under the same transaction.
@@ -210,6 +211,9 @@ def reattest_current_purchase_association(storage, job_ref, snapshot, candidate,
     A corrupt receipt is a refusal, not authority for another GET.
     The caller pins the same live context as the original request.
     """
+    def result(ref, changed=False):
+        return (ref, changed) if report_change else ref
+
     if not journal._integer(now, minimum=1):
         raise ValueError("notice_purchase_association_invalid")
     with storage._lock, storage._connect() as db:
@@ -228,23 +232,25 @@ def reattest_current_purchase_association(storage, job_ref, snapshot, candidate,
                 raise ValueError("notice_purchase_association_changed")
             if _exact_receipt_source_txn(db, value, candidate):
                 if _matches_refresh(value, job, ref):
-                    if value["a"] != proof:
+                    changed = value["a"] != proof
+                    if changed:
                         value["a"] = proof
                         _store_receipt(db, ref, value)
-                    return job.ref
+                    return result(job.ref, changed)
                 if now - value["observed_at"] >= _DETAIL_TTL_SECONDS:
                     successor = journal._renew_purchase_current_txn(db, job, now=now)
                     value["refresh_generation"] = successor.generation
                     value["a"] = proof
                     _store_receipt(db, ref, value)
-                    return successor
-                if value["a"] != proof:
+                    return result(successor, True)
+                changed = value["a"] != proof
+                if changed:
                     value["a"] = proof
                     _store_receipt(db, ref, value)
-                return job.ref
+                return result(job.ref, changed)
         if job.state != "current":
-            return job.ref
-        return journal._renew_purchase_current_txn(db, job, now=now)
+            return result(job.ref)
+        return result(journal._renew_purchase_current_txn(db, job, now=now), True)
 
 
 def _read_txn(db, source):
