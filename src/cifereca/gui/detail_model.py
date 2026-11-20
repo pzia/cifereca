@@ -81,24 +81,26 @@ def catalogue_availability_label(item: object, availability: str) -> str:
 
 
 def compact_availability_label(value: object) -> str:
-    """Normalize verbose provider prose into a short business status."""
+    """Shorten only complete known labels, retaining every source qualifier.
+
+    Availability prose is descriptive evidence, not an entitlement. Substring
+    matching (including ``disponible`` inside ``indisponible``) or discarding
+    a suffix can reverse that evidence or drop its account/freshness limits.
+    GTK already wraps these values, so unfamiliar prose remains intact.
+    """
     text = str(value or "").strip()
-    folded = text.casefold()
-    if not text:
-        return ""
-    if "non vérifi" in folded or "non verifi" in folded:
-        return "Non vérifiée"
-    if "dans votre bibliothèque" in folded or "dans votre bibliotheque" in folded:
-        return "Dans la bibliothèque"
-    if "téléchargement libre" in folded or "telechargement libre" in folded:
-        return "Téléchargement libre"
-    if "disponible à l’emprunt" in folded or "disponible a l'emprunt" in folded:
-        return "Empruntable"
-    if "disponible" in folded and len(text) > 32:
-        return "Disponible"
-    if len(text) > 40 and " — " in text:
-        return text.split(" — ", 1)[0].strip()
-    return text
+    known = {
+        "disponibilité non vérifiée": "Non vérifiée",
+        "disponibilite non verifiee": "Non vérifiée",
+        "dans votre bibliothèque": "Dans la bibliothèque",
+        "dans votre bibliotheque": "Dans la bibliothèque",
+        "téléchargement libre": "Téléchargement libre",
+        "telechargement libre": "Téléchargement libre",
+        "disponible à l’emprunt": "Empruntable",
+        "disponible à l'emprunt": "Empruntable",
+        "disponible a l'emprunt": "Empruntable",
+    }
+    return known.get(text.casefold(), text)
 
 def search_detail_borrow_action_candidate(item: object, availability: str) -> bool:
     """Presentation only: an exact source-bound hint never authorizes borrowing.
