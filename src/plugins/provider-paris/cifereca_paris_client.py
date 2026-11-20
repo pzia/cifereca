@@ -796,6 +796,24 @@ class ParisClient:
                     documentary_facts(previous) == documentary_facts(item)
                     and previous.medium == item.medium
                 )
+                # A duplicate exact record may carry different result-owned
+                # series in the two Search routes. Do not let first-route
+                # order establish a public relation or restore a relation
+                # already refused by an earlier duplicate.
+                from cifereca_paris_bibliography import public_search_series_metadata
+                first_series = public_search_series_metadata(previous.metadata, previous.scenario)
+                next_series = public_search_series_metadata(item.metadata, item.scenario)
+                if (not same_classification or not first_series or not next_series
+                        or first_series["series"] != next_series["series"]):
+                    metadata.pop("series", None)
+                    claims = metadata.get("bibliography_evidence")
+                    if type(claims) is dict and "series" in claims:
+                        remaining = {key: value for key, value in claims.items()
+                                     if key != "series"}
+                        if remaining:
+                            metadata["bibliography_evidence"] = remaining
+                        else:
+                            metadata.pop("bibliography_evidence", None)
                 if same_classification:
                     out[pos] = replace(previous, metadata=metadata)
                 else:
