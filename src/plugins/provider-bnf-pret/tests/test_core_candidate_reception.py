@@ -45,7 +45,17 @@ def adapter(tmp_path, monkeypatch):
         session.rights_observation_snapshot(account).scope,
         offer.edition_id, offer.right_id, "loan", "bnf_html",
     )
+    preflight_calls = []
+    fresh_runtime = SimpleNamespace(
+        preflight_acsm_profile=lambda name: (
+            preflight_calls.append(name) or name == "borrower-adobe"
+        ),
+    )
     service = SimpleNamespace(
+        _plugin_manager=SimpleNamespace(registry_generation=1),
+        _required_plugin_service=lambda pid: (
+            fresh_runtime if pid == "runtime.kobo-adept" else None
+        ),
         storage=db, accounts=[account], _account_context_epoch=1,
         _sessions={(provider, credential): session},
         _session_key=lambda p, c: (p, c),
@@ -97,7 +107,8 @@ def adapter(tmp_path, monkeypatch):
         yield SimpleNamespace(
             complete=complete, service=service, source=source, account=account,
             root=root, db=db, calls=calls, token_gets=token_gets,
-            runtime_calls=runtime_calls,
+            runtime_calls=runtime_calls, fresh_runtime=fresh_runtime,
+            preflight_calls=preflight_calls,
         )
     finally:
         session.close()
@@ -108,6 +119,7 @@ def test_real_bnf_offer_and_token_are_accepted_by_core_consumer(adapter):
     a = adapter
     completed = a.complete()
     assert len(a.token_gets) == len(a.runtime_calls) == 1
+    assert a.preflight_calls == ['borrower-adobe']
     request, = a.runtime_calls
     assert request["source"]["type"] == "acsm"
     assert request["source"]["provider"] == "bnf-pret"
@@ -148,4 +160,18 @@ def test_bnf_source_rebound_before_core_admission_makes_no_token_get(adapter):
         a.complete()
     assert a.calls == before
     assert a.token_gets == a.runtime_calls == []
+    assert a.db.placements() == []
+
+
+def test_bnf_fresh_capability_refusal_leaves_attempt_unmarked(adapter):
+    """Reject locally before any durable one-use marker or DRM mutator."""
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+
+    a = adapter
+    a.fresh_runtime.preflight_acsm_profile = lambda _name: False
+    with pytest.raises(ValueError, match="^canonical_adept_preflight_unavailable$"):
+        a.complete()
+    assert len(a.token_gets) == 1  # ACSM type only known after candidate GET.
+    assert a.runtime_calls == []
+    assert not pending_loan_adept_attempt(a.db, a.source)
     assert a.db.placements() == []

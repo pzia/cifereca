@@ -18,12 +18,14 @@ from dataclasses import replace
     "missing", "v15_only", "confirmed", "revoked_during_get",
     "revoked_during_adept", "profile_unready", "profile_inventory_missing",
     "profile_inventory_error", "profile_name_mismatch", "profile_id_mismatch",
+    "preflight_refused", "preflight_registry_rebind",
 ])
 def test_linked_loan_canonical_adept_uses_exact_grant(
     tmp_path, monkeypatch, scenario,
 ):
     service, loan = service_with_linked_borrower(tmp_path)
     db = service.storage
+    original_plugin_manager = service._plugin_manager
     try:
         account = service.accounts[1]
         with db._lock, db._connect() as sql:
@@ -102,6 +104,21 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
 
         service.adept_profiles_for_identity = profiles_for_identity
         service._adept_profile_row = lambda _name, rows: rows[0] if rows else None
+        preflight_calls = []
+        manager = NS(registry_generation=3)
+
+        def preflight(name):
+            preflight_calls.append(name)
+            assert name == "bob-adobe"
+            if scenario == "preflight_registry_rebind":
+                manager.registry_generation += 1
+            return scenario != "preflight_refused"
+
+        fresh_runtime = NS(preflight_acsm_profile=preflight)
+        service._plugin_manager = manager
+        service._required_plugin_service = lambda pid: (
+            fresh_runtime if pid == "runtime.kobo-adept" else None
+        )
 
         def runtime(request):
             calls.append("ADEPT")
@@ -137,7 +154,7 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
                 assert result.path.is_relative_to(root / "alice")
                 assert result.adept_receipt_ref.startswith("core-adept:")
             else:
-                with pytest.raises(ValueError, match="adept_borrower|adept_profile"):
+                with pytest.raises(ValueError, match="adept_borrower|adept_profile|canonical_adept_preflight"):
                     execute()
         expected = {
             "missing": [], "v15_only": [], "confirmed": ["GET", "ADEPT"],
@@ -147,12 +164,19 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
             "profile_inventory_error": ["GET"],
             "profile_name_mismatch": ["GET"],
             "profile_id_mismatch": ["GET"],
+            "preflight_refused": ["GET"], "preflight_registry_rebind": ["GET"],
         }
         assert calls == expected[scenario]
+        assert preflight_calls == (
+            ["bob-adobe"] if scenario in {
+                "confirmed", "revoked_during_adept", "preflight_refused",
+                "preflight_registry_rebind",
+            } else []
+        )
         if scenario in {
             "profile_unready", "profile_inventory_missing",
             "profile_inventory_error", "profile_name_mismatch",
-            "profile_id_mismatch",
+            "profile_id_mismatch", "preflight_refused", "preflight_registry_rebind",
         }:
             from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
             assert pending_loan_adept_attempt(db, source) is False
@@ -161,4 +185,5 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
             assert not list(root.rglob("*.acsm"))
             assert not list(root.rglob("*.pdf"))
     finally:
+        service._plugin_manager = original_plugin_manager
         service.close()
