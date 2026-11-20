@@ -69,7 +69,7 @@ def test_public_product_metadata_is_projected_without_acquired_edition_claim(mon
 
     node = {"@type": "Book", "url": URL, "name": "Fixture",
             "inLanguage": language, "genre": ["Policier"], "keywords": "enquête, mer",
-            "typicalAgeRange": "12+", "isPartOf": {"@type": "BookSeries", "name": "Série non qualifiée"}}
+            "typicalAgeRange": "12+", "isPartOf": {"@type": "BookSeries", "name": "Série publique de recette"}}
     monkeypatch.setattr(transport, "BODY", '<script type="application/ld+json">'
                         + json.dumps(node) + '</script>')
     s, _, _ = session(monkeypatch)
@@ -90,6 +90,13 @@ def test_public_product_metadata_is_projected_without_acquired_edition_claim(mon
             assert bio["language_observation"]["source_field"] == "inLanguage"
         row, = response.results
         assert not row.owned and not row.downloadable and row.format is None
-        assert "series_relation" not in bio and "public_age_range_label" not in bio
+        assert bio["series_relation"] == {
+            "label": "Série publique de recette",
+            "source": "numilog-catalog.public_product_jsonld",
+            "source_field": "isPartOf.name", "scope": "NUMILOG_PUBLIC",
+            "confidence": "explicit_record_field", "freshness": "search_response",
+        }
+        assert "public_age_range_label" not in bio
+        assert "youth_age_ranges" not in bio
     finally:
         s.close()

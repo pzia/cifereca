@@ -161,7 +161,7 @@ class PublicSeriesRelation:
 def decode_public_series_relation(
     raw: object, *, provider_id: str, scenario: str | None = None,
 ) -> PublicSeriesRelation | None:
-    """Closed, bounded supplier-neutral provenance shape."""
+    """Closed proof: an exact linked relation or explicit record field."""
     names = {"label", "source", "source_field", "scope", "confidence", "freshness"}
     if type(raw) is not dict or set(raw) != names:
         return None
@@ -172,7 +172,7 @@ def decode_public_series_relation(
             ) is None for name in names - {"label"})
             or not raw["source"].startswith(provider_id + ".")
             or (scenario is not None and raw["scope"] != scenario)
-            or raw["confidence"] != "linked_search_relation"
+            or raw["confidence"] not in ("linked_search_relation", "explicit_record_field")
             or raw["freshness"] != "search_response"):
         return None
     return PublicSeriesRelation(**raw)

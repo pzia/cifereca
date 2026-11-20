@@ -91,3 +91,34 @@ def test_oversize_values_omitted_not_truncated():
     row, = purchase_public_detail_response(raw, product_url=URL).results
     assert row.author is None and row.description is None
     assert row.title == "Titre public"
+
+
+@pytest.mark.parametrize("series,expected", [
+    ({"@type": "BookSeries", "name": "Cycle public"}, "Cycle public"),
+    ({"@type": "CreativeWorkSeries", "name": "Cycle public"}, "Cycle public"),
+    ({"@type": "Book", "name": "Autre livre"}, None),
+    ({"name": "Sans type"}, None),
+    ({"@type": "BookSeries", "name": "x" * 241}, None),
+])
+def test_exact_product_series_is_a_structured_public_relation(series, expected):
+    response = purchase_public_detail_response(detail(isPartOf=series), product_url=URL)
+    row, = response.results
+    session = NumilogPublicSession(credential_id="__public__", label="", credentials={}, options={})
+    session.connect()
+    try:
+        projected, = _public_rows_from_response(response, session)
+        observation = admit_public_search_catalogue(
+            projected, identity_id="alice", observed_at=100, public_cover_url=None)
+        assert observation is not None
+        relation = observation.fields_copy()["search_result"]["public_bibliography"].get("series_relation")
+        if expected is None:
+            assert relation is None and "series" not in row.metadata
+        else:
+            assert relation == {
+                "label": expected, "source": "numilog-catalog.public_product_jsonld",
+                "source_field": "isPartOf.name", "scope": "NUMILOG_PUBLIC",
+                "confidence": "explicit_record_field", "freshness": "search_response",
+            }
+        assert row.format is None and not row.owned and not row.downloadable
+    finally:
+        session.close()

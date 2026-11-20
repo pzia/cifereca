@@ -111,3 +111,14 @@ def test_public_series_projection_keeps_only_exact_bounded_proof():
     assert actual.metadata["bibliography_evidence"] == {"series": proof}
     assert actual.metadata["bibliography_evidence"]["series"] is not proof
     assert actual.metadata["series"] == ["Cycle A"]
+
+
+def test_structured_public_series_proof_keeps_its_own_kind():
+    proof = {
+        "source": "synthetic-a.product", "source_field": "isPartOf.name",
+        "scope": "search", "confidence": "explicit_record_field",
+        "freshness": "search_response",
+    }
+    actual = project({"series": ["Cycle A"], "bibliography_evidence": {"series": proof}})
+    assert actual.metadata["bibliography_evidence"] == {"series": proof}
+    assert actual.metadata["series"] == ["Cycle A"]

@@ -52,6 +52,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         "publisher": {"name": "Editeur de recette"},
         "description": "Résumé de recette", "datePublished": "2025-03-15",
         "isbn": "9782702194287", "inLanguage": "fr",
+        "isPartOf": {"@type": "BookSeries", "name": "Cycle de recette"},
     }) + '</script>'
     requests = []
 
@@ -140,6 +141,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         assert facts["author"] == "Auteur de recette" and facts["publisher"] == "Editeur de recette"
         assert facts["description"] == "Résumé de recette"
         assert facts["languages"] == "fr" and "isbn" not in facts
+        assert facts["series"] == "Cycle de recette"
         assert not notice.proves_acquired_edition and not notice.authorizes_acquisition
         assert read_purchase_descriptive_notice(db, omitted, identity_id=owner) is None
         assert read_purchase_descriptive_notice(db, chosen, identity_id="B") is None

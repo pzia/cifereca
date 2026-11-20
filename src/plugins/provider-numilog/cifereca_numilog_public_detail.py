@@ -580,6 +580,17 @@ def purchase_public_detail_response(detail, *, product_url):
                 "source_field": "inLanguage", "scope": "NUMILOG_PUBLIC",
                 "confidence": "explicit_record_field", "freshness": "search_response",
             }}
+    # isPartOf was already checked for an explicit BookSeries or
+    # CreativeWorkSeries on this product. Distinguish its structured field
+    # proof from a search-link relation; neither proves an acquired edition.
+    series = fields.get("public_series_label")
+    if _valid_text(series, 240):
+        metadata["series"] = [series]
+        metadata.setdefault("bibliography_evidence", {})["series"] = {
+            "source": "numilog-catalog.public_product_jsonld",
+            "source_field": "isPartOf.name", "scope": "NUMILOG_PUBLIC",
+            "confidence": "explicit_record_field", "freshness": "search_response",
+        }
     for source, target in (("genres", "genres"), ("public_keywords", "keywords")):
         if source in fields:
             metadata[target] = list(fields[source])
