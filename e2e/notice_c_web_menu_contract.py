@@ -5,9 +5,8 @@ from threading import get_ident
 from time import monotonic
 from types import SimpleNamespace as NS
 
-from gi.repository import Gtk
-
 from cifereca.core.notice_c_cover_index import persist_consolidated_cover_source
+from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
 from cifereca.core.notice_cover_repository import persist_notice_cover, evict_notice_cover
 from cifereca.core.notice_search_cover_producer import (
     admit_public_search_catalogue, _CORE_PUBLIC_C_WITNESS,
@@ -63,11 +62,18 @@ def seed_multiple_web_choices(db):
         )
     for source in sources:
         assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    menu = read_public_web_choices(db, c.document)
+    assert menu is not None and menu.epoch == c.epoch, "multi-web retained epoch"
+    assert {choice.label for choice in menu.choices} == set(expected), "multi-web retained choices"
+    for choice in menu.choices:
+        assert resolve_public_web_choice(db, c.document, expected_epoch=c.epoch,
+                                         choice_id=choice.choice_id) == expected[choice.label], "multi-web retained resolution"
     return c.document, c.epoch, expected
 
 
 def verify_multiple_web_choices(window, db, fixture, *, offline, later, guard,
                                 capture, report, complete, state):
+    from gi.repository import Gtk
     from cifereca.gui.detail_panel import DetailPanel
     from cifereca.gui.notice_c_web_action_controller import request_public_web_actions
 
@@ -106,7 +112,11 @@ def verify_multiple_web_choices(window, db, fixture, *, offline, later, guard,
         assert isinstance(menu, Gtk.MenuButton)
         menu.popup()
         popover = menu.get_popover()
+        # GtkScrolledWindow can insert a GtkViewport for a non-scrollable box.
         box = popover.get_child().get_child()
+        if isinstance(box, Gtk.Viewport):
+            box = box.get_child()
+        assert isinstance(box, Gtk.Box), "multi-web GTK menu content"
         options = {}
         button = box.get_first_child()
         while button is not None:
