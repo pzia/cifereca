@@ -149,3 +149,23 @@ def test_ordinary_book_slug_keeps_original_attested_url(suffix):
         '<a href="' + url + '">Notice</a>',
     )
     assert parsed.book_urls == (("123", url),)
+
+
+def test_next_page_keeps_exact_filter_scope_and_first_equivalent_url():
+    page = "https://www.biblioaccess.com/1409/Catalog/Search?query=test&type=all&language=fr&pageindex=0"
+    base = "/1409/Catalog/Search?"
+    wrong = base + "query=test&type=all&pageindex=1"
+    first = base + "query=test&type=all&language=fr&pageindex=1"
+    second = base + "pageindex=1&language=fr&type=all&query=test"
+    def anchor(url):
+        return '<a rel="next" href="' + url.replace("&", "&amp;") + '">Suivant</a>'
+    links = mod.extract_catalogue_links(page, anchor(wrong) + anchor(first) + anchor(second))
+    assert links.next_page_url == "https://www.biblioaccess.com" + first
+
+
+def test_next_page_conflict_never_selects_last_candidate():
+    page = "https://www.biblioaccess.com/1409/Catalog/Search?query=test&pageindex=0"
+    first = '<a rel="next" href="/1409/Catalog/Search?query=test&amp;pageindex=1">Suivant</a>'
+    second = first.replace("pageindex=1", "pageindex=01")
+    links = mod.extract_catalogue_links(page, first + second + first)
+    assert links.next_page_url is None and links.completeness == "partial"

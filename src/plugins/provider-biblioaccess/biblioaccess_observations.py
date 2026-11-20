@@ -78,7 +78,7 @@ def classify_search_response(*, request_url: str, status: int,
                        for v in target_params.values())):
             return "untrusted_redirect"
         page = target_params.get("pageindex", ["0"])[0]
-        if not re.fullmatch(r"[0-9]{1,3}", page) or int(page) > 100:
+        if not re.fullmatch(r"[0-9]{1,3}", page) or int(page) != 0:
             return "untrusted_redirect"
         return "search_redirect"
     if status == 200:
@@ -129,6 +129,7 @@ class _Links(HTMLParser):
         self.page_url = page_url
         current = parse_qs(urlsplit(page_url).query, keep_blank_values=True)
         self.current_query = current.get("query") if len(current.get("query", [])) == 1 else None
+        self.current_scope = {key: value for key, value in current.items() if key != "pageindex"}
         page = current.get("pageindex", ["0"])
         self.current_page = int(page[0]) if (len(page) == 1 and re.fullmatch(r"[0-9]{1,5}", page[0])) else -1
         self.book_ids = []
@@ -138,8 +139,24 @@ class _Links(HTMLParser):
         self._book_anchor = None
         self._book_anchor_text = []
         self.next_page_url = None
+        self._next_scope = None
+        self._next_conflict = False
         self._candidate = None
         self._anchor_text = []
+
+    def _observe_next(self, link):
+        # Equivalent URL encodings are acceptable; conflicting navigation
+        # never selects the last anchor. Preserve the first exact URL.
+        scope = parse_qs(urlsplit(link).query, keep_blank_values=True)
+        if self._next_conflict:
+            return
+        if self._next_scope is not None and scope != self._next_scope:
+            self.next_page_url = None
+            self._next_conflict = True
+            return
+        if self.next_page_url is None:
+            self.next_page_url = link
+            self._next_scope = scope
 
     def handle_starttag(self, tag, attrs):
         if tag != "a":
@@ -183,13 +200,14 @@ class _Links(HTMLParser):
                     and re.fullmatch(r"[0-9]{1,5}", params["pageindex"][0])
                     and self.current_query is not None
                     and params.get("query") == self.current_query
+                    and {key: value for key, value in params.items() if key != "pageindex"} == self.current_scope
                     and self.current_page >= 0
                     and int(params["pageindex"][0]) == self.current_page + 1
                     and int(params["pageindex"][0]) <= 100):
                 self._candidate = link
                 self._anchor_text = []
                 if "next" in str(values.get("rel") or "").lower().split():
-                    self.next_page_url = link
+                    self._observe_next(link)
 
     def handle_data(self, data):
         if self._book_anchor is not None:
@@ -220,7 +238,7 @@ class _Links(HTMLParser):
         if tag == "a" and self._candidate is not None:
             label = " ".join(self._anchor_text).strip().casefold()
             if label.startswith(("suiv", "next")):
-                self.next_page_url = self._candidate
+                self._observe_next(self._candidate)
             self._candidate = None
             self._anchor_text = []
 

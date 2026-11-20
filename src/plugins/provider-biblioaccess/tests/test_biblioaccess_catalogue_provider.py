@@ -223,8 +223,8 @@ def test_public_envelope_reports_window_not_exhaustive_catalog(body, expected):
         session.connect()
         response = session.search_with_response_facets("roman")
         assert len(response.results) == len(response.public_notices) == expected
-        assert response.partial is False and response.catalogue_complete is False
-        assert session.last_search_warnings == []
+        assert response.partial is (expected == 0) and response.catalogue_complete is False
+        assert bool(session.last_search_warnings) is (expected == 0)
         clear = session.search_with_response_facets(" ")
         assert clear.catalogue_complete is None and not clear.public_notices
     finally:
@@ -340,5 +340,50 @@ def test_encoded_slug_retains_description_but_not_public_c_web_authority():
         assert projected.title == row.title and projected.record_id == row.record_id
         assert projected.friendly_url is None
         assert "public_url_evidence" not in projected.metadata
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("index", ["1", "100", "%C2%B2", "%D9%A1", "0000"])
+def test_summary_must_begin_at_page_zero_before_catalogue_get(index):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.url.path.endswith("SearchResultSummary")
+        return httpx.Response(302, headers={"location":
+            "/1409/Catalog/Search?query=roman&pageindex=" + index})
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        with pytest.raises(provider.ProviderError, match="catalogue_redirect_refused"):
+            session.search_with_response_facets("roman")
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("target", [
+    "&pageindex=1", "&type=all&pageindex=1&format=pdf",
+    "&type=all&pageindex=1&language=fr",
+    "&type=audio&pageindex=1",
+])
+def test_changed_filter_is_not_next_page(target):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={"location":
+                "/1409/Catalog/Search?query=roman&type=all&pageindex=0"})
+        assert request.url.params["pageindex"] == "0"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<a href="/1409/Catalog/Book/123/roman">Roman</a>'
+            '<a rel="next" href="/1409/Catalog/Search?query=roman'
+            + target.replace("&", "&amp;") + '">Suivant</a>'))
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        assert session.search("roman", page=1) == []
+        assert session.last_search_warnings
+        assert len(calls) == 2
     finally:
         session.close()
