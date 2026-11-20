@@ -13,9 +13,18 @@ class Widget:
     def __init__(self, **kwargs):
         self.children = []
         self.options = kwargs
+        self.parent = None
 
     def append(self, value):
         self.children.append(value)
+        value.parent = self
+
+    def get_parent(self):
+        return self.parent
+
+    def remove(self, value):
+        self.children.remove(value)
+        value.parent = None
 
 
 Gtk = NS(Widget=Widget, Box=Widget, Label=Widget, Orientation=NS(VERTICAL=1))
@@ -156,3 +165,49 @@ def test_guided_mount_uses_page_lifecycle_not_duplicate_route_token():
     assert not received and not lease.is_current()
     window._dispose_maintenance_lines()
     assert events.count("disposed") == 1
+
+
+@pytest.mark.parametrize("mode", ["route_revoked", "mount_replaced", "append_failed"])
+def test_guided_mount_rolls_back_widget_inserted_before_revocation(mode):
+    window, events = rig()
+    leases = []
+    widget = Widget()
+
+    class Tool:
+        def build_guided(self, lease):
+            leases.append(lease)
+            return GuidedMaintenanceView(widget, lambda: events.append("disposed"))
+
+    tool = Tool()
+    window.plugin_manager = NS(_registry_generation=2, service=lambda _: tool)
+    resolved = ResolvedPluginService("fixture.tool", "1", "fixture", "1",
+                                     "maintenance.tool", tool, registry_generation=2)
+    sibling = Widget()
+    successor = Widget()
+
+    class ReentrantBox(Widget):
+        def append(self, value):
+            super().append(value)
+            if value is not widget:
+                return
+            if mode == "route_revoked":
+                window._route_display_token = object()
+            elif mode == "mount_replaced":
+                window._dispose_maintenance_lines()
+                super().append(successor)
+            else:
+                raise RuntimeError("synthetic append failure")
+
+    box = ReentrantBox()
+    box.append(sibling)
+    assert mount_guided_tool(window, box, resolved, Gtk=Gtk)
+    assert widget.get_parent() is None and widget not in box.children
+    assert box.children[0] is sibling
+    assert not leases[0].is_current()
+    assert events.count("disposed") == 1
+    assert not window._guided_maintenance_disposers
+    if mode == "mount_replaced":
+        assert box.children == [sibling, successor]
+    else:
+        assert len(box.children) == 2
+        assert "indisponible" in box.children[-1].options["label"]
