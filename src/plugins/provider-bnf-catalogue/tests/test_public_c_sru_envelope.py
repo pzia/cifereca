@@ -224,7 +224,8 @@ def test_sru_record_loss_is_not_a_clean_catalogue_window(monkeypatch, defect):
         assert page.partial is True and page.catalogue_complete is None
         # A duplicate ARK from two different SRU record positions is not
         # a unique public occurrence, even when the overwritten row agrees.
-        expected = 0 if defect in {"duplicate", "nested"} else 1
+        # A nested recordData is not a second direct SRU occurrence.
+        expected = 0 if defect == "duplicate" else 1
         assert len(page.results) == len(page.public_notices) == expected
         assert len(calls) == 1
     finally:
@@ -347,5 +348,46 @@ def test_duplicate_sru_ark_is_quarantined_for_whole_page(monkeypatch, variant):
         assert [row.record_id for row in _public_rows_from_response(page, session)] == expected
         assert len(calls) == 1  # No retry/fetch to resolve an ambiguous record.
         assert session.last_search_warnings
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("shape", ["orphan", "nested", "two_direct"])
+def test_non_direct_sru_data_cannot_mint_a_public_record(monkeypatch, shape):
+    """Malformed SRU recordData must be partial, never a public C witness."""
+    from xml.etree import ElementTree as ET
+    from cifereca.core.search_orchestration import _public_rows_from_response
+
+    root = ET.fromstring(BODY)
+    ns = "{http://www.loc.gov/zing/srw/}"
+    record = root.find(ns + "records")[0]
+    data = record.find(ns + "recordData")
+    if shape == "two_direct":
+        record.append(ET.fromstring(ET.tostring(data)))
+    else:
+        record.remove(data)
+        if shape == "orphan":
+            ET.SubElement(root, ns + "extra").append(data)
+        else:
+            ET.SubElement(record, ns + "extra").append(data)
+
+    calls = []
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=ET.tostring(root), request=request)
+
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        page = session.search_with_response_facets("Les loups")
+        assert page.partial is True and page.catalogue_complete is None
+        assert page.results == [] and page.public_notices == ()
+        assert _public_rows_from_response(page, session) == []
+        assert len(calls) == 1
     finally:
         session.close()
