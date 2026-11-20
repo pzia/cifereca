@@ -9,11 +9,22 @@ def apply_detail_action_state(button, action) -> None:
     adaptive bar can move it to overflow without losing its state or reason.
     The marker also guards queued/synthetic signals on insensitive buttons.
     """
-    state = getattr(action, "state", "available")
-    available = type(state) is str and state == "available"
+    raw_state = getattr(action, "state", "available")
+    # Do not compare arbitrary objects supplied by a plugin with state labels.
+    state = raw_state if type(raw_state) is str else None
+    uri = getattr(action, "uri", "")
+    executable = callable(getattr(action, "callback", None)) or (
+        type(uri) is str and bool(uri.strip())
+    )
+    # A renderer cannot execute a missing target. This is a structural
+    # check, not an admission decision; URL validation stays in the adapters.
+    available = state == "available" and executable
     button._cifereca_action_state_blocked = not available
     button.set_sensitive(available)
-    reason = str(getattr(action, "unavailable_reason", "") or "").strip()
+    raw_reason = getattr(action, "unavailable_reason", "")
+    reason = raw_reason.strip() if type(raw_reason) is str else ""
+    if state == "available" and not executable:
+        reason = "Aucune action exécutable"
     if available:
         tooltip = str(action.title)
     else:
