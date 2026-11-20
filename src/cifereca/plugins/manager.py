@@ -16,6 +16,7 @@ from cifereca.plugin_api import (
     ContractRequirement, check_service_contract, contract_version_matches,
 )
 
+from ..core.activation_scoped_broker import ActivationBrokerResolver
 from .categories import CategoryRegistry
 from .configuration import PluginConfigError, PluginConfigStore, defaults_for_schema, schema_scope
 from .dependency import DependencyIssue, topological_order, validate_dependencies
@@ -98,6 +99,7 @@ class _RuntimeRecord:
     degraded_details: list[dict[str, object]] | None = None
     instance: object | None = None
     service: object | None = None
+    activation_brokers: ActivationBrokerResolver | None = None
 
 
 class PluginManager:
@@ -394,6 +396,7 @@ class PluginManager:
             if plugin_id in reusable and new is not None and new.enabled and new.state in {"ready", "degraded"}:
                 new.instance = old.instance
                 new.service = old.service
+                new.activation_brokers = old.activation_brokers
                 continue
             if old.instance is not None:
                 self._deactivate_record(old)
@@ -552,6 +555,9 @@ class PluginManager:
                 try:
                     self._activate_one(record)
                 except Exception as exc:
+                    if record.activation_brokers is not None:
+                        record.activation_brokers.close()
+                        record.activation_brokers = None
                     record.state = "error"
                     record.reason = "activation_failed"
                     record.reason_detail = {"exception": type(exc).__name__}
@@ -602,6 +608,13 @@ class PluginManager:
             if scope == "plugin"
             else defaults_for_schema(descriptor.config_schema)
         )
+        resolver = ActivationBrokerResolver(
+            lambda broker_id, pid=descriptor.id, trusted=(record.package.sha256 == "builtin"):
+                self._broker_for_plugin(pid, broker_id, trusted=trusted),
+            self.broker, descriptor.id,
+            (*descriptor.requires_brokers, *descriptor.requires_services),
+        )
+        record.activation_brokers = resolver
         context = PluginContext(
             plugin_id=descriptor.id,
             package_id=descriptor.package_id,
@@ -611,7 +624,7 @@ class PluginManager:
             _service_resolver=self.service,
             _services_resolver=self.services,
             _services_subscriber=self.subscribe_services,
-            _broker_resolver=lambda broker_id, pid=descriptor.id, trusted=(record.package.sha256 == "builtin"): self._broker_for_plugin(pid, broker_id, trusted=trusted),
+            _broker_resolver=resolver,
             _diagnostic_reporter=lambda message, status, detail, level, pid=descriptor.id: self._plugin_diag(pid, message, status, detail, level),
             _config_resolver=lambda scope_id, pid=descriptor.id, schema=descriptor.config_schema: self.config.get(pid, schema, scope_id=scope_id),
             _config_ids_resolver=lambda pid=descriptor.id, schema=descriptor.config_schema: self.config.scope_ids(pid, schema),
@@ -623,6 +636,8 @@ class PluginManager:
         published = service if service is not None else instance
         check = check_service_contract(descriptor.type, published)
         if not check.ok:
+            resolver.close()
+            record.activation_brokers = None
             deactivate = getattr(instance, "deactivate", None)
             if callable(deactivate):
                 try:
@@ -651,6 +666,9 @@ class PluginManager:
         self._diag("plugin activated", "ok", {"plugin": descriptor.id, "type": descriptor.type})
 
     def _deactivate_record(self, record: _RuntimeRecord) -> None:
+        if record.activation_brokers is not None:
+            record.activation_brokers.close()
+            record.activation_brokers = None
         if record.instance is None:
             return
         deactivate = getattr(record.instance, "deactivate", None)
