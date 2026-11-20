@@ -360,17 +360,23 @@ def commit_derived_reservation_in_transaction(
 
 def summarize_derived_journal(storage):
     """Aggregate only, no payload, path, digest or recovery authority."""
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
-        rows, total = _measure(db)
-        pending_bytes = committed_bytes = 0
-        for key, _ in rows:
-            raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-            intent = _decode(key, raw)
-            if key.startswith(_PREFIX):
-                pending_bytes += intent.output_size
-            else:
-                committed_bytes += intent.output_size
+    with storage._lock:
+        db = storage._connect()
+        # A borrowed connection may already own a caller transaction. Never
+        # enter its context manager (which could commit/rollback that work).
+        if db.in_transaction:
+            raise DerivedJournalConflict("derived_journal_nested_transaction")
+        with db:
+            db.execute("BEGIN")
+            rows, total = _measure(db)
+            pending_bytes = committed_bytes = 0
+            for key, _ in rows:
+                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                intent = _decode(key, raw)
+                if key.startswith(_PREFIX):
+                    pending_bytes += intent.output_size
+                else:
+                    committed_bytes += intent.output_size
     return {
         "count": len(rows), "payload_bytes": total,
         "pending_count": sum(key.startswith(_PREFIX) for key, _ in rows),
