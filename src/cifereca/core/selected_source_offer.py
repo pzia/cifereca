@@ -42,7 +42,7 @@ class SourceOfferTarget:
     # Pinned by the synchronous Core facade. A→B→A can restore the same
     # identity string but cannot restore the account-context generation.
     selection_epoch: int | None = field(default=None, compare=False)
-    # Only an explicit Core-admitted Search click may use this independent
+    # Only an explicit Core-admitted Search or Library click may use this independent
     # source lease. Passive/legacy targets retain navigation-epoch semantics.
     source_epoch: int | None = field(default=None, compare=False)
     # Explicit headless admission additionally pins the actual registry object
@@ -73,6 +73,8 @@ def _resolve(service, target: SourceOfferTarget):
                 ) is not True):
             raise ValueError("selected_source_binding_changed")
     if target.source_epoch is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
         from .source_context import source_context_epoch
         if (type(target.source_epoch) is not int
                 or target.source_epoch < 0
@@ -182,7 +184,10 @@ def admit_library_source_offer(
             or source_context_epoch(service) != source_epoch):
         raise ValueError("selected_library_source_revoked")
     _resolve(service, target)
-    admitted = replace(target, selection_epoch=None, source_epoch=source_epoch)
+    admitted = replace(
+        target, selection_epoch=None, source_epoch=source_epoch,
+        _confirmed_use=_ConfirmedOfferUse(),
+    )
     _resolve(service, admitted)
     if (service._account_context_epoch != account_epoch
             or source_context_epoch(service) != source_epoch):
@@ -194,7 +199,7 @@ def obtain_source_offer(service, target: SourceOfferTarget):
     """Core's existing global-lock, single-offer A→B path, without entitlements."""
     if type(target) is not SourceOfferTarget:
         raise ValueError("selected_source_target_invalid")
-    if target.reader_scope is not None:
+    if target.source_epoch is not None or target.reader_scope is not None:
         if type(target._confirmed_use) is not _ConfirmedOfferUse:
             raise ValueError("selected_source_confirmation_required")
         target._confirmed_use.claim()
