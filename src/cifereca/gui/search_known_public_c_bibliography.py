@@ -92,6 +92,43 @@ def _alternative_proven_fields(alternative, hit, index, provider):
     return fields
 
 
+def _alternative_summary_provenance(alternative, hit, displayed_names):
+    """Attest only the exact displayed source facts, not individual parser fields.
+
+    The summary may contain excerpts; the source-level receipt must match
+    the complete underlying values for every displayed entry. Untyped
+    passive descriptions remain visible but never acquire this provenance.
+    """
+    from datetime import datetime, timezone
+    from ..core.notice_c_known_projection import _source_alternative
+    from ..plugin_api import Provenance
+
+    if hit is None or not displayed_names:
+        return None
+    expected = _source_alternative(hit)
+    for name in ("provider_id", "record_id", "source_revision", "title", *displayed_names):
+        value, original = alternative.get(name), expected.get(name)
+        if type(value) is not type(original):
+            return None
+        if type(value) is list:
+            if (len(value) != len(original)
+                    or any(type(part) is not str for part in value)):
+                return None
+        elif type(value) not in (str, type(None)):
+            return None
+        if value != original:
+            return None
+    try:
+        observed = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError, TypeError):
+        return None
+    return Provenance(
+        source="Notice C · observation de source",
+        provider_id=hit.provider_id, source_id=hit.record_id,
+        observed_at=observed,
+    )
+
+
 def known_public_alternative_section(metadata, *, item=None):
     """Keep a separate passive summary for each matching C source."""
     if not _native_mapping(metadata):
@@ -126,6 +163,7 @@ def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=(
             alternative, hits[index - 2] if hits else None, index, provider,
         )
         parts = []
+        displayed_names = []
         for name, label in _ALTERNATIVE_FIELDS:
             if name in proven:
                 continue
@@ -137,10 +175,14 @@ def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=(
             if len(values) > 8:
                 excerpts.append("…")
             parts.append(label + " : " + " ; ".join(excerpts))
+            displayed_names.append(name)
         if parts:
             fields.append(DetailField(
                 id=f"known-public-alternative-{index}",
                 label=f"Source {index} · {provider}", value="\n".join(parts),
+                provenance=_alternative_summary_provenance(
+                    alternative, hits[index - 2] if hits else None, displayed_names,
+                ),
             ))
         for name in ("series", "languages"):
             fields.extend(proven.get(name, ()))

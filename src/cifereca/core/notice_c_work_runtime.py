@@ -210,14 +210,22 @@ class NoticeWorkRuntime:
                 result = request_affected_public_recompute(
                     self._storage, source, now=now,
                 )
-            except (ValueError, TypeError, OSError, SQLiteError):
+            except (ValueError, TypeError, SQLiteError):
                 continue
-            requested += len(result.refs)
+            except OSError:
+                # An isolated publication failure need not suppress a
+                # different repair transaction. Each port reattests source.
+                pass
+            else:
+                requested += len(result.refs)
             try:
                 first = request_initial_publication(self._storage, source, now=now)
-            except (ValueError, TypeError, OSError, SQLiteError):
+            except (ValueError, TypeError, SQLiteError):
                 continue
-            requested += int(first is not None)
+            except OSError:
+                pass
+            else:
+                requested += int(first is not None)
             try:
                 group = request_search_group_repair(self._storage, source, now=now)
             except (ValueError, TypeError, OSError, SQLiteError):

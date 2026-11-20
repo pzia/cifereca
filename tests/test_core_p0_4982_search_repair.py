@@ -121,3 +121,35 @@ def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path
         }
         assert events == [(group_document, latest.epoch)]
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+
+
+def test_isolated_recompute_io_failure_does_not_suppress_first_publication(tmp_path, monkeypatch):
+    from cifereca.core import notice_c_work_requests as requests
+
+    with open_core(tmp_path, notice_work_admission=SharedTaskAdmission(
+            max_inflight=4, reserve_user_slots=1)) as core:
+        committed = Event()
+        events = []
+        def observe(document, epoch):
+            events.append((document, epoch))
+            committed.set()
+        core.notice_work.bind_committed_observer(observe)
+        def fail(*args, **kwargs):
+            raise OSError("isolated publication failure")
+        with monkeypatch.context() as patch:
+            patch.setattr(index, "_persist_exact_public_search_cover_txn", fail)
+            patch.setattr(requests, "request_affected_public_recompute", fail)
+            pairs = search._ingest_public_search_c(
+                core.library, [_admitted("Première publication")],
+                identity_id="alice", now=100,
+                require_public_cover_witness=True,
+            )
+        assert len(pairs) == 1
+        assert pairs[0][2] is None
+        assert committed.wait(10)
+        document, epoch = events[0]
+        result = index.read_consolidated_notice_cover(core.storage, document)
+        assert result.epoch == epoch
+        assert result.sources[0].public_bibliography.title == "Première publication"
+        assert len(events) == 1
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
