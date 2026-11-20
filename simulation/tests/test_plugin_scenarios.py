@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 import sys
 import tempfile
@@ -74,8 +75,41 @@ class SpecializedFixturesTests(unittest.TestCase):
             youth = json.loads((a / "youth.json").read_text(encoding="utf-8"))
             self.assertIn("age_boundary_18_no_match", youth["cases"])
             self.assertTrue(any(not record["age_ranges"] for record in youth["records"]))
-            self.assertEqual(len(first["files"]), 10)
+            self.assertEqual(len(first["files"]), 13)
             self.assertEqual(first["version"], plugin_scenarios.SCHEMA_VERSION)
+
+    def test_pdf_document_fixtures_have_distinct_payloads_and_valid_offsets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = plugin_scenarios.create(root)
+            names = ("publication-text.pdf", "publication-scan.pdf",
+                     "publication-corrupt.pdf")
+            payloads = [(root / name).read_bytes() for name in names]
+            self.assertEqual(len(set(payloads)), 3)
+            for name, payload in zip(names, payloads):
+                self.assertEqual(manifest["files"][name], sha256(payload).hexdigest())
+            text, scan, corrupt = payloads
+            for payload in (text, scan):
+                self.assertTrue(payload.startswith(b"%PDF-1.4\n"))
+                self.assertTrue(payload.endswith(b"%%EOF\n"))
+                self.assertNotIn(b"/Info", payload)
+                self.assertNotIn(b"/Encrypt", payload)
+                xref = int(payload.rsplit(b"startxref\n", 1)[1].splitlines()[0])
+                table = payload[xref:].splitlines()
+                self.assertEqual(table[0], b"xref")
+                count = int(table[1].split()[1])
+                for index, entry in enumerate(table[3:count + 2], 1):
+                    offset = int(entry.split()[0])
+                    self.assertTrue(payload[offset:].startswith(
+                        f"{index} 0 obj\n".encode("ascii")))
+            self.assertIn(b"/Count 2", text)
+            self.assertIn(b"(Synthetic page two) Tj", text)
+            self.assertIn(b"/Count 1", scan)
+            self.assertIn(b"/Subtype /Image", scan)
+            self.assertNotIn(b"/Font", scan)
+            self.assertNotIn(b" Tj", scan)
+            self.assertTrue(corrupt.startswith(b"%PDF-"))
+            self.assertNotIn(b"%%EOF", corrupt)
 
     def test_archived_youth_fixture_remains_available_without_plugin(self):
         rows = plugin_scenarios.youth_records()

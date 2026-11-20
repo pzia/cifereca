@@ -18,7 +18,7 @@ from pathlib import Path
 from common.fake_books import FakeBookFactory, epub_bytes
 
 SEED = 20261008
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ISBN_A = "9780306406157"
 ISBN_B = "9780140328721"
 ISBN_C = "9780553386790"
@@ -323,6 +323,49 @@ def reproducible_epub(payload: bytes) -> bytes:
     return output.getvalue()
 
 
+def synthetic_pdf(*, scan: bool = False) -> bytes:
+    """Tiny PDF 1.4; no dependencies, metadata or personal content."""
+    def stream(data: bytes, attributes: bytes = b"") -> bytes:
+        return (b"<< /Length " + str(len(data)).encode("ascii") + attributes
+                + b" >>\nstream\n" + data + b"\nendstream")
+
+    if scan:
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+            b"/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>",
+            stream(bytes([0, 255, 255, 0]),
+                   b" /Type /XObject /Subtype /Image /Width 2 /Height 2"
+                   b" /ColorSpace /DeviceGray /BitsPerComponent 8"),
+            stream(b"q 160 0 0 160 20 20 cm /Im0 Do Q"),
+        ]
+    else:
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            stream(b"BT /F1 12 Tf 20 160 Td (Synthetic page one) Tj ET"),
+            stream(b"BT /F1 12 Tf 20 160 Td (Synthetic page two) Tj ET"),
+        ]
+    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = []
+    for index, obj in enumerate(objects, 1):
+        offsets.append(len(out))
+        out.extend(f"{index} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+    xref = len(out)
+    out.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets:
+        out.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    out.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+               f"startxref\n{xref}\n%%EOF\n".encode("ascii"))
+    return bytes(out)
+
+
 def create(out: Path, *, seed: int = SEED) -> dict:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -342,10 +385,13 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     (out / "criticism.rss.xml").write_text(criticism_rss(), encoding="utf-8")
     (out / "optimizer-valid.epub").write_bytes(reproducible_epub(epub_bytes(fake)))
     (out / "optimizer-corrupt.epub").write_bytes(b"this is not a valid EPUB file\n")
+    (out / "publication-text.pdf").write_bytes(synthetic_pdf())
+    (out / "publication-scan.pdf").write_bytes(synthetic_pdf(scan=True))
+    (out / "publication-corrupt.pdf").write_bytes(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog\n")
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
     manifest = {"version": SCHEMA_VERSION, "synthetic": True, "seed": seed,
                 "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
-                          "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept"],
+                          "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept", "publication-pdf"],
                 "files": {p.name: sha256(p.read_bytes()).hexdigest() for p in paths},
                 "warning": "JDD de contrat isolés ; activation explicite, aucun E2E GTK prouvé."}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
