@@ -120,6 +120,15 @@ jobs:
           assert Gtk is not None and httpx is not None
           PY
 
+      # #2435: same 16/256 corpus and callback assertions as PR CI, but
+      # require the native decoder in the existing GTK environment.
+      - name: Measure native GdkPixbuf preview cache
+        if: contains(steps.select.outputs.scenarios, 'book-detail-1366')
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src "$RUNNER_TEMP/cifereca-e2e-venv/bin/python" -m tests.test_core_p0_2435_preview_baseline
+
       - name: Replay impacted GTK/XTEST scenarios
         if: steps.select.outputs.count != '0'
         shell: bash
