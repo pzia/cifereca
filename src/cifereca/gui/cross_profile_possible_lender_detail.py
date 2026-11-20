@@ -6,7 +6,7 @@ detail can consume its result; no eligibility, loan or copy is inferred.
 from __future__ import annotations
 
 from ..models import SearchResult
-from ..core.borrow_for_identity_discovery import PossibleBorrowLender
+from ..core.borrow_for_identity_discovery import possible_lender_matches
 from ..task_queue import TaskPriority
 
 
@@ -70,12 +70,9 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
                         or type(rows) is not tuple or not 1 <= len(rows) <= 64
-                        or any(type(row) is not PossibleBorrowLender
-                               or row.executable is not False
-                               or row.supplier_eligibility != "not_verified"
-                               or row.lender_identity_id == identity_id
-                               or row._notice is not item
-                               for row in rows)):
+                        or any(not possible_lender_matches(
+                                   row, item, requesting_identity_id=identity_id,
+                               ) for row in rows)):
                     return
                 details = [
                     (
