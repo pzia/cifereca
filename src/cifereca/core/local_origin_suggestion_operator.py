@@ -39,10 +39,10 @@ def _navigation_epoch(service):
 def _binding_current(storage, identity, directory):
     # The binding helper owns a connection context. Never allow a preview
     # guard to settle an unrelated write already on this worker connection.
-    with storage._lock:
-        if storage._connect().in_transaction:
-            return False
-        return storage.exact_profile_directory_binding(identity) == (directory, True)
+    # The connection is thread-local; the binding API owns the lock.
+    if storage._connect().in_transaction:
+        return False
+    return storage.exact_profile_directory_binding(identity) == (directory, True)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
