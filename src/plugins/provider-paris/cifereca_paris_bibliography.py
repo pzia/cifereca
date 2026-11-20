@@ -106,6 +106,31 @@ def _safe_series_search_href(href: object) -> bool:
     return True
 
 
+def _safe_series_label(value):
+    """Same text boundary for native Search and its public declaration.
+
+    Do not normalize invisible formatting/surrogates into positive facts
+    or forward a source-looking credential/path as bibliographic text.
+    """
+    if type(value) is not str or len(value) > _MAX_INPUT:
+        return None
+    decoded = html.unescape(value)
+    if any(category(char) in {"Cf", "Cs"} or
+           (category(char) == "Cc" and char not in "\t\r\n")
+           for char in decoded):
+        return None
+    text = _clean_text(value)
+    if (text is None or "://" in text or "@" in text or chr(92) in text
+            or text.startswith(("/", ".", "~"))
+            or re.match(r"(?i)^(?:file:|[a-z]:/)", text)
+            or any(marker in text.casefold() for marker in (
+                "token=", "password=", "secret=", "cookie:", "bearer ",
+                "authorization:", "api_key=", "signature=", "refresh_token=",
+            ))):
+        return None
+    return text
+
+
 class _SeriesAnchorParser(HTMLParser):
     """Distinguish an absent relation from rejected/contradictory evidence."""
 
@@ -191,11 +216,8 @@ class _SeriesAnchorParser(HTMLParser):
                 break
         if tag == "a":
             if self._inside:
-                label = None if self._invalid else _clean_text("".join(self._parts))
-                if (label is not None and "://" not in label and "@" not in label
-                        and not any(s in label.casefold() for s in (
-                            "token=", "password=", "secret=", "bearer ", "cookie:",
-                        ))):
+                label = None if self._invalid else _safe_series_label("".join(self._parts))
+                if label is not None:
                     self._values.append(label)
                 else:
                     self._rejected = True
@@ -290,9 +312,9 @@ def public_search_series_metadata(
         "freshness": "search_response",
     }
     label = values[0]
+    # Public projection retains its pre-existing, narrower size bound.
     if (proof != expected or type(label) is not str
-            or _safe_facet_choice_text(label) != label
-            or re.match(r"(?i)^(?:~|file:|[a-z]:[/\\\\])", label)):
+            or len(label) > _FACET_TEXT_MAX or _safe_series_label(label) != label):
         return {}
     return {
         "series": [label],
