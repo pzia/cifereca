@@ -282,11 +282,14 @@ def test_adept_nonrepair_cross_filesystem_stage_is_never_hardlinked(
     calls = []
 
     def across_mount_is_invalid(src, dst, **kwargs):
-        src, dst = Path(src), Path(dst)
+        assert kwargs["src_dir_fd"] == kwargs["dst_dir_fd"]
+        fd = kwargs["src_dir_fd"]
+        assert os.fstat(fd).st_ino == library.stat().st_ino
+        src, dst = library / src, library / dst
         calls.append((src, dst))
         if src.parent != dst.parent:
             raise OSError(errno.EXDEV, "Invalid cross-device link")
-        return real_link(src, dst, **kwargs)
+        return real_link(src.name, dst.name, **kwargs)
 
     monkeypatch.setattr(os, "link", across_mount_is_invalid)
     published = adept_artifact_publication._publish_new_adept_without_clobber(
@@ -343,7 +346,7 @@ def test_adept_nonrepair_copy_fails_closed_if_staged_inode_changes_while_reading
     destination = library / "published.epub"
     real_open = os.open
     def swap_at_open(path, *args, **kwargs):
-        if Path(path) == produced:
+        if Path(path) == Path(produced.name) and kwargs.get("dir_fd") is not None:
             produced.unlink()
             produced.symlink_to(foreign)
         return real_open(path, *args, **kwargs)
@@ -356,3 +359,96 @@ def test_adept_nonrepair_copy_fails_closed_if_staged_inode_changes_while_reading
     assert not destination.exists()
     assert foreign.read_bytes() == b"UNRELATED"
     assert not list(library.glob(".adept-publish-*"))
+
+
+@pytest.mark.parametrize("phase", ["link", "fsync", "fsync_error"])
+def test_adept_directory_durability_refusal_preserves_stage_and_foreign_scope(
+    tmp_path, monkeypatch, phase,
+):
+    import stat
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    retired = tmp_path / "retired"
+    produced = stage / "new.epub"
+    produced.write_bytes(b"NEW")
+    final = library / "book.epub"
+    old = library / "previous.epub"
+    old.write_bytes(b"OLD")
+    real_link, real_fsync = os.link, os.fsync
+    injected = []
+
+    def rebind():
+        library.rename(retired)
+        library.mkdir()
+        final.write_bytes(b"FOREIGN")
+
+    def link(src, dst, **kw):
+        if phase == "link" and not injected:
+            injected.append(True)
+            rebind()
+        return real_link(src, dst, **kw)
+
+    def fsync(fd):
+        if (not injected and stat.S_ISDIR(os.fstat(fd).st_mode)
+                and final.exists()):
+            assert produced.read_bytes() == b"NEW"
+            injected.append(True)
+            if phase == "fsync_error":
+                raise OSError("synthetic directory fsync")
+            rebind()
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "link", link)
+    monkeypatch.setattr(os, "fsync", fsync)
+    with pytest.raises((OSError, ProviderConfigurationError)):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, final, uuid=uuid, ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert injected == [True] and produced.read_bytes() == b"NEW"
+    if phase == "fsync_error":
+        assert list(library.iterdir()) == [old]
+        assert old.read_bytes() == b"OLD"
+    else:
+        assert final.read_bytes() == b"FOREIGN"
+        assert list(retired.iterdir()) == [retired / old.name]
+        assert (retired / old.name).read_bytes() == b"OLD"
+
+
+def test_adept_nested_destination_symlink_never_creates_in_foreign_scope(tmp_path):
+    stage = tmp_path / "stage.epub"
+    stage.write_bytes(b"NEW")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ProviderConfigurationError, match="inattendu"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            stage, alias / "nested" / "final.epub", uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert not list(outside.iterdir()) and stage.read_bytes() == b"NEW"
+
+
+def test_adept_final_directory_synced_while_stage_exists(tmp_path, monkeypatch):
+    import stat
+
+    stage = tmp_path / "stage.epub"
+    stage.write_bytes(b"NEW")
+    final = tmp_path / "final.epub"
+    real = os.fsync
+    seen = []
+
+    def fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and final.exists():
+            assert stage.read_bytes() == final.read_bytes() == b"NEW"
+            seen.append(True)
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    result = adept_artifact_publication._publish_new_adept_without_clobber(
+        stage, final, uuid=uuid, ProviderConfigurationError=ProviderConfigurationError,
+    )
+    assert seen == [True] and result == final and not stage.exists()
