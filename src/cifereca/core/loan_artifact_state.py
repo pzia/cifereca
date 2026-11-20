@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Callable, Iterable, Mapping
+
+from .loan_provider_delivery import _physical_witness
+from .derived_variant_publication import _verified_variant_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +54,36 @@ def inspect_previous_loan_artifact(
     previous_meta = dict((previous or {}).get("metadata") or {})
     previous_path = Path(str(previous_meta.get("path") or "")) if previous_meta.get("path") else None
     previous_inspection = None
-    if previous_path is not None and previous_path.is_file():
+    physical = False
+    if previous_path is not None:
         expected_previous = "pdf" if previous_path.suffix.casefold() == ".pdf" else "epub" if previous_path.suffix.casefold() == ".epub" else None
-        previous_inspection = artifact_inspector(previous_path, expected_previous)
+        artifact_id = (previous or {}).get("artifact_id")
+        # Historical path-only receipts retain their compatibility. But
+        # an explicit content-addressed receipt cannot attest different
+        # bytes merely because both files are structurally valid books.
+        try:
+            with _physical_witness(previous_path, ValueError) as (size, current):
+                if artifact_id is None:
+                    previous_inspection = artifact_inspector(previous_path, expected_previous)
+                    current()
+                    physical = True
+                elif (type(artifact_id) is str
+                      and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_id)
+                      and 0 < size <= 1024 ** 3):
+                    with _verified_variant_file(previous_path, artifact_id[7:],
+                                                expected_size=size) as recheck:
+                        previous_inspection = artifact_inspector(previous_path, expected_previous)
+                        recheck()
+                        current()
+                        physical = True
+        except (OSError, ValueError, TypeError, RuntimeError):
+            previous_inspection = None
+        if not physical:
+            previous_inspection = None
     legacy_acsm_artifact = bool(
         (previous or {}).get("executor") == "kobo-adept"
         and previous_path is not None
-        and previous_path.is_file()
+        and physical
         and (
             not previous_meta.get("post_processed")
             or previous_inspection is None
@@ -68,9 +95,9 @@ def inspect_previous_loan_artifact(
         previous
         and previous.get("status") == "complete"
         and previous_path is not None
-        and previous_path.is_file()
+        and physical
         and previous_inspection is not None
-        and previous_inspection.valid
+        and previous_inspection.valid is True
         and previous_inspection.protected is not True
         and (
             (previous or {}).get("executor") != "kobo-adept"
