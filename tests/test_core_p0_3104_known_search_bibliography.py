@@ -67,6 +67,18 @@ def test_retained_primary_and_alternative_facts_render_separately(tmp_path):
         field, = separate.fields
         assert "Sujets : " + alternative in field.value
         assert field.kind == "text"
+        source = item["metadata"]["notice_c_source_alternatives"][0]
+        assert field.provenance.source == "Notice C · observation de source"
+        assert field.provenance.provider_id == source["provider_id"]
+        assert field.provenance.source_id == source["record_id"]
+        # A forged value remains passive rather than acquiring exact provenance.
+        from copy import deepcopy
+        altered = deepcopy(item["metadata"])
+        altered["notice_c_source_alternatives"][0]["subjects"] = ["Fait modifié"]
+        forged = {**item, "metadata": altered}
+        forged_field, = known_public_alternative_section(altered, item=forged).fields
+        assert "Fait modifié" in forged_field.value
+        assert forged_field.provenance is None
         assert not presentation.actions and not presentation.links
         assert db.entitlements() == [] and db.acquisitions() == []
 
@@ -87,6 +99,7 @@ def test_only_native_safe_bibliography_and_explicit_limits_reach_detail():
     section = known_public_alternative_section(data)
     field, = section.fields
     assert field.label == "Source 3 · seller-b"
+    assert field.provenance is None
     assert "Sujet 7" in field.value and "Sujet 8" not in field.value
     assert field.value.endswith("x" * 512 + "…")
     assert "OPAQUE" not in field.value and "https://" not in field.value
