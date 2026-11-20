@@ -151,3 +151,30 @@ gap = "BiblioAccess La Rochelle : plugin HTTP expérimental désactivé par déf
 [package.storage-usb]
 data = []
 gap = "Stockage USB : adaptateur de staging hors réseau, aucun scénario de simulation/GTK attesté ; admission, vérification de volume et publication restent au Core"
+
+
+# #7100 : inventaire des packages extraits ; preuves contractuelles source,
+# ni résultat de simulation sur corpus ni validation GTK autonome.
+[package.maintenance-derived-variants]
+contract_tests = ["tests/test_core_p0_7093_derived_package.py"]
+failure_tests = ["tests/test_core_p0_7093_derived_maintenance_port.py"]
+data = []
+gap = "Contrats Core de capacité, simulation et refus de reçu périmé ; pas de profil de simulation spécifique ni recette GTK autonome du package attestée"
+
+[package.maintenance-library-organizer]
+contract_tests = ["tests/test_core_p0_7087_organizer_plugin.py"]
+failure_tests = ["tests/test_core_p0_7087_organizer_port.py"]
+data = []
+gap = "Aperçu et pagination, conseil sans écriture, refus du contexte révoqué ; profil dataset et recette GTK autonome non qualifiés"
+
+[package.maintenance-local-origin]
+contract_tests = ["tests/test_core_p0_7092_origin_package.py"]
+failure_tests = ["tests/test_core_p0_7092_origin_batch_port.py"]
+data = []
+gap = "Suggestions et comparaison cache-only, budget, révocation et annulation ; pas de preuve de simulation multi-fournisseurs ni GTK autonome"
+
+[package.maintenance-page]
+contract_tests = ["tests/test_core_p0_7100_maintenance_page.py"]
+failure_tests = ["tests/test_core_p0_7100_page_mount.py"]
+data = []
+gap = "Composition hôte, contexte/lifecycle et mounting guidé ; scénarios GTK du nouvel ensemble à qualifier séparément"
