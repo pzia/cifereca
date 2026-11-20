@@ -75,7 +75,7 @@ class SpecializedFixturesTests(unittest.TestCase):
             youth = json.loads((a / "youth.json").read_text(encoding="utf-8"))
             self.assertIn("age_boundary_18_no_match", youth["cases"])
             self.assertTrue(any(not record["age_ranges"] for record in youth["records"]))
-            self.assertEqual(len(first["files"]), 13)
+            self.assertEqual(len(first["files"]), 14)
             self.assertEqual(first["version"], plugin_scenarios.SCHEMA_VERSION)
 
     def test_pdf_document_fixtures_have_distinct_payloads_and_valid_offsets(self):
@@ -110,6 +110,37 @@ class SpecializedFixturesTests(unittest.TestCase):
             self.assertNotIn(b" Tj", scan)
             self.assertTrue(corrupt.startswith(b"%PDF-"))
             self.assertNotIn(b"%%EOF", corrupt)
+
+    def test_publication_cases_bind_existing_payloads_and_isolate_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = plugin_scenarios.create(root)
+            data = json.loads((root / "publication-cases.json").read_text())
+            self.assertEqual(data["mode"], "descriptive-only")
+            chain = data["chains"]["purchase_transfer_purchase_transfer"]
+            maintenance = data["maintenance"]
+            for row in chain["placements"] + maintenance["placements"]:
+                path = Path(row["relative_path"])
+                self.assertFalse(path.is_absolute())
+                self.assertNotIn("..", path.parts)
+                self.assertEqual(path.parts[0], row["identity"])
+                self.assertEqual(row["sha256"], manifest["files"][row["fixture"]])
+                self.assertFalse((root / path).exists())
+            self.assertEqual(len({p["sha256"] for p in chain["placements"]}), 1)
+            self.assertEqual({p["identity"] for p in chain["placements"]}, {"A", "B", "C"})
+            self.assertEqual(chain["expected"]["origin_links"], 8)
+            self.assertEqual(chain["expected"]["independent_rights"], ["A", "B"])
+            self.assertFalse(chain["expected"]["restore_after_missing"]["C"])
+            rows = {p["id"]: p for p in maintenance["placements"]}
+            self.assertEqual(rows["keeper"]["sha256"], rows["duplicate"]["sha256"])
+            self.assertEqual(rows["keeper"]["sha256"], rows["other_profile"]["sha256"])
+            self.assertNotEqual(rows["keeper"]["identity"], rows["other_profile"]["identity"])
+            self.assertFalse(rows["missing"]["present"])
+            self.assertFalse(maintenance["expected"]["physical_removal_enabled"])
+            self.assertEqual(maintenance["expected"]["candidate_only"], ["duplicate"])
+            self.assertNotIn("excluded", maintenance["expected"]["candidate_only"])
+            self.assertNotEqual(data["transformation"]["source"]["sha256"],
+                                data["transformation"]["different_bytes_example"]["sha256"])
 
     def test_archived_youth_fixture_remains_available_without_plugin(self):
         rows = plugin_scenarios.youth_records()
