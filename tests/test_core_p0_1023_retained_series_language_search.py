@@ -34,8 +34,8 @@ def test_series_and_language_search_use_only_exact_source_proofs_after_restart(t
                           "confidence": "explicit_record_field"},
         }}
         first, second, third = (persist(db, row) for row in (declared, other, divergent))
-        assert first.observation.fields_copy()["public_bibliography"]["language_observation"]["languages"] == ["ja"]
-        assert "language_observation" not in third.observation.fields_copy()["public_bibliography"]
+        assert first.observation.fields_copy()["search_result"]["public_bibliography"]["language_observation"]["languages"] == ["ja"]
+        assert "language_observation" not in third.observation.fields_copy()["search_result"]["public_bibliography"]
         persist_exact_public_search_cover(db, third)
         canonical = persist_exact_public_search_cover(db, first)
         persist_exact_public_search_cover(db, second)
