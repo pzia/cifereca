@@ -79,17 +79,34 @@ def qualify_failed_epub_cover(
 
     try:
         descriptor = os.open(
-            source_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            source_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
         )
         with os.fdopen(descriptor, "rb") as handle:
             info = os.fstat(handle.fileno())
             if (not stat.S_ISREG(info.st_mode)
                     or not 0 < info.st_size <= _MAX_EPUB_BYTES):
                 return state("retryable", "source_unverified")
+            def stamp(value):
+                return (value.st_dev, value.st_ino, value.st_size,
+                        value.st_mtime_ns, value.st_ctime_ns)
+
+            def unchanged():
+                # The bytes and the currently named Placement must still
+                # be the same regular file, not a moved/replaced inode.
+                return (stamp(os.fstat(handle.fileno())) == stamp(info)
+                        and stamp(os.stat(source_path, follow_symlinks=False)) == stamp(info))
+
             digest = hashlib.sha256()
-            while chunk := handle.read(1024 * 1024):
+            remaining = info.st_size
+            while remaining:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    return state("retryable", "source_unverified")
+                remaining -= len(chunk)
                 digest.update(chunk)
-            if digest.hexdigest() != resource.artifact_sha256:
+            if (handle.read(1) or not unchanged()
+                    or digest.hexdigest() != resource.artifact_sha256):
                 return state("retryable", "source_unverified")
             handle.seek(0)
             _bounded_directory(handle)
@@ -101,12 +118,17 @@ def qualify_failed_epub_cover(
                 except ValueError as exc:
                     # Only our exact bounded parser codes may certify an
                     # immutable source's missing/unsafe cover member.
+                    if not unchanged():
+                        return state("retryable", "source_unverified")
                     code = exc.args[0] if type(exc) is ValueError and len(exc.args) == 1 else None
                     if code == "ambiguous_or_missing_entry":
                         return state("definitive_unusable", "member_missing_or_ambiguous")
                     if code in ("oversized_or_symlink_entry", "oversized_entry"):
                         return state("definitive_unusable", "member_unusable")
                     return state("retryable", "source_unverified")
+
+            if not unchanged():
+                return state("retryable", "source_unverified")
 
         kind = _image_kind(cover_bytes)
         if kind is None:
