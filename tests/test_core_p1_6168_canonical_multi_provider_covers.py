@@ -236,3 +236,60 @@ def test_canonical_cover_through_shared_n2_worker_without_provider_requests(
         service.close()
         loader.close()
         db.close()
+
+
+@pytest.mark.parametrize("damage", ("epoch", "proof", "evicted", "malformed"))
+def test_canonical_writer_rejects_inconsistent_source_fence(tmp_path, damage):
+    import json
+    from contextlib import closing
+    from cifereca.core.notice_cover_repository import _fence_key, _opaque_key
+
+    filename = tmp_path / "source-fence.sqlite"
+    with closing(Storage(filename)) as db:
+        stable = _join(db, "bnf", "https://covers.example.org/bnf.jpg")
+        incoming = _store(db, "paris", "https://covers.example.org/paris.jpg")
+        key = _fence_key(_opaque_key(incoming.document))
+        with db._lock, db._connect() as sql:
+            (raw,) = sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            fence = json.loads(raw)
+            if damage == "epoch":
+                fence["epoch"] += 1
+            elif damage == "proof":
+                fence["proof"] = "0" * 64
+            elif damage == "evicted":
+                fence["epoch"] += 1
+                fence["evicted"] = True
+            else:
+                fence = {}
+            sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(fence), key))
+        # The incoming row is unchanged, but it is no longer current
+        # evidence. Neither a new C nor a mutation of an older C is valid.
+        for edition in (EDITION, "edition:new"):
+            with pytest.raises(ValueError, match="notice_c_source_fence_corrupt"):
+                persist_consolidated_cover_source(
+                    db, canonical_edition_id=edition, source=incoming,
+                    relation_proof_id="strong:fixture:paris",
+                )
+        assert read_consolidated_notice_cover(db, stable.document) == stable
+        assert read_consolidated_notice_cover(db, canonical_cover_document_ref("edition:new")) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    with closing(Storage(filename)) as db:
+        assert read_consolidated_notice_cover(db, stable.document) == stable
+        assert read_consolidated_notice_cover(db, canonical_cover_document_ref("edition:new")) is None
+
+
+def test_canonical_writer_keeps_legacy_unfenced_source_compatibility(tmp_path):
+    from contextlib import closing
+    from cifereca.core.notice_cover_repository import _fence_key, _opaque_key
+
+    with closing(Storage(tmp_path / "legacy.sqlite")) as db:
+        source = _store(db, "bnf", "https://covers.example.org/bnf.jpg")
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?",
+                        (_fence_key(_opaque_key(source.document)),))
+        result = persist_consolidated_cover_source(
+            db, canonical_edition_id=EDITION, source=source,
+            relation_proof_id="strong:fixture:legacy",
+        )
+        assert result.candidates[0].url == "https://covers.example.org/bnf.jpg"
+        assert read_consolidated_notice_cover(db, result.document) == result
