@@ -139,7 +139,8 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
     try:
         ui_identity = window._identity_context_generation
         ui_account = window._account_context_generation
-        from gi.repository import Adw, Gtk
+        from gi.repository import Adw
+        from .action_widgets import action_button
         from .task_runner import TaskPriority
     except (AttributeError, ImportError):
         return False
@@ -159,7 +160,8 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
         except Exception:
             return False
 
-    button = Gtk.Button(label="Choisir un profil prêteur…")
+    button = action_button("Choisir un profil prêteur…", "system-users-symbolic")
+    button._cifereca_action_id = "choose-normal-lender"
     button.connect("clicked", lambda control: present_normal_lender_choice(
         panel, item=item, rows=rows, current=current, service=service,
         identity=identity, identity_id=identity_id, account_epoch=account_epoch,
