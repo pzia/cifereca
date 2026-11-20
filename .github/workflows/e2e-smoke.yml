@@ -129,6 +129,15 @@ jobs:
           set -euo pipefail
           PYTHONPATH=src "$RUNNER_TEMP/cifereca-e2e-venv/bin/python" -m tests.test_core_p0_2435_preview_baseline
 
+      # #6939: exercise the real desktop lifecycle adapter while an
+      # actual journal scan is deliberately blocked on a worker.
+      - name: Verify native GTK documentary runtime responsiveness
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src dbus-run-session -- xvfb-run -a "$RUNNER_TEMP/cifereca-e2e-venv/bin/python" e2e/notice_work_heartbeat_contract.py
+
       - name: Replay impacted GTK/XTEST scenarios
         if: steps.select.outputs.count != '0'
         shell: bash
