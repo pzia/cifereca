@@ -7,6 +7,7 @@ The module is importable without GTK and starts no work on import.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, TYPE_CHECKING
 
 from ..core.source_context import source_context_epoch
@@ -15,6 +16,28 @@ from ..plugin_api import UserFacingError
 
 if TYPE_CHECKING:
     from gi.repository import Gtk
+
+
+_TRACE = logging.getLogger("cifereca")
+
+
+def _trace_library_request(window, cause, decision):
+    """Process-local counters only; no identity, account, path or coalesce key."""
+    def counter(value):
+        return value if type(value) is int and 0 <= value < 2**63 else -1
+
+    try:
+        epoch = source_context_epoch(window.service)
+    except (AttributeError, ValueError, TypeError):
+        epoch = -1
+    _TRACE.info(
+        "TRACE library refresh cause=%s decision=%s request_generation=%s "
+        "identity_generation=%s scope_generation=%s source_epoch=%s mode=%s",
+        cause, decision, counter(getattr(window, "_library_refresh_generation", 0)),
+        counter(getattr(window, "_identity_context_generation", 0)),
+        counter(getattr(window, "_library_scope_generation", 0)), counter(epoch),
+        "all_profiles" if getattr(window, "_library_all_profiles", False) is True else "profile",
+    )
 
 
 def _library_scope(window):
@@ -62,7 +85,9 @@ def passive_library_refresh(window):
     pending = getattr(window, "_library_pending_scope", None)
     if (getattr(window, "_library_refresh_pending", False)
             and _same_library_scope(pending, _library_scope(window))):
+        _trace_library_request(window, "navigation", "join")
         return
+    _trace_library_request(window, "navigation", "delegate")
     window.refresh_library(False)
 
 
@@ -79,7 +104,9 @@ def invalidate_library(self) -> None:
     invalidate_search_snapshot(self)
     if getattr(self, "_library_refresh_pending", False):
         self._library_refresh_dirty = True
+        _trace_library_request(self, "publication", "follow_up")
         return
+    _trace_library_request(self, "publication", "delegate")
     refresh = getattr(self, "refresh_library", None)
     if callable(refresh):
         refresh(False)
@@ -100,6 +127,9 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # invalidate_library() still records real newly indexed artifacts.
         if not getattr(self, "_library_refresh_explicit_pending", False):
             self._library_refresh_dirty = True
+            _trace_library_request(self, "automatic", "follow_up")
+        else:
+            _trace_library_request(self, "automatic", "join_explicit")
         return
     if control is not None or replaced:
         self._library_refresh_dirty = False
@@ -108,6 +138,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
+    _trace_library_request(self, "user" if control is not None else "automatic", "admitted")
     service = self.service
     selected = service.current_identity
     identity_id = selected.identity_id if selected is not None else None
@@ -168,6 +199,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # selected identity. Do not resubmit work on every return to Library.
         self._library_loaded_generation = generation
         self._library_loaded_scope = scope
+        _trace_library_request(self, "completion", "rendered")
     def err(exc: BaseException) -> None:
         if (getattr(self, "_closed", False) or self.service is not service
                 or request_generation != self._library_refresh_generation
