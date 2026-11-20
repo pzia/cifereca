@@ -108,7 +108,8 @@ def test_periodic_opt_in_creates_single_minute_heartbeat_then_due_dispatch():
     job = r.jobs[0]
     assert job.options["kind"] == "source-sync"
     assert job.options["origin"] == "automatic"
-    assert job.options["coalesce_key"] == "source:inventory:periodic"
+    assert job.options["coalesce_key"].startswith("source:inventory:periodic:")
+    assert len(job.options["coalesce_key"].rsplit(":", 1)[1]) == 64
     assert not any(c[0] == "dispatch" for c in r.records["calls"])
     job.work()
     assert ("dispatch", "alice", "periodic") in r.records["calls"]
@@ -520,3 +521,63 @@ def test_legacy_source_without_phase_contract_preserves_passive_fallback():
         modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}},
     )
     assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ("alice",)
+
+
+def test_same_due_batch_coalesces_but_other_identity_and_epoch_need_new_mission():
+    rows = [NS(identity_id=identity, source_id="sync:" + letter * 24,
+               provider_id="kobo", connected=True, enabled=True, sync_capable=True,
+               status="idle", last_attempt="")
+            for identity, letter in (("alice", "a"), ("bob", "b"))]
+    r = rig(accounts=rows, modes={rows[0].source_id:
+                                 {"mode": "periodic", "interval_minutes": 15}})
+    r.window.service._source_context_epoch = 7
+    r.configure()
+    tick = next(iter(r.records["timers"].values()))
+    assert tick() and tick()
+    first, repeated = [job.options["coalesce_key"] for job in r.jobs]
+    assert first == repeated
+    r.policies[rows[1].source_id] = {"mode": "periodic", "interval_minutes": 15}
+    assert tick()
+    both = r.jobs[-1].options["coalesce_key"]
+    assert both != first
+    # Ordering is not part of the exact identity batch.
+    r.window.service.identities.reverse()
+    assert tick() and r.jobs[-1].options["coalesce_key"] == both
+    r.window.service._source_context_epoch += 1
+    assert tick()
+    assert r.jobs[-1].options["coalesce_key"] != both
+    assert not any(word in both for word in ("alice", "bob"))
+    # A queued old generation cannot dispatch any provider work.
+    assert r.jobs[2].work() is None
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+    assert r.jobs[-1].work().ok
+    assert {c[1] for c in r.records["calls"] if c[0] == "dispatch"} == {"alice", "bob"}
+
+
+@pytest.mark.parametrize("change", ["epoch", "core", "invalid_epoch"])
+def test_periodic_checks_pinned_source_generation_before_each_identity(change):
+    rows = [NS(identity_id=identity, source_id="sync:" + letter * 24,
+               provider_id="kobo", connected=True, enabled=True, sync_capable=True,
+               status="idle", last_attempt="")
+            for identity, letter in (("alice", "a"), ("bob", "b"))]
+    r = rig(accounts=rows, modes={row.source_id:
+                                 {"mode": "periodic", "interval_minutes": 15}
+                                 for row in rows})
+    r.window.service._source_context_epoch = 7
+    r.configure()
+    tick = next(iter(r.records["timers"].values()))
+    assert tick()
+    seen = []
+    def dispatch(identity, trigger):
+        seen.append(identity)
+        if change == "epoch":
+            r.window.service._source_context_epoch += 1
+        elif change == "invalid_epoch":
+            r.window.service._source_context_epoch = None
+        else:
+            r.window.service = NS(identities=r.window.service.identities,
+                                  _source_context_epoch=7)
+        return NS(ok=True)
+    r.broker.synchronize_scheduled_inventory = dispatch
+    r.jobs[0].work()
+    assert seen == ["alice"]
