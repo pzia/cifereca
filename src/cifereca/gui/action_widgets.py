@@ -239,13 +239,13 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         )
         if visible_count == self._overflow_visible_count:
             return
-        if self.overflow_button.get_parent() is self.box:
-            self.box.remove(self.overflow_button)
         hidden = self._buttons[visible_count:]
         # A late append is initially parented to the toolbar, even if older
         # actions are in the popover. On growth, moving those older buttons
         # back with append() alone would put the new action ahead of them.
         # Restore descriptor order on both surfaces using the same widgets.
+        # Placing the visible actions first keeps the menu last without
+        # detaching it while its popover is still needed.
         previous = None
         for button in self._buttons[:visible_count]:
             self._move_button(button, self.box)

@@ -104,6 +104,34 @@ def test_resize_keeps_original_buttons_and_menu_last_without_reordering_actions(
     assert obj.box.children == previous
 
 
+def test_resize_keeps_the_overflow_menu_attached_while_actions_are_hidden(monkeypatch):
+    obj = bar()
+    obj._layout_overflow(410)
+    menu = obj.overflow_button
+    removals = []
+    remove = obj.box.remove
+
+    def observe_remove(widget):
+        if widget is menu:
+            removals.append(widget)
+        remove(widget)
+
+    monkeypatch.setattr(obj.box, "remove", observe_remove)
+
+    for budget in (650, 300):
+        previous = obj._overflow_visible_count
+        obj._layout_overflow(budget)
+        assert obj._overflow_visible_count != previous
+        assert obj.overflow_box.children
+        assert menu.get_visible() and menu.get_parent() is obj.box
+        assert obj.box.children[-1] is menu
+    assert not removals
+
+    obj._layout_overflow(1400)
+    assert removals == [menu]
+    assert not menu.get_visible() and menu.get_parent() is None
+
+
 def test_late_toolbar_style_change_reduces_visible_count():
     obj = bar()
     obj._layout_overflow(410)
