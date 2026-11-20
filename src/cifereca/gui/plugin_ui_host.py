@@ -171,6 +171,34 @@ class _UiHost:
         from .plugin_public_c_binding import issue_public_c_binding
         return issue_public_c_binding(self.window, item, identity_id=identity_id)
 
+    def public_notice_alternative_fields(
+        self, item: object, *, identity_id: str, document: object,
+        receipt: object, catalogue_sources: tuple[str, ...] = (),
+    ):
+        """Optional passive fields for the original, current known-C row.
+
+        The plugin forwards its existing opaque receipt unchanged. No new
+        receipt, rights, provider operation or SQLite read is performed.
+        """
+        if not self._window_alive():
+            return ()
+        from .plugin_public_c_binding import _PublicCBinding, public_c_binding_revision
+        if (type(receipt) is not _PublicCBinding or receipt.source is not item
+                or type(identity_id) is not str or receipt.identity_id != identity_id
+                or public_c_binding_revision(self.window, document, receipt) is None):
+            return ()
+        from ..core.notice_c_recommendation_known import known_public_c_alternative_hits
+        from .search_known_public_c_bibliography import _render_known_public_alternatives
+
+        hits = known_public_c_alternative_hits(item)
+        if not hits:
+            return ()
+        section = _render_known_public_alternatives(
+            item.metadata.get("notice_c_source_alternatives"), hits,
+            catalogue_sources=catalogue_sources,
+        )
+        return section.fields if section is not None else ()
+
     def can_open_loaded_search_notice(
         self, *, provider: str, credential: str, record_id: str,
         docbase: str, source_collection: str, identity_id: str,
