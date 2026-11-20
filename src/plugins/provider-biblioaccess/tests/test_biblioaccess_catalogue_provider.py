@@ -175,3 +175,170 @@ def test_public_search_without_redirect_does_not_fake_empty_catalogue():
             session.search("roman")
     finally:
         session.close()
+
+
+def test_public_envelope_retains_observed_titles_and_never_fallbacks():
+    from cifereca.core.search_orchestration import _public_rows_from_response
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<a href="/1409/Catalog/Book/123/example">Roman exemplaire</a>'
+            '<a href="/1409/Catalog/Book/124/no-title"><img src="x"></a>'
+            '<a href="/1409/Catalog/Book/125/ambiguous">A</a>'
+            '<a href="/1409/Catalog/Book/125/ambiguous">B</a>'
+            '<a href="/1409/Catalog/Book/126/cta">Voir la fiche</a>'))
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman", "catalog")
+        assert response.partial is True and response.catalogue_complete is False
+        assert len(response.results) == 4
+        assert [n.result.record_id for n in response.public_notices] == ["123"]
+        assert response.public_notices[0].result is response.results[0]
+        assert all(row.owned is False and row.downloadable is False for row in response.results)
+        projected, = _public_rows_from_response(response, session)
+        assert projected.title == "Roman exemplaire"
+        assert projected.friendly_url == "https://www.biblioaccess.com/1409/Catalog/Book/123/example"
+        assert len(calls) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("body,expected", [
+    ('<a href="/1409/Catalog/Book/123/example">Roman exemplaire</a>', 1),
+    ('<p>Pas de carte reconnue</p>', 0),
+])
+def test_public_envelope_reports_window_not_exhaustive_catalog(body, expected):
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        assert len(response.results) == len(response.public_notices) == expected
+        assert response.partial is False and response.catalogue_complete is False
+        assert session.last_search_warnings == []
+        clear = session.search_with_response_facets(" ")
+        assert clear.catalogue_complete is None and not clear.public_notices
+    finally:
+        session.close()
+
+
+def test_public_envelope_does_not_move_a_title_to_another_observed_url():
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<a href="/1409/Catalog/Book/123/fiche"><img src="cover.png"></a>'
+            '<a href="/1409/Catalog/Book/123/roman">Roman exemplaire</a>'
+            '<a href="/1409/Catalog/Book/124/titre"><img src="cover.png"></a>'
+            '<a href="/1409/Catalog/Book/124/titre">Roman exact</a>'
+            '<a href="/1409/Catalog/Book/125/fiche">Premier titre</a>'
+            '<a href="/1409/Catalog/Book/125/roman">Autre titre</a>'))
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman", "catalog")
+        assert response.partial is True
+        rows = {row.record_id: row for row in response.results}
+        assert rows["123"].friendly_url.endswith("/123/fiche")
+        assert rows["123"].metadata["bibliographic_evidence"] == "book_link"
+        assert rows["125"].metadata["bibliographic_evidence"] == "book_link"
+        notice, = response.public_notices
+        assert notice.result is rows["124"]
+        assert notice.result.title == "Roman exact"
+    finally:
+        session.close()
+
+
+def test_real_federated_biblioaccess_c_survives_eviction(tmp_path):
+    from cifereca.config import Config
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+    from cifereca.core.notice_cover_repository import read_notice_cover, evict_notice_cover
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
+
+    url = "https://www.biblioaccess.com/1409/Catalog/Book/123/example"
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.method == "GET" and "cookie" not in request.headers
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=Roman+exemplaire&pageindex=0"})
+        assert request.url.path == "/1409/Catalog/Search"
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text='<a href="' + url + '">Roman exemplaire</a>')
+
+    config = Config(tmp_path / "config.json")
+    config.set("library.directory", str(tmp_path / "library"))
+    config.set("identities", [{"id": "alice", "label": "Alice"}, {"id": "bob", "label": "Bob"}])
+    config.set("providers.accounts", [])
+    db = Storage(tmp_path / "notice.sqlite")
+    service = LibraryService(config, db, Diagnostics())
+    session, _ = _session(handler)
+    session.connect()
+    service._sessions = {session.provider_id: session}
+    try:
+        row, = service.search("Roman exemplaire", provider_id=session.provider_id, force=True)
+        assert row.friendly_url == url and row.thumbnail_url is None
+        assert row.source_collection == "public_catalog"
+        assert row.owned is False and row.downloadable is False
+        source_ref = row._core_notice_cover_document_ref
+        document = row._core_notice_canonical_cover_document_ref
+        source = read_notice_cover(db, source_ref)
+        assert source.observation.status == "partial" and source.attribute.state == "pending"
+        assert evict_notice_cover(db, source_ref, expected_epoch=source.epoch)
+        service.select_identity("bob")
+        reopened = Storage(tmp_path / "notice.sqlite")
+        try:
+            retained = read_consolidated_notice_cover(reopened, document)
+            ref, = retained.catalogue_web_references
+            assert (ref.url, ref.record_id, ref.provider_id) == (url, "123", session.provider_id)
+            menu = read_public_web_choices(reopened, document)
+            choice, = menu.choices
+            assert resolve_public_web_choice(
+                reopened, document, expected_epoch=menu.epoch, choice_id=choice.choice_id,
+            ) == url
+        finally:
+            reopened.close()
+        assert db.entitlements() == [] and db.acquisitions() == []
+        assert len(calls) == 2
+    finally:
+        service.close()
+        session.close()
+
+
+def test_encoded_slug_retains_description_but_not_public_c_web_authority():
+    from cifereca.core.search_orchestration import _public_rows_from_response
+    url = "https://www.biblioaccess.com/1409/Catalog/Book/123/un-roman-%C3%A9"
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text='<a href="' + url + '">Roman attesté</a>')
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        row, = response.results
+        assert row.friendly_url == url and row.title == "Roman attesté"
+        assert len(response.public_notices) == 1
+        projected, = _public_rows_from_response(response, session)
+        assert projected.title == row.title and projected.record_id == row.record_id
+        assert projected.friendly_url is None
+        assert "public_url_evidence" not in projected.metadata
+    finally:
+        session.close()

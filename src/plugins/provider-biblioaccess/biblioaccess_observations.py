@@ -134,7 +134,8 @@ class _Links(HTMLParser):
         self.book_ids = []
         self.book_urls = {}
         self.book_titles = {}
-        self._book_anchor_id = None
+        self._observed_book_titles = {}
+        self._book_anchor = None
         self._book_anchor_text = []
         self.next_page_url = None
         self._candidate = None
@@ -143,7 +144,7 @@ class _Links(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag != "a":
             return
-        self._book_anchor_id = None
+        self._book_anchor = None
         self._book_anchor_text = []
         values = dict(attrs)
         href = values.get("href")
@@ -168,8 +169,8 @@ class _Links(HTMLParser):
             # slug can be required for the actual book GET; never reconstruct
             # an unrelated/cross-tenant link from an opaque book identifier.
             self.book_urls[ident] = link
-        if ident:
-            self._book_anchor_id = ident
+        if ident in self.book_urls:
+            self._book_anchor = (ident, link)
         parts = _parts(link)
         self._candidate = None
         if parts and parts.path == _SEARCH_PATH:
@@ -191,17 +192,30 @@ class _Links(HTMLParser):
                     self.next_page_url = link
 
     def handle_data(self, data):
-        if self._book_anchor_id is not None:
+        if self._book_anchor is not None:
             self._book_anchor_text.append(data[:200])
         if self._candidate is not None:
             self._anchor_text.append(data[:100])
 
     def handle_endtag(self, tag):
-        if tag == "a" and self._book_anchor_id is not None:
+        if tag == "a" and self._book_anchor is not None:
             title = " ".join("".join(self._book_anchor_text).split())
-            if title and len(title) <= 256 and self._book_anchor_id not in self.book_titles:
-                self.book_titles[self._book_anchor_id] = title
-            self._book_anchor_id = None
+            ident, link = self._book_anchor
+            # A visible generic call-to-action is not a title. Keep the
+            # book link for explicit detail, not a fabricated C observation.
+            if title and len(title) <= 256 and title.casefold() not in {
+                "voir", "voir la fiche", "consulter", "consulter la fiche",
+                "détails", "detail", "details", "en savoir plus",
+            }:
+                previous = self._observed_book_titles.setdefault(ident, title)
+                if previous != title:
+                    self.book_titles.pop(ident, None)
+                    self._observed_book_titles[ident] = None
+                # Another slug can contradict this title, but it cannot
+                # supply a title for the first retained URL.
+                elif link == self.book_urls[ident]:
+                    self.book_titles[ident] = title
+            self._book_anchor = None
             self._book_anchor_text = []
         if tag == "a" and self._candidate is not None:
             label = " ".join(self._anchor_text).strip().casefold()
