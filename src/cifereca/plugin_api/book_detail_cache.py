@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Callable, Iterable
 
 from cifereca.catalogue_link import safe_document_link_url
+from .detail_action_descriptor import inactive_without_target
 
 from .models import (
     BookRef, CachedBookDetail, DetailField, DetailSection, Provenance,
@@ -67,7 +68,7 @@ def _sanitize(detail: object, book: BookRef, identity_id: str, plugin_id: str) -
         uri = safe_document_link_url(action.uri, relation="related") if action.uri else ""
         if action.uri and not uri:
             continue
-        if not uri and not callable(action.callback):
+        if not uri and not callable(action.callback) and not inactive_without_target(action):
             continue
         actions.append(replace(
             action, id=_small_text(action.id, 80),

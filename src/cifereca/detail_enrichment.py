@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Any, Callable, Iterable
 
 from .catalogue_link import safe_document_link_url
+from .plugin_api.detail_action_descriptor import inactive_without_target
 from .plugin_api.models import (
     BookRef, CachedBookDetail, DetailField, DetailSection, Provenance,
     UiBookDetailAction,
@@ -79,7 +80,7 @@ def _valid_result(
         else:
             uri = ""
         callback = action.callback if callable(action.callback) else None
-        if not uri and callback is None:
+        if not uri and callback is None and not inactive_without_target(action):
             continue
         actions.append(UiBookDetailAction(
             id=f"{plugin_id}:{_text(action.id, 64)}",
