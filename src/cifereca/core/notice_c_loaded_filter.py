@@ -67,7 +67,6 @@ def expand_filter_sources(rows, *, scope):
                 _MARKER: marker,
                 "source": "notice_c_public",
                 "provider_id": hit.provider_id,
-                "item_id": hit.record_id,
                 "title": hit.title, "author": hit.author,
                 "publisher": hit.publisher, "description": hit.description,
                 "medium": hit.medium, "media_format": hit.media_format,
@@ -105,4 +104,7 @@ def matching_source_label(row):
     if (type(providers) is not tuple or not providers
             or providers == (row.get("provider_id"),)):
         return ""
-    return " · Correspondance : " + ", ".join(providers)
+    if any(type(provider) is not str or not 1 <= len(provider) <= 64 for provider in providers):
+        return ""
+    suffix = f" (+{len(providers) - 3})" if len(providers) > 3 else ""
+    return " · Correspondance : " + ", ".join(providers[:3]) + suffix
