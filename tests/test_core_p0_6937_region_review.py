@@ -1,0 +1,136 @@
+"""#6937: inspect stage regions without granting authority or following aliases."""
+from dataclasses import asdict, replace
+from pathlib import Path
+
+import pytest
+
+from cifereca.core import derived_variant_journal as journal
+from cifereca.core import derived_variant_region_review as review
+from cifereca.core.derived_variant_capacity_review import read_capacity_review
+from cifereca.core.derived_variant_maintenance_review import admit_maintenance_review
+from cifereca.gui.derived_variant_capacity_line import _subtitle
+from tests.test_core_p0_4520_recovery_operator import _setup
+from tests.test_core_p0_4520_derived_journal import _publish_reserved
+
+
+def _read(db, root):
+    return review.review_derived_private_region(
+        db, library_root=root, identity_id="id1", explicitly_requested=True,
+    )
+
+
+def _protected(result):
+    assert not any(result[key] for key in (
+        "exclusive_region_verified", "sha_verified", "external_dependencies_verified",
+        "complete_physical_inventory", "reclaimable_bytes_known",
+        "retention_authorized", "quota_refund_authorized", "destructive_cleanup_allowed",
+    ))
+
+
+def test_active_and_committed_named_stock_and_unrecorded_nested_region(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        stage = Path(intent.staged_path)
+        nested = Path(intent.parent_path).parent / "nested" / ".cifereca-staging" / "variants"
+        nested.mkdir(parents=True)
+        unrecorded = nested / "unrecorded.epub"
+        unrecorded.write_bytes(b"untracked witness")
+        alias = nested / "alias"
+        alias.symlink_to(stage)
+        (nested / "unknown-dir").mkdir()
+        target = Path(intent.candidate_path)
+        before = journal.summarize_derived_journal(db)
+        observed = _read(db, tmp_path)
+        assert observed["status"] == "observed" and observed["bounded_walk_complete"]
+        assert observed["counts"] == {
+            "pending_named": 1, "committed_named": 0, "unrecorded_regular": 1,
+            "ambiguous_entries": 2, "unverified_regions": 0, "unobserved_receipts": 0,
+        }
+        _protected(observed)
+        assert journal.summarize_derived_journal(db) == before
+        _publish_reserved(db, intent, reservation)
+        result = read_capacity_review(service, admit_maintenance_review(service))
+        assert result["region"]["counts"]["committed_named"] == 1
+        assert "1 sans reçu" in _subtitle(result)
+        assert "Aucun orphelin supprimable attesté" in _subtitle(result)
+        assert str(tmp_path) not in repr(result)
+        assert unrecorded.read_bytes() == b"untracked witness"
+        assert alias.is_symlink() and stage.samefile(target)
+        assert journal.summarize_derived_journal(db)["committed_count"] == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("change", ["replaced", "absent", "foreign", "corrupt", "region_symlink"])
+def test_ambiguous_evidence_never_becomes_unrecorded_or_cleanup_candidate(tmp_path, change):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        stage = Path(intent.staged_path)
+        prior = db.metadata_get(reservation.key)
+        if change in ("replaced", "absent"):
+            stage.unlink()
+            if change == "replaced":
+                stage.write_bytes(b"new bytes")
+        elif change == "foreign":
+            foreign = replace(intent, identity_id="another-identity",
+                              parent_placement_id="another-placement")
+            db.metadata_set(journal._slot(foreign), journal._encode({
+                "schema": "derived.intent.v2", "nonce": "a" * 32, "intent": asdict(foreign),
+            }))
+        elif change == "corrupt":
+            foreign = replace(intent, identity_id="another-identity",
+                              parent_placement_id="another-placement")
+            db.metadata_set(journal._slot(foreign), "unreadable")
+        else:
+            other = Path(intent.parent_path).parent / "other"
+            other.mkdir()
+            (other / ".cifereca-staging").symlink_to(stage.parent.parent)
+        result = _read(db, tmp_path)
+        _protected(result)
+        assert result["counts"]["unrecorded_regular"] == 0
+        if change == "corrupt":
+            assert result["status"] == "unavailable"
+        else:
+            assert result["status"] == "observed"
+            key = {"absent": "unobserved_receipts", "region_symlink": "unverified_regions"}.get(
+                change, "ambiguous_entries",
+            )
+            assert result["counts"][key] == 1
+        assert prior == db.metadata_get(reservation.key)
+        assert Path(intent.candidate_path).read_bytes() == b"new bytes"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("change", ["filesystem", "journal", "budget"])
+def test_changed_or_incomplete_witness_discarded(tmp_path, monkeypatch, change):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        walk = review._walk
+        calls = 0
+
+        def changed(profile, stages, *, deadline):
+            nonlocal calls
+            result = walk(profile, stages, deadline=deadline)
+            calls += 1
+            if calls == 1:
+                if change == "filesystem":
+                    Path(intent.staged_path).with_name("late.epub").write_bytes(b"late")
+                elif change == "journal":
+                    db.metadata_set(reservation.key, "changed")
+            return result
+
+        if change == "budget":
+            from cifereca.core import derived_variant_stage_symlinks
+            monkeypatch.setattr(derived_variant_stage_symlinks, "_MAX_ENTRIES", 1)
+        else:
+            monkeypatch.setattr(review, "_walk", changed)
+        report = _read(db, tmp_path)
+        assert report["status"] in ("evidence_changed", "unavailable", "incomplete")
+        assert not report["bounded_walk_complete"] and not any(report["counts"].values())
+        _protected(report)
+    finally:
+        db.close()
