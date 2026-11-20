@@ -207,7 +207,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             # neither a matching Origin nor a strong edition relation.
             independent = SearchResult(
                 id="independent-c", record_id="independent-c", docbase="digital-books",
-                medium="digital", title="Autre notice indépendante", author="Autre auteur",
+                medium="digital", title="Atlas indépendant", author="Géographe",
                 type="book", format="PDF", publisher=None, published_at=None,
                 description=None, thumbnail_url=url, friendly_url=None,
                 scenario="search", source_provider="fixture-c-other",
@@ -403,6 +403,8 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             ])
             with patch.object(recommendation_service, "build_queries",
                               return_value=("Notice", "témoin")):
+                # Keep the pre-existing six-view ranking corpus isolated:
+                # the extra Atlas fixture shares N3, not either query term.
                 ranking = recommendation_service.compute_recommendations(
                     library, OfflineCatalogue(), owner, exclude_owned=False, max_queries=2,
                 )
