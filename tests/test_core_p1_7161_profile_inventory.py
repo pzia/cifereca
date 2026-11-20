@@ -65,3 +65,27 @@ def test_failed_profile_inventory_never_becomes_cli_profile_id(tmp_path, scenari
     finally:
         service._plugin_manager = None
         service.close()
+
+
+@pytest.mark.parametrize("rows", [
+    [{"profile_id": "stable-b", "name": "other-reader", "fetch_capable": True}],
+    [{"profile_id": "stable-a", "fetch_capable": True}],
+    [
+        {"profile_id": "stable-a", "name": "same-reader", "fetch_capable": True},
+        {"profile_id": "stable-b", "name": "same-reader", "fetch_capable": True},
+    ],
+    [{"profile_id": "stable-a", "name": "bad\\nreader", "fetch_capable": True}],
+])
+def test_unresolved_or_ambiguous_binding_never_falls_back_to_cli_id(tmp_path, rows):
+    service = _service(tmp_path)
+    try:
+        service.storage.adept_profile_binding_set("identity", "default", "stable-a")
+        events = setup_runtime(service, rows=rows)
+        with pytest.raises(AdeptProfileResolutionError) as error:
+            service.resolve_adept_profile_for_identity("default")
+        assert error.value.code == "adept_profile_binding_unresolved"
+        assert events == ["profile-list"]
+        assert service.storage.adept_profile_binding_get("identity", "default") == "stable-a"
+    finally:
+        service._plugin_manager = None
+        service.close()
