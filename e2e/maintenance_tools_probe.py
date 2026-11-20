@@ -325,8 +325,9 @@ def main():
 
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     tool = DummyTool()
-    # Install the real page contribution in an isolated registry. No provider
-    # package is loaded and only the single dummy tool is admitted here.
+    # Install the real page and three independent guided tool packages into
+    # an isolated registry, with actual Core read ports and no providers.
+    # The dummy tool still exercises the generic confirmation/run lifecycle.
     fixture = TemporaryDirectory(prefix="maintenance-page-fixture-")
     fixture_root = Path(fixture.name)
     manager = PluginManager(
@@ -334,20 +335,25 @@ def main():
         state_store=PluginStateStore(fixture_root / "state.json"),
         brokers=core.brokers,
     )
-    package = fixture_root / "maintenance-page.zip"
-    with ZipFile(package, "w") as archive:
-        for source in sorted((ROOT / "src/plugins/maintenance-page").iterdir()):
-            if source.is_file() and source.suffix in (".py", ".json", ".md"):
-                archive.write(source, source.name)
-    manager.install(package)
+    for folder in ("maintenance-page", "maintenance-library-organizer",
+                   "maintenance-local-origin", "maintenance-derived-variants"):
+        package = fixture_root / (folder + ".zip")
+        with ZipFile(package, "w") as archive:
+            for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
+                if source.is_file() and source.suffix in (".py", ".json", ".md"):
+                    archive.write(source, source.name)
+        manager.install(package)
     assert manager.service("ui.page.maintenance") is not None
+    for key in ("maintenance.library.organizer", "maintenance.library.local-origin",
+                "maintenance.library.derived-variants"):
+        assert manager.service(key) is not None
     original_services, original_service = manager.services, manager.service
     def fixture_services(category):
         if category == "maintenance.tool":
             return (ResolvedPluginService(
                 "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
                 registry_generation=manager.registry_generation,
-            ),)
+            ),) + tuple(original_services(category))
         return original_services(category)
     def fixture_service(key):
         return tool if key == "e2e.maintenance" else original_service(key)
@@ -561,6 +567,16 @@ def main():
         assert len(organizer_rows) == 1
         assert "Lecture seule" in organizer_rows[0].get_subtitle()
         report["checks"]["P0_3176_organizer_read_only_row"] = True
+        origin_rows = [node for node in walk(w._tools_box)
+                       if isinstance(node, Adw.ActionRow)
+                       and node.get_title() == "Suggestions de provenance — par lots"]
+        assert len(origin_rows) == 1
+        assert "Lecture seule" in origin_rows[0].get_subtitle()
+        assert {resolved.plugin_id for resolved in original_services("maintenance.tool")} == {
+            "maintenance.library.organizer", "maintenance.library.local-origin",
+            "maintenance.library.derived-variants",
+        }
+        report["checks"]["P0_7100_three_real_guided_contributions"] = True
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
