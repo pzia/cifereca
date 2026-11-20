@@ -84,13 +84,14 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
         display_state(None)
         clock[0] = 100 + _DETAIL_TTL_SECONDS - 1
         assert reattest_current_purchase_association(
-            db, ref, snapshot, candidate, now=clock[0],
-        ) == ref
+            db, ref, snapshot, candidate, now=clock[0], report_change=True,
+        ) == (ref, False)
         assert read() == before
         clock[0] += 1
-        successor = reattest_current_purchase_association(
-            db, ref, snapshot, candidate, now=clock[0],
+        successor, changed_receipt = reattest_current_purchase_association(
+            db, ref, snapshot, candidate, now=clock[0], report_change=True,
         )
+        assert changed_receipt is True
         assert successor.key == ref.key and successor.generation == ref.generation + 1
         assert request(db, snapshot, candidate, now=clock[0]) == (successor,)
         assert journal.read_job(db, successor).state == "pending"
@@ -109,8 +110,11 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
             assert read() is None
             assert request(db, updated, changed, now=clock[0]) == (successor,)
             assert reattest_current_purchase_association(
-                db, successor, updated, changed, now=clock[0],
-            ) == successor
+                db, successor, updated, changed, now=clock[0], report_change=True,
+            ) == (successor, True)
+            assert reattest_current_purchase_association(
+                db, successor, updated, changed, now=clock[0], report_change=True,
+            ) == (successor, False)
             assert journal.read_job(db, successor) == old_job
             assert read() == before
         elif mode == "changed":
