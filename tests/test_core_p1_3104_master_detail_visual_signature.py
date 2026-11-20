@@ -6,6 +6,7 @@ Gio.ListStore facade. No provider, file system or GUI startup is needed.
 from __future__ import annotations
 
 import ast
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -35,12 +36,14 @@ class BookRow:
         self.action_icon_name = "view-more-symbolic"
 
 
-def production_methods():
+def production_methods(*extra_methods):
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     page = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                 and n.name == "MasterDetailPage")
-    method = next(n for n in page.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "show_rows")
+    methods = {
+        n.name: n for n in page.body if isinstance(n, ast.FunctionDef)
+        and n.name in {"show_rows", *extra_methods}
+    }
     helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                   and n.name == "_same_book_row_presentation")
     fields = next(n for n in tree.body if isinstance(n, ast.Assign)
@@ -51,10 +54,13 @@ def production_methods():
         "BookListItem": BookRow,
         "_BOOK_ROW_VISIBLE_FIELDS": ast.literal_eval(fields.value),
         "time": NS(perf_counter=lambda: 1.0),
+        "Gtk": NS(SingleSelection=object),
+        "capture_detail_selection": lambda *_args, **_kwargs: nullcontext(),
     }
-    node = ast.fix_missing_locations(ast.Module(body=[helper, method], type_ignores=[]))
+    node = ast.fix_missing_locations(ast.Module(body=[helper, *methods.values()], type_ignores=[]))
     exec(compile(node, str(SOURCE), "exec"), ns)
-    return ns["_same_book_row_presentation"], ns["show_rows"]
+    return (ns["_same_book_row_presentation"], ns["show_rows"],
+            *(ns[name] for name in extra_methods))
 
 
 def page_with(row):
@@ -71,16 +77,22 @@ def page_with(row):
             self.items[start:start + delete] = list(rows)
         def append(self, item):
             self.items.append(item)
+        def remove_all(self):
+            self.items.clear()
     store = Store()
     class Selection:
         def __init__(self):
             self.position = 0
+            self.changed = None
         def get_selected_item(self):
             if 0 <= self.position < len(store.items):
                 return store.items[self.position]
             return None
         def set_selected(self, position):
+            previous = self.get_selected_item()
             self.position = position
+            if self.changed is not None and self.get_selected_item() is not previous:
+                self.changed()
     selection = Selection()
     perf = []
     states = []
@@ -90,6 +102,7 @@ def page_with(row):
         window=NS(search_page=None, ui_perf=NS(record=lambda *a: perf.append(a))),
         list_stack=NS(set_visible_child_name=states.append),
         _update_count=counts.append,
+        _narrow_detail_visible=False, _replacing_rows=False,
         clear_rows=lambda: store.items.clear(),
     )
     return obj, store, selection, perf, states, counts
@@ -257,3 +270,75 @@ def test_removing_documentary_proof_forces_rebind_before_legacy_url_fallback():
     show(page, [fresh])
     assert store.items[0] is fresh
     assert perf[-1][0] == "list.replace"
+
+
+def narrow_page_with(row, open_detail):
+    _, show, selection_changed, clear = production_methods("_selection_changed", "clear_rows")
+    page, _store, selection, _perf, _states, _counts = page_with(row)
+    navigation = []
+
+    def navigate(detail):
+        page._narrow_detail_visible = detail
+        navigation.append("detail" if detail else "list")
+
+    page._narrow_master_detail = True
+    page._narrow_detail_visible = open_detail
+    page._show_narrow_detail = lambda: navigate(True)
+    page._show_narrow_list = lambda: navigate(False)
+    page._selected_callbacks = []
+    page.detail = NS(empty=lambda *_args: None)
+    page.count_label = NS(set_label=lambda _label: None)
+    page.clear_rows = lambda: clear(page)
+    selection.changed = lambda: selection_changed(page, selection, None)
+    return page, show, navigation
+
+
+@pytest.mark.parametrize("open_detail", [True, False])
+def test_refresh_restores_selected_key_without_changing_the_narrow_view(open_detail):
+    old, updated = BookRow(), BookRow(title="Notice enrichie")
+    page, show, navigation = narrow_page_with(old, open_detail)
+    selected = []
+    page._selected_callbacks.append(selected.append)
+
+    show(page, [updated])
+
+    assert page.selection.get_selected_item() is updated
+    assert page._narrow_detail_visible is open_detail
+    assert navigation == []
+    assert selected == [None, updated]
+
+
+@pytest.mark.parametrize("replacement", [[], [BookRow("exact:2")]])
+def test_refresh_returns_to_narrow_list_when_selected_document_disappears(replacement):
+    page, show, navigation = narrow_page_with(BookRow(), True)
+
+    show(page, replacement)
+
+    assert page.selection.get_selected_item() is None
+    assert not page._narrow_detail_visible
+    assert navigation == ["list"]
+
+
+def test_clearing_a_narrow_page_returns_to_the_list():
+    page, _show, navigation = narrow_page_with(BookRow(), True)
+
+    page.clear_rows()
+
+    assert page.selection.get_selected_item() is None
+    assert not page._narrow_detail_visible
+    assert navigation == ["list"]
+
+
+def test_row_replacement_fallback_preserves_narrow_detail_for_the_retained_key(monkeypatch):
+    page, show, navigation = narrow_page_with(BookRow(), True)
+    updated = BookRow(title="Notice enrichie")
+
+    def splice_failure(*_args):
+        raise RuntimeError("splice unavailable")
+
+    monkeypatch.setattr(page.store, "splice", splice_failure)
+    show(page, [updated])
+
+    assert page.selection.get_selected_item() is updated
+    assert page._narrow_detail_visible
+    assert navigation == []

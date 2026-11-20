@@ -98,6 +98,7 @@ class MasterDetailPage(Gtk.Box):
         self.window = window
         self.title = title
         self._selected_callbacks: list[Callable[[BookListItem | None], None]] = []
+        self._replacing_rows = False
 
         # Keep headings independent from action controls.  On 1024px-wide
         # windows the previous single horizontal row forced search/filter
@@ -291,7 +292,8 @@ class MasterDetailPage(Gtk.Box):
                 self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
             for callback in self._selected_callbacks:
                 callback(selected)
-            if self._narrow_master_detail and selected is not None:
+            if (self._narrow_master_detail and selected is not None
+                    and not self._replacing_rows):
                 self._show_narrow_detail()
             if selected is None:
                 probe = getattr(self.window, "_ui_perf_frame_probe", None)
@@ -404,6 +406,8 @@ class MasterDetailPage(Gtk.Box):
         # account/provider/filter. This is especially visible when switching
         # to an anonymous catalogue account with no selected loan.
         self.detail.empty("Aucun document sélectionné", "Sélectionnez un document dans la liste.")
+        if self._narrow_detail_visible and not self._replacing_rows:
+            self._show_narrow_list()
 
     def set_documentary_summary(self, text: str) -> None:
         self._documentary_summary.set_label(text)
@@ -469,19 +473,29 @@ class MasterDetailPage(Gtk.Box):
                 self.window.ui_perf.record("list.append-fast", (time.perf_counter() - started) * 1000.0)
             return
 
-        self.selection.set_selected(0xFFFFFFFF)
+        # Restoring a selection is a data refresh. Keep the current pane
+        # until we know whether its selected document is still present.
+        replacing_rows = self._replacing_rows
+        self._replacing_rows = True
         try:
-            self.store.splice(0, self.store.get_n_items(), rows)
-        except Exception:
-            self.clear_rows()
-            for row in rows:
-                self.store.append(row)
-        self._update_count(total_count if total_count is not None else len(rows))
-        self.list_stack.set_visible_child_name("list" if rows else "empty")
-        if rows and selected_key is not None:
-            restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
-            if restored is not None:
-                self.selection.set_selected(restored)
+            self.selection.set_selected(0xFFFFFFFF)
+            try:
+                self.store.splice(0, self.store.get_n_items(), rows)
+            except Exception:
+                self.clear_rows()
+                for row in rows:
+                    self.store.append(row)
+            self._update_count(total_count if total_count is not None else len(rows))
+            self.list_stack.set_visible_child_name("list" if rows else "empty")
+            if rows and selected_key is not None:
+                restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
+                if restored is not None:
+                    self.selection.set_selected(restored)
+        finally:
+            self._replacing_rows = replacing_rows
+        if (not self._replacing_rows and self._narrow_detail_visible
+                and self.selection.get_selected_item() is None):
+            self._show_narrow_list()
         if hasattr(self.window, "ui_perf"):
             self.window.ui_perf.record("list.replace", (time.perf_counter() - started) * 1000.0)
 
