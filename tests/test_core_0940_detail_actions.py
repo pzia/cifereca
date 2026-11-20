@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.book_detail_metadata import canonical_book_isbn, safe_detail_value
+from cifereca.gui.detail_model import detail_subtitle_lines
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -72,6 +73,7 @@ def _group():
         "detail_display_value": lambda _label, value: (value, value),
         "canonical_book_isbn": canonical_book_isbn,
         "safe_detail_value": safe_detail_value,
+        "detail_subtitle_lines": detail_subtitle_lines,
     }
     exec(compile(ast.Module(body=[method, actions], type_ignores=[]), str(MAIN), "exec"), env)
 

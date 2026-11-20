@@ -54,7 +54,7 @@ def test_compact_metadata_groups_use_at_most_two_columns():
     assert "set_max_children_per_line(2)" in source
     assert "detail_display_value(label, value)" in source
     assert "detail_subtitle_lines(title, display_value)" in source
-    assert "set_tooltip_text(label + ' : ' + tooltip_value)" in source
+    assert "annotate_detail_field(row, label, tooltip_value, field," in source
 
 
 def test_action_width_budget_has_exact_fit_boundary():
