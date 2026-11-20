@@ -124,7 +124,10 @@ def test_alternative_provenance_shared_with_search_after_restart(tmp_path):
         expected = fields()
         assert expected == section.fields
         proven = [field for field in expected if field.provenance is not None]
-        assert len(proven) == 2
+        assert len(proven) == 3
+        summary, = [f for f in proven if f.provenance.source == "Notice C · observation de source"]
+        assert summary.id == "known-public-alternative-2"
+        assert "Titre : " in summary.value
         alternative, = item.metadata["notice_c_source_alternatives"]
         assert all(f.provenance.provider_id == alternative["provider_id"]
                    and f.provenance.source_id == alternative["record_id"] for f in proven)
