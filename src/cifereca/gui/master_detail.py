@@ -375,7 +375,8 @@ class MasterDetailPage(Gtk.Box):
         self._set_narrow_detail_context(True)
         self.detail_back.set_visible(True)
         self.paned.set_position(0)
-        self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
+        if not self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD):
+            self.detail_back.grab_focus()
 
     def _show_narrow_list(self) -> None:
         if not self._narrow_master_detail:
