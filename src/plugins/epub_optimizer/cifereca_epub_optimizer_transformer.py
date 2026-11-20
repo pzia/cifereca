@@ -10,7 +10,9 @@ from cifereca.plugin_api import (
     TransformResult,
 )
 
-from cifereca_epub_optimizer.profiles import DeviceProfile, default_output_path, discover_profiles
+from cifereca_epub_optimizer.profiles import (
+    DeviceProfile, EPUB_RENDERING_WARNING, default_output_path, discover_profiles,
+)
 
 
 EPUB = ArtifactFormat(media_type="application/epub+zip", format="epub", drm="none")
@@ -119,7 +121,7 @@ class EpubOptimizerTransformer:
         return TransformPlan(
             output_format=EPUB,
             proposed_filename=proposed,
-            warnings=(),
+            warnings=(EPUB_RENDERING_WARNING,),
             facts={
                 "profile_plugin_id": profile_plugin_id,
                 "profile_id": profile.id,
@@ -187,7 +189,9 @@ class EpubOptimizerTransformer:
             )
             raise
 
-        warnings = tuple(f"image conservée: {item.split(':',1)[0]}" for item in report.image_errors[:20])
+        warnings = (EPUB_RENDERING_WARNING,) + tuple(
+            f"image conservée: {item.split(':',1)[0]}" for item in report.image_errors[:20]
+        )
         facts = {
             "profile_plugin_id": profile_plugin_id,
             "profile_id": profile.id,

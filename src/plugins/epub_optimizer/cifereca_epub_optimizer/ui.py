@@ -11,7 +11,7 @@ except ImportError:
 
     prefer_downloads_for_save = _keep_native_folder
 
-from .profiles import default_output_path, discover_profiles
+from .profiles import EPUB_RENDERING_WARNING, default_output_path, discover_profiles
 
 
 class _CancelEventAdapter:
@@ -689,6 +689,7 @@ class OptimizerPage:
             f"Sortie : {report.output_path}"
             + (f"\n{len(report.image_errors)} image(s) conservée(s) après erreur de décodage." if report.image_errors else "")
             + "".join(f"\n{note}" for note in report.image_notes if note.startswith("Processus CPU"))
+            + ("\n" + EPUB_RENDERING_WARNING if Path(report.output_path).suffix.casefold() == ".epub" else "")
         )
         self.host.toast("Variante optimisée créée")
         return False
@@ -699,7 +700,9 @@ class OptimizerPage:
         self.progress.set_fraction(1.0)
         self.progress.set_text("100% — Terminé")
         filename = str(getattr(artifact, "filename", "") or getattr(artifact, "artifact_id", "variante"))
-        self.status.set_text(f"Variante disponible dans la bibliothèque : {filename}")
+        fmt = getattr(getattr(artifact, "format", None), "format", None)
+        warning = "\n" + EPUB_RENDERING_WARNING if fmt == "epub" else ""
+        self.status.set_text(f"Variante disponible dans la bibliothèque : {filename}" + warning)
         refresh = getattr(self.action_host, "refresh_context", None)
         if callable(refresh):
             refresh()
