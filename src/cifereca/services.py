@@ -1304,8 +1304,13 @@ class LibraryService:
         identity_profile = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
             profiles = self.kobo_profiles()
-        except Exception:
-            profiles = []
+        except Exception as exc:
+            # A failed inventory is not an empty, successfully read inventory.
+            # In particular never pass a stable UUID as a CLI name on failure.
+            raise AdeptProfileResolutionError(
+                "Inventaire des profils ADEPT indisponible.",
+                code="adept_profile_lookup_failed",
+            ) from exc
         resolution = AdeptProfileResolver().resolve(
             explicit_profile=explicit_profile,
             identity_profile=identity_profile,
@@ -3483,9 +3488,21 @@ class LibraryService:
         return state
 
     def kobo_profiles(self) -> list[dict[str, Any]]:
-        payload = self._kobo_adapter().profiles()
-        rows = payload.get("profiles") if isinstance(payload, dict) else None
-        return [dict(x) for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
+        # The historical adapter was removed in the provider cutover. Resolve
+        # the same installed runtime service as the public ADEPT profile broker.
+        manager = self._plugin_manager
+        generation = getattr(manager, "registry_generation", None)
+        runtime = self._required_plugin_service("runtime.kobo-adept")
+        payload = runtime.profiles()
+        if (self._plugin_manager is not manager
+                or getattr(manager, "registry_generation", None) != generation
+                or self._required_plugin_service("runtime.kobo-adept") is not runtime):
+            raise AttentionRequired("Inventaire ADEPT révoqué.", code="adept_profile_lookup_failed")
+        rows = payload.get("profiles") if type(payload) is dict else None
+        if (type(rows) is not list or len(rows) > 2048
+                or any(type(row) is not dict for row in rows)):
+            raise AttentionRequired("Inventaire ADEPT invalide.", code="adept_profile_lookup_failed")
+        return [dict(row) for row in rows]
 
     def adept_profiles_for_identity(
         self, identity_id: str, *, profile_name: str,
