@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from . import loan_artifact_state
+from .loan_verified_presence import canonical_loan_presence
 from .loan_safe_trace import loan_trace_ref
 from .loan_failure_diagnostics import _CODES as _RUNTIME_FAILURE_CODES
 
@@ -82,7 +83,17 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
     previous_path = previous_state.path
     previous_inspection = previous_state.inspection
     legacy_acsm_artifact = previous_state.legacy_acsm_artifact
-    previous_complete_local = previous_state.complete_local
+    # A catalogue row is account-free descriptive evidence. Only the exact
+    # canonical loan delivery may use this positive presence shortcut.
+    canonical = (None if force_refresh else canonical_loan_presence(
+        self, loan, identity.identity_id, inspector=inspect_artifact,
+    ))
+    prior_loan = previous_meta.get("provider_loan_id")
+    previous_complete_local = (
+        previous_state.complete_local
+        and (prior_loan is None or prior_loan == loan.id)
+        and canonical is None
+    )
     if previous_complete_local and not existing and not force_refresh:
         repaired_index = self.catalog_index_path(
             previous_path, title=loan.title, item_id=str(loan.record_id or loan.id),
@@ -102,7 +113,7 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
     )
     decision = decide_artifact_reuse(
         force_refresh=force_refresh,
-        catalog_valid=bool(existing),
+        catalog_valid=canonical is True,
         ledger_complete_valid=previous_complete_local,
         legacy_repair=legacy_acsm_artifact,
         legacy_reason=legacy_reason,
@@ -114,7 +125,7 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
     _TRACE_LOG.info(
         "TRACE download loan_auto decision loan_ref=%s action=%s reason=%s source=%s catalog_valid=%s ledger_valid=%s force_refresh=%s dt=%.3fs",
         trace_ref, decision.action, decision.reason, decision.source,
-        bool(existing), previous_complete_local, force_refresh, time.monotonic()-started,
+        canonical is True, previous_complete_local, force_refresh, time.monotonic()-started,
     )
     if decision.action == "reuse":
         _TRACE_LOG.info(
