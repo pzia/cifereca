@@ -1,8 +1,8 @@
 """#4988: read-only possible-lender summary in shared Search/Recommendations.
 
 A known local account may attempt the ordinary supplier borrow only after a
-separate user confirmation. This presenter never invents eligibility and has
-no action widget, callback or provider IO.
+separate user confirmation. This presenter never invents eligibility or
+performs provider IO; the optional consent entry is delegated.
 """
 from __future__ import annotations
 
@@ -57,6 +57,12 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
             for i, row in enumerate(rows, 1)
         ]
         panel._group("Emprunt avec un autre profil · information", details)
+        from .cross_profile_normal_lender_dialog import append_normal_lender_action
+        append_normal_lender_action(
+            panel, item=item, rows=rows, visible=visible, service=service,
+            identity=identity, identity_id=identity_id, account_epoch=account_epoch,
+            source_epoch=source_epoch,
+        )
         return True
     except Exception:
         return False
