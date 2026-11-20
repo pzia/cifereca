@@ -113,7 +113,7 @@ plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
 
 ## Découverte et enrichissement Jeunesse — fixtures conservées, plugins retirés
 
-Le manifeste des JDD spécialisés est en **version 4** ; les profils
+Le manifeste des JDD spécialisés est en **version 5** ; les profils
 `ux-small`, `ux-all`, `ux-errors` peuvent régénérer les fixtures
 `youth-discovery.json` et `youth-enrichment.json`, proposées par le service
 éditorial local (`GET /youth/discovery.json` et `GET /youth/enrichment.json`).
@@ -159,3 +159,17 @@ HTML testent `transport.http`. Les tests sont dans
 Les scénarios sont **opt-in**, sans impact sur les catalogues des profils
 `ux-small`, `ux-all`, `ux-errors` en mode normal ; les preuves de
 fonctionnement GTK et les vrais fournisseurs ne sont pas vérifiés.
+
+
+## Publication et maintenance — #773
+
+`publication-cases.json` lie les payloads générés à des chemins relatifs
+**fictifs**, trois identités et des attentes de recette : chaîne
+achat A/ADEPT → transfert B → achat indépendant B/ADEPT → transfert C,
+un SHA partagé et huit provenances ; keeper, copie en doublon, profil
+étranger, Outbox, fichier missing, collision, annulation et reprise.
+Aucun chemin de bibliothèque n'est créé par cette fixture et aucun état
+SQLite/droit n'est importé. Les attentes ne sont pas des résultats métier.
+Les preuves métier restent dans les suites #3171/#3275/#3176 et la recette
+GTK reste distincte. Le couple PDF différent illustre deux SHA, pas une
+conversion exécutée.
