@@ -338,12 +338,19 @@ class BnfCatalogueSession(ProviderSession):
             element.text.strip() if element.text is not None and len(element) == 0 else None
             for element in root.findall(f"{{{SRU}}}nextRecordPosition")
         )
+        # Count every recordData (including malformed/nested siblings), but
+        # each ARK only once per data node. An invalid duplicate must not
+        # make a valid sibling look uniquely attested by this SRU page.
+        ark_occurrences: dict[str, int] = {}
+        for data in data_nodes:
+            observed = {
+                match.group(1).lower()
+                for node in data.iter(f"{{{DC}}}identifier")
+                if (match := ARK.fullmatch(_text(node).strip())) is not None
+            }
+            for candidate in observed:
+                ark_occurrences[candidate] = ark_occurrences.get(candidate, 0) + 1
         rows = {}
-        # SRU can return the same ARK in multiple record positions. A later
-        # record must not silently replace the first and become the sole
-        # public same-call occurrence of this edition. Quarantine the ARK
-        # for the whole page, including any third occurrence.
-        ambiguous_arks: set[str] = set()
         # Only direct SRU record/recordData children attest an occurrence.
         # A nested/orphan recordData still makes coverage partial, but must
         # never mint a public record or poison a valid sibling's identity.
@@ -370,11 +377,7 @@ class BnfCatalogueSession(ProviderSession):
             if not arks:
                 continue
             ark = next(iter(arks))
-            if ark in ambiguous_arks:
-                continue
-            if ark in rows:
-                del rows[ark]
-                ambiguous_arks.add(ark)
+            if ark_occurrences.get(ark) != 1:
                 continue
             formats = values.get("format", [])
             kinds = values.get("type", [])
