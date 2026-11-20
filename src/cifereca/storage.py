@@ -67,6 +67,7 @@ class Storage:
         self._lock = threading.Lock()
         self._connections_lock = threading.Lock()
         self._connections: set[sqlite3.Connection] = set()
+        self._closed = False
         self._thread_local = threading.local()
         started = time.monotonic()
         _TRACE_LOG.info("TRACE storage init path=%s", self.path)
@@ -2055,31 +2056,46 @@ class Storage:
         open/close + PRAGMA setup cost from the hot paths while preserving the
         existing transaction boundaries.
         """
-        connection = getattr(self._thread_local, "connection", None)
-        if connection is not None:
-            return connection
-        connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
-        connection.execute("PRAGMA busy_timeout=10000")
-        connection.execute("PRAGMA synchronous=NORMAL")
-        self._thread_local.connection = connection
         with self._connections_lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("storage_closed")
+            connection = getattr(self._thread_local, "connection", None)
+            # A reusable close clears every worker's registered handle,
+            # not just the calling thread's thread-local slot.
+            if connection is not None and connection in self._connections:
+                return connection
+            connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+            try:
+                connection.execute("PRAGMA busy_timeout=10000")
+                connection.execute("PRAGMA synchronous=NORMAL")
+            except BaseException:
+                connection.close()
+                raise
+            self._thread_local.connection = connection
             self._connections.add(connection)
-        return connection
+            return connection
 
-    def close(self) -> None:
-        """Close cached connections owned by this Storage instance."""
-        with self._connections_lock:
+    def close(self, *, final: bool = False) -> None:
+        """Drain the active locked transaction before closing its connection.
+
+        Ordinary close keeps historical reusable-storage behavior. Final
+        lifecycle close also refuses late workers/new connections. Do not
+        call close while holding the transaction lock or from a transaction.
+        """
+        with self._lock, self._connections_lock:
+            if final:
+                self._closed = True
             connections = list(self._connections)
             self._connections.clear()
-        for connection in connections:
+            for connection in connections:
+                try:
+                    connection.close()
+                except sqlite3.Error:
+                    pass
             try:
-                connection.close()
-            except sqlite3.Error:
+                del self._thread_local.connection
+            except AttributeError:
                 pass
-        try:
-            del self._thread_local.connection
-        except AttributeError:
-            pass
 
     def cache_get(self, namespace: str, key: str, default: Any = None) -> Any:
         now = int(time.time())
