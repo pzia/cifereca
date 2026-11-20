@@ -256,6 +256,13 @@ _BOOK_DETAIL_STAGES = frozenset({
     "component_open_overflow",
     "component_click_hidden",
     "component_lists",
+    "component_keyboard_start",
+    "component_keyboard_menu",
+    "component_keyboard_hidden",
+    "component_keyboard_activate",
+    "component_keyboard_escape",
+    "component_keyboard_close",
+    "component_keyboard_done",
     "component_identity",
     "component_identity_rendered",
 })
