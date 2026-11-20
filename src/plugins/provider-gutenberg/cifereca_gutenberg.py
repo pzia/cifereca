@@ -435,6 +435,7 @@ class GutenbergSession(ProviderSession):
             link_shapes: list[tuple[str, str, str]] = []
             coordinate_urls: list[str] = []
             public_alternates: set[str] = set()
+            direct_atom_links = set(entry.findall(f"{{{ATOM}}}link"))
             # OPDS is Atom-based, but be tolerant of servers that serialize link
             # elements with a different/no namespace.  The semantic attributes
             # (rel/type/href) are what matter here.
@@ -468,7 +469,7 @@ class GutenbergSession(ProviderSession):
                     friendly = friendly or href
                     coordinate_urls.append(href)
                     # Only direct Atom declarations can attest a web link.
-                    if link in entry.findall(f"{{{ATOM}}}link"):
+                    if link in direct_atom_links:
                         public_alternates.add(href)
                 elif rel == "subsection" and re.search(r"/ebooks/\d+\.opds(?:[/?]|$)", href, re.I):
                     detail_url = detail_url or href
