@@ -243,3 +243,64 @@ def test_malformed_documentary_format_filter_does_not_query(types):
         assert calls == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("alternate", ["exact", "absent", "ambiguous"])
+def test_gutenberg_web_choice_requires_observed_alternate_after_restart(tmp_path, alternate):
+    from cifereca.core.notice_c_web_choices import (
+        read_public_web_choices, resolve_public_web_choice,
+    )
+    from contextlib import closing
+
+    expected = "https://www.gutenberg.org/ebooks/42"
+    entries = ENTRY
+    if alternate == "absent":
+        entries = entries.replace('<link rel="alternate" type="text/html" href="/ebooks/42"/>', "")
+    elif alternate == "ambiguous":
+        entries = entries.replace(
+            "</entry>", '<link rel="alternate" type="text/html" href="https://example.test/other"/></entry>',
+        )
+    session, calls = make_session(entries)
+    filename = tmp_path / "web.sqlite"
+    try:
+        with closing(Storage(filename)) as db:
+            response = session.search_with_response_facets("Exact OPDS book", "catalog")
+            row, = _public_rows_from_response(response, session)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            exact = row._core_notice_cover_document_ref
+            canonical = row._core_notice_canonical_cover_document_ref
+            snapshot = read_consolidated_notice_cover(db, canonical)
+            menu = read_public_web_choices(db, canonical)
+            assert menu.epoch == snapshot.epoch
+            if alternate == "exact":
+                ref, = snapshot.catalogue_web_references
+                choice, = menu.choices
+                assert ref.url == expected
+                assert ref.evidence == session.provider_id + ".public_search_record_identifier"
+                assert ref.provider_id == choice.provider_id == session.provider_id
+                assert ref.record_id == choice.record_id == "42"
+                assert ref.access_mode == "public"
+                assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                                 choice_id=choice.choice_id) == expected
+            else:
+                assert snapshot.catalogue_web_references == menu.choices == ()
+            source = read_notice_cover(db, exact)
+            assert evict_notice_cover(db, exact, expected_epoch=source.epoch)
+            assert db.entitlements() == db.acquisitions() == []
+        with closing(Storage(filename)) as db:
+            assert read_public_web_choices(db, canonical) == menu
+            known, = merge_public_notice_c_known_rows(
+                [], search_public_notice_c(db, "Exact OPDS book", group_by_document=True),
+                identity_id="bob",
+            )
+            assert known["_cover_document_ref"] == canonical
+            if alternate == "exact":
+                assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                                 choice_id=choice.choice_id) == expected
+                assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch + 1,
+                                                 choice_id=choice.choice_id) is None
+            assert db.entitlements() == db.acquisitions() == []
+        assert len(calls) == 1
+    finally:
+        session.close()
