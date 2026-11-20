@@ -104,7 +104,16 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     if field == "author":
         return (_values(row.get("author")) + _attested_author_names(meta.get("authors"))
                 + _bundle_member_values(row, field) + _purchase_catalogue_values(row, field))
+    if field == "publisher":
+        # Explicit field search cannot fall back to all bibliographic fields.
+        return (_values(row.get("publisher")) + _values(meta.get("publisher"))
+                + _purchase_catalogue_values(row, field))
     if field == "isbn":
+        # A retained public C source has no admitted ISBN in this cursor.
+        # The opaque supplier record coordinate is not an ISBN, even when
+        # its digits happen to pass an ISBN checksum.
+        if row.get("source") == "notice_c_public":
+            return []
         return _values(row.get("isbn")) + _values(row.get("item_id")) + _values(meta.get("isbn")) + _values(meta.get("isbns"))
     if field == "subject":
         # The explicit Sujet filter must cover the same known, already
@@ -202,7 +211,8 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _values(meta.get("synopsis")) + _values(search.get("description"))),
         ("publisher", 20, _values(row.get("publisher")) + _values(meta.get("publisher"))
          + _values(search.get("publisher"))),
-        ("identifier", 10, _values(row.get("item_id")) + _values(row.get("isbn"))
+        ("identifier", 10, [] if row.get("source") == "notice_c_public" else
+         _values(row.get("item_id")) + _values(row.get("isbn"))
          + _values(meta.get("isbn")) + _values(meta.get("isbns"))),
         ("language", 5, _values(meta.get("languages")) + _values(meta.get("language"))),
         *((f"public_purchase_{name}", weight, _purchase_catalogue_values(row, name))
@@ -270,8 +280,15 @@ def local_match_explanation(row: Mapping[str, Any], query: str, *, field: str = 
 
 def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
     # Explicit Author/Title/ISBN/... keep their old strict field semantics.
-    if str(field or "all").casefold() == "all":
+    field = str(field or "all").casefold()
+    if field == "all":
         return local_search_evidence(row, query)[0] > 0 if query.strip() else True
+    if row.get("source") == "notice_c_public" and field in {"title", "author", "publisher"}:
+        # The retained C cursor deliberately keeps literal substring
+        # semantics for these explicit fields. Do not reinterpret a C hit
+        # on the local UI pass as a different tokenized search.
+        needle = _fold(query.strip())
+        return bool(needle) and any(needle in _fold(value) for value in _field_values(row, field))
     tokens = [token for token in _fold(query).split() if token]
     if not tokens:
         return True
