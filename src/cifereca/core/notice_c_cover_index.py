@@ -21,7 +21,7 @@ from .covers import CoverCandidate, candidate
 from .notice_c_web_references import (CatalogueWebReference, FIELD as _WEB_FIELD,
     decode_public_web_references, qualified_public_web_source)
 from .notice_cover_repository import (
-    PersistedNoticeCover, _decode as _decode_source,
+    PersistedNoticeCover, _checked_source_state,
     _opaque_key as _source_db_key,
 )
 
@@ -410,12 +410,12 @@ def _persist_consolidated_cover_source_txn(
         raise ValueError("invalid_canonical_cover_source")
 
     key = _db_key(document)
-    original = db.execute(
-        "SELECT value FROM metadata WHERE key=?", (source_key,),
-    ).fetchone()
-    if original is None or _decode_source(
-        original[0], source_document,
-    ) != source:
+    # The source row and its durable CAS fence must agree in the SAME
+    # writer transaction. A readable row alone is not current evidence.
+    original, current, _fence = _checked_source_state(
+        db, source_document, source_key,
+    )
+    if current is None or current != source:
         raise ValueError("stale_canonical_cover_source")
     old = db.execute(
         "SELECT value FROM metadata WHERE key=?", (key,),
