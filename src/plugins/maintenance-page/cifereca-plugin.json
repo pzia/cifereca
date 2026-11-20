@@ -1,0 +1,34 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.maintenance.page",
+    "version": "0.1.0",
+    "name": "Cifereca Maintenance",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.maintenance",
+      "type": "ui.page",
+      "entrypoint": "cifereca_maintenance_page:PLUGIN",
+      "display_name": "Outils",
+      "description": "Conteneur générique des contributions de maintenance.",
+      "version": "0.1.0",
+      "priority": 60,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Présente les outils actifs. Leur admission, confirmation, exécution et sécurité restent prises en charge par le Core.",
+      "capabilities": [
+        "ui.maintenance.page"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "maintenance.page.host"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}
