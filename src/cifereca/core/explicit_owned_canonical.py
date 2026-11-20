@@ -194,24 +194,54 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
             if (len(result) != 1 or result[0].source != key
                     or result[0].status not in {
                         "downloaded", "recovered", "present_attested",
-                    }
-                    or not result[0].artifact_id):
+                    }):
                 raise ValueError("explicit_canonical_delivery_unconfirmed")
-            artifact_id = result[0].artifact_id
-            placements = [
-                row for row in storage.placements()
-                if row.get("identity_id") == target.identity_id
-                and row.get("provider_id") == target.provider_id
-                and row.get("artifact_id") == artifact_id
-                and row.get("state") == "present"
-                and row.get("source_item_id") == target.item_id
-            ]
-            if len(placements) != 1:
-                raise ValueError("explicit_canonical_placement_ambiguous")
-            path = service.local_book_path(
-                placements[0]["placement_id"], identity_id=target.identity_id,
+            # Slots on a legacy Placement no longer carry provider or edition.
+            # Resolve the exact current source via its independent OriginLink
+            # and newly verified physical B, under the same acquisition lease.
+            # A successful commit is never a reason to retry the supplier GET.
+            from .convergence_verified_presence import plan_existing_verified_presence
+            fresh = plan_existing_verified_presence(
+                storage, snapshot, library_root=Path(service.library_dir()),
             )
-            if not isinstance(path, Path) or not path.is_file():
+            if (len(fresh.decisions) != 1 or fresh.decisions[0].source != key
+                    or not fresh.decisions[0].provider_satisfied
+                    or not live_permission(key)):
+                raise ValueError("explicit_canonical_placement_unavailable")
+            outcome = result[0]
+            published_id = outcome.placement_id
+            ids = fresh.decisions[0].placement_ids
+            if published_id:
+                if published_id not in ids or not outcome.artifact_id:
+                    raise ValueError("explicit_canonical_placement_unavailable")
+                ids = (published_id,)
+            placements = []
+            for pid in ids:
+                row = storage.placement_get(pid)
+                if (type(row) is not dict or row.get("placement_id") != pid
+                        or row.get("identity_id") != target.identity_id
+                        or row.get("state") != "present"
+                        or type(row.get("path")) is not str
+                        or type(row.get("artifact_id")) is not str):
+                    raise ValueError("explicit_canonical_placement_unavailable")
+                if ".canonical-delivery" in Path(row["path"]).parts:
+                    continue
+                if not outcome.artifact_id or row["artifact_id"] == outcome.artifact_id:
+                    placements.append(row)
+            # Multiple attested byte-identical copies in this same profile are
+            # equivalent for display only. Different digests remain ambiguous.
+            # No selection, deduplication or provider authority is derived
+            # from an arbitrary folder or filename.
+            if not placements or len({row["artifact_id"] for row in placements}) != 1:
+                raise ValueError("explicit_canonical_placement_ambiguous")
+            placement = min(placements, key=lambda row: row["placement_id"])
+            artifact_id = placement["artifact_id"]
+            path = service.local_book_path(
+                placement["placement_id"], identity_id=target.identity_id,
+            )
+            if (not isinstance(path, Path) or not path.is_file()
+                    or storage.placement_get(placement["placement_id"]) != placement
+                    or not live_permission(key)):
                 raise ValueError("explicit_canonical_placement_unavailable")
             acquired = Acquisition(
                 provider_id=target.provider_id, credential_id=target.credential_id,
