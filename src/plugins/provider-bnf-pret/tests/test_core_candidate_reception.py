@@ -57,7 +57,12 @@ def adapter(tmp_path, monkeypatch):
                     == (provider, credential, borrower)
             ) else (None, "adept_borrower_ambiguous")
         ),
-        _adept_profile_row=lambda _reference, _profiles: None,
+        adept_profiles_for_identity=lambda i, *, profile_name: (
+            [{"name": "borrower-adobe", "profile_id": "synthetic-adobe-profile-id",
+              "fetch_capable": True, "provisioning": {"acsm_fetch_ready": True}}]
+            if i == identity and profile_name == "borrower-adobe" else []
+        ),
+        _adept_profile_row=lambda _reference, rows: rows[0] if rows else None,
         resolve_adept_profile_for_identity=lambda i: ("borrower-adobe", "configured"),
         _originating_adept_profile_id=lambda i, p: "synthetic-adobe-profile-id",
     )
