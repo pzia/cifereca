@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 import re
-from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlsplit
 from xml.etree import ElementTree as ET
 
 BOOK_HOST = "www.biblioaccess.com"
@@ -29,14 +29,14 @@ _ADEPT = "http://ns.adobe.com/adept"
 def _parts(url: str):
     if type(url) is not str or not url or url != url.strip():
         return None
-    if any(ord(ch) < 32 or ch == "\\"
+    if any(ch.isspace() or ord(ch) < 32 or ch == "\\"
            or ord(ch) == 127 for ch in url):
         return None
     try:
         parts = urlsplit(url)
         if (parts.scheme != "https" or parts.hostname != BOOK_HOST
-                or parts.port not in (None, 443) or parts.username
-                or parts.password or parts.fragment):
+                or parts.port not in (None, 443) or parts.username is not None
+                or parts.password is not None or parts.fragment):
             return None
         return parts
     except ValueError:
@@ -92,7 +92,24 @@ def book_id_from_url(url: str) -> str | None:
     if parts is None or parts.query:
         return None
     match = _BOOK_PATH.fullmatch(parts.path)
-    return match.group(1) if match else None
+    if match is None:
+        return None
+    # The optional slug is descriptive, but may not change the exact
+    # route or book coordinate after URL/server decoding. Accept ordinary
+    # UTF-8 escapes in a slug, not a second layer of escaping, encoded
+    # separators, matrix parameters, dot segments or acquisition files.
+    slug = parts.path[len("/1409/Catalog/Book/") + len(match.group(1)):].strip("/")
+    if re.search(r"%(?![0-9a-fA-F]{2})", slug):
+        return None
+    try:
+        decoded = unquote(slug, errors="strict")
+    except UnicodeError:
+        return None
+    if (decoded in {".", ".."}
+            or any(ch in "/\\?#;%" or ord(ch) < 32 or ord(ch) == 127 for ch in decoded)
+            or decoded.casefold().endswith((".acsm", ".lcpl", ".epub", ".pdf", ".zip"))):
+        return None
+    return match.group(1)
 
 
 @dataclass(frozen=True)
@@ -130,10 +147,20 @@ class _Links(HTMLParser):
         self._book_anchor_text = []
         values = dict(attrs)
         href = values.get("href")
-        if not isinstance(href, str) or not href.strip():
+        if (not isinstance(href, str) or not href
+                or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 or ch == "\\" for ch in href)):
             self._candidate = None
             return
-        link = urljoin(self.page_url, href)
+        # Reject ambiguity before urljoin can remove dot segments or
+        # urlsplit can normalize a malformed href. Never abort the page.
+        try:
+            if any(part in {".", ".."} for part in urlsplit(href).path.split("/")):
+                self._candidate = None
+                return
+            link = urljoin(self.page_url, href)
+        except ValueError:
+            self._candidate = None
+            return
         ident = book_id_from_url(link)
         if ident and ident not in self.book_ids and len(self.book_ids) < 300:
             self.book_ids.append(ident)
