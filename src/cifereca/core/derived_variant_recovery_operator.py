@@ -50,7 +50,10 @@ class _Scope:
             ):
                 return False
             if db is None:
-                return self.storage.exact_profile_directory_binding(self.identity_id) == (self.directory, True)
+                with self.storage._lock:
+                    if self.storage._connect().in_transaction:
+                        return False
+                    return self.storage.exact_profile_directory_binding(self.identity_id) == (self.directory, True)
             # The recovery writer already holds Storage._lock. Never call
             # an ordinary Storage method from this transaction callback.
             return (
