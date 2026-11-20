@@ -65,3 +65,39 @@ def test_seen_again_without_content_change_keeps_exact_c_route(tmp_path):
         assert hit.document == canonical.document
         assert hit.observed_at == 100
         assert hit.last_seen_at == 120
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_revision": "foreign-revision"},
+    {"urls": ["https://covers.example.org/foreign.jpg"]},
+    {"state": "missing", "urls": []},
+    {"state": "pending", "urls": []},
+])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_live_c_route_requires_exact_cover_source_proof(tmp_path, changes, grouped):
+    filename = tmp_path / "cover-proof.sqlite"
+    with closing(Storage(filename)) as db:
+        live = persist(db, verified_public(
+            title="Les loups", thumbnail_url="https://covers.example.org/original.jpg",
+        ), at=100)
+        canonical = persist_exact_public_search_cover(db, live)
+        query = dict(now=100, group_by_document=grouped)
+        original, = search_public_notice_c(db, "loups", **query).hits
+        assert original.document == canonical.document
+        with db._lock, db._connect() as sql:
+            key = _db_key(canonical.document)
+            payload = json.loads(sql.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()[0])
+            payload["sources"][live.document.source_key].update(changes)
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (json.dumps(payload), key))
+        assert read_consolidated_notice_cover(db, canonical.document) is not None
+        hit, = search_public_notice_c(db, "loups", **query).hits
+        assert hit.document == live.document
+        assert hit.epoch == live.epoch
+        assert hit.cover_state == "available"
+        assert hit.title == original.title
+    with closing(Storage(filename)) as db:
+        assert search_public_notice_c(db, "loups", **query).hits == (hit,)
+        assert db.entitlements() == [] and db.acquisitions() == []
