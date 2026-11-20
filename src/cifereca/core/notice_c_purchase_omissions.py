@@ -55,6 +55,7 @@ def record_purchase_omissions(storage, snapshot, omissions, candidates, *, conte
             or len(omissions) + len(candidates) > _MAX or not callable(context_current)
             or (permission_current_txn is not None and not callable(permission_current_txn))):
         raise ValueError("invalid_purchase_omission_batch")
+    changed = False
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         if (context_current() is not True or not _allowed_txn(db, snapshot.scope)
@@ -76,13 +77,18 @@ def record_purchase_omissions(storage, snapshot, omissions, candidates, *, conte
                     or proof_for_row(ref, row) != proof):
                 raise ValueError("purchase_omission_source_changed")
             if type(item) is PurchaseEnrichmentCandidate:
-                db.execute("DELETE FROM metadata WHERE key=?", (_key(ref),))
+                removed = db.execute("DELETE FROM metadata WHERE key=?", (_key(ref),))
+                changed |= removed.rowcount == 1
             else:
                 if type(item.reason) is not str or item.reason not in _OMISSION_REASONS:
                     raise ValueError("invalid_purchase_omission_reason")
                 wire = json.dumps({"a": proof, "reason": item.reason}, separators=(",", ":"))
-                db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
-                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (_key(ref), wire))
+                updated = db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
+                                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value "
+                                     "WHERE metadata.value IS NOT excluded.value", (_key(ref), wire))
+                changed |= updated.rowcount == 1
         if (context_current() is not True or not _allowed_txn(db, snapshot.scope)
                 or (permission_current_txn is not None and permission_current_txn(db) is not True)):
             raise ValueError("purchase_omission_context_changed")
+    # Only report after commit and Storage unlock, never an uncommitted hint.
+    return changed

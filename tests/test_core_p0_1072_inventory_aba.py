@@ -176,6 +176,43 @@ def test_omission_handoff_uses_original_runtime_fence_after_a_commit(rig, monkey
                                  (_PREFIX, _PREFIX + "\uffff")).fetchone()
         assert count == int(mode == "qualified")
         assert calls == [] and executor.ready_refs() == ()
+        assert runtime.documentary_revision() == int(mode == "qualified")
+        if mode == "qualified":
+            from cifereca.core.notice_c_purchase_library_projection import _status_txn
+            from cifereca.plugin_api import PurchaseEnrichmentCandidate
+            # An identical same-A omission is idempotent, with no job.
+            observe_canonical_rights_in_sync(service, service.account)
+            assert runtime.documentary_revision() == 1
+            assert calls == [] and executor.ready_refs() == ()
+            with db._lock, db._connect() as sql:
+                assert _status_txn(sql, resource.source, now=100) == (
+                    "direct_locator_unattested", 0,
+                )
+            newer = PurchaseEnrichmentOmission(
+                resource.source, resource.observed_at, "comparison_title_unattested",
+            )
+            service.session.purchase_enrichment_observation = lambda account: PurchaseEnrichmentObservation(
+                inventory, omissions=(newer,))
+            observe_canonical_rights_in_sync(service, service.account)
+            assert runtime.documentary_revision() == 2
+            with db._lock, db._connect() as sql:
+                assert _status_txn(sql, resource.source, now=100) == (
+                    "comparison_title_unattested", 0,
+                )
+            # A candidate clears the receipt before its separate handoff.
+            # The existing wake is intercepted, so no worker/GET occurs.
+            candidate = PurchaseEnrichmentCandidate(
+                resource.source, "https://catalog.example.org/product/123",
+                "Titre synthétique", resource.observed_at,
+            )
+            service.session.purchase_enrichment_observation = lambda account: PurchaseEnrichmentObservation(
+                inventory, (candidate,))
+            observe_canonical_rights_in_sync(service, service.account)
+            assert runtime.documentary_revision() == 3
+            with db._lock, db._connect() as sql:
+                assert sql.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
+                                   (_PREFIX, _PREFIX + "\uffff")).fetchone() == (0,)
+            assert calls == ["wake"] and len(executor.ready_refs()) == 1
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert not root.exists()
     finally:
