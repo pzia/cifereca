@@ -83,7 +83,7 @@ class GuidedMaintenanceHostLease:
             self._ticket = None
 
 
-def admit_guided_maintenance_host(window, resolved):
+def admit_guided_maintenance_host(window, resolved, *, view_current=None):
     """Capture one mounted view; construction performs no work.
 
     Only inert scope/registry coordinates are checked on workers. GTK
@@ -98,7 +98,9 @@ def admit_guided_maintenance_host(window, resolved):
         epoch = source_context_epoch(service)
         registry = resolved.registry_generation
         plugin_id, plugin = resolved.plugin_id, resolved.service
-        if (type(identity) is not str or not identity or route is None
+        if (type(identity) is not str or not identity
+                or (route is None and view_current is None)
+                or (view_current is not None and not callable(view_current))
                 or type(navigation) is not int or type(registry) is not int
                 or resolved.category_id != "maintenance.tool"):
             return None
@@ -110,7 +112,8 @@ def admit_guided_maintenance_host(window, resolved):
                 and window.runner is runner
                 and service.current_identity is owner and owner.identity_id == identity
                 and window._identity_context_generation == navigation
-                and window._route_display_token is route
+                and (view_current() is True if view_current is not None
+                     else window._route_display_token is route)
                 and source_context_epoch(service) == epoch
                 and manager._registry_generation == registry
                 and manager.service(plugin_id) is plugin

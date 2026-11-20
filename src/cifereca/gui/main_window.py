@@ -695,6 +695,9 @@ class MainWindow(Adw.ApplicationWindow):
     def _dispose_maintenance_lines(self) -> None:
         # All Maintenance rows are widget-scoped. A refresh or identity switch
         # cancels their workers and revokes any pending result display.
+        guided, self._guided_maintenance_disposers = getattr(self, "_guided_maintenance_disposers", ()), []
+        for dispose in guided:
+            dispose()
         for feedback, state in getattr(self, "_maintenance_line_rows", ()):
             feedback.dispose()
             control = state["control"]
@@ -705,7 +708,13 @@ class MainWindow(Adw.ApplicationWindow):
             view.clear()
         self._maintenance_result_views = []
 
-    def _refresh_tools_page(self) -> None:
+    def _refresh_tools_page(self, *, _page_context=None) -> None:
+        # An opted-in page owns refresh and lifecycle; legacy identity or
+        # route notifications cannot rebuild its detached content.
+        if _page_context is None and getattr(self, "_maintenance_mount_owner", None) is not None:
+            return
+        if _page_context is not None and not _page_context.is_current():
+            return
         box = getattr(self, "_tools_box", None)
         if box is None: return
         self._dispose_maintenance_lines()
@@ -723,8 +732,27 @@ class MainWindow(Adw.ApplicationWindow):
             add_library_organizer_line(self, box, Gtk=Gtk, Adw=Adw)
             add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
             return
+        manager = self.plugin_manager
         for resolved in services:
             tool = resolved.service
+
+            def tool_current(r=resolved):
+                if _page_context is None:
+                    return True  # existing native renderer until page cutover
+                return (
+                    not self._closed and self._tools_box is box
+                    and _page_context.is_current()
+                    and self.plugin_manager is manager
+                    and manager.registry_generation == r.registry_generation
+                    and manager.service(r.plugin_id) is r.service
+                )
+
+            if not tool_current():
+                continue
+            if _page_context is not None:
+                from .maintenance_page_mount import mount_guided_tool
+                if mount_guided_tool(self, box, resolved, Gtk=Gtk, view_current=tool_current):
+                    continue
             try: info = tool.describe()
             except Exception:
                 # Provider exceptions can contain account data, URLs or paths.
@@ -758,7 +786,9 @@ class MainWindow(Adw.ApplicationWindow):
             # plugin progress prose remains discarded by the relay.
             activity_label = activity_labels.get(getattr(info, "id", None), "Traitement")
             if activity_label is not None:
-                def line_alive(button=run, scope=line_scope):
+                def line_alive(button=run, scope=line_scope, live=tool_current):
+                    if not live():
+                        return False
                     if self._closed or button.get_root() is None:
                         return False
                     if not scope["active"]:
@@ -775,10 +805,10 @@ class MainWindow(Adw.ApplicationWindow):
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
 
-            def result_alive(button=run, scope=line_scope):
+            def result_alive(button=run, scope=line_scope, live=tool_current):
                 current = self.service.current_identity
                 return (
-                    not self._closed and button.get_root() is not None
+                    live() and not self._closed and button.get_root() is not None
                     and scope["active"]
                     and (current.identity_id if current else None) == scope["identity"]
                     and getattr(self, "_identity_context_generation", None) == scope["generation"]
@@ -805,8 +835,10 @@ class MainWindow(Adw.ApplicationWindow):
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
                 feedback=line_feedback, progress_scope=line_scope,
-                result_view=result_view,
+                result_view=result_view, live=tool_current,
             ):
+                if not live():
+                    return
                 if self._closed or _button.get_root() is None:
                     return
                 result_view.clear()
@@ -852,6 +884,8 @@ class MainWindow(Adw.ApplicationWindow):
                     # TaskRunner records errors in global activity before the
                     # row callback. Sanitize at the worker boundary as well.
                     try:
+                        if not live():
+                            raise MaintenanceCancelledError("Opération de maintenance annulée")
                         result = callback()
                         if feedback is not None and worker_cancel_control is not None:
                             worker_cancel_control.check_cancelled()
@@ -889,7 +923,7 @@ class MainWindow(Adw.ApplicationWindow):
                 if previous_control is not None:
                     previous_control.cancel()
                 planning_control = MaintenanceCancelControl(
-                    owner_closed=lambda: self._closed,
+                    owner_closed=lambda: self._closed or not live(),
                     on_progress=(preview_progress if feedback is not None else None),
                 )
                 cancellation_state["control"] = planning_control
@@ -910,6 +944,8 @@ class MainWindow(Adw.ApplicationWindow):
                     # identity changes or shutdown. Only the current plan may
                     # create a GTK dialog and all widget access stays on GTK.
                     if not finish_preview() or planning_control.cancelled():
+                        return
+                    if not live():
                         return
                     if self._closed or _button.get_root() is None:
                         return
@@ -979,6 +1015,8 @@ class MainWindow(Adw.ApplicationWindow):
                         dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
 
                     def response(_dialog, selected):
+                        if not live():
+                            return
                         if cancellation_state["ticket"] != ticket:
                             return
                         if selected != "run" or self._closed:
@@ -1013,7 +1051,7 @@ class MainWindow(Adw.ApplicationWindow):
                             # not rehash all configured roots for every EPUB
                             # chunk on that worker thread; GTK revalidates at
                             # refresh and terminal publication.
-                            owner_closed=lambda: self._closed,
+                            owner_closed=lambda: self._closed or not live(),
                             on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
@@ -1025,6 +1063,8 @@ class MainWindow(Adw.ApplicationWindow):
                             if cancellation_state["control"] is not worker_control:
                                 return False
                             cancellation_state["control"] = None
+                            if not live():
+                                return False
                             if self._closed or _button.get_root() is None:
                                 return False
                             cancel_button.set_visible(False)
@@ -1123,6 +1163,8 @@ class MainWindow(Adw.ApplicationWindow):
                     kind="maintenance-plan",
                 )
             run.connect("clicked", prepare)
+        if _page_context is not None and (not _page_context.is_current() or self._tools_box is not box):
+            return
         # Keep existing plugin tools in their original order and above the
         # independent Core diagnostics, including on narrow displays.
         add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
