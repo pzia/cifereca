@@ -1030,7 +1030,7 @@ def _opds_items(session,feed,feed_url,*,warnings=None,documentary=False):
     # Count even rejected siblings, so an incomplete or malformed duplicate
     # cannot leave a deceptively unique durable occurrence.
     occurrences=Counter(
-        (node.text or "").strip() for entry in entries for node in entry.findall(ATOM+'id')
+        (node.text or "").strip().casefold() for entry in entries for node in entry.findall(ATOM+'id')
     ) if documentary else None
     for entry in entries:
         # OPDS search responses may mix navigational scopes with acquisition
@@ -1058,9 +1058,9 @@ def _opds_items(session,feed,feed_url,*,warnings=None,documentary=False):
             if (len(ids)!=1 or len(ids[0]) or ids[0].attrib
                     or len(titles)!=1 or len(titles[0])
                     or not re.fullmatch(
-                        r"urn:uuid:(?:[0-9]{1,20}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+                        r"urn:uuid:(?:[0-9]{1,20}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
                         entry_id)
-                    or occurrences[entry_id]!=1):
+                    or occurrences[entry_id.casefold()]!=1):
                 unqualified=True
                 continue
         epub=None; alternate=None; thumbnail=None; formats=set()
@@ -1098,13 +1098,13 @@ def _opds_items(session,feed,feed_url,*,warnings=None,documentary=False):
         if documentary and (bad_documentary_link or not epub or len(html_links)>1):
             unqualified=True
             continue
-        if documentary and entry_id.startswith("urn:uuid:") and entry_id[9:].isdigit():
-            # Numeric COPS coordinates: both explicitly declared routes,
-            # when present, must name the very same entry.
-            number=entry_id[9:]
-            if (urlsplit(epub).path!=f"/index.php/fetch/{number}.epub"
-                    or urlsplit(epub).query
-                    or (alternate and urlsplit(alternate).path!=f"/index.php/book/{number}")):
+        if documentary:
+            # Narrow the declared COPS paths to one exact book coordinate.
+            # No signed/parameterized route, no generated web link.
+            target=re.fullmatch(r"/index\.php/fetch/([0-9]{1,20})\.epub", urlsplit(epub).path)
+            if (not target or urlsplit(epub).query
+                    or (entry_id[9:].isdigit() and target.group(1)!=entry_id[9:])
+                    or (alternate and urlsplit(alternate).path!=f"/index.php/book/{target.group(1)}")):
                 unqualified=True
                 continue
         author_nodes=entry.findall(ATOM+'author')
