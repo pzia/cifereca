@@ -195,10 +195,12 @@ def test_periodic_failed_profile_does_not_starve_other_identities_or_claim_succe
     r.configure()
     assert next(iter(r.records["timers"].values()))()
     assert len(r.jobs) == 1 and attempts == []
-    with pytest.raises(RuntimeError, match="Actualisation des notices des comptes indisponible") as exc:
-        r.jobs[0].work()
+    result = r.jobs[0].work()
     assert attempts == [(identity, "periodic") for identity in ("alice", "bob", "carol")]
-    assert "PRIVATE" not in str(exc.value)
+    assert result.ok is False and result.facts == {
+        "status": "partial", "completed": 2, "failed": 1,
+    }
+    assert "PRIVATE" not in repr(result)
 
 
 def test_due_probe_uses_per_source_interval_and_running_status():

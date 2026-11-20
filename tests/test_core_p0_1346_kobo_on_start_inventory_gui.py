@@ -336,9 +336,11 @@ def test_failed_first_account_is_redacted_and_second_account_still_runs():
         return NS(ok=True)
     r.broker.synchronize_scheduled_inventory = dispatch
     assert startup.dispatch_after_opening(r.window)
-    with pytest.raises(RuntimeError, match="Actualisation initiale des notices des comptes indisponible") as exc:
-        r.jobs[0].work()
-    assert "SECRET" not in str(exc.value)
+    result = r.jobs[0].work()
+    assert result.ok is False and result.facts == {
+        "status": "partial", "completed": 1, "failed": 1,
+    }
+    assert "SECRET" not in repr(result)
     assert [
         c for c in r.records["calls"] if c[0] == "attempt"
     ] == [
