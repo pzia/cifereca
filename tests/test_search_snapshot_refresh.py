@@ -29,6 +29,8 @@ class Page:
         self.count_label = NS(set_label=Mock())
         self.list_stack = NS(set_visible_child_name=Mock())
         self._update_count = Mock()
+        self._replacing_rows = False
+        self._narrow_detail_visible = False
     def splice(self, index, count, rows): self.rows[index:index+count] = rows
 
 
