@@ -74,7 +74,7 @@ def test_failed_profile_inventory_never_becomes_cli_profile_id(tmp_path, scenari
         {"profile_id": "stable-a", "name": "same-reader", "fetch_capable": True},
         {"profile_id": "stable-b", "name": "same-reader", "fetch_capable": True},
     ],
-    [{"profile_id": "stable-a", "name": "bad\\nreader", "fetch_capable": True}],
+    [{"profile_id": "stable-a", "name": "bad\nreader", "fetch_capable": True}],
 ])
 def test_unresolved_or_ambiguous_binding_never_falls_back_to_cli_id(tmp_path, rows):
     service = _service(tmp_path)
