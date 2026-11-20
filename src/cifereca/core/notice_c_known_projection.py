@@ -45,10 +45,25 @@ def known_public_primary_facts(row):
             or hit.provider_id != row.get("provider_id")
             or hit.record_id != row.get("item_id")
             or hit.title != row.get("title")
+            or type(meta.get("notice_c_epoch")) is not int
             or hit.epoch != meta.get("notice_c_epoch")
             or not is_notice_cover_document(hit.document)):
         return None
     return hit
+
+
+
+def known_public_alternative_facts(row):
+    """Reuse the already sealed source-group packet, never serialized alternatives."""
+    from .notice_c_loaded_filter import _sources
+
+    primary = known_public_primary_facts(row)
+    if primary is None:
+        return ()
+    hits = _sources(row)
+    if not hits or hits[0] is not primary:
+        return ()
+    return hits[1:]
 
 
 def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None:

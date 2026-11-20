@@ -48,13 +48,61 @@ def known_public_detail_metadata(metadata):
     return facts
 
 
-def known_public_alternative_section(metadata):
+def _alternative_proven_fields(alternative, hit, index, provider):
+    """Only qualify field values tied to the immutable exact source hit."""
+    from datetime import datetime, timezone
+    from ..plugin_api import Provenance
+
+    if hit is None:
+        return {}
+    for name, expected in (("provider_id", hit.provider_id),
+                           ("record_id", hit.record_id),
+                           ("source_revision", hit.source_revision),
+                           ("title", hit.title)):
+        value = alternative.get(name)
+        if type(value) is not type(expected) or value != expected:
+            return {}
+    try:
+        observed = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError, TypeError):
+        return {}
+    fields = {}
+    for name, label, proof, values in (
+        ("series", "Série", hit.series_relation,
+         [hit.series_relation.label] if hit.series_relation is not None else []),
+        ("languages", "Langue", hit.language_observation,
+         list(hit.language_observation.languages) if hit.language_observation is not None else []),
+    ):
+        supplied = alternative.get(name)
+        if (proof is None or type(supplied) is not list
+                or not 1 <= len(supplied) <= 8
+                or any(type(value) is not str for value in supplied)
+                or supplied != values
+                or _values(supplied, limit=512) != tuple(values)):
+            continue
+        fields[name] = tuple(DetailField(
+            id=f"known-public-alternative-{index}-{name}-{number}",
+            label=f"Source {index} · {provider} · {label}", value=value,
+            provenance=Provenance(
+                source=proof.source + " · " + proof.source_field,
+                provider_id=hit.provider_id, source_id=hit.record_id,
+                observed_at=observed,
+            ),
+        ) for number, value in enumerate(values, 1))
+    return fields
+
+
+def known_public_alternative_section(metadata, *, item=None):
     """Keep a separate passive summary for each matching C source."""
     if not _native_mapping(metadata):
         return None
     alternatives = metadata.get("notice_c_source_alternatives")
     if type(alternatives) is not list or not 1 <= len(alternatives) <= 31:
         return None
+    from ..core.notice_c_known_projection import known_public_alternative_facts
+    hits = known_public_alternative_facts(item)
+    if type(item) is not dict or item.get("metadata") is not metadata or len(hits) != len(alternatives):
+        hits = ()
     fields = []
     for index, alternative in enumerate(alternatives, 2):
         if not _native_mapping(alternative):
@@ -63,8 +111,13 @@ def known_public_alternative_section(metadata):
         if (type(provider) is not str
                 or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", provider)):
             continue
+        proven = _alternative_proven_fields(
+            alternative, hits[index - 2] if hits else None, index, provider,
+        )
         parts = []
         for name, label in _ALTERNATIVE_FIELDS:
+            if name in proven:
+                continue
             values = _values(alternative.get(name), limit=8192)
             if not values:
                 continue
@@ -78,6 +131,8 @@ def known_public_alternative_section(metadata):
                 id=f"known-public-alternative-{index}",
                 label=f"Source {index} · {provider}", value="\n".join(parts),
             ))
+        for name in ("series", "languages"):
+            fields.extend(proven.get(name, ()))
     if not fields:
         return None
     return DetailSection(

@@ -170,3 +170,100 @@ def test_primary_field_provenance_survives_eviction_and_restart(tmp_path):
                        {**item, "metadata": {**meta, "series": ["Other"], "languages": ["fr"]}}):
             assert not any(f.provenance for sec in present(forged).sections for f in sec.fields)
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_alternative_series_and_language_keep_their_own_provenance_after_restart(tmp_path):
+    from cifereca.gui.detail_field_provenance import detail_field_provenance
+
+    path = tmp_path / "two-source-provenance.sqlite"
+    with closing(Storage(path)) as db:
+        sources = []
+        for provider, record, series, language in (
+            ("bnf", "record-a", "Cycle Orion", "ja"),
+            ("numilog-catalog", "record-b", "Cycle Vega", "fr"),
+        ):
+            row = verified_public(source_provider=provider, record_id=record,
+                                  title="Deux séries")
+            common = {"source": provider + ".fixture", "scope": row.scenario,
+                      "freshness": "search_response"}
+            row.metadata = {
+                "series": [series], "languages": [language],
+                "bibliography_evidence": {
+                    "series": {**common, "source_field": "Search.series",
+                               "confidence": "linked_search_relation"},
+                    "languages": {**common, "raw_tags": [language],
+                                  "source_field": "dc.language",
+                                  "confidence": "explicit_record_field"},
+                },
+            }
+            sources.append(persist(db, row))
+        group = shared(db, *sources)
+        for source in sources:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    with closing(Storage(path)) as db:
+        page = search_public_notice_c(db, "Deux séries", group_by_document=True)
+        item, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        assert item["_cover_document_ref"] == group.document
+        meta = item["metadata"]
+        alternative, = meta["notice_c_source_alternatives"]
+        expected_provider = alternative["provider_id"]
+        expected_record = alternative["record_id"]
+
+        def section(row):
+            return known_public_alternative_section(row["metadata"], item=row)
+
+        fields = section(item).fields
+        series, = [f for f in fields if f.label.endswith(" · Série")]
+        language, = [f for f in fields if f.label.endswith(" · Langue")]
+        assert series.value == alternative["series"][0]
+        assert language.value == alternative["languages"][0]
+        assert series.value != meta["series"][0] and language.value != meta["languages"][0]
+        assert series.provenance.provider_id == language.provenance.provider_id == expected_provider
+        assert series.provenance.source_id == language.provenance.source_id == expected_record
+        assert series.provenance.observed_at == language.provenance.observed_at
+        assert "Search.series" in detail_field_provenance(series)
+        assert "dc.language" in detail_field_provenance(language)
+        assert all(f.kind == "text" for f in fields)
+
+        ui = _host()
+        ui._identity_context_generation = 2
+        ui._search_generation = 3
+        ui.service._account_context_epoch = 5
+        ui.service._source_context_epoch = 7
+        ui._populate_local_search([item])
+        mapped, = ui.search_page.show_rows.call_args.args[0]
+        panel = NS(show_presentation=Mock(), empty=Mock())
+        host = NS(_closed=False, _search_detail_request_generation=0,
+                  _cancel_cached_book_details=Mock(),
+                  _search_local_objects={item["key"]: item}, _selected_search_id=None,
+                  service=ui.service, _search_mode="local",
+                  _identity_context_generation=2, _search_generation=3,
+                  search_page=NS(detail=panel, selection=NS(get_selected_item=lambda: mapped)))
+        _detail_selected()(host, mapped)
+        panel.empty.assert_not_called()
+        presentation = panel.show_presentation.call_args.args[0]
+        visible, = [part for part in presentation.sections if part.id == "known-public-alternatives"]
+        assert visible == section(item)
+        assert not presentation.actions and not presentation.links
+
+        def changed(**changes):
+            return {**item, "metadata": {**meta, "notice_c_source_alternatives": [
+                {**alternative, **changes},
+            ]}}
+
+        for forged in (
+            {k: v for k, v in item.items() if k != "_core_notice_c_filter_sources"},
+            {k: v for k, v in item.items() if k != "_core_notice_c_primary_facts"},
+            {**item, "identity_id": "bob"},
+            {**item, "metadata": {**meta, "notice_c_epoch": True}},
+            changed(record_id="different"),
+            changed(provider_id="another"),
+            changed(title="Different title"),
+            changed(series=["Different series"], languages=["en"]),
+        ):
+            assert all(f.provenance is None for f in section(forged).fields)
+        # One modified field does not erase independent evidence on the other.
+        remaining = [f for f in section(changed(series=["Other"])).fields if f.provenance]
+        assert remaining == [language]
+        assert all(f.provenance is None for f in known_public_alternative_section(meta).fields)
+        assert db.entitlements() == [] and db.acquisitions() == []

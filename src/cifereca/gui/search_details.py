@@ -117,7 +117,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 panel.empty("Notice indisponible", "Source documentaire périmée.")
                 return
             presentation = with_known_public_field_provenance(presentation, item)
-            alternatives = known_public_alternative_section(metadata)
+            alternatives = known_public_alternative_section(metadata, item=item)
             if alternatives is not None:
                 presentation = replace(
                     presentation, sections=(*presentation.sections, alternatives),
