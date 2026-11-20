@@ -66,6 +66,37 @@ def _subtitle(value):
                 f'{rc["unobserved_receipts"]} reçus non observés. '
                 "Aucun orphelin supprimable attesté."
             )
+        compact_text = "Traces compactes : capacité indéterminée."
+        compact = value.get("compact")
+        if compact is not None:
+            if (type(compact) is not dict
+                    or compact.get("retirement_authorized") is not False
+                    or compact.get("quota_refund_authorized") is not False):
+                return _FALLBACK
+            if compact.get("status") in ("observed", "partial"):
+                cc = compact["capacity"]
+                n, used = compact["count"], compact["payload_bytes"]
+                exact, unpaired = compact["matched"], compact["unpaired"]
+                if (set(cc) != {"records", "payload_bytes"}
+                        or any(type(k) is not int or not 0 <= k <= 2**74
+                               for k in (n, used, exact, unpaired, *cc.values()))
+                        or n > cc["records"] or used > cc["payload_bytes"]
+                        or exact + unpaired != n
+                        or (compact["status"] == "observed") != (unpaired == 0)
+                        or compact["saturation"] not in ("at_limit", "below_limits")
+                        or (compact["saturation"] == "at_limit") != (
+                            n >= cc["records"] or used >= cc["payload_bytes"])):
+                    return _FALLBACK
+                compact_limit = (" Plafond atteint." if compact["saturation"] == "at_limit"
+                                 else "")
+                compact_text = (
+                    f'Traces compactes : {n}/{cc["records"]} témoins, '
+                    f'{used:,}/{cc["payload_bytes"]:,} octets ; '
+                    f'{exact} rattachés au reçu exact, {unpaired} non rattachés.'
+                    f'{compact_limit} Capacité distincte, aucune retraite attestée.'
+                )
+            elif compact.get("status") != "unavailable":
+                return _FALLBACK
         prefix = "" if value["output_bytes_complete"] else "Au moins "
         return (
             f'Installation : {value["record_count"]}/{cap["records"]} reçus '
@@ -77,7 +108,7 @@ def _subtitle(value):
             f'{value["active_output_bytes"]:,} octets déclarés ; '
             f'{counts["unreadable"]} illisibles et {counts["unbound"]} non rattachables '
             'à l’installation.\n'
-            f'{physical}\\n{region_text} Aucun quota libéré, aucun octet récupérable attesté.'
+            f'{physical}\n{region_text}\n{compact_text} Aucun quota libéré, aucun octet récupérable attesté.'
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         return _FALLBACK

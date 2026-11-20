@@ -9,11 +9,54 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import derived_variant_journal as journal
+from . import derived_variant_compact_receipt as compact
 from .derived_variant_maintenance_review import MaintenanceReviewRequest
 from .derived_variant_recovery_operator import _capture
 from .derived_variant_stock_review import review_derived_staging_stock
 from .derived_variant_region_review import review_derived_private_region
 from .library_sqlite_freshness import sqlite_source_stamp
+
+
+def _compact_snapshot(db):
+    """Independent capacity and exact shadow/original comparison.
+
+    An unpaired compact value is NOT an authoritative retired receipt.
+    Unknown or over-budget stores don't hide the ordinary journal figures.
+    """
+    limits = {"records": compact._MAX_PROOFS, "payload_bytes": compact._MAX_PROOF_TOTAL}
+    try:
+        count, total = compact._measure_compact_in_transaction(db)
+        rows = db.execute(
+            "SELECT key,value FROM metadata WHERE key>=? AND key<? ORDER BY key LIMIT ?",
+            (compact._PREFIX, compact._END, compact._MAX_PROOFS + 1),
+        ).fetchall()
+        matched = 0
+        witnesses = []
+        for key, raw in rows:
+            original_key, original = compact.decode_committed_witness(key, raw)
+            existing = db.execute(
+                "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND ? "
+                "THEN value ELSE NULL END FROM metadata WHERE key=?",
+                (journal._MAX_RECORD_BYTES, original_key),
+            ).fetchone()
+            if existing == (original,):
+                matched += 1
+            witnesses.append((key, journal._receipt_digest(raw)))
+        if len(rows) != count:
+            raise journal.DerivedJournalConflict("derived_compact_snapshot_changed")
+        return tuple(witnesses), {
+            "status": "observed" if matched == count else "partial",
+            "count": count, "payload_bytes": total, "matched": matched,
+            "unpaired": count - matched, "capacity": limits,
+            "saturation": ("at_limit" if count >= limits["records"]
+                           or total >= limits["payload_bytes"] else "below_limits"),
+            "retirement_authorized": False, "quota_refund_authorized": False,
+        }
+    except journal.DerivedJournalConflict:
+        return (), {"status": "unavailable", "count": None,
+                    "payload_bytes": None, "matched": None, "unpaired": None,
+                    "capacity": limits, "saturation": "unknown",
+                    "retirement_authorized": False, "quota_refund_authorized": False}
 
 
 def _snapshot(scope):
@@ -77,7 +120,7 @@ def _snapshot(scope):
                 else:
                     counts["other_bound"] += 1
             return (tuple(witnesses), tuple(sorted(bindings.items())), counts,
-                    total, known_bytes, active_payload, active_bytes)
+                    total, known_bytes, active_payload, active_bytes, _compact_snapshot(db))
 
 
 def read_capacity_review(service, request):
@@ -93,7 +136,8 @@ def read_capacity_review(service, request):
         if stamp is None:
             return None
         snapshot = _snapshot(scope)
-        witnesses, _bindings, counts, payload, known, active_payload, active_bytes = snapshot
+        witnesses, _bindings, counts, payload, known, active_payload, active_bytes, compact_snapshot = snapshot
+        _compact_witnesses, compact_report = compact_snapshot
         # If any row is corrupt, the stock reviewer may fail closed; do not
         # downgrade that outcome to zero measured physical bytes.
         stock = review_derived_staging_stock(
@@ -117,13 +161,14 @@ def read_capacity_review(service, request):
         return {
             "status": "partial" if counts["unreadable"] or counts["unbound"]
                        or stock["status"] != "journal_entries_observed"
-                       or region["status"] != "observed" else "observed",
+                       or region["status"] != "observed"
+                       or compact_report["status"] != "observed" else "observed",
             "counts": counts, "record_count": count, "payload_bytes": payload,
             "known_output_bytes": known,
             "output_bytes_complete": counts["unreadable"] == 0,
             "active_payload_bytes": active_payload, "active_output_bytes": active_bytes,
             "capacity": capacity, "saturation": saturation,
-            "stock": stock, "region": region,
+            "stock": stock, "region": region, "compact": compact_report,
             "admission_authorized": False, "recovery_authorized": False,
             "quota_refund_authorized": False, "destructive_cleanup_allowed": False,
         }
