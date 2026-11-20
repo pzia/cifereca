@@ -96,7 +96,14 @@ def _read(db, document):
     snapshot = _decode(raw[0], document)
     pairs = []
     for source in snapshot.sources:
-        refs = _current_refs(db, source)
+        try:
+            refs = _current_refs(db, source)
+        except ValueError:
+            # A corrupt source observation/fence disqualifies only that
+            # exact contribution. Other sources in the decoded canonical
+            # snapshot still require their own independent current proof.
+            # Do not suppress a corrupt canonical row or SQLite failures.
+            continue
         for ref in refs:
             choice = PublicWebChoice(
                 _choice_id(document, snapshot.epoch, ref), ref.provider_id,
