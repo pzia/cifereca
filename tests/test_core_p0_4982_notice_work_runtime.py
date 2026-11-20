@@ -266,3 +266,94 @@ def test_late_hints_drain_new_durable_work_without_another_external_tick(tmp_pat
         ).sources[0].public_bibliography.title == "Nouveau"
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
     assert runtime.request_tick() is None
+
+
+def _await_progress(runtime, predicate):
+    deadline = monotonic() + 10
+    while monotonic() < deadline:
+        snapshot = runtime.progress_snapshot()
+        if predicate(snapshot):
+            return snapshot
+        Event().wait(.005)
+    pytest.fail("documentary progress callback did not settle")
+
+
+def test_documentary_progress_counts_real_work_and_admission_not_acquisitions(tmp_path):
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        initial = runtime.progress_snapshot()
+        assert initial.workers_submitted == initial.documentary_revision == 0
+        assert initial.scan_active is initial.hint_pending is False
+        first = persist_exact_public_search_cover(
+            core.storage, source(core.storage, "Ancien", 10),
+        )
+        source(core.storage, "Nouveau", 11)
+        ref = request_exact_public_recompute(core.storage, first.document, now=100,
+                                             expected_generation=0)
+        leases = [budget.acquire(priority=int(TaskPriority.METADATA))
+                  for _ in range(3)]
+        try:
+            assert all(lease is not None for lease in leases)
+            assert runtime.request_tick() is None
+            refused = runtime.progress_snapshot()
+            assert refused.admission_refusals == 1
+            assert refused.hint_pending is True and refused.scan_active is False
+            assert refused.workers_submitted == 0
+            assert journal.read_job(core.storage, ref).attempts == 0
+        finally:
+            for lease in leases:
+                if lease is not None:
+                    lease.release()
+
+        scan = runtime.request_tick()
+        assert scan is not None
+        outcome = scan.result(timeout=10)
+        worker, = outcome.handles
+        assert worker.result(timeout=10) == "current"
+        progress = _await_progress(runtime, lambda p: not p.scan_active
+                                   and p.workers_current == 1)
+        assert progress.scans_completed == 1
+        assert progress.rows_examined == outcome.examined
+        assert progress.corrupt_rows == outcome.corrupt
+        assert progress.deferred_scans == int(outcome.deferred)
+        assert progress.workers_submitted == 1
+        assert progress.workers_running_or_queued == 0
+        assert progress.workers_retry == progress.workers_error == 0
+        assert progress.documentary_revision == 1
+        assert journal.read_job(core.storage, ref).state == "current"
+        assert core.storage.acquisitions() == [] and core.storage.entitlements() == []
+        assert initial.workers_submitted == 0  # previous immutable snapshot
+    assert runtime.progress_snapshot() is None
+
+    with open_core(tmp_path, notice_work_admission=SharedTaskAdmission(
+        max_inflight=4, reserve_user_slots=1,
+    )) as core:
+        # Counters are scoped to one runtime, not a durable backlog total.
+        assert core.notice_work.progress_snapshot().workers_submitted == 0
+        assert journal.read_job(core.storage, ref).state == "current"
+
+
+def test_dispatch_scan_failure_does_not_invent_worker_or_document_progress(tmp_path, monkeypatch):
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        def broken(*, control=None):
+            raise ValueError("synthetic scan interruption")
+        original = runtime._pump.tick
+        monkeypatch.setattr(runtime._pump, "tick", broken)
+        scan = runtime.request_tick()
+        assert scan is not None
+        with pytest.raises(ValueError, match="synthetic scan interruption"):
+            scan.result(timeout=10)
+        failed = _await_progress(runtime, lambda p: not p.scan_active and p.scans_failed == 1)
+        assert failed.scans_completed == failed.workers_submitted == 0
+        assert failed.documentary_revision == 0
+        monkeypatch.setattr(runtime._pump, "tick", original)
+        scan = runtime.request_tick()
+        assert scan is not None
+        assert scan.result(timeout=10).handles == ()
+        recovered = _await_progress(runtime, lambda p: not p.scan_active
+                                    and p.scans_completed == 1)
+        assert recovered.scans_failed == 1
+        assert recovered.workers_submitted == recovered.documentary_revision == 0
