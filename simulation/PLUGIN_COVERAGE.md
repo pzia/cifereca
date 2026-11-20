@@ -89,10 +89,11 @@ par `datasetctl` si `[specialized].enabled = true` (profils `ux-small`,
 Les flux RSS et JSON Feed de critique sont désormais **servis par HTTP local** via
 `simulation/editorial/pseudo_editorial_service.py` ; les JSON Jeunesse et
 Constellations sont consultables comme fixtures, mais ne sont **pas des API
-plugins injectées automatiquement**. Les fichiers ne sont pas injectés dans les caches métier,
-ni recettées par le harnais E2E GTK. Elles ne simulent pas les
-pages GUI OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, ni les parcours ADEPT ou PDF/DRM de bout en bout. Lier ces scénarios à des faux services et des tests GUI réels reste
-à faire dans les tickets dédiés.
+plugins injectées automatiquement**. Les fichiers ne sont pas injectés automatiquement dans les caches métier.
+Pour Publication, des consommateurs de recette isolés utilisent effectivement
+ce corpus (voir réception #773 ci-dessous). Ce n'est pas une injection
+automatique dans les parcours GUI OpenLibrary, ni une simulation du
+provisionnement ADEPT ou du DRM de bout en bout.
 
 ## Éditions Milan — HTTP
 
@@ -150,7 +151,7 @@ Il ne s'agit pas d'une validation GTK ni du véritable backend Kobo-Adept.
 
 Le service `transport_failures` est accessible uniquement sur `127.0.0.1:8102` dans les profils `ux-small`, `ux-all`, `ux-errors`. Le vrai `HttpTransport` est testé contre 429/503, timeout, HTML ou MIME incorrect, taille excessive, réponse vide, boucle de redirection et redirection inter-origines supprimant les en-têtes sensibles. Un EPUB fictif permet aussi un téléchargement positif.
 
-Ces tests ne constituent pas un scénario E2E GTK, une annulation de tâche ou une preuve de couverture du cache. Voir `simulation/transport/README.md` et `simulation/tests/test_http_negative_contracts.py`.
+Ces tests ne constituent pas un scénario E2E GTK ni une preuve de couverture du cache. La réception Core #7002 exerce le vrai transport et l'annulation aux frontières de publication ; le contrat transport ne comporte pas d'annulation intra-stream. Voir `simulation/transport/README.md` et `simulation/tests/test_http_negative_contracts.py`.
 
 ## OPDS Gallica/Gutenberg — erreurs de protocole
 
@@ -174,6 +175,26 @@ un SHA partagé et huit provenances ; keeper, copie en doublon, profil
 étranger, Outbox, fichier missing, collision, annulation et reprise.
 Aucun chemin de bibliothèque n'est créé par cette fixture et aucun état
 SQLite/droit n'est importé. Les attentes ne sont pas des résultats métier.
-Les preuves métier restent dans les suites #3171/#3275/#3176 et la recette
-GTK reste distincte. Le couple PDF différent illustre deux SHA, pas une
-conversion exécutée.
+Les attentes seules ne constituent pas une conversion exécutée. Les consommateurs ci-dessous exercent effectivement les moteurs et les contrats Core ; les suites métier #3171/#3275/#3176 restent propriétaires de leurs invariants.
+
+
+### Réception technique #773 — preuves exécutées, distinctes de l'inventaire statique
+
+État des livraisons fusionnées au 20/11/2026. Les tests métier sont réutilisés,
+sans dupliquer les moteurs. Les liens renvoient aux PR et aux runs de leur HEAD
+exact ; le rapport statique ne transforme toujours pas ces références en PASS.
+
+| Domaine | Preuve reçue | Limite / responsabilité |
+|---|---|---|
+| Publication A/B/C | [#6974](https://github.com/pzia/cifereca/pull/6974), `tests/test_core_p0_773_publication_fixture_reception.py` : vraie SQLite, 3 placements, 8 provenances, SHA partagé, achat indépendant et replay | Core #3171/#3275 ; aucune mutation réelle |
+| Maintenance | [#6980](https://github.com/pzia/cifereca/pull/6980), `tests/test_core_p0_773_maintenance_fixture_reception.py` : keeper, chemins interdits, collision, missing et garde physique ; audits couvertures/langues : contrats propres `maintenance-library-audit/tests/test_contract_039.py` et suites Core #3995 | Plugins/Core #3995 : audits documentaires à qualifier séparément ; pas de nettoyage effectif |
+| Optimizer | [#6982](https://github.com/pzia/cifereca/pull/6982), [#6983](https://github.com/pzia/cifereca/pull/6983), [#6995](https://github.com/pzia/cifereca/pull/6995) : vrais moteurs EPUB/PDF et broker/journal durable, refus corrompu/protection fictive, image minimale conservée, géométrie/texte et SHA | Pas de déchiffrement ; profils logiciels ≠ recette sur liseuse |
+| GTK | [#6991](https://github.com/pzia/cifereca/pull/6991), [run 44681285124](https://github.com/pzia/cifereca/actions/runs/44681285124) : optimizer-handoff-1366/1600, vrais clics XTEST, annulation avant worker, erreur et succès EPUB, OriginLink exact | Pas de moteur PDF natif dans le runtime E2E ; PDF reçu hors GTK par #6983 |
+| ADEPT | [#6995](https://github.com/pzia/cifereca/pull/6995), [run 44681814140](https://github.com/pzia/cifereca/actions/runs/44681814140) : harnais simulation exécuté, CLI synthétique sans secrets, absent/incomplet/prêt/sans liseuse/expiré | Runtime Kobo-Adept : ni vrai provisioning ni clé/licence réelle |
+| Transport et reprise | [#7002](https://github.com/pzia/cifereca/pull/7002), [run 44683753015](https://github.com/pzia/cifereca/actions/runs/44683753015), [#7007](https://github.com/pzia/cifereca/pull/7007), [run 44684490811](https://github.com/pzia/cifereca/actions/runs/44684490811) : transport loopback, 429/timeout, annulation après GET/reçu/promotion, réouverture SQLite, EPUB/PDF et aucun GET après reçu durable | Transport Plugins : pas d'annulation intra-stream ni mesure réseau fournisseur |
+| Maintenance et Diagnostics GTK | [run 44683153718](https://github.com/pzia/cifereca/actions/runs/44683153718), HEAD `cb8ffff285dce7a28df5f61c95c90cb2a974b7bd` : verdicts PASS maintenance-tools-920/1024/1280/1366/1600/1728, diagnostics-states/structured/volume/navigation/navigation-slow-1366, diagnostics-1366/raw-export-1366/large-1600 | Fixtures GUI propres, pas le corpus Publication injecté ; propriétaire Diagnostics/UX, pas de preuve terrain de latence |
+
+La nouvelle recette `test_p0_773_generated_device_profiles.py` vérifie le
+même corpus EPUB + PDF texte/scan avec Xteink X3/X4, Clara BW et générique,
+sans matériel, et exige le profil exact, l'intégrité des sources et les
+invariants de document. Sa réception dépend de sa propre CI.
