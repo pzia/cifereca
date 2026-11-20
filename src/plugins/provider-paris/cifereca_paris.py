@@ -1358,6 +1358,18 @@ class ParisProviderSession(ProviderSession):
             ))
             for item in result_rows
         )
+        # A genuinely anonymous producer can publish the sanitized object
+        # itself. Core requires same-object evidence to persist Notice C.
+        # A credential-bound session keeps its independent declaration and
+        # must never be relabelled as an anonymous installation source.
+        if (self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials
+                and type(self._accounts) is list and not self._accounts):
+            result_rows = [
+                replace(notice.result, source_collection="public_catalog")
+                for notice in public_notices
+            ]
+            public_notices = tuple(PublicSearchNotice(row) for row in result_rows)
         return ProviderSearchResponse(
             result_rows, projected, partial=bool(warnings),
             public_notices=public_notices,
