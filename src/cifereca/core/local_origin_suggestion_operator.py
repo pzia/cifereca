@@ -36,6 +36,15 @@ def _navigation_epoch(service):
     return epoch
 
 
+def _binding_current(storage, identity, directory):
+    # The binding helper owns a connection context. Never allow a preview
+    # guard to settle an unrelated write already on this worker connection.
+    with storage._lock:
+        if storage._connect().in_transaction:
+            return False
+        return storage.exact_profile_directory_binding(identity) == (directory, True)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LocalOriginSuggestionRequest:
     service: object
@@ -67,7 +76,7 @@ class LocalOriginSuggestionRequest:
                 and s.config is self.config
                 and _root(s.config) == self.root
                 and configured_identity_roots(s.config, self.identity_id)[self.identity_id] == self.roots
-                and s.storage.exact_profile_directory_binding(self.identity_id) == (self.directory, True)
+                and _binding_current(s.storage, self.identity_id, self.directory)
                 and source_context_epoch(s) == self.source_epoch
                 and _navigation_epoch(s) == self.navigation_epoch
             )
