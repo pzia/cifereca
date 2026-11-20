@@ -128,12 +128,30 @@ def _capture_sink(service, runtime, executor, account, private):
                 return None
             if policy[0] is None:
                 return None
-    return make_purchase_enrichment_sink(
+    sink = make_purchase_enrichment_sink(
         executor, private_provider_id=private_id, public_session=public,
         read_response=public.purchase_enrichment_public_response,
         hold_context=hold_context, wake=runtime.request_tick, ttl_seconds=300,
         input_current_txn=permission_current_txn,
     )
+
+    def record_omissions(snapshot, omissions, candidates, *, context_current):
+        # Pin the same private source/session and permission generation as
+        # candidate admission. This does not grant transport or change A.
+        from .notice_c_purchase_omissions import record_purchase_omissions
+        if snapshot.scope != scope:
+            raise ValueError("purchase_omission_context_changed")
+        with hold_context() as held:
+            if held is not True:
+                raise ValueError("purchase_omission_context_changed")
+            record_purchase_omissions(
+                storage, snapshot, omissions, candidates,
+                context_current=context_current,
+                permission_current_txn=permission_current_txn,
+            )
+
+    sink.record_omissions = record_omissions
+    return sink
 
 
 def install_purchase_runtime(service, runtime):

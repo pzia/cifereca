@@ -178,6 +178,7 @@ def observe_canonical_rights_in_sync(
         return None
     # The runtime owns the optional composition. Capture the original
     # source before the same-read A observation.
+    explicit_sink = purchase_enrichment_sink is not None
     if purchase_enrichment_sink is None and session is not None:
         factory = getattr(service, "_notice_purchase_sink_factory", None)
         if callable(factory):
@@ -342,11 +343,20 @@ def observe_canonical_rights_in_sync(
     if (candidate_batch or omission_batch) and not cancelled():
         try:
             if current_context() and service.sync_source_enabled(account) is True:
-                from .notice_c_purchase_omissions import record_purchase_omissions
-                record_purchase_omissions(
-                    service.storage, snapshot, tuple(omission_batch), tuple(candidate_batch),
-                    context_current=lambda: not cancelled() and current_context(),
-                )
+                guarded = getattr(purchase_enrichment_sink, "record_omissions", None)
+                if callable(guarded):
+                    guarded(snapshot, tuple(omission_batch), tuple(candidate_batch),
+                            context_current=lambda: not cancelled() and current_context())
+                elif explicit_sink:
+                    # Explicit Core test/embedding seam, not a provider port.
+                    # Production factory must supply its own captured fence.
+                    from .notice_c_purchase_omissions import record_purchase_omissions
+                    record_purchase_omissions(
+                        service.storage, snapshot, tuple(omission_batch), tuple(candidate_batch),
+                        context_current=lambda: not cancelled() and current_context(),
+                    )
+                else:
+                    raise ValueError("purchase_omission_guard_required")
         except Exception:
             # Separate descriptive transaction: never rewrite the successful A.
             _LOG.warning("TRACE purchase enrichment code=omission_record_failed")
