@@ -409,6 +409,57 @@ def _public_recommendation_detail_fields(item: Any) -> tuple[DetailField, ...]:
     return tuple(fields)
 
 
+def _known_source_alternative_fields(item, *, admitted: bool, catalogue_sources):
+    """Passive source-specific facts, only after the exact Core C host gate.
+
+    One bounded row per alternative; no flattened primary bibliography,
+    record/credential IDs, raw provenance payload, URI or new action.
+    """
+    if admitted is not True or not _known_public_c_candidate(item):
+        return ()
+    alternatives = item.metadata.get("notice_c_source_alternatives")
+    if type(alternatives) is not list or not 1 <= len(alternatives) <= 31:
+        return ()
+    if (type(catalogue_sources) is not tuple or len(catalogue_sources) > 128
+            or any(type(value) is not str for value in catalogue_sources)):
+        return ()
+    fields = []
+    labels = (
+        ("title", "Titre"), ("author", "Auteur"), ("publisher", "Éditeur"),
+        ("published_at", "Publication"), ("series", "Série"),
+        ("languages", "Langues"), ("subjects", "Sujets"), ("genres", "Genres"),
+        ("keywords", "Mots-clés"), ("themes", "Thèmes"), ("tags", "Tags"),
+        ("description", "Résumé (extrait)"),
+    )
+    for index, alternative in enumerate(alternatives, 1):
+        if (type(alternative) is not dict or len(alternative) > 64
+                or any(type(key) is not str for key in alternative)):
+            continue
+        provider = alternative.get("provider_id")
+        if (type(provider) is not str
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", provider)
+                or (catalogue_sources and provider not in catalogue_sources)):
+            continue
+        parts = []
+        for name, label in labels:
+            value = alternative.get(name)
+            raw = (value,) if type(value) is str else value if type(value) is list else ()
+            safe = []
+            for candidate in raw[:8]:
+                text = _public_candidate_text(candidate, limit=8192)
+                text = _safe_local_bibliography_value(text, limit=512)
+                if text:
+                    safe.append(text)
+            if safe:
+                parts.append(label + " : " + " ; ".join(safe))
+        if parts:
+            fields.append(DetailField(
+                f"known-public-alternative-{index}",
+                f"Source {index + 1} · {provider}", "\n".join(parts),
+            ))
+    return tuple(fields)
+
+
 # Keep only the query grammar of Core Search's local all-fields filter.
 # Plugin code cannot import cifereca.core.search or its private GTK adapters.
 # Matching is over a bounded projection of already-loaded public values.
@@ -3024,6 +3075,16 @@ class UxRecommendationsView:
                     30,
                 )
             )
+
+        alternative_fields = _known_source_alternative_fields(
+            item, admitted=row_cover_ref is not None,
+            catalogue_sources=catalogue_sources,
+        )
+        if alternative_fields:
+            sections.append(DetailSection(
+                "known-public-alternatives", "Autres descriptions de la même notice",
+                alternative_fields, 34,
+            ))
 
         # Ranks may aggregate editions and accounts from several providers.
         # Show only accountable, originally observed variants. Never display
