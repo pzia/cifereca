@@ -39,3 +39,21 @@ octets logiques publiés et compteurs /proc/self/io si disponibles.
 Les délais incluent la barrière et la queue : aucune comparaison de SLA avec
 la série séquentielle. Corpus synthétique, pas de GTK ni d'I/O physique
 mesurés. Ne pas déduire une identité documentaire du partage N3.
+
+
+## Mesure complémentaire du curseur SQLite C (#1023)
+
+`pytest -s tests/test_core_p0_2435_public_c_cursor_baseline.py`
+mesure 16/256 notices canoniques exactes, moitié correspondantes, huit URL
+partagées, pagination complète des seuls résultats connus (50 par page).
+Trois états : observations live, moitié évincées par CAS, puis toutes
+évincées et nouveau Storage. Neuf parcours par état ; p50/p95/max, CPU
+cumulatif, RSS high-water et I/O du processus. Un passage séparé avec trace
+SQL compte les statements et lectures de fence, sans tracer les valeurs.
+La trace n'est pas active pendant les mesures de latence. Assertions :
+identités C et ordre stables, aucun droit, aucune mutation du curseur.
+Le nombre de lectures fence est une mesure (pas une assertion de
+performance ni une réception de #7123). Comparer avec le même scénario
+après intégration de #7123 ; ne pas attribuer un écart au seul contrôle
+sans exécution comparable. Aucune revendication de bibliothèque réelle,
+de disque froid, de rendu GTK ni de SLA.
