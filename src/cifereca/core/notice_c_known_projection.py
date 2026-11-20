@@ -19,6 +19,36 @@ from .notice_cover_repository import is_notice_cover_document
 from .notice_c_cover_index import _MAX_SOURCES
 
 _MAX = 50
+_PRIMARY_FACT_TOKEN = object()
+_PRIMARY_FACT_FIELD = "_core_notice_c_primary_facts"
+
+
+def known_public_primary_facts(row):
+    """Read the exact Core-created C-source packet, not loose metadata proof.
+
+    A copied/modified metadata mapping cannot acquire a provenance by
+    supplying a provider name, a proof-shaped dict or a DocumentRef alone.
+    The view still owns its existing mapped-row/context/epoch lease.
+    """
+    if type(row) is not dict or row.get("source") != "notice_c_public":
+        return None
+    packet = row.get(_PRIMARY_FACT_FIELD)
+    meta = row.get("metadata")
+    if (type(packet) is not tuple or len(packet) != 3
+            or packet[0] is not _PRIMARY_FACT_TOKEN
+            or packet[1] != row.get("identity_id")
+            or type(packet[2]) is not PublicNoticeCHit
+            or type(meta) is not dict):
+        return None
+    hit = packet[2]
+    if (hit.document != row.get("_cover_document_ref")
+            or hit.provider_id != row.get("provider_id")
+            or hit.record_id != row.get("item_id")
+            or hit.title != row.get("title")
+            or hit.epoch != meta.get("notice_c_epoch")
+            or not is_notice_cover_document(hit.document)):
+        return None
+    return hit
 
 
 def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None:
@@ -160,6 +190,9 @@ def merge_public_notice_c_known_rows(
             },
             "_cover_document_ref": hit.document,
         })
+        # Keep the immutable primary contribution alongside its display
+        # mapping. Never reconstruct per-field provenance from that mapping.
+        rows[-1][_PRIMARY_FACT_FIELD] = (_PRIMARY_FACT_TOKEN, identity_id, hit)
         by_document[hit.document.source_key] = rows[-1]
     from .notice_c_loaded_filter import attach_filter_sources
     for key, group in source_groups.items():
