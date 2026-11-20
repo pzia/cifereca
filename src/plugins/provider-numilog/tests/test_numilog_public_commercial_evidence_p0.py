@@ -45,7 +45,7 @@ def commercial_row():
     return replace(
         card,
         title=observed()["fields"]["title"], friendly_url=URL,
-        record_id="numilog:public:1171334", source_provider="numilog-catalog",
+        id="numilog:public:1171334", record_id="numilog:public:1171334", source_provider="numilog-catalog",
         metadata={"source_url": SOURCE, "source_item_id": "1171334"},
     )
 
