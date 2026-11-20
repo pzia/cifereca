@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 import pytest
 
@@ -116,6 +117,11 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
 
     service.adept_profiles_for_identity = inventory
     service._adept_profile_row = lambda _ref, rows: rows[0] if len(rows) == 1 else None
+    service._plugin_manager = NS(registry_generation=1)
+    ready_runtime = NS(preflight_acsm_profile=lambda name: name == "borrower-profile")
+    service._required_plugin_service = lambda pid: (
+        ready_runtime if pid == "runtime.kobo-adept" else None
+    )
 
     # A second content request, including an old mutating ASSARedirect, would
     # fail immediately. The read-only selected offer is already attested.

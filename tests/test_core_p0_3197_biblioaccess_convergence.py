@@ -68,6 +68,14 @@ def test_biblioaccess_core_canonical_convergence(
             {"name": "synthetic-adobe", "fetch_capable": True},
         ]
         service._adept_profile_row = lambda _name, rows: rows[0]
+        # Exercise real Core negative preflight on the installed service.
+        from types import SimpleNamespace as NS
+        manager = NS(registry_generation=3)
+        fresh_runtime = NS(preflight_acsm_profile=lambda name: name == "synthetic-adobe")
+        service._plugin_manager = manager
+        service._required_plugin_service = lambda pid: (
+            fresh_runtime if pid == "runtime.kobo-adept" else None
+        )
         calls = []
         policy = (None if scenario == "unset" else set_source_sync_consent(
             service, account, enabled=scenario != "off", expected_revision=None,

@@ -33,6 +33,7 @@ from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
 from .canonical_adept_attempt import begin_loan_adept_attempt, pending_loan_adept_attempt
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
+from .adept_runtime_preflight import require_fresh_acsm_capability
 from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
 from .source_convergence import SourceKey
 
@@ -318,8 +319,15 @@ def complete_selected_delivery(
     runtime_used = [False]
     adept_attempt_id = [""]
 
-    def mark_adept_attempt():
+    def mark_adept_attempt(profile_name: str):
         if source.kind == "loan":
+            require_borrower()
+            # No cached UI readiness and no durable marker before this
+            # exact, scoped, read-only installed-runtime capability veto.
+            require_fresh_acsm_capability(
+                service, profile_name,
+                scope_current=lambda: borrower_current() is True and current() is True,
+            )
             require_borrower()
             adept_attempt_id[0] = begin_loan_adept_attempt(
                 storage, source=source, offer_id=offer.delivery_offer_id,
@@ -364,7 +372,7 @@ def complete_selected_delivery(
         require_borrower()
         runtime_used[0] = True
         if expected_adept is not None:
-            mark_adept_attempt()
+            mark_adept_attempt(expected_adept[0])
             require_adept_profile(*expected_adept)
         result = service.execute_acquisition_request(request)
         require_borrower()
@@ -542,7 +550,7 @@ def complete_selected_delivery(
                 "options": {"force": False},
             }
             require_adept_profile(profile, profile_id)
-            mark_adept_attempt()
+            mark_adept_attempt(profile)
             require_adept_profile(profile, profile_id)
             result = service.execute_acquisition_request(request)
             require_adept_profile(profile, profile_id)
