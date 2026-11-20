@@ -17,7 +17,8 @@ from tests.test_core_p1_4662_live_lender_preview import harness
 from tests.test_core_p1_4988_normal_lender_borrow import setup, facade_execute
 
 
-@pytest.mark.parametrize("scenario", ["collision", "sqlite_crash", "revoked", "changed_bytes"])
+@pytest.mark.parametrize("scenario", ["collision", "sqlite_crash", "revoked", "changed_bytes",
+                                      "wrong_right", "missing_origin", "wrong_kind"])
 def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, monkeypatch, scenario):
     service, lender, session, notice, candidate, _scope = setup(harness)
     reader = service.current_identity
@@ -86,6 +87,28 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
     again = service.resolve_cross_profile_lender_placement(**scope)
     assert again.status == "present" and again._placement_id == published.placement_id
     exact = dict(lender_placement_id=published.placement_id, **scope)
+    if scenario in {"wrong_right", "missing_origin", "wrong_kind"}:
+        # Poison the legacy hints to appear exact: a typed reference still
+        # takes precedence. Missing proof is not a reason to use these hints.
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE placements SET provider_id=?,source_item_id=? WHERE placement_id=?",
+                        (lender.provider_id, notice.record_id, published.placement_id))
+            if scenario == "missing_origin":
+                sql.execute("DELETE FROM origin_links WHERE source_reference_id=?",
+                            (published.source_reference_id,))
+            elif scenario == "wrong_kind":
+                sql.execute("UPDATE source_references SET reference_kind='purchase' WHERE source_reference_id=?",
+                            (published.source_reference_id,))
+            else:
+                sql.execute("UPDATE source_references SET right_id='other-loan' WHERE source_reference_id=?",
+                            (published.source_reference_id,))
+        assert service.resolve_cross_profile_lender_placement(**scope).status == "unavailable"
+        assert service.preflight_cross_profile_loan_transfer(**exact).transfer == "blocked"
+        denied = service.send_cross_profile_borrowed_placement(confirmed=True, **exact)
+        assert denied["status"] == "blocked" and denied["retry_borrow"] is False
+        assert len(db.placements()) == 1 and db.loan_borrow_state(key) == receipt
+        assert session.actions == 1 and src.read_bytes() == fixture.read_bytes() == payload
+        return
 
     def capture(confirmed=True):
         return service.capture_admitted_lender_local_copy(confirmed=confirmed, **exact)
