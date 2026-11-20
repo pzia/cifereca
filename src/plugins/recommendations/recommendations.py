@@ -427,7 +427,8 @@ def _known_source_alternative_fields(item, *, admitted: bool, catalogue_sources)
     labels = (
         ("title", "Titre"), ("author", "Auteur"), ("publisher", "Éditeur"),
         ("published_at", "Publication"), ("series", "Série"),
-        ("languages", "Langues"), ("subjects", "Sujets"), ("genres", "Genres"),
+        ("languages", "Langues"), ("subjects", "Sujets"), ("subject", "Sujet"),
+        ("genres", "Genres"), ("genre", "Genre"),
         ("keywords", "Mots-clés"), ("themes", "Thèmes"), ("tags", "Tags"),
         ("description", "Résumé (extrait)"),
     )
@@ -444,14 +445,19 @@ def _known_source_alternative_fields(item, *, admitted: bool, catalogue_sources)
         for name, label in labels:
             value = alternative.get(name)
             raw = (value,) if type(value) is str else value if type(value) is list else ()
+            if len(raw) > 32:
+                continue
             safe = []
-            for candidate in raw[:8]:
+            for candidate in raw:
                 text = _public_candidate_text(candidate, limit=8192)
-                text = _safe_local_bibliography_value(text, limit=512)
-                if text:
-                    safe.append(text)
+                checked = _safe_local_bibliography_value(text, limit=512)
+                if checked:
+                    safe.append(checked + ("…" if len(text) > 512 else ""))
             if safe:
-                parts.append(label + " : " + " ; ".join(safe))
+                excerpts = safe[:8]
+                if len(safe) > 8:
+                    excerpts.append("…")
+                parts.append(label + " : " + " ; ".join(excerpts))
         if parts:
             fields.append(DetailField(
                 f"known-public-alternative-{index}",
