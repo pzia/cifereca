@@ -222,7 +222,10 @@ def test_sru_record_loss_is_not_a_clean_catalogue_window(monkeypatch, defect):
     try:
         page = session.search_with_response_facets("Les loups")
         assert page.partial is True and page.catalogue_complete is None
-        assert len(page.results) == len(page.public_notices) == 1
+        # A duplicate ARK from two different SRU record positions is not
+        # a unique public occurrence, even when the overwritten row agrees.
+        expected = 0 if defect == "duplicate" else 1
+        assert len(page.results) == len(page.public_notices) == expected
         assert len(calls) == 1
     finally:
         session.close()
@@ -291,5 +294,58 @@ def test_language_proof_only_for_entire_explicit_record_declaration(monkeypatch,
             assert declared_public_language_observation(
                 row.metadata, provider_id=row.source_provider, scenario="OTHER",
             ) is None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("variant", ["same_title", "conflicting_title", "three_duplicates", "valid_sibling"])
+def test_duplicate_sru_ark_is_quarantined_for_whole_page(monkeypatch, variant):
+    """#3724: deduplication by ARK is not evidence of an exact SRU occurrence."""
+    from xml.etree import ElementTree as ET
+    from cifereca.core.search_orchestration import _public_rows_from_response
+
+    root = ET.fromstring(BODY)
+    ns = "{http://www.loc.gov/zing/srw/}"
+    dc = "{http://purl.org/dc/elements/1.1/}"
+    records = root.find(ns + "records")
+    first = records[0]
+    other = ET.fromstring(ET.tostring(first))
+    if variant == "conflicting_title":
+        other.find(".//" + dc + "title").text = "Another edition"
+    records.append(other)
+
+    if variant in {"three_duplicates", "valid_sibling"}:
+        third = ET.fromstring(ET.tostring(first))
+        if variant == "valid_sibling":
+            third.find(".//" + dc + "identifier").text = (
+                "https://catalogue.bnf.fr/ark:/12148/cb100000005e"
+            )
+            third.find(".//" + dc + "title").text = "Unrelated title"
+        records.append(third)
+
+    root.find(ns + "numberOfRecords").text = str(len(records))
+    body = ET.tostring(root)
+    calls = []
+
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=body, request=request)
+
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        page = session.search_with_response_facets("Les loups")
+        assert page.partial is True and page.catalogue_complete is None
+        expected = ["ark:/12148/cb100000005e"] if variant == "valid_sibling" else []
+        assert [row.record_id for row in page.results] == expected
+        assert [notice.result.record_id for notice in page.public_notices] == expected
+        assert [row.record_id for row in _public_rows_from_response(page, session)] == expected
+        assert len(calls) == 1  # No retry/fetch to resolve an ambiguous record.
+        assert session.last_search_warnings
     finally:
         session.close()
