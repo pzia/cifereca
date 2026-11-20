@@ -207,7 +207,9 @@ def filter_loaded_with_documentary_proofs(
     """
     from cifereca.core.search import filter_loaded_results
 
-    from .notice_c_loaded_filter import expand_filter_sources, collapse_filter_sources
+    from .notice_c_loaded_filter import (
+        expand_filter_sources, collapse_filter_sources, is_expanded_source,
+    )
 
     expanded, originals = expand_filter_sources(rows, scope=scope)
     base = filter_loaded_results(
@@ -225,7 +227,8 @@ def filter_loaded_with_documentary_proofs(
         if classification is None:
             # Historical providers keep precisely the existing filter rules.
             if filter_loaded_results(
-                (row,), "", content_types=content_types, scope=scope,
+                (row,), "", content_types=content_types,
+                scope="all" if is_expanded_source(row) else scope,
             ):
                 out.append(row)
             continue
