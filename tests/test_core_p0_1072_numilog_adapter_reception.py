@@ -29,6 +29,7 @@ from cifereca.plugin_api import Account, from_legacy_rights_snapshot
 from cifereca.storage import Storage
 from cifereca.task_admission import SharedTaskAdmission
 from cifereca.task_runtime import TaskBrokerImpl
+from cifereca.task_queue import TaskPriority
 from tests.test_core_p0_3171_canonical_sync_stage import Service
 from tests.test_core_p0_3171_atomic_publication_v14 import register
 
@@ -44,8 +45,11 @@ def card(lid, href):
             '</td></tr>')
 
 
-@pytest.mark.parametrize("restart_before_worker", (False, True))
-def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkeypatch, restart_before_worker):
+@pytest.mark.parametrize("restart_before_worker,heartbeat", (
+    (False, False), (True, False), (True, True),
+))
+def test_real_numilog_adapters_same_read_automatic_c_and_reopen(
+        tmp_path, monkeypatch, restart_before_worker, heartbeat):
     monkeypatch.syspath_prepend(str(PLUGIN))
     import cifereca_numilog as private_module
     import cifereca_numilog_public_client as public_client
@@ -64,6 +68,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         "isPartOf": {"@type": "BookSeries", "name": "Cycle de recette"},
     }) + '</script>'
     requests = []
+    public_entered, public_release = Event(), Event()
 
     def private_http(request):
         assert request.method == "GET"
@@ -75,6 +80,9 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
     def public_http(request):
         assert request.method == "GET" and str(request.url) == PRODUCT
         assert "cookie" not in request.headers and "authorization" not in request.headers
+        if heartbeat:
+            public_entered.set()
+            assert public_release.wait(10), "test did not release blocked public transport"
         requests.append("detail")
         return httpx.Response(200, text=product,
                               headers={"content-type": "text/html; charset=utf-8"},
@@ -132,10 +140,10 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         stack.callback(runtime.close)
         monkeypatch.setattr(runtime, "request_tick", lambda: wakes.append(True))
         executor = install_purchase_runtime(service, runtime)
-        return db, service, runtime, executor
+        return db, service, runtime, executor, tasks
 
     with ExitStack() as stack:
-        db, service, runtime, executor = start_lifecycle(stack, initial=True)
+        db, service, runtime, executor, tasks = start_lifecycle(stack, initial=True)
         result = observe_canonical_rights_in_sync(service, account,
                                                    snapshot_sink=snapshots.append)
         assert result["observed"] == 2 and result["attested_active"] == 2
@@ -151,7 +159,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
             with db._lock, db._connect() as sql:
                 assert _status_txn(sql, chosen, now=executor._now()) == ("pending", 0)
             stack.close()
-            db, service, runtime, executor = start_lifecycle(stack)
+            db, service, runtime, executor, tasks = start_lifecycle(stack)
             # A durable intent is not authority. No fetch or claim before
             # the replacement runtime receives the fresh same-read inventory.
             assert not executor.ready_refs()
@@ -165,10 +173,43 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
             assert executor.ready_refs()
         prefix = ["inventory"] * (2 if restart_before_worker else 1)
         # The real runtime owns both the purchase work and follow-up aggregate.
+        # In the additional heartbeat variant use the production admitted
+        # dispatcher (the patched sync wake is merely a deterministic hint).
+        # Block the actual public adapter response, not the shared broker.
+        if heartbeat:
+            try:
+                scan = NoticeWorkRuntime.request_tick(runtime)
+                assert scan is not None
+                handles = scan.result(timeout=5).handles
+                assert handles and public_entered.wait(5)
+                assert requests == prefix
+                assert runtime.documentary_revision() >= 1
+                assert read_purchase_descriptive_notice(db, chosen, identity_id=owner) is None
+                with db._lock, db._connect() as sql:
+                    assert _status_txn(sql, chosen, now=executor._now()) == ("running", 1)
+                # A user action completes while the actual HTTP mock is blocked.
+                # This is capacity evidence, not a GUI latency measurement.
+                user = tasks.submit(lambda control: "interactive",
+                                    priority=TaskPriority.USER_ACTION)
+                assert user.result(timeout=5) == "interactive"
+                assert not public_release.is_set()
+            finally:
+                public_release.set()
+            for handle in handles:
+                assert handle.result(timeout=5) == "current"
+
         deadline = monotonic() + 10
         notice = None
         while monotonic() < deadline:
-            for handle in runtime._pump.tick().handles:
+            if heartbeat:
+                scan = NoticeWorkRuntime.request_tick(runtime)
+                if scan is None:
+                    Event().wait(.01)
+                    continue
+                pending = scan.result(timeout=5).handles
+            else:
+                pending = runtime._pump.tick().handles
+            for handle in pending:
                 assert handle.result(timeout=5) == "current"
             notice = read_purchase_descriptive_notice(db, chosen, identity_id=owner)
             if notice is not None:
