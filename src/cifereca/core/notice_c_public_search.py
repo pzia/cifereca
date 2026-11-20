@@ -34,7 +34,7 @@ from .search import filter_loaded_results, local_search_evidence
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
 _STALE_AFTER = 86400
-_FIELDS = frozenset(("all", "title", "author", "publisher", "subject"))
+_FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "language"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
 _BIBLIO_FIELDS = frozenset((
     "schema", "record_id", "docbase", "scenario", "source_collection",
@@ -209,7 +209,7 @@ def _public_observation(
 
 
 def _public_text_score(query, field, title, author, publisher, description,
-                       classification=None):
+                       classification=None, series=None, language=None):
     """Same local relevance for C fields and source labels, without joins."""
     texts = (title, author, publisher, description)
     # SQLite prefilter may see corrupt unadmitted JSON. Bound text before
@@ -217,16 +217,21 @@ def _public_text_score(query, field, title, author, publisher, description,
     if any(value is not None and (type(value) is not str or len(value) > limit)
            for value, limit in zip(texts, (512, 512, 512, 4000))):
         return 0
+    metadata = classification.wire() if classification is not None else {}
+    if series is not None:
+        metadata["series"] = [series.label]
+    if language is not None:
+        metadata["languages"] = list(language.languages)
     if field == "all":
         score, _ = local_search_evidence({
             "title": title, "author": author, "publisher": publisher,
             "description": description,
-            "metadata": classification.wire() if classification is not None else {},
+            "metadata": metadata,
         }, query)
         return score
-    if field == "subject":
-        return int(bool(classification is not None and filter_loaded_results(
-            [{"metadata": classification.wire()}], query, field="subject",
+    if field in {"subject", "series", "language"}:
+        return int(bool(filter_loaded_results(
+            [{"source": "notice_c_public", "metadata": metadata}], query, field=field,
         )))
     selected = {"title": title, "author": author, "publisher": publisher}[field]
     return int(bool(selected) and _fold(query) in _fold(selected))
@@ -234,7 +239,8 @@ def _public_text_score(query, field, title, author, publisher, description,
 
 def _hit_score(record, *, field, query):
     return _public_text_score(query, field, record.title, record.author,
-                              record.publisher, record.description, record.classification)
+                              record.publisher, record.description, record.classification,
+                              record.series_relation, record.language_observation)
 
 
 def _matches_c_format(medium, media_format, content_types):
@@ -275,9 +281,11 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
     columns = ", ".join(
         f"json_extract({raw}, '$.public_bibliography.{name}')"
         for name in ("title", "author", "publisher", "description",
-                     "medium", "media_format", "classification")
-    )
-    def score(title, author, publisher, description, medium, media_format, raw_classification):
+                     "medium", "media_format", "classification", "series_relation",
+                     "language_observation")
+    ) + f", json_extract({raw}, '$.provider')"
+    def score(title, author, publisher, description, medium, media_format,
+              raw_classification, raw_series, raw_language, provider):
         if not _matches_c_format(medium, media_format, content_types):
             return 0
         classification = None
@@ -291,9 +299,26 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
                 return 0
             if classification is None:
                 return 0
+        series = language = None
+        for value, decoder in ((raw_series, decode_public_series_relation),
+                               (raw_language, decode_public_language_observation)):
+            if value is None:
+                continue
+            if type(value) is not str or len(value) > _MAX_BIBLIOGRAPHY_BYTES:
+                return 0
+            try:
+                fact = decoder(json.loads(value), provider_id=provider)
+            except (ValueError, TypeError, RecursionError):
+                return 0
+            if fact is None:
+                return 0
+            if decoder is decode_public_series_relation:
+                series = fact
+            else:
+                language = fact
         return _public_text_score(needle, field, title, author, publisher, description,
-                                  classification)
-    db.create_function("cifereca_c_search_match", 7, score, deterministic=True)
+                                  classification, series, language)
+    db.create_function("cifereca_c_search_match", 10, score, deterministic=True)
     try:
         rows = db.execute(
             "SELECT DISTINCT src.key FROM metadata AS m, "
@@ -310,7 +335,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
              json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        db.create_function("cifereca_c_search_match", 7, None)
+        db.create_function("cifereca_c_search_match", 10, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
 
 
