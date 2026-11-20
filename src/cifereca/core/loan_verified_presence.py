@@ -5,6 +5,7 @@ fulfill. The legacy Loan has no branch field: accept typed evidence only
 when the exact current loan key resolves to one unambiguous branch/reference.
 """
 from pathlib import Path
+from time import monotonic
 
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_recovery import _exact_borrower_bound_in_db
@@ -91,10 +92,12 @@ def canonical_loan_presence(service, loan, identity_id, *, inspector):
         # Conflicting canonical artifacts are not a single exact delivery.
         if len({r[2] for r in copies}) != 1:
             return False
+        remaining = 1024 ** 3
+        deadline = monotonic() + 3
         for _placement, raw, artifact, digest, size in copies:
             if (type(raw) is not str or type(digest) is not str
                     or artifact != "sha256:" + digest or type(size) is not int
-                    or not 0 < size <= 1024 ** 3):
+                    or not 0 < size <= remaining):
                 continue
             path = Path(raw)
             owner = root / directory
@@ -104,6 +107,9 @@ def canonical_loan_presence(service, loan, identity_id, *, inspector):
                     or ordinary_dedup_path_excluded(path, library_root=root,
                         identity_id=identity_id, owner_directory=directory)):
                 continue
+            if monotonic() >= deadline:
+                return False
+            remaining -= size
             try:
                 with _verified_variant_file(path, digest, expected_size=size) as recheck:
                     inspected = inspector(path)
