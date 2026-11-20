@@ -75,7 +75,12 @@ class SpecializedFixturesTests(unittest.TestCase):
             youth = json.loads((a / "youth.json").read_text(encoding="utf-8"))
             self.assertIn("age_boundary_18_no_match", youth["cases"])
             self.assertTrue(any(not record["age_ranges"] for record in youth["records"]))
-            self.assertEqual(len(first["files"]), 14)
+            self.assertEqual(len(first["files"]), 16)
+            self.assertEqual(set(first["files"]), plugin_scenarios.FIXTURE_NAMES)
+            with zipfile.ZipFile(a / "optimizer-protected.epub") as archive:
+                self.assertIn(b"synthetic-unsupported", archive.read("META-INF/encryption.xml"))
+            with zipfile.ZipFile(a / "optimizer-compact.epub") as archive:
+                self.assertEqual(archive.read("OEBPS/cover.png"), plugin_scenarios.minimal_gray_png())
             self.assertEqual(first["version"], plugin_scenarios.SCHEMA_VERSION)
 
     def test_pdf_document_fixtures_have_distinct_payloads_and_valid_offsets(self):
