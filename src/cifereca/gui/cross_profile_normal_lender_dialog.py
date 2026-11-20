@@ -1,7 +1,7 @@
 """#4988: explicit consent for the normal lender path, without copy rights."""
 from __future__ import annotations
 
-from ..core.borrow_for_identity_discovery import PossibleBorrowLender
+from ..core.borrow_for_identity_discovery import possible_lender_matches
 
 
 def present_normal_lender_choice(panel, *, item, rows, current, service,
@@ -12,9 +12,9 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     execute = getattr(service, "execute_normal_lender_borrow_for_current_identity", None)
     if (not callable(execute) or not current()
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
-            or any(type(row) is not PossibleBorrowLender or row._notice is not item
-                   or row.executable is not False or row.supplier_eligibility != "not_verified"
-                   for row in rows)
+            or any(not possible_lender_matches(
+                row, item, requesting_identity_id=identity_id,
+            ) for row in rows)
             or getattr(window, "_cross_profile_borrow_pending", None) is not None):
         return False
     token = object()
@@ -44,7 +44,10 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         nonlocal stage
         if not owns("confirm"):
             return
-        if type(response) is not str or response != "borrow" or not dialog_current():
+        if (type(response) is not str or response != "borrow" or not dialog_current()
+                or not possible_lender_matches(
+                    candidate, item, requesting_identity_id=identity_id,
+                )):
             release()
             return
         stage = "submitted"
@@ -52,7 +55,9 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         def work():
             # No widget reads on the worker. Core revalidates exact candidate,
             # requester object, epochs, lender/session and at-most-once claim.
-            if not route_current():
+            if (not route_current() or not possible_lender_matches(
+                    candidate, item, requesting_identity_id=identity_id,
+                )):
                 return {"status": "blocked"}
             return execute(
                 captured_candidate=candidate, exact_notice=item,
@@ -102,7 +107,9 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             return
         choices = {f"choice-{i}": row for i, row in enumerate(rows)}
         candidate = choices.get(response)
-        if candidate is None:
+        if not possible_lender_matches(
+                candidate, item, requesting_identity_id=identity_id,
+        ):
             release()
             return
         stage = "confirm"

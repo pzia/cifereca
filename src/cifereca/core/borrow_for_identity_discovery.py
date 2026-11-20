@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from ..models import Account, SearchResult
 from ..plugin_api.lending_capabilities import assess_lending_operation
-from .borrow_action_scope import _fields, borrow_claim_key
+from .borrow_action_scope import _fields, _valid_fields, borrow_claim_key
 from .borrow_for_identity_live import _lender_label
 from .borrow_for_identity_preview import _display_account_label
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
@@ -51,6 +51,33 @@ class PossibleBorrowLender:
                 or borrow_claim_key(account, notice) is None):
             raise ValueError("invalid_possible_borrow_lender")
         object.__setattr__(self, "_captured_fields", _fields(account, notice))
+
+
+
+def possible_lender_matches(candidate, notice, *, requesting_identity_id):
+    """Pure check of an already captured inert lender, never permission.
+
+    A notice or account can change in place while a discovery task is queued,
+    or while a chooser is open. An object reference alone is not a receipt.
+    """
+    if (type(candidate) is not PossibleBorrowLender
+            or type(notice) is not SearchResult
+            or candidate._notice is not notice
+            or candidate.executable is not False
+            or candidate.supplier_eligibility != "not_verified"
+            or type(requesting_identity_id) is not str or not requesting_identity_id):
+        return False
+    account = candidate._account
+    if (type(account) is not Account or account.is_primary is not True
+            or type(candidate.lender_identity_id) is not str
+            or candidate.lender_identity_id == requesting_identity_id
+            or type(candidate._captured_fields) is not tuple
+            or not _valid_fields(candidate._captured_fields)):
+        return False
+    fields = _fields(account, notice)
+    return (_valid_fields(fields)
+            and candidate.lender_identity_id == fields[0]
+            and candidate._captured_fields == fields)
 
 
 def discover_possible_borrow_lenders(
@@ -262,4 +289,5 @@ def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLe
     return tuple(visible)
 
 
-__all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders"]
+__all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders",
+           "possible_lender_matches"]
