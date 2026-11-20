@@ -180,6 +180,27 @@ def _source_fingerprint(observation, field_path, inventory_complete):
     return sha256(raw.encode("ascii")).hexdigest()
 
 
+def _is_public_search_v2(observation):
+    return (observation.parser_id == "core.search.public-cover"
+            and observation.parser_version == "2")
+
+
+def _retained_public_search_v2(db, observation, document):
+    # Old fences have only a digest, not the parser version. The exact
+    # independently admitted self C is sufficient positive evidence.
+    # Do not infer it from the URL, title or a foreign canonical group.
+    from .notice_c_cover_index import canonical_cover_document_ref, _db_key, _decode
+    canonical = canonical_cover_document_ref(observation.key.edition_id)
+    raw = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_db_key(canonical),)).fetchone()
+    if raw is None:
+        return False
+    return any(member.source_ref == document.source_key
+               and member.visibility == "public"
+               and member.public_bibliography is not None
+               for member in _decode(raw[0], canonical).sources)
+
+
 def _read_source_fence(db, key):
     row = db.execute("SELECT value FROM metadata WHERE key=?",
                      (_fence_key(key),)).fetchone()
@@ -191,10 +212,11 @@ def _read_source_fence(db, key):
             raise ValueError
         fence = json.loads(raw, object_pairs_hook=_unique_object)
         if (type(fence) is not dict
-                or set(fence) not in (
+                or (set(fence) - {"public_search_v2"}) not in (
                     {"epoch", "last_seen_at", "proof"},
                     {"epoch", "last_seen_at", "proof", "evicted"},
                 )
+                or ("public_search_v2" in fence and fence["public_search_v2"] is not True)
                 or ("evicted" in fence and (
                     fence["evicted"] is not True or fence.get("epoch", 0) == 1
                 ))
@@ -210,7 +232,8 @@ def _read_source_fence(db, key):
     return fence
 
 
-def _write_source_fence(db, key, *, epoch, seen_at, proof, evicted=False):
+def _write_source_fence(db, key, *, epoch, seen_at, proof, evicted=False,
+                        public_search_v2=False):
     if not 1 <= epoch <= _MAX_EPOCH or not 1 <= seen_at <= _MAX_EPOCH:
         raise ValueError("notice_c_source_fence_overflow")
     db.execute(
@@ -219,6 +242,7 @@ def _write_source_fence(db, key, *, epoch, seen_at, proof, evicted=False):
         (_fence_key(key), json.dumps({
             "epoch": epoch, "last_seen_at": seen_at, "proof": proof,
             **({"evicted": True} if evicted else {}),
+            **({"public_search_v2": True} if public_search_v2 else {}),
         }, sort_keys=True, separators=(",", ":"))),
     )
 
@@ -238,6 +262,8 @@ def _checked_source_state(db, document, key):
         if fence is not None and (
             fence.get("evicted") is True or fence["epoch"] != previous.epoch
             or fence["last_seen_at"] != seen_at or fence["proof"] != proof
+            or (fence.get("public_search_v2") is True
+                and not _is_public_search_v2(previous.observation))
         ):
             raise ValueError("notice_c_source_fence_corrupt")
     return row, previous, fence
@@ -301,7 +327,7 @@ def evict_notice_cover(
                 previous.observation, tuple(old_row["field_path"]),
                 old_row["cover_inventory_complete"],
             ),
-            evicted=True,
+            evicted=True, public_search_v2=_is_public_search_v2(previous.observation),
         )
         db.execute("DELETE FROM metadata WHERE key=?", (key,))
         return True
@@ -362,6 +388,14 @@ def _persist_notice_cover_txn(
                     and expected_epoch is None
                     and (qualified or proof != fence["proof"]))):
             raise ValueError("notice_c_persisted_stale_source")
+        # Legacy cache-only parser v1 must not erase an admitted v2
+        # bibliography when the source body is absent. No freshness update:
+        # as with a live downgrade, this is not a new public observation.
+        if (observation.parser_id == "core.search.public-cover"
+                and observation.parser_version == "1"
+                and (fence.get("public_search_v2") is True
+                     or _retained_public_search_v2(db, observation, attribute.document))):
+            return None
         # A newer changed incomplete observation cannot reconstruct the
         # evicted proof. In particular it would shadow the retained complete
         # C in exact-source lookup and search merely because a parser omitted
@@ -374,6 +408,7 @@ def _persist_notice_cover_txn(
                     db, key, epoch=previous_epoch,
                     seen_at=observation.observed_at, proof=fence["proof"],
                     evicted=qualified,
+                    public_search_v2=fence.get("public_search_v2") is True,
                 )
             return None
     elif expected_epoch is not None and expected_epoch != previous_epoch:
@@ -394,7 +429,8 @@ def _persist_notice_cover_txn(
                 _advance_seen_watermark(db, key, existing[0], latest)
             if fence is None or latest > seen_at:
                 _write_source_fence(db, key, epoch=previous_epoch,
-                                    seen_at=latest, proof=old_proof)
+                                    seen_at=latest, proof=old_proof,
+                                    public_search_v2=_is_public_search_v2(old))
             return previous
         # A cache replay or generic cover-only SearchResult is never a new
         # PUBLIC bibliography observation. After a same-call C v2 writer has
@@ -433,7 +469,8 @@ def _persist_notice_cover_txn(
         (key, encoded),
     )
     _write_source_fence(db, key, epoch=epoch,
-                        seen_at=observation.observed_at, proof=proof)
+                        seen_at=observation.observed_at, proof=proof,
+                        public_search_v2=_is_public_search_v2(observation))
     return PersistedNoticeCover(observation, attribute, epoch)
 
 
@@ -455,6 +492,7 @@ def persist_notice_cover(
     A changed partial proof after eviction returns None: the watermark
     advances, no observation is recreated and the retained C stays readable.
     A complete admitted observation can subsequently rehydrate the source.
+    A public Search v1 cache replay cannot supersede known v2 evidence.
     """
     attribute = project_notice_cover_attribute(
         observation, field_path=field_path,
