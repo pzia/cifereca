@@ -563,6 +563,11 @@ def search_public_notice_c(
                         and bib.source_revision == hit.source_revision
                         and bib.title == hit.title
                         and bib.author == hit.author
+                        and bib.publisher == hit.publisher
+                        and bib.media_format == hit.media_format
+                        and bib.description == hit.description
+                        and bib.published_at == hit.published_at
+                        and src.observed_at == hit.observed_at
                         and bib.series_relation == hit.series_relation
                         and bib.language_observation == hit.language_observation
                         and bib.classification == hit.classification):
