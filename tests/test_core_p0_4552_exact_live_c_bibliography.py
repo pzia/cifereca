@@ -101,3 +101,47 @@ def test_live_c_route_requires_exact_cover_source_proof(tmp_path, changes, group
     with closing(Storage(filename)) as db:
         assert search_public_notice_c(db, "loups", **query).hits == (hit,)
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+@pytest.mark.parametrize("damage", ["malformed_fence", "epoch", "proof", "invalid_row"])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_invalid_live_source_does_not_reappear_from_retained_c(tmp_path, damage, grouped):
+    from cifereca.core.notice_cover_repository import _fence_key, _opaque_key
+
+    filename = tmp_path / "invalid-live.sqlite"
+    with closing(Storage(filename)) as db:
+        bad = persist(db, verified_public(record_id="bad-source", title="Les loups"), at=100)
+        good = persist(db, verified_public(record_id="good-source", title="Les loups"), at=100)
+        bad_c = persist_exact_public_search_cover(db, bad)
+        good_c = persist_exact_public_search_cover(db, good)
+        query = dict(now=100, group_by_document=grouped)
+        assert {hit.document for hit in search_public_notice_c(db, "loups", **query).hits} == {
+            bad_c.document, good_c.document,
+        }
+        key = _opaque_key(bad.document)
+        with db._lock, db._connect() as sql:
+            if damage == "invalid_row":
+                sql.execute("UPDATE metadata SET value=? WHERE key=?", ("{", key))
+            else:
+                key = _fence_key(key)
+                fence = json.loads(sql.execute(
+                    "SELECT value FROM metadata WHERE key=?", (key,),
+                ).fetchone()[0])
+                if damage == "malformed_fence":
+                    fence = {}
+                elif damage == "epoch":
+                    fence["epoch"] += 1
+                else:
+                    fence["proof"] = "0" * 64
+                sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                            (json.dumps(fence), key))
+        # Both retained canonical rows still exist. The invalid present
+        # source is not a retention eviction, and must not be replayed.
+        assert read_consolidated_notice_cover(db, bad_c.document) == bad_c
+        page = search_public_notice_c(db, "loups", **query)
+        assert page.known_matches == 1 and page.unindexed_sources >= 1
+        hit, = page.hits
+        assert hit.document == good_c.document
+    with closing(Storage(filename)) as db:
+        assert search_public_notice_c(db, "loups", **query).hits == (hit,)
+        assert db.entitlements() == [] and db.acquisitions() == []
