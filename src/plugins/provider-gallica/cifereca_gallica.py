@@ -893,7 +893,26 @@ class GallicaSession(ProviderSession):
             self.last_search_warnings.append(
                 "partial_results : Gallica : certains formats demandés ne sont pas pris en charge"
             )
-        rows = list({item.id: item for item in rows}.values())
+        # An exact result ID can occur more than once in the selected
+        # branches/page. Do not let arrival order select its title, support,
+        # cover or acquisition offer when the parsed occurrences disagree.
+        # Identical projected rows are harmless repeats. Once conflicting,
+        # the ID remains refused for this response, not just for one pair.
+        by_id = {}
+        conflicts = set()
+        for item in rows:
+            if item.id in conflicts:
+                continue
+            if item.id not in by_id:
+                by_id[item.id] = item
+            elif by_id[item.id] != item:
+                del by_id[item.id]
+                conflicts.add(item.id)
+        rows = list(by_id.values())
+        if conflicts:
+            self.last_search_warnings.append(
+                "partial_results : Gallica : occurrences de notice contradictoires"
+            )
         if errors and not successful_branches:
             # A 401/403 on either independent public branch is not a
             # transport outage and must never authorize Core's stale

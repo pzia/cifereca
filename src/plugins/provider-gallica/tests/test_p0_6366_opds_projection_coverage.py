@@ -64,3 +64,52 @@ def test_opds_projection_coverage_through_public_search(entries, expected, parti
         assert len(calls) == 2
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("change,conflict", [
+    (lambda entry: entry, False),
+    (lambda entry: entry.replace("<title>Book</title>", "<title>Other title</title>"), True),
+    (lambda entry: entry.replace(".epub", ".pdf").replace("application/epub+zip", "application/pdf"), True),
+    (lambda entry: entry.replace(".epub", ".epub?variant=other"), True),
+    (lambda entry: entry.replace("</entry>", '<link rel="http://opds-spec.org/image/thumbnail" href="https://gallica.bnf.fr/cover.jpg"/></entry>'), True),
+])
+def test_repeated_opds_occurrence_never_selects_conflicting_facts(change, conflict):
+    sibling = GOOD.replace("bpt6k5493831p", "bpt6k1279113")
+    calls = []
+    payload = b""
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, content=payload)
+
+    session = GallicaSession(
+        credential_id="gallica-public", label="Gallica", credentials={},
+        options={"include_audio": False}, config={}, diagnostics=Diagnostics(),
+    )
+    session.client.close()
+    session.client = httpx.Client(transport=httpx.MockTransport(respond))
+    session.connect()
+    try:
+        # The third occurrence cannot restore a previously refused ID.
+        for entries in (GOOD + change(GOOD) + GOOD + sibling,
+                        change(GOOD) + GOOD + sibling):
+            payload = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>Test</title>'
+                       + entries + '</feed>').encode()
+            rows = session.search("Doyle", scope="digital", field="title")
+            expected = ["ark:/12148/bpt6k1279113"]
+            if not conflict:
+                expected.insert(0, "ark:/12148/bpt6k5493831p")
+            assert [row.record_id for row in rows] == expected
+            assert session.last_search_warnings == (
+                ["partial_results : Gallica : occurrences de notice contradictoires"]
+                if conflict else []
+            )
+        # Refusal is scoped to the response, not durable across searches.
+        payload = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>Test</title>'
+                   + GOOD + '</feed>').encode()
+        row, = session.search("Doyle", scope="digital", field="title")
+        assert row.record_id == "ark:/12148/bpt6k5493831p"
+        assert session.last_search_warnings == []
+        assert len(calls) == 3
+    finally:
+        session.close()
