@@ -452,3 +452,53 @@ def test_adept_final_directory_synced_while_stage_exists(tmp_path, monkeypatch):
         stage, final, uuid=uuid, ProviderConfigurationError=ProviderConfigurationError,
     )
     assert seen == [True] and result == final and not stage.exists()
+
+
+@pytest.mark.parametrize("same_path", [False, True])
+def test_adept_stage_requires_single_private_link(tmp_path, same_path):
+    """Even identical bytes and inode are not authority to consume a shared stage."""
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    produced = stage / "source.epub"
+    produced.write_bytes(b"PRIVATE SOURCE")
+    other_owner = tmp_path / "another-owner.epub"
+    os.link(produced, other_owner)
+    destination = produced if same_path else tmp_path / "destination.epub"
+    with pytest.raises(ProviderConfigurationError, match="invalide"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert produced.read_bytes() == other_owner.read_bytes() == b"PRIVATE SOURCE"
+    if not same_path:
+        assert not destination.exists()
+    assert not list(tmp_path.glob(".adept-publish-*"))
+
+
+def test_adept_stage_link_added_during_final_commit_refuses(tmp_path, monkeypatch):
+    """A new outside hardlink changes nlink/ctime without altering size or mtime."""
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    produced = stage / "source.epub"
+    produced.write_bytes(b"UNCHANGED CONTENT")
+    destination = tmp_path / "destination.epub"
+    outside = tmp_path / "other-owner.epub"
+    original_link = os.link
+    injected = []
+
+    def attach_other_owner(source, target, **kwargs):
+        if not injected:
+            injected.append(True)
+            original_link(produced, outside)
+        return original_link(source, target, **kwargs)
+
+    monkeypatch.setattr(os, "link", attach_other_owner)
+    with pytest.raises(ProviderConfigurationError, match="modifié"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert injected == [True]
+    assert produced.read_bytes() == outside.read_bytes() == b"UNCHANGED CONTENT"
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".adept-publish-*"))
