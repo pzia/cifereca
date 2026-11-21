@@ -21,7 +21,8 @@
       "help_text": "Prévisualisation par pages et sélection consultative de recommandations. Aucun fichier ni droit modifié.",
       "capabilities": [
         "maintenance.organizer",
-        "maintenance.group.organization"
+        "maintenance.group.organization",
+        "maintenance.link.recovery"
       ],
       "requires": [],
       "recommends": [],
