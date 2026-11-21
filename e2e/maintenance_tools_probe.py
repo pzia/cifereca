@@ -623,6 +623,24 @@ def main():
         assert len(organizer_rows) == 1
         assert "Lecture seule" in organizer_rows[0].get_subtitle()
         report["checks"]["P0_3176_organizer_read_only_row"] = True
+        group_names = ("Organiser la bibliothèque", "Vérifier l’intégrité",
+                       "Qualité documentaire", "Origine et provenance",
+                       "Reprise des opérations", "Stockage et entretien technique")
+        headings = [child.get_first_child().get_text()
+                    for child in walk(w._tools_box) if isinstance(child, Gtk.Box)
+                    and isinstance(child.get_first_child(), Gtk.Label)
+                    and child.get_first_child().get_text() in group_names]
+        assert tuple(headings) == group_names
+        links = [node for node in walk(w._tools_box)
+                 if isinstance(node, Gtk.Button)
+                 and node.get_label() == "Voir : Reprise des opérations"]
+        assert len(links) == 1 and section_contains(links[0], group_names[0])
+        retry_rows = [node for node in walk(w._tools_box)
+                      if isinstance(node, Adw.ActionRow)
+                      and node.get_title() == "Téléchargements à reprendre"]
+        assert len(retry_rows) == 1 and section_contains(retry_rows[0], group_names[4])
+        assert tool.plan_calls == tool.run_calls == 0
+        report["checks"]["P0_7407_six_groups_and_single_contextual_retry"] = True
         origin_rows = [node for node in walk(w._tools_box)
                        if isinstance(node, Adw.ActionRow)
                        and node.get_title() == "Suggestions de provenance — par lots"]
