@@ -82,6 +82,16 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             row[key] = Hostile()
             expanded, originals = expand_filter_sources([row], scope="all")
             assert expanded == [row] and originals == {}
+        from dataclasses import replace
+        packet = primary["_core_notice_c_filter_sources"]
+        for tampered in (
+            (packet[0], Hostile(), *packet[2:]),
+            (*packet[:4], (replace(packet[4][0], provider_id=Hostile()), *packet[4][1:])),
+            (*packet[:4], (replace(packet[4][0], record_id=Hostile()), *packet[4][1:])),
+        ):
+            row = {**primary, "_core_notice_c_filter_sources": tampered}
+            expanded, originals = expand_filter_sources([row], scope="all")
+            assert expanded == [row] and originals == {}
         from cifereca.core.notice_c_loaded_filter import (
             matching_source_label, collapse_filter_sources, is_expanded_source, _MARKER,
         )
