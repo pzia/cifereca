@@ -158,6 +158,38 @@ def test_direct_keeper_advice_rejects_sql_change_during_confirmation(store, tmp_
     assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
 
 
+
+@pytest.mark.parametrize("drift", [
+    "candidate_missing", "candidate_modified", "keeper_modified", "candidate_alias",
+])
+def test_direct_keeper_selection_reverifies_physical_bytes(store, tmp_path, drift):
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    assert len(result["keeper_advice"].eligible) == 1
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is not None
+    candidate = Path(store.placement_get(pair[0].placement_id)["path"])
+    keeper = Path(store.placement_get(pair[1].placement_id)["path"])
+    before = rows(store)
+    if drift == "candidate_missing":
+        candidate.unlink()
+    elif drift == "candidate_modified":
+        candidate.write_bytes(b"modified")
+    elif drift == "keeper_modified":
+        keeper.write_bytes(b"modified")
+    else:
+        candidate.unlink()
+        candidate.symlink_to(keeper)
+    # SQLite and scope are unchanged; only a fresh physical keeper review
+    # detects the loss, including a symlink to the otherwise valid keeper.
+    assert review.sqlite_source_stamp(scope.database) == result["review_anchor"].stamp
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+    assert rows(store) == before
+
+
+
 def test_page_continuation_invalidated_by_sql_or_identity_change(store, tmp_path):
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
