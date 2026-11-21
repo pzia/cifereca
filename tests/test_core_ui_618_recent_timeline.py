@@ -77,5 +77,5 @@ def test_recent_detail_prioritizes_filename_date_and_provenance():
     assert "('Récupéré', acquired)" in source
     assert "('Provenance', provenance)" in source
     assert "provider_display_name" in source
-    assert "provider.capitalize()" in source  # fallback when the provider label is unavailable
+    assert "recent_provider_label(provider, lookup)" in source
     assert "('Chemin', full_path or '—')" in source
