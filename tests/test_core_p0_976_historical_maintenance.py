@@ -143,3 +143,70 @@ def test_native_maintenance_hook_exists_with_or_without_tools():
              and isinstance(node.func, ast.Name)
              and node.func.id == "add_adept_historical_maintenance_line"]
     assert len(calls) == 2
+
+
+def test_hold_review_includes_marker_without_ledger_and_never_unlocks(store, tmp_path):
+    from dataclasses import replace
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.adept_historical_maintenance_line import _display_holds
+    service, source, path, _ = _setup(store, tmp_path)
+    # A distinct loan was observed but never reached a completed receipt.
+    pending, snapshot = new_source(kind="loan", branch="loans", right="pending-loan")
+    persist_attested_source_references(store, snapshot)
+    marker = _value("synthetic-offer", "f" * 32)
+    store.metadata_set(_key(pending), marker)
+    service.execute_acquisition_request = Mock(side_effect=AssertionError("no acquisition"))
+    request = review.admit_historical_review(service)
+    page = review.run_historical_hold_review(service, request)
+    row, = page["rows"]
+    assert row["provider_loan_id"] == pending.right_id
+    assert row["hold_origin"] == "marker_recorded"
+    assert not row["unlock_authorized"] and not page["mutation_authorized"]
+    assert row["replay_proof"] == "not_established"
+    assert "pending-loan" in _display_holds(page) and "non autorisé" in _display_holds(page)
+    assert marker not in repr(page) and "f" * 32 not in _display_holds(page)
+    assert store.metadata_get(_key(pending)) == marker
+    assert path.read_bytes() == BYTES
+    service.execute_acquisition_request.assert_not_called()
+    service._account_context_epoch += 1
+    assert review.run_historical_hold_review(service, request) is None
+
+
+def test_hold_review_pages_and_exact_owner(store, tmp_path):
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    service, source, path, _ = _setup(store, tmp_path)
+    for index in range(5):
+        key, snapshot = new_source(kind="loan", branch="loans", right=f"held-{index}")
+        persist_attested_source_references(store, snapshot)
+        store.metadata_set(_key(key), _value("offer", "a"*32))
+    register(store, "B", "seller", "card-B", account="buyer-B")
+    key, snapshot = new_source("B", credential="card-B", account="buyer-B",
+                               kind="loan", branch="loans", right="foreign-loan")
+    persist_attested_source_references(store, snapshot)
+    store.metadata_set(_key(key), _value("offer", "b"*32))
+    request = review.admit_historical_review(service)
+    first = review.run_historical_hold_review(service, request)
+    second = review.run_historical_hold_review(service, request, offset=first["next_cursor"])
+    assert first["known_holds"] == second["known_holds"] == 5
+    assert first["next_cursor"] == 4 and second["next_cursor"] is None
+    assert {row["provider_loan_id"] for row in first["rows"] + second["rows"]} == {
+        f"held-{index}" for index in range(5)
+    }
+    assert all(not row["unlock_authorized"] for row in first["rows"] + second["rows"])
+
+
+def test_hold_review_nested_transaction_preserves_caller(store, tmp_path):
+    service, _, _, _ = _setup(store, tmp_path)
+    request = review.admit_historical_review(service)
+    db = store._connect()
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT INTO metadata(key,value) VALUES('synthetic.hold.caller','pending')")
+        assert review.run_historical_hold_review(service, request) is None
+        assert db.in_transaction
+        assert db.execute("SELECT value FROM metadata WHERE key='synthetic.hold.caller'").fetchone() == ("pending",)
+    finally:
+        if db.in_transaction:
+            db.rollback()
