@@ -74,19 +74,41 @@ def canonical_loan_presence(service, loan, identity_id, *, inspector):
     if not hasattr(storage, "_lock") or not callable(getattr(storage, "_connect", None)):
         return None
     try:
-        account = loan.source_account_id
-        edition = loan.record_id or loan.id
-        if type(account) is not str or type(edition) is not str or not edition:
+        def coordinates():
+            return (
+                loan.id, loan.record_id, loan.source_provider,
+                loan.source_credential, loan.source_account_id,
+                getattr(loan, "identity_id", None),
+            )
+
+        pinned = coordinates()
+        loan_id, record, provider, credential, account, loan_identity = pinned
+        edition = record or loan_id
+        if (type(account) is not str or type(edition) is not str or not edition
+                or type(loan_id) is not str or not loan_id
+                or (loan_identity is not None and loan_identity != identity_id)):
             return False
-        scope = ProviderRightsScope(identity_id, loan.source_provider,
-                                    loan.source_credential, account)
-        evidence = _snapshot(storage, scope, edition, loan.id)
+        scope = ProviderRightsScope(identity_id, provider, credential, account)
+
+        def source_current():
+            return service.storage is storage and coordinates() == pinned
+
+        evidence = _snapshot(storage, scope, edition, loan_id)
+        if not source_current():
+            return False
         if evidence is None:
             return None
         if not evidence:
             return False
         root = service.library_dir()
         if not isinstance(root, Path) or not root.is_absolute() or root == Path("/"):
+            return False
+
+        def current():
+            return (source_current() and service.library_dir() == root
+                    and source_current())
+
+        if not current():
             return False
         _, directory, copies = evidence
         # Conflicting canonical artifacts are not a single exact delivery.
@@ -107,19 +129,22 @@ def canonical_loan_presence(service, loan, identity_id, *, inspector):
                     or ordinary_dedup_path_excluded(path, library_root=root,
                         identity_id=identity_id, owner_directory=directory)):
                 continue
-            if monotonic() >= deadline:
+            if monotonic() >= deadline or not current():
                 return False
             remaining -= size
             try:
                 with _verified_variant_file(path, digest, expected_size=size) as recheck:
                     inspected = inspector(path)
+                    # Unknown/non-boolean protection is not evidence of
+                    # openable content. No mutable caller or new storage/root
+                    # may inherit a positive local proof from this inspection.
                     if (getattr(inspected, "valid", None) is not True
-                            or getattr(inspected, "protected", None) is True):
+                            or getattr(inspected, "protected", None) is not False):
                         continue
-                    if _snapshot(storage, scope, edition, loan.id) != evidence:
+                    if not current() or _snapshot(storage, scope, edition, loan_id) != evidence:
                         return False
                     recheck()
-                    return True
+                    return current()
             except (OSError, ValueError, RuntimeError, TypeError):
                 continue
         return False
