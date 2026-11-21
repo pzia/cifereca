@@ -443,3 +443,50 @@ def test_unrelated_sqlite_commit_during_hash_does_not_block_exact_source(store, 
     monkeypatch.setattr(module, "_verified_copy", physical)
     assert plan(store, snapshot, tmp_path)[0].provider_satisfied
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("mutation", ["owner_symlink", "nested_symlink", "replace_file",
+                                      "alias_retarget", "stable_alias", "stable_direct"])
+def test_presence_hash_pins_full_owner_path_and_configured_root(tmp_path, monkeypatch, mutation):
+    import hashlib
+    from cifereca.core import convergence_verified_presence as module
+    from cifereca.core import derived_variant_publication as physical
+
+    real = tmp_path / "real"
+    root = tmp_path / "library"
+    path = real / "A" / "nested" / "book.pdf"
+    other = tmp_path / "foreign"
+    foreign = other / "A" / "nested" / "book.pdf"
+    path.parent.mkdir(parents=True)
+    foreign.parent.mkdir(parents=True)
+    path.write_bytes(BYTES)
+    foreign.write_bytes(BYTES)
+    root.symlink_to(real, target_is_directory=True)
+    original = physical.os.read
+    changed = []
+
+    def read(fd, count):
+        block = original(fd, count)
+        if not changed and block == BYTES:
+            changed.append(True)
+            if mutation in ("owner_symlink", "nested_symlink"):
+                directory = real / "A" if mutation == "owner_symlink" else path.parent
+                directory.rename(directory.with_name(directory.name + "-old"))
+                directory.symlink_to(other / "A" if mutation == "owner_symlink"
+                                     else foreign.parent, target_is_directory=True)
+            elif mutation == "replace_file":
+                path.rename(path.with_suffix(".old"))
+                path.write_bytes(BYTES)
+            elif mutation == "alias_retarget":
+                root.unlink()
+                root.symlink_to(other, target_is_directory=True)
+        return block
+
+    monkeypatch.setattr(physical.os, "read", read)
+    config_root = real if mutation == "stable_direct" else root
+    assert module._verified_copy(
+        str(path), root=config_root, owner_directory="A",
+        registered_directories=frozenset({"A"}), size=len(BYTES),
+        sha256=hashlib.sha256(BYTES).hexdigest(),
+    ) is (mutation in ("stable_alias", "stable_direct"))
+    assert changed and foreign.read_bytes() == BYTES
