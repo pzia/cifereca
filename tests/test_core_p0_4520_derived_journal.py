@@ -266,3 +266,35 @@ def test_competing_distinct_reservations_share_one_output_budget(tmp_path, monke
     finally:
         second.close()
         db.close()
+
+
+def test_pending_reservation_blob_receipt_fails_closed_without_mutation(tmp_path):
+    """A SQLite BLOB in the TEXT ledger is not a replayable receipt."""
+    import sqlite3
+
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        original = db.metadata_get(reservation.key)
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (sqlite3.Binary(original.encode("ascii")), reservation.key),
+            )
+        conn = db._connect()
+        conn.execute("BEGIN")
+        try:
+            with pytest.raises(
+                journal.DerivedJournalConflict,
+                match="derived_journal_reservation_changed",
+            ):
+                journal._read_pending_reservation(conn, reservation)
+            assert conn.in_transaction
+        finally:
+            conn.rollback()
+        assert db._connect().execute(
+            "SELECT value FROM metadata WHERE key=?", (reservation.key,),
+        ).fetchone() == (original.encode("ascii"),)
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
