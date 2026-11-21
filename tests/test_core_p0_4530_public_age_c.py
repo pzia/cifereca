@@ -134,6 +134,41 @@ def test_copy_or_late_edit_does_not_mint_same_call_age(tmp_path):
         assert "age_observation" not in snapshot.observation.fields_copy()["search_result"]["public_bibliography"]
 
 
+@pytest.mark.parametrize("invalid", ["no_evidence", "wrong_record", "bad_range", "foreign_type"])
+def test_reused_public_row_cannot_replay_prior_age_after_failed_restamp(tmp_path, invalid):
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    old = verified_same_call_public_age(row)
+    assert old is not None and old.ranges[0].age_min == 12
+    candidate = original()
+    if invalid == "no_evidence":
+        candidate.metadata = {}
+    elif invalid == "wrong_record":
+        candidate.record_id = "unrelated"
+    elif invalid == "bad_range":
+        candidate.metadata["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = True
+    else:
+        candidate = object()
+    # Reused SearchResult object must never retain its previous exact-call
+    # proof when the latest attempt does not qualify; the negative result
+    # must survive the subsequent Core C writer, not merely the filter.
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    with closing(Storage(tmp_path / (invalid + ".sqlite"))) as db:
+        source = persist(db, row)
+        bibliography = source.observation.fields_copy()["search_result"]["public_bibliography"]
+        assert "age_observation" not in bibliography
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+    # Fresh, independently qualified exact evidence can stamp again.
+    stamp_same_call_public_age(row, original())
+    renewed = verified_same_call_public_age(row)
+    assert renewed is not None and renewed.ranges == old.ranges
+
+
 def test_grouped_filter_keeps_age_on_its_own_source_only(tmp_path):
     with closing(Storage(tmp_path / "group.sqlite")) as db:
         a = project(original())
@@ -281,3 +316,71 @@ def test_exact_live_lookup_outside_budget_reapplies_age_predicate(tmp_path, chan
         assert page.known_matches == len(expected)
         assert all(hit.age_observation is not None for hit in page.hits)
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+class _HostileAgeMember:
+    def __hash__(self):
+        return hash("age_min")
+
+    def __eq__(self, other):
+        raise AssertionError("provider age proof equality executed")
+
+
+def test_structured_age_proof_rejects_foreign_keys_before_set_or_get():
+    from cifereca.core.notice_c_public_age import decode_public_age_observation
+
+    source = original()
+    proof = source.metadata["bibliography_evidence"]["youth_age"]
+    params = dict(provider_id=source.source_provider, record_id=source.record_id,
+                  docbase=source.docbase, medium=source.medium,
+                  source_revision=source.revision_id)
+    assert decode_public_age_observation(proof, **params) is not None
+    malformed = dict(proof)
+    malformed["ranges"] = [{_HostileAgeMember(): 12}]
+    assert decode_public_age_observation(malformed, **params) is None
+    assert decode_public_age_observation({
+        _HostileAgeMember(): 12,
+    }, **params) is None
+
+
+def test_reused_age_row_refuses_hostile_source_metadata_and_coordinates():
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    assert verified_same_call_public_age(row) is not None
+    candidate = original()
+    candidate.metadata = {_HostileAgeMember(): "untrusted"}
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    candidate = original()
+    candidate.source_provider = _HostileAgeMember()
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    stamp_same_call_public_age(row, original())
+    assert verified_same_call_public_age(row) is not None
+
+
+@pytest.mark.parametrize("change", ("bound", "range_container", "proof_source"))
+def test_mutated_native_age_receipt_refuses_unsafe_replay_before_wire(change):
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    valid = row._core_same_call_public_age
+    age = valid[2]
+    if change == "bound":
+        damaged = replace(age, ranges=(
+            replace(age.ranges[0], age_min=_HostileAgeMember()),
+        ))
+    elif change == "range_container":
+        damaged = replace(age, ranges=_HostileAgeMember())
+    else:
+        damaged = replace(age, source_field=_HostileAgeMember())
+    row._core_same_call_public_age = (valid[0], valid[1], damaged)
+    assert verified_same_call_public_age(row) is None
+    row._core_same_call_public_age = valid
+    assert verified_same_call_public_age(row) is not None

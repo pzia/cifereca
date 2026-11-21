@@ -33,6 +33,37 @@ def _epoch(value):
     return type(value) is int and 1 <= value < _EPOCH_LIMIT
 
 
+def _native_source_document(document):
+    # Frozen scope DTOs are still mutable through object.__setattr__; a
+    # foreign nested hash/equals must not run when checking duplicate refs.
+    return (type(document) is CoverDocumentScope
+            and all(type(getattr(document, name)) is str
+                    and len(getattr(document, name)) <= 512
+                    and getattr(document, name).isprintable() for name in (
+                "kind", "source_key", "provider_id", "credential_id",
+                "loan_id", "artifact_id", "placement_id",
+            ))
+            and (document.identity_id is None
+                 or (type(document.identity_id) is str
+                     and 0 < len(document.identity_id) <= 512
+                     and document.identity_id.isprintable()))
+            and (document.account_id is None
+                 or (type(document.account_id) is str
+                     and len(document.account_id) <= 512
+                     and document.account_id.isprintable())))
+
+
+def _native_reader_scope(scope, service):
+    # Reject altered Core-only reader leases before touching identity_by_id
+    # (which can hash/compare its argument) or a source-context generation.
+    return (type(scope) is SearchReadScope
+            and scope.service is service
+            and type(scope.identity_id) is str
+            and 0 < len(scope.identity_id) <= 1024
+            and not any(ord(char) in (0, 10, 13) for char in scope.identity_id)
+            and type(scope.source_epoch) is int and scope.source_epoch >= 0)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _Binding:
     document: CoverDocumentScope
@@ -243,10 +274,12 @@ def _read(service, document, bindings):
 
 def read_authenticated_web_choices(service, document, *, reader_scope, source_documents):
     """Read only explicit account-scoped source locators from trusted Core."""
-    if (not is_canonical_cover_document(document)
-            or type(reader_scope) is not SearchReadScope or not reader_scope.current(service)
+    if (not _native_source_document(document)
+            or not is_canonical_cover_document(document)
+            or not _native_reader_scope(reader_scope, service)
+            or not reader_scope.current(service)
             or type(source_documents) is not tuple or not 1 <= len(source_documents) <= 32
-            or any(type(d) is not CoverDocumentScope for d in source_documents)
+            or any(not _native_source_document(d) for d in source_documents)
             or len(set(source_documents)) != len(source_documents)):
         return None
     bindings = tuple(b for doc in sorted(source_documents, key=lambda d: d.source_key)
@@ -268,9 +301,31 @@ def read_authenticated_web_choices(service, document, *, reader_scope, source_do
 
 def resolve_authenticated_web_choice(service, menu, *, choice_id):
     """Explicit click revalidates the original scope, account, session and C."""
+    # The GTK-held menu may have been copied/mutated after Core issued it.
+    # Validate every native collection and member before calling .current()
+    # or comparing a supplied choice id. Foreign equality or callbacks must
+    # not be invoked from an invalid click receipt.
     if (type(menu) is not AuthenticatedWebChoices or menu._witness is not _TOKEN
+            or not _native_source_document(menu.document)
+            or not is_canonical_cover_document(menu.document)
             or not _epoch(menu.epoch) or type(choice_id) is not str
             or re.fullmatch(r"[0-9a-f]{64}", choice_id) is None
+            or not _native_reader_scope(menu._scope, service)
+            or type(menu._bindings) is not tuple
+            or not 1 <= len(menu._bindings) <= 32
+            or any(type(binding) is not _Binding
+                   or not _native_source_document(binding.document)
+                   for binding in menu._bindings)
+            or type(menu.choices) is not tuple
+            or not 1 <= len(menu.choices) <= 256
+            or any(type(choice) is not AuthenticatedWebChoice
+                   or type(choice.choice_id) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", choice.choice_id) is None
+                   or type(choice.provider_id) is not str
+                   or type(choice.label) is not str
+                   or type(choice.access_mode) is not str
+                   or choice.access_mode != "authenticated"
+                   for choice in menu.choices)
             or not menu._scope.current(service)
             or not all(b.current(service, menu._scope) for b in menu._bindings)
             or sum(c.choice_id == choice_id for c in menu.choices) != 1):

@@ -186,13 +186,20 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
     try:
         if not request.bound():
             return None
+        # A ledger page can remain byte-for-byte identical while its
+        # independent source references/branch proof changes during hashing.
+        # The same source-image fence already protects the v1 hold view.
+        stamp = sqlite_source_stamp(request.database)
+        if stamp is None:
+            return None
         observed = _page(request.storage, request.identity, cursor)
         reports = []
         for row in observed[:_PAGE]:
             if not request.bound():
                 return None
             reports.append(_row(request, row, verify_local_bytes))
-        if (not request.bound() or _page(request.storage, request.identity, cursor) != observed
+        if (not request.bound() or sqlite_source_stamp(request.database) != stamp
+                or _page(request.storage, request.identity, cursor) != observed
                 or any(report["acquisition_id"] is None for report in reports)):
             return None
         next_cursor = observed[_PAGE - 1][0] if len(observed) > _PAGE else None
