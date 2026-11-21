@@ -78,6 +78,38 @@ def test_unbound_and_corrupt_receipts_are_not_free_capacity(tmp_path):
         db.close()
 
 
+def test_native_blob_receipt_reports_partial_without_discarding_capacity(tmp_path):
+    """SQLite BLOB is unreadable provenance, not evidence of free capacity."""
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        original = db.metadata_get(reservation.key)
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (original.encode("utf-8"), reservation.key))
+        result = _read(service)
+        assert result is not None
+        assert result["status"] == "partial"
+        assert result["counts"]["pending"] == 1
+        assert result["counts"]["unreadable"] == 1
+        assert result["record_count"] == 1
+        assert result["output_bytes_complete"] is False
+        assert result["saturation"] == "unknown"
+        assert result["known_output_bytes"] == 0
+        assert result["admission_authorized"] is False
+        assert result["quota_refund_authorized"] is False
+        assert result["destructive_cleanup_allowed"] is False
+        with db._lock:
+            stored = db._connect().execute(
+                "SELECT typeof(value),value FROM metadata WHERE key=?",
+                (reservation.key,),
+            ).fetchone()
+        assert stored == ("blob", original.encode("utf-8"))
+        assert Path(intent.staged_path).exists()
+    finally:
+        db.close()
+
+
 def test_scope_or_snapshot_change_discards_result(tmp_path, monkeypatch):
     service, intent, reservation = _setup(tmp_path)
     db = service.storage

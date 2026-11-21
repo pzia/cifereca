@@ -228,3 +228,45 @@ def test_typed_age_label_with_valid_exact_provenance_remains_attested():
     # An invalid typed sibling cannot replace independently valid evidence.
     bad = YouthAgeRange(8, 12, "publisher", source_label="x" * 121)
     assert attested_age_ranges(book("edition", ages=[bad, valid])) == (valid,)
+
+
+
+@pytest.mark.parametrize("mutation", [
+    ("age_min", True), ("age_min", "8"), ("age_min", -1),
+    ("age_min", 121), ("age_max", 7), ("age_max", 121),
+    ("age_kind", None), ("confidence", float("nan")),
+    ("confidence", float("inf")), ("confidence", True),
+])
+def test_post_construction_mutated_typed_age_cannot_pass_filter(mutation):
+    # Frozen dataclasses are not a trust boundary for a plugin DTO: callers
+    # may use object.__setattr__, including after an earlier positive match.
+    typed = YouthAgeRange(
+        8, 12, "publisher", source_label="8 à 12 ans",
+        provenance=Provenance("bnf", source_id="edition"),
+    )
+    row = book("edition", ages=[typed])
+    assert attested_age_status(row, 9) == "match"
+    name, value = mutation
+    object.__setattr__(typed, name, value)
+    assert attested_age_ranges(row) == ()
+    assert attested_age_status(row, 9) == "unknown"
+    assert filter_attested_age([row], 9) == []
+
+
+def test_mutated_typed_age_does_not_invoke_hostile_kind_or_bounds():
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("supplier-defined equality invoked")
+
+        def __hash__(self):
+            raise AssertionError("supplier-defined hash invoked")
+
+        def __le__(self, other):
+            raise AssertionError("supplier-defined ordering invoked")
+
+    for attr in ("age_kind", "age_min", "age_max"):
+        typed = YouthAgeRange(8, 12, "publisher", source_label="8 à 12 ans")
+        object.__setattr__(typed, attr, Hostile())
+        row = book("edition", ages=[typed])
+        assert attested_age_ranges(row) == ()
+        assert attested_age_status(row, 9) == "unknown"

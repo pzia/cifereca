@@ -268,6 +268,86 @@ def test_competing_distinct_reservations_share_one_output_budget(tmp_path, monke
         db.close()
 
 
+def test_pending_reservation_blob_receipt_fails_closed_without_mutation(tmp_path):
+    """A SQLite BLOB in the TEXT ledger is not a replayable receipt."""
+    import sqlite3
+
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        original = db.metadata_get(reservation.key)
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (sqlite3.Binary(original.encode("ascii")), reservation.key),
+            )
+        conn = db._connect()
+        conn.execute("BEGIN")
+        try:
+            with pytest.raises(
+                journal.DerivedJournalConflict,
+                match="derived_journal_reservation_changed",
+            ):
+                journal._read_pending_reservation(conn, reservation)
+            assert conn.in_transaction
+        finally:
+            conn.rollback()
+        assert db._connect().execute(
+            "SELECT value FROM metadata WHERE key=?", (reservation.key,),
+        ).fetchone() == (original.encode("ascii"),)
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("corruption", ["blob", "oversized"])
+def test_canonical_origin_receipt_requires_bounded_text(tmp_path, corruption):
+    """Even matching canonical fields cannot authorize a BLOB or oversized receipt."""
+    import json
+
+    service, intent = _fixture(tmp_path)
+    placement_id, origin_id, recipe_id = "derived-placement", "derived-origin", "derived-recipe"
+    metadata = json.dumps({
+        "source_placement_id": intent.parent_placement_id,
+        "transformer_plugin_id": intent.transformer_id,
+        "transformer_version": intent.transformer_version,
+        "profile_plugin_id": intent.profile_id,
+        "profile_version": intent.profile_version,
+        "options_fingerprint": intent.options_fingerprint,
+        "source_sha256": intent.parent_sha256,
+        "result_sha256": intent.output_sha256,
+    })
+    if corruption == "blob":
+        metadata = metadata.encode("utf-8")
+    else:
+        metadata = metadata[:-1] + ', "padding": "' + "x" * 8192 + '"}'
+    artifact_id = "sha256:" + intent.output_sha256
+    parent_id = "sha256:" + intent.parent_sha256
+    rows = iter((
+        (artifact_id, intent.identity_id, intent.candidate_path, "present", "cifereca"),
+        (intent.output_sha256, intent.output_size),
+        ("derived", intent.identity_id, artifact_id, None, parent_id,
+         f"derived:{recipe_id}:{placement_id}", metadata),
+        (artifact_id, parent_id, intent.parent_sha256,
+         intent.transformer_id, intent.options_fingerprint),
+    ))
+
+    class ReadOnlyDB:
+        def execute(self, *_args):
+            return self
+
+        def fetchone(self):
+            return next(rows)
+
+    try:
+        with pytest.raises(journal.DerivedJournalConflict, match="canonical_proof_missing"):
+            journal._require_canonical_proof(
+                ReadOnlyDB(), intent, placement_id=placement_id,
+                origin_id=origin_id, recipe_id=recipe_id,
+            )
+    finally:
+        service.storage.close()
+
 
 def test_historical_committed_receipt_keeps_target_reserved_even_without_placement(tmp_path):
     """An incomplete/corrupt historical B state is not a free destination.

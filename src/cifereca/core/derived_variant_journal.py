@@ -246,18 +246,14 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
                     ).fetchone()[0]
                     prior = _decode(existing_key, existing)
                     reserved_output_bytes += prior.output_size
-                    # Even if the canonical Placement disappeared, an old
-                    # committed receipt retains its target coordinate. It
-                    # cannot be reused for a fresh output before supervised
-                    # retirement; otherwise the new publication could claim
-                    # historical bytes or overwrite an unindexed orphan.
+                    # Committed receipt targets remain reserved until a
+                    # supervised retirement, even if the Placement is lost.
                     if (prior.candidate_path == intent.candidate_path
                             or (existing_key.startswith(_PREFIX) and (
                                 existing_key == key or prior.staged_path == intent.staged_path))):
                         occupied = True
-                # Decode all bounded receipts before reporting an occupied
-                # slot: a corrupt later row must remain a corruption veto,
-                # not be hidden by a valid historical target collision.
+                # Validate all bounded receipts before reporting a collision.
+                # Corrupt later rows must still yield a corruption veto.
                 if occupied:
                     raise DerivedJournalConflict("derived_journal_slot_occupied")
                 if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
@@ -300,7 +296,11 @@ def _read_pending_reservation(db, reservation):
         "AND length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
         (reservation.key, _MAX_RECORD_BYTES),
     ).fetchone()
-    if row is None or _receipt_digest(row[0]) != reservation.receipt_sha256:
+    # TEXT affinity does not prevent a BLOB from being persisted in SQLite.
+    # The digest is defined only for Unicode text: fail closed rather than
+    # leaking AttributeError from bytes.encode at the recovery boundary.
+    if (row is None or type(row[0]) is not str
+            or _receipt_digest(row[0]) != reservation.receipt_sha256):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     return row[0], _decode(reservation.key, row[0])
 
@@ -341,6 +341,11 @@ def _require_canonical_proof(db, intent, *, placement_id, origin_id, recipe_id):
                 "derived:" + recipe_id + ":" + placement_id)
             or recipe != (artifact_id, parent_id, intent.parent_sha256,
                           intent.transformer_id, intent.options_fingerprint)):
+        raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
+    # Canonical provenance is a bounded JSON TEXT witness, never an arbitrary
+    # SQLite BLOB (which json.loads would otherwise silently accept).
+    if (type(origin[6]) is not str
+            or not 0 < len(origin[6].encode("utf-8")) <= _MAX_RECORD_BYTES):
         raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
     try:
         metadata = json.loads(origin[6], object_pairs_hook=_unique_pairs)

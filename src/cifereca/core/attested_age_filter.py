@@ -86,12 +86,23 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
                 or not _age_provenance_matches(provenance, provider, edition)
             ):
                 continue
-            # The typed DTO must obey the same bounded native label contract.
-            if (record.age_kind in _AGE_KINDS
+            # A frozen DTO can still be changed with object.__setattr__
+            # after construction. Revalidate *every* numeric and kind field
+            # at the Core filter boundary, not only the source label.
+            low, high, kind = record.age_min, record.age_max, record.age_kind
+            if (type(kind) is str and kind in _AGE_KINDS
                     and type(record.source_label) is str
                     and len(record.source_label) <= 120
-                    and (record.age_min is not None or record.age_max is not None)):
-                out.append(record)
+                    and (low is not None or high is not None)
+                    and all(value is None or (type(value) is int and 0 <= value <= 120)
+                            for value in (low, high))
+                    and (low is None or high is None or low <= high)):
+                from math import isfinite
+                confidence = record.confidence
+                if (confidence is None
+                        or (type(confidence) in (int, float)
+                            and isfinite(confidence) and 0 <= confidence <= 1)):
+                    out.append(record)
             continue
         if type(record) is not dict:
             continue

@@ -68,10 +68,15 @@ class OrganizerScope:
     def bound(self):
         # The connection is worker-local. The binding API takes its own
         # non-reentrant lock, so do not hold it across that call.
-        return (self.current()
-                and not self.storage._connect().in_transaction
-                and self.storage.exact_profile_directory_binding(self.identity)
-                == (self.directory, True))
+        # Confirmation calls this guard *before* their own exception boundary:
+        # unavailable SQLite/binding must refuse the advice, never escape to UI.
+        try:
+            return (self.current()
+                    and not self.storage._connect().in_transaction
+                    and self.storage.exact_profile_directory_binding(self.identity)
+                    == (self.directory, True))
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -437,5 +442,7 @@ def select_organizer_keeper_advice(scope, result, *, confirmed=False):
         selected = preview_keeper_bulk(reviews, identity_id=scope.identity, accept_all=True)
         return (selected if scope.bound()
                 and sqlite_source_stamp(scope.database) == anchor.stamp else None)
-    except (ValueError, TypeError, KeyError):
+    except Exception:
+        # Advice selection is read-only. A failed SQLite/physical recheck or
+        # a revoked/malformed private preview must never escape to CoreUI.
         return None
