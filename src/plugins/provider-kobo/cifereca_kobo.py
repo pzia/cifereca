@@ -784,9 +784,47 @@ class KoboSession(ProviderSession):
         """
         from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or len(content_types) > 32
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Kobo-Vault : unsupported_content_type")
+        requested = {value.casefold() for value in content_types} - {"all"}
         rows = self.search(query, scope, field=field)
         if scope != "catalog":
             return ProviderSearchResponse(rows)
+        # The account-bound route above retains its historical semantics.
+        # On catalog-only, use explicit and concordant bibliographic format
+        # aliases from this page. Never infer a file/delivery from a product ID.
+        from cifereca.plugin_api.acquisition import file_format, format_family
+        ebook_formats = {"epub", "kepub", "pdf"}
+        audio_formats = {"mp3", "m4a", "ogg", "opus", "flac", "wav"}
+        supported = ebook_formats | audio_formats | {"ebook", "audiobook"}
+        partial = bool(requested - supported)
+        if requested:
+            filtered = []
+            for row in rows:
+                metadata = row.metadata if type(row.metadata) is dict else {}
+                values = [metadata[key] for key in ("format", "file_format")
+                          if key in metadata and metadata[key] is not None]
+                observed = {file_format(value) for value in values if type(value) is str}
+                exact = (next(iter(observed)) if len(observed) == 1
+                         and all(type(value) is str and file_format(value) for value in values)
+                         else "")
+                if exact != file_format(row.format):
+                    exact = ""
+                matching = bool(exact and (exact in requested or format_family(exact) in requested))
+                if ("ebook" in requested and (exact in ebook_formats
+                        or not exact and row.content_type == "ebook")):
+                    matching = True
+                if ("audiobook" in requested and (exact in audio_formats
+                        or not exact and row.content_type == "audiobook")):
+                    matching = True
+                if matching:
+                    filtered.append(row)
+                elif not exact and requested & (ebook_formats | audio_formats):
+                    partial = True
+            rows = filtered
         # Only the installed production catalogue parser, bound to the exact
         # live Vault client, can establish the anonymous endpoint provenance.
         # A mocked/replaced adapter or a forged row-level flag cannot do so.
@@ -798,7 +836,8 @@ class KoboSession(ProviderSession):
             is KoboCatalogService.search
         )
         if not trusted:
-            return ProviderSearchResponse(rows)
+            return ProviderSearchResponse(rows, partial=partial,
+                                          catalogue_complete=False if requested else None)
         notices = tuple(
             PublicSearchNotice(replace(
                 row, owned=False, downloadable=False, download_url=None,
@@ -815,7 +854,10 @@ class KoboSession(ProviderSession):
                 and row.downloadable is not True
                 and row.source_account_id is None)
         )
-        return ProviderSearchResponse(rows, public_notices=notices)
+        return ProviderSearchResponse(
+            rows, public_notices=notices, partial=partial,
+            catalogue_complete=False if requested else None,
+        )
 
     def _ensure_personal_binding(
         self, account: Account, generation: int, *,
