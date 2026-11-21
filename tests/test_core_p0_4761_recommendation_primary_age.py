@@ -209,3 +209,63 @@ def test_recommendation_opaque_packet_rejects_hostile_nested_values_after_restar
         assert known_public_c_primary_hit(item) is not None
         assert known_public_c_alternative_hits(item) == (alternative,)
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_recommendation_source_proof_decoder_accepts_native_series_language_classification(tmp_path):
+    from cifereca.core.notice_c_recommendation_known import _native_hit
+    from cifereca.core.public_search_projection import (
+        decode_public_classification, decode_public_language_observation,
+        decode_public_series_relation,
+    )
+
+    with closing(Storage(tmp_path / "typed-proofs.sqlite")) as db:
+        first = original(source_provider="aaa-fixture")
+        first.record_id = "typed-proof"
+        first.metadata["bibliography_evidence"]["youth_age"]["record_id"] = first.record_id
+        source = persist(db, project(first))
+        canonical = persist_attested_public_cover_group(
+            db, canonical_edition_id="strong:typed-recommendation",
+            sources=(source,), relation_proof_id="strong:synthetic",
+        )
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("Même titre")
+        hit = known_public_c_primary_hit(item)
+        assert hit is not None
+        binding = (canonical.document, canonical.epoch)
+        series = decode_public_series_relation({
+            "label": "Cycle du futur",
+            "source": "aaa-fixture.fixture",
+            "source_field": "series",
+            "scope": "notice_c_public",
+            "confidence": "explicit_record_field",
+            "freshness": "search_response",
+        }, provider_id="aaa-fixture")
+        language = decode_public_language_observation({
+            "raw_tags": ["fr"], "languages": ["fr"],
+            "source": "aaa-fixture.fixture",
+            "source_field": "language",
+            "scope": "notice_c_public",
+            "confidence": "explicit_record_field",
+            "freshness": "search_response",
+        }, provider_id="aaa-fixture")
+        classification = decode_public_classification({
+            "subjects": ["Science", "Astronomie"],
+        })
+        assert series is not None and language is not None and classification is not None
+        native = replace(
+            hit, series_relation=series, language_observation=language,
+            classification=classification,
+        )
+        assert _native_hit(native, binding)
+        assert not _native_hit(replace(
+            native, language_observation=replace(language, raw_tags=("fr", "xx_???")),
+        ), binding)
+        assert not _native_hit(replace(
+            native, series_relation=replace(series, source="other.fixture"),
+        ), binding)
+        assert not _native_hit(replace(
+            native, classification=replace(classification, entries=(
+                ("subjects", ("https://private.example.org/token",)),
+            )),
+        ), binding)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
