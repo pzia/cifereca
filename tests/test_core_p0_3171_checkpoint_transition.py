@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from cifereca.core import canonical_recovery as recovery
+from cifereca.core.canonical_publication import publish_completed_acquisition
 from cifereca.storage import Storage
 from cifereca.core.convergence_execution import CompletedDelivery
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register, target, SHA
@@ -11,7 +12,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register,
 
 def test_completed_delivery_transition_is_atomic_and_idempotent(tmp_path, monkeypatch):
     storage = Storage(tmp_path / "canonical.sqlite")
-    key, _snapshot = new_source()
+    key, snapshot = new_source()
     offer = "synthetic-offer"
     artifact = "sha256:" + SHA
     monkeypatch.setattr(recovery, "_lock_ok", lambda lock: True)
@@ -48,6 +49,16 @@ def test_completed_delivery_transition_is_atomic_and_idempotent(tmp_path, monkey
             storage, source=key, offer_id=offer,
             completed=CompletedDelivery(key, offer, path, SHA, "synthetic-receipt"),
             library_root=tmp_path / "EBooks", shared_lock=object(),
+        )
+        with pytest.raises(ValueError, match="published_origin_unverified"):
+            recovery.mark_completed_delivery_published(
+                storage, source=key, offer_id=offer, artifact_id=artifact,
+                shared_lock=object(),
+            )
+        publish_completed_acquisition(
+            storage, library_root=tmp_path / "EBooks", path=path,
+            source=key, snapshot=snapshot, final_sha256=SHA,
+            delivery_receipt_ref="synthetic-receipt",
         )
         recovery.mark_completed_delivery_published(
             storage, source=key, offer_id=offer, artifact_id=artifact,

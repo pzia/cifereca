@@ -357,6 +357,50 @@ def mark_completed_delivery_published(
             return
         if row[6] is not None:
             raise ValueError("canonical_intake_checkpoint_conflict")
+        # A matching SHA/receipt in the operation journal is not B. The
+        # terminal status follows the publisher's independently committed
+        # source, provider OriginLink and present Placement, never precedes it.
+        provider_receipt = data.get("receipt")
+        adept_receipt = data.get("adept_receipt")
+        if (type(provider_receipt) is not str or not provider_receipt
+                or len(provider_receipt) > 1024
+                or type(adept_receipt) is not str or len(adept_receipt) > 1024
+                or any(ch in item for item in (provider_receipt, adept_receipt)
+                       for ch in "\x00\r\n")):
+            raise ValueError("canonical_intake_checkpoint_conflict")
+        source_id = _stable(
+            "source", scope.identity_id, scope.provider_id, scope.credential_id,
+            scope.account_id, source.branch, source.edition_id,
+            source.right_id, source.kind,
+        )
+        def has_exact_link(kind, receipt):
+            origin_id = _stable(
+                "origin", kind, scope.identity_id, artifact_id,
+                source_id, receipt,
+            )
+            return db.execute(
+                "SELECT 1 FROM source_references s "
+                "JOIN origin_links o ON o.source_reference_id=s.source_reference_id "
+                "JOIN artifacts a ON a.artifact_id=o.artifact_id "
+                "WHERE s.source_reference_id=? AND s.identity_id=? "
+                "AND s.provider_id=? AND s.credential_id=? AND s.account_id=? "
+                "AND s.branch_id=? AND s.edition_id=? AND s.right_id=? "
+                "AND s.reference_kind=? AND o.origin_link_id=? "
+                "AND o.origin_kind=? AND o.identity_id=? "
+                "AND o.artifact_id=? AND o.evidence_ref=? LIMIT 1",
+                (source_id, scope.identity_id, scope.provider_id,
+                 scope.credential_id, scope.account_id, source.branch,
+                 source.edition_id, source.right_id, source.kind,
+                 origin_id, kind, scope.identity_id, artifact_id, receipt),
+            ).fetchone() is not None
+        if (not has_exact_link("provider", provider_receipt)
+                or (adept_receipt and not has_exact_link("adept", adept_receipt))
+                or db.execute(
+                    "SELECT 1 FROM placements WHERE identity_id=? "
+                    "AND artifact_id=? AND state='present' LIMIT 1",
+                    (scope.identity_id, artifact_id),
+                ).fetchone() is None):
+            raise ValueError("canonical_intake_published_origin_unverified")
         db.execute(
             "UPDATE acquisition_ledger SET status='complete',artifact_id=?,"
             "updated_at=? WHERE acquisition_id=? AND status=?",
