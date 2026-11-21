@@ -149,3 +149,38 @@ def test_review_and_reset_one_paused_loan_without_provider_io(rig, monkeypatch):
     assert service.calls == 0
     with pytest.raises(ValueError, match="reset_changed"):
         reset_reviewed_loan_download_retry(service, identity_id="A", row=row)
+
+
+def test_old_ledger_attention_without_marker_is_visible_and_cannot_reset(rig, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+    service, account, source, snap, root, lock_path = loan_snapshot(rig)
+    service.current_identity = SimpleNamespace(identity_id="A")
+    persist_attested_source_references(service.storage, snap)
+    monkeypatch.setattr("cifereca.core.loan_download_retry_review.acquisition_lock_file",
+                        lambda: lock_path)
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(service.storage, source,
+                                         reason="canonical_delivery_failed", shared_lock=lease)
+    before, = review_loan_download_retries(service, identity_id="A")
+    assert before.can_reset
+    service.storage.acquisition_put({
+        "acquisition_id": "synthetic-historic-adept",
+        "identity_id": source.scope.identity_id,
+        "provider_id": source.scope.provider_id,
+        "credential_id": source.scope.credential_id,
+        "account_id": source.scope.account_id,
+        "item_id": source.edition_id,
+        "status": "attention_required", "strategy": "loan_auto",
+        "executor": "kobo-adept", "metadata": {"provider_loan_id": source.right_id},
+    })
+    assert not pending_loan_adept_attempt(service.storage, source)
+    after, = review_loan_download_retries(service, identity_id="A")
+    assert after.adept_hold and not after.can_reset
+    with pytest.raises(ValueError, match="reset_changed"):
+        reset_reviewed_loan_download_retry(service, identity_id="A", row=before)
+    assert read_loan_download_retry(service.storage, source).paused

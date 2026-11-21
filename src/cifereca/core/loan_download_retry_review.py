@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import getattr_static
 
 from ..locking import InterProcessLock
-from ..models import Loan
+from ..models import Account, Loan
 from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_adept_attempt import _key as _adept_key
 from .canonical_recovery import _exact_borrower_bound_in_db
+from .canonical_loan_retry_guard import historical_adept_ledger_hold
+from ..plugin_api.loan_inventory import LoanInventoryScope
 from .loan_download_retry import LoanDownloadRetry, _decode, _key
 from .source_context import source_context_epoch
 from .source_convergence import SourceKey
@@ -59,10 +62,43 @@ def _title_index(service, identity_id):
     return titles
 
 
+def _inventory_scopes(service, identity_id):
+    """Derive aliases only from the current descriptor, never provider labels."""
+    scopes = {}
+    for account in getattr(service, "accounts", ()):
+        if type(account) is not Account or account.identity_id != identity_id:
+            continue
+        key = (account.provider_id, account.credential_id, account.unique_id)
+        try:
+            session = service._sessions.get(service._session_key(
+                account.provider_id, account.credential_id,
+            ))
+            scope = LoanInventoryScope.for_account(
+                account, descriptor=getattr_static(session, "descriptor", None),
+            )
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if key in scopes:
+            scopes[key] = None  # never infer an alias from duplicate bindings
+        else:
+            scopes[key] = scope
+    return scopes
+
+
+def _ledger_hold(db, source, scopes):
+    scope = source.scope
+    observed = scopes.get((scope.provider_id, scope.credential_id, scope.account_id))
+    if observed is None:
+        observed = LoanInventoryScope(scope.identity_id, scope.provider_id,
+                                      scope.credential_id, scope.account_id)
+    return historical_adept_ledger_hold(db, observed, source)
+
+
 def review_loan_download_retries(service, *, identity_id: str):
     """Read only exact locally observed loan references, never an inventory GET."""
     storage, current = _context(service, identity_id)
     titles = _title_index(service, identity_id)
+    scopes = _inventory_scopes(service, identity_id)
     result = []
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
@@ -80,7 +116,8 @@ def review_loan_download_retries(service, *, identity_id: str):
                                edition, right, "loan", branch)
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
             retry = _decode(raw[0] if raw is not None else None)
-            hold = db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone() is not None
+            hold = (db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone() is not None
+                    or _ledger_hold(db, source, scopes))
             if not retry.failures and not hold:
                 continue
             possible = titles.get((provider, credential, account, edition, right), ())
@@ -106,6 +143,7 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
     storage, current = _context(service, identity_id)
     source = row.source
     scope = source.scope
+    scopes = _inventory_scopes(service, identity_id)
     with InterProcessLock(acquisition_lock_file()):
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -122,6 +160,7 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
             hold = db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone()
             if (len(refs) != 1 or refs[0][0] == "inactive" or hold is not None
+                    or _ledger_hold(db, source, scopes)
                     or raw is None or _decode(raw[0]) != row.retry or not current()):
                 raise ValueError("loan_download_retry_reset_changed")
             db.execute("DELETE FROM metadata WHERE key=?", (_key(source),))

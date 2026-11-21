@@ -77,6 +77,8 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
                 if not current():
                     return
                 def work():
+                    if not current():
+                        return False
                     try:
                         reset_reviewed_loan_download_retry(
                             service, identity_id=scope.identity_id, row=row,
@@ -89,6 +91,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
                         dialog.close()
                         window.toast("Tentatives réinitialisées" if ok is True else
                                      "Reprise indisponible : actualisez l’affichage")
+                        window._refresh_sync_page()
                 window.runner.submit(
                     "Réinitialisation des tentatives…", work, done, control=button,
                     priority=TaskPriority.USER_ACTION, kind="source-sync",
@@ -99,3 +102,35 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
 
     window.runner.submit("Lecture des téléchargements…", read, show, control=control,
                          priority=TaskPriority.USER_ACTION, kind="source-sync")
+
+
+def refresh_loan_download_retry_summary(window, scope, label):
+    """Update only the active page generation, using the ordinary worker."""
+    service = window.service
+    if not hasattr(service, "storage"):
+        return
+    def read():
+        try:
+            return review_loan_download_retries(service, identity_id=scope.identity_id)
+        except Exception:
+            return None
+    def done(rows):
+        if (window.service is not service or not sync_action_scope_current(window, scope)
+                or getattr(window, "_sync_retry_summary", None) is not label):
+            return
+        if rows is None:
+            label.set_label("Téléchargements à reprendre : état indisponible")
+            label.set_visible(True)
+            return
+        active = [row for row in rows if not row.inactive]
+        holds = sum(row.adept_hold for row in active)
+        paused = sum(row.retry.paused and not row.adept_hold for row in active)
+        retrying = len(active) - holds - paused
+        label.set_label(
+            f"Téléchargements : {paused} en pause · {retrying} à retenter · "
+            f"{holds} intervention(s) ADEPT requise(s)"
+        )
+        label.set_visible(bool(active))
+    window.runner.submit("État des téléchargements…", read, done,
+                         priority=TaskPriority.NORMAL, kind="loan-download-review",
+                         origin="automatic")
