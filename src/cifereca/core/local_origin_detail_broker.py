@@ -11,6 +11,7 @@ from ..plugin_api.local_origin_detail import (
     LocalOriginDetailMatch, LocalOriginDetailPage, LocalOriginPublicChoice,
     LocalOriginPublicMatch, LocalOriginPublicReport,
     LocalOriginPrivateChoice, LocalOriginPrivateMatch, LocalOriginPrivateReport,
+    LocalOriginRemoteLoanChoice, LocalOriginRemoteLoanMatch, LocalOriginRemoteLoanReport,
 )
 from .activation_scoped_broker import ActivationScopedReadFactory
 from .local_origin_public_catalogue import (
@@ -20,6 +21,9 @@ from .local_origin_public_catalogue import (
 from .local_origin_private_catalogue import (
     PrivateCatalogueContinuation, PrivateDocumentaryMatch,
     available_known_private_catalogues, compare_known_private_catalogue,
+)
+from .local_origin_remote_loans import (
+    RemoteLoanDocumentaryMatch, available_remote_loan_catalogues, compare_remote_loan_catalogue,
 )
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
 from .local_origin_suggestion_operator import (
@@ -34,6 +38,7 @@ class LocalOriginDetailReadBrokerImpl:
         self._activation_current = activation_current
         self._public = {}
         self._private = {}
+        self._remote_loans = {}
         self._lock = Lock()
         self._generation = 0
         self._active = None
@@ -72,7 +77,7 @@ class LocalOriginDetailReadBrokerImpl:
                 return None
             # Only a verified first OPF page can offer an explicit anonymous
             # comparison. Discovery is inert and never dispatches a provider.
-            choices = private_choices = ()
+            choices = private_choices = remote_loans = ()
             if (request.page == 0 and self._activation_current is not None
                     and result["metadata_evidence"] == "verified_epub_opf_description"):
                 choices = tuple((token_hex(32), choice)
@@ -83,6 +88,10 @@ class LocalOriginDetailReadBrokerImpl:
                                         for choice in available_known_private_catalogues(
                                             self._service, request,
                                             evidence=result.get("public_comparison_evidence")))
+                remote_loans = tuple((token_hex(32), choice)
+                                     for choice in available_remote_loan_catalogues(
+                                         self._service, request,
+                                         evidence=result.get("public_comparison_evidence")))
             page = LocalOriginDetailPage(
                 token_hex(32), known.page + 1,
                 tuple(LocalOriginDetailMatch(
@@ -98,6 +107,10 @@ class LocalOriginDetailReadBrokerImpl:
                     token, choice.scope.provider_id, choice.scope.credential_id,
                     choice.scope.account_id, choice.kind,
                 ) for token, choice in private_choices),
+                remote_loan_choices=tuple(LocalOriginRemoteLoanChoice(
+                    token, choice.scope.provider_id, choice.scope.credential_id,
+                    choice.scope.account_id,
+                ) for token, choice in remote_loans),
             )
             with self._lock:
                 if self._revoked or self._generation != generation:
@@ -105,6 +118,7 @@ class LocalOriginDetailReadBrokerImpl:
                 self._active = (page.token, following, view)
                 self._public = {token: (choice, view, generation) for token, choice in choices}
                 self._private = {token: (choice, view, generation, None) for token, choice in private_choices}
+                self._remote_loans = {token: (choice, view, generation) for token, choice in remote_loans}
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -125,6 +139,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._active = None
             self._public.clear()
             self._private.clear()
+            self._remote_loans.clear()
         try:
             if still_current() is not True:
                 return None
@@ -150,6 +165,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._active = None
             self._public.clear()
             self._private.clear()
+            self._remote_loans.clear()
             self._generation += 1
             generation = self._generation
         return self._read(request, view, generation)
@@ -281,12 +297,62 @@ class LocalOriginDetailReadBrokerImpl:
         except Exception:
             return None
 
+    def compare_remote_loan(self, *, token, confirmed=False):
+        if (confirmed is not True or type(token) is not str
+                or self._activation_current is None):
+            return None
+        with self._lock:
+            if self._revoked:
+                return None
+            selected = self._remote_loans.pop(token, None)
+            if selected is None:
+                return None
+            choice, view, generation = selected
+        request = choice.request
+
+        def live():
+            return self._live(generation, view, request)
+
+        try:
+            if not live():
+                return None
+            result = compare_remote_loan_catalogue(
+                self._service, choice, confirmed=True, still_current=live,
+            )
+            if (not live() or type(result) is not dict
+                    or result.get("status") not in ("partial", "excluded", "scope_changed", "unavailable")
+                    or type(result.get("window_truncated")) is not bool
+                    or type(result.get("provider_read_requested")) is not bool
+                    or any(result.get(flag) is not False for flag in (
+                        "coverage_complete", "fresh_network_verified",
+                        "association_authorized", "may_write_origin_or_right",
+                        "local_description_transmitted"))
+                    or type(result.get("candidates")) is not tuple
+                    or len(result["candidates"]) > 50
+                    or (result.get("observed_at") is not None
+                        and type(result["observed_at"]) is not str)
+                    or any(type(row) is not RemoteLoanDocumentaryMatch
+                           for row in result["candidates"])):
+                return None
+            report = LocalOriginRemoteLoanReport(
+                result["status"], choice.scope.provider_id, choice.scope.credential_id,
+                choice.scope.account_id,
+                tuple(LocalOriginRemoteLoanMatch(
+                    row.edition_id, row.loan_id, row.title, row.author, row.comparison,
+                ) for row in result["candidates"]), result["window_truncated"],
+                result["observed_at"], result["provider_read_requested"],
+            )
+            return report if live() else None
+        except Exception:
+            return None
+
     def cancel(self, *, token):
         with self._lock:
             if self._active is not None and type(token) is str and token == self._active[0]:
                 self._active = None
                 self._public.clear()
                 self._private.clear()
+                self._remote_loans.clear()
                 self._generation += 1
 
     def revoke(self):
@@ -296,6 +362,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._active = None
             self._public.clear()
             self._private.clear()
+            self._remote_loans.clear()
             self._generation += 1
 
 
@@ -309,6 +376,6 @@ class LocalOriginDetailReadFactory:
     def for_activation(self, plugin_id, *, current):
         factory = ActivationScopedReadFactory(
             lambda: LocalOriginDetailReadBrokerImpl(self._service, activation_current=current),
-            ("preview", "next_page", "search_public", "compare_private", "cancel"),
+            ("preview", "next_page", "search_public", "compare_private", "compare_remote_loan", "cancel"),
         )
         return factory.for_activation(plugin_id, current=current)
