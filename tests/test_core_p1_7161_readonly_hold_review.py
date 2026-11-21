@@ -158,3 +158,61 @@ def test_durable_marker_transaction_restores_sync_and_preserves_other_claim(stor
         assert sum("PRAGMA SYNCHRONOUS=FULL" in line.upper() for line in seen) == 4
     finally:
         db.set_trace_callback(None)
+
+
+@pytest.mark.parametrize("change", ["operation", "offer", "deleted", "blob", "same_value"])
+def test_reviewed_v1_marker_selects_exact_negative_fact_only(store, change):
+    source, _ = new_source(kind="loan", branch="dilicom")
+    raw = _value("private-offer", "f" * 32)
+    _write(store, source, raw)
+    sibling = replace(source, right_id="sibling")
+    _write(store, sibling, raw)
+    review = marker.review_loan_adept_marker(store, source)
+    assert review.state == "held_phase_unknown"
+    assert review.fingerprint and not review.unlock_authorized
+    assert "f" * 32 not in repr(review) and review.fingerprint not in repr(review)
+    db = store._connect()
+    compare = marker.matches_reviewed_loan_adept_marker_in_transaction
+    assert not compare(db, source=source, review=review)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        assert compare(db, source=source, review=review)
+        assert not compare(db, source=sibling, review=review)
+        if change == "deleted":
+            db.execute("DELETE FROM metadata WHERE key=?", (_key(source),))
+        else:
+            value = {
+                "operation": _value("private-offer", "a" * 32),
+                "offer": _value("rotated", "f" * 32),
+                "blob": sqlite3.Binary(raw.encode("ascii")),
+                "same_value": raw,
+            }[change]
+            db.execute("UPDATE metadata SET value=? WHERE key=?", (value, _key(source)))
+        assert compare(db, source=source, review=review) is (change == "same_value")
+        assert db.in_transaction
+        assert db.execute("SELECT value FROM metadata WHERE key=?", (_key(sibling),)).fetchone() == (raw,)
+    finally:
+        db.rollback()
+    assert store.metadata_get(_key(source)) == raw
+    assert marker.review_loan_adept_marker(store, source) == review
+
+
+def test_missing_invalid_or_unreadable_marker_never_supplies_review_fingerprint(store):
+    source, _ = new_source(kind="loan")
+    absent = marker.review_loan_adept_marker(store, source)
+    assert absent.state == "none" and not absent.fingerprint
+    _write(store, source, "{malformed")
+    invalid = marker.review_loan_adept_marker(store, source)
+    assert invalid.state == "held_invalid" and not invalid.fingerprint
+    db = store._connect()
+    try:
+        db.execute("BEGIN")
+        unreadable = marker.review_loan_adept_marker(store, source)
+        assert unreadable.state == "unreadable" and not unreadable.fingerprint
+        for review in (absent, invalid, unreadable):
+            assert not review.unlock_authorized
+            assert not marker.matches_reviewed_loan_adept_marker_in_transaction(
+                db, source=source, review=review)
+        assert db.in_transaction
+    finally:
+        db.rollback()
