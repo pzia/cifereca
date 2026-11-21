@@ -18,7 +18,8 @@ from .local_origin_public_catalogue import (
     search_local_public_catalogue,
 )
 from .local_origin_private_catalogue import (
-    PrivateDocumentaryMatch, available_known_private_catalogues, compare_known_private_catalogue,
+    PrivateCatalogueContinuation, PrivateDocumentaryMatch,
+    available_known_private_catalogues, compare_known_private_catalogue,
 )
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
 from .local_origin_suggestion_operator import (
@@ -103,7 +104,7 @@ class LocalOriginDetailReadBrokerImpl:
                     return None
                 self._active = (page.token, following, view)
                 self._public = {token: (choice, view, generation) for token, choice in choices}
-                self._private = {token: (choice, view, generation) for token, choice in private_choices}
+                self._private = {token: (choice, view, generation, None) for token, choice in private_choices}
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -211,7 +212,7 @@ class LocalOriginDetailReadBrokerImpl:
             selected = self._private.pop(token, None)
             if selected is None:
                 return None
-            choice, view, generation = selected
+            choice, view, generation, continuation = selected
         request = choice.request
 
         def live():
@@ -223,6 +224,7 @@ class LocalOriginDetailReadBrokerImpl:
             result = compare_known_private_catalogue(
                 self._service, request, account=choice.account, kind=choice.kind,
                 choice=choice, confirmed=True, still_current=live,
+                continuation=continuation,
             )
             if (not live() or type(result) is not dict
                     or result.get("status") not in ("partial", "excluded", "scope_changed", "unavailable")
@@ -236,6 +238,18 @@ class LocalOriginDetailReadBrokerImpl:
             if any(type(row) is not PrivateDocumentaryMatch or row.source.scope != choice.scope
                    or row.source.kind != choice.kind for row in result["candidates"]):
                 return None
+            following = result.get("next_cursor")
+            page = continuation.page if continuation is not None else 1
+            next_token = None
+            if following is not None:
+                if (result["status"] != "partial" or result["window_truncated"] is not True
+                        or type(following) is not PrivateCatalogueContinuation
+                        or following.request is not request
+                        or following.account is not choice.account
+                        or following.scope != choice.scope or following.kind != choice.kind
+                        or following.page != page + 1):
+                    return None
+                next_token = token_hex(32)
             report = LocalOriginPrivateReport(
                 result["status"], choice.scope.provider_id, choice.scope.credential_id,
                 choice.scope.account_id, choice.kind,
@@ -244,8 +258,26 @@ class LocalOriginDetailReadBrokerImpl:
                     row.evidence, row.title_observed_at,
                     row.source.branch, row.source.resource_id,
                 ) for row in result["candidates"]), result["window_truncated"],
+                page=page, next_token=next_token,
             )
-            return report if live() else None
+            if not live():
+                return None
+            if following is not None:
+                with self._lock:
+                    if self._revoked or self._generation != generation:
+                        return None
+                    # Replace the consumed token with one continuation.
+                    # Never expose the private cursor or expand the active
+                    # per-catalogue choice budget.
+                    if next_token in self._private or len(self._private) >= 16:
+                        return None
+                    self._private[next_token] = (choice, view, generation, following)
+            if not live():
+                with self._lock:
+                    if next_token is not None:
+                        self._private.pop(next_token, None)
+                return None
+            return report
         except Exception:
             return None
 

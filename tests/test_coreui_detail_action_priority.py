@@ -89,3 +89,25 @@ def test_default_abi_keeps_native_layout_and_reapplying_state_clears_destructive
     assert button.classes == set()
     assert not hasattr(button, "_cifereca_action_priority")
     assert button.sensitive
+
+
+def test_native_review_action_removal_releases_id_and_preserves_peer():
+    priority, actions, retire = _methods("_detail_action_priority", "_actions", "remove_review_action")
+    bar = Bar()
+    host = NS(action_scroll=bar, _action_ids=set(), _action_buttons=[], _rendered_action_count=0,
+              _detail_action_priority=lambda button: priority(button))
+    host._actions = lambda buttons: actions(host, buttons)
+    peer = Button("Ouvrir", "open")
+    old = Button("Catalogue 1", "book-review:fixture:public-0")
+    replacement = Button("Catalogue 2", "book-review:fixture:public-0")
+    actions(host, [peer, old])
+    retire(host, old)
+    assert bar.buttons == [peer, old]
+    old._cifereca_review_action_retired = True
+    old._cifereca_action_context_revoked = True
+    retire(host, old)
+    assert bar.buttons == [peer] and host._action_buttons == [peer]
+    assert old._cifereca_action_id not in host._action_ids
+    actions(host, [replacement])
+    assert bar.buttons == [peer, replacement]
+    assert old._cifereca_action_context_revoked is True
