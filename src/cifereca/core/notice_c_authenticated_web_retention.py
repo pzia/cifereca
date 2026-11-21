@@ -101,6 +101,8 @@ def retain_private_web_field_txn(db, source, original):
         "DO UPDATE SET value=excluded.value WHERE value<>excluded.value",
         (key, raw),
     )
+    # The public C retains only this opaque digest, never the field/scope.
+    return sha256(raw.encode("ascii")).hexdigest()
 
 
 def retained_private_web_field_txn(db, doc, member, fence):
@@ -114,6 +116,9 @@ def retained_private_web_field_txn(db, doc, member, fence):
     if row is None or type(row[0]) is not str or len(row[0]) > 16384:
         return None
     try:
+        if (type(member.private_web_digest) is not str
+                or sha256(row[0].encode("ascii")).hexdigest() != member.private_web_digest):
+            return None
         from .notice_cover_repository import _unique_object
         raw = json.loads(row[0], object_pairs_hook=_unique_object)
         if (type(raw) is not dict or set(raw) != {
