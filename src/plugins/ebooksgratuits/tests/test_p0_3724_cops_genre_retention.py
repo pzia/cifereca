@@ -24,7 +24,8 @@ def test_opds_explicit_genre_is_retained_without_category_inference(tmp_path, sc
 
     host = "https://opds2.ebooksgratuits.org"
     feed = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>All books</title>'
-            '<entry><id>urn:uuid:42</id><title>Roman témoin</title>'
+            '<entry><id>urn:uuid:42</id><title>Roman témoin COPS</title>'
+            '<author><name>Autrice témoin</name></author>'
             '<category term="Jeunesse" label="Jeunesse"/>'
             '<category scheme=' + quoteattr(scheme) + ' term=' + quoteattr(label) + '/>'
             '<link rel="alternate" type="text/html" href="/index.php/book/42"/>'
