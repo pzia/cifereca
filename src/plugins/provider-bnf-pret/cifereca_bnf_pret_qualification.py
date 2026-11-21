@@ -43,6 +43,32 @@ _COPIES = re.compile(
 )
 _CONFIRM = re.compile(r"\bconfirmer\s+l[’']emprunt\b", re.IGNORECASE)
 
+# Inline formatting may split the actually observed BnF wording without
+# changing the meaning of a label. Never concatenate different block rows,
+# login forms, script/style content, or unrelated edition cards.
+_INLINE = frozenset(("span", "strong", "small", "b", "em", "a", "label", "i"))
+
+
+def _inline_visible_text(node: _Node, depth: int = 0) -> str:
+    """Bounded ephemeral text for a single DOM label; never returned/logged."""
+    if (depth > 12 or node.tag in _HIDDEN or "hidden" in node.attrs
+            or node.attrs.get("aria-hidden") == "true"):
+        return ""
+    parts: list[str] = []
+    remaining = 512
+    for child in node.children:
+        if remaining <= 0:
+            break
+        if isinstance(child, str):
+            fragment = child[:remaining]
+        elif isinstance(child, _Node) and child.tag in _INLINE:
+            fragment = _inline_visible_text(child, depth + 1)[:remaining]
+        else:
+            continue
+        parts.append(fragment)
+        remaining -= len(fragment)
+    return " ".join(" ".join(parts).split())
+
 
 def _empty(page: str, status: str = "ok") -> dict[str, object]:
     # Fixed keys and enumerated values only, never user-supplied input.
@@ -138,19 +164,29 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
             elif name in ("resource_id", "resource", "book_id"):
                 report["resource_field_names"] = _count(
                     report["resource_field_names"] + 1)
-        for chunk in node.children:
-            if not isinstance(chunk, str):
+        patterns = (
+            (("quota_label", _QUOTA), ("pass_label", _PASS))
+            if page == "profile" else
+            (("copies_label", _COPIES),) if page == "detail" else
+            (("confirmation_label", _CONFIRM),)
+        )
+        # A parent and its formatted child can carry the same phrase. Count
+        # the deepest matching label, not both. An outer block cannot join
+        # unrelated child paragraphs into a fabricated positive marker.
+        label_text = _inline_visible_text(node)
+        if page == "confirmation":
+            label_text = re.sub(r"l([’'])\s+emprunt", r"l\1emprunt",
+                                label_text, flags=re.IGNORECASE)
+        for key, pattern in patterns:
+            if not pattern.search(label_text):
                 continue
-            if page == "profile":
-                if _QUOTA.search(chunk):
-                    _hit(report, "quota_label", path)
-                if _PASS.search(chunk):
-                    _hit(report, "pass_label", path)
-            elif page == "detail":
-                if _COPIES.search(chunk):
-                    _hit(report, "copies_label", path)
-            elif page == "confirmation" and _CONFIRM.search(chunk):
-                _hit(report, "confirmation_label", path)
+            if any(
+                isinstance(child, _Node)
+                and pattern.search(_inline_visible_text(child))
+                for child in node.children
+            ):
+                continue
+            _hit(report, key, path)
     return report
 
 
