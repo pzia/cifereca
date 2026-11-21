@@ -178,3 +178,41 @@ def test_optional_private_sql_failure_does_not_hide_live_search_result(harness, 
     with service.storage._lock, service.storage._connect() as db:
         assert db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
+def test_private_commit_failure_never_counts_rolled_back_publication(harness, monkeypatch):
+    from contextlib import contextmanager
+    from sqlite3 import OperationalError
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    assert call is not None
+    row, = session.search("fiction")
+    stamp_authenticated_search_rows(service, call, [row])
+    storage = service.storage
+    real_connect = storage._connect
+    attempted = []
+
+    @contextmanager
+    def fail_at_transaction_exit():
+        conn = real_connect()
+        yield conn
+        # All Core writes have already succeeded; emulate a rejected SQLite
+        # commit before any staged row can become durable. Storage owns this
+        # reusable connection; closing it would invalidate the later retry.
+        attempted.append("commit")
+        conn.rollback()
+        raise OperationalError("controlled commit failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, "_connect", fail_at_transaction_exit)
+        assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 0
+    assert attempted == ["commit"]
+    with storage._lock, storage._connect() as db:
+        assert db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
+    # Reuse the exact same Core receipt; do not relaunch Search/GET.
+    assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 1
+    scope = capture_search_read_scope(service, "alice")
+    choices = read_authenticated_web_for_search(service, row, reader_scope=scope)
+    assert choices is not None and len(choices.choices) == 1
+    assert len(client.calls) == 1
+    assert storage.entitlements() == storage.acquisitions() == storage.placements() == []

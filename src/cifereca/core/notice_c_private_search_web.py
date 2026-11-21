@@ -246,7 +246,10 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                         db, canonical_edition_id=obs.key.edition_id, source=source,
                         relation_proof_id="private-self:" + _coordinate_digest(doc.source_key),
                     )
-                    count += 1
+            # Account only after both the SQLite transaction and Core's
+            # mutation context completed. A failed commit must never be
+            # reported as one durable private C publication.
+            count += 1
         except (AttributeError, TypeError, ValueError, LookupError, RuntimeError, SQLiteError):
             # Exit the SQLite context before containing its failure: neither
             # a partial source nor a canonical sidecar may escape rollback.
