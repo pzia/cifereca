@@ -152,3 +152,78 @@ def test_capacity_explains_compact_admission_refusal(tmp_path, case):
         assert Path(intent.staged_path).samefile(intent.candidate_path)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("action", ["list", "verify", "simulate"])
+@pytest.mark.parametrize("phase", ["before_worker", "after_worker"])
+def test_cancel_discards_queued_or_late_review_and_revokes_exact_token(tmp_path, action, phase):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        _, _, _, c, tasks, renders = rig(service)
+        before = db.metadata_get(reservation.key)
+        old_page = None
+        if action != "list":
+            assert c.request("list")
+            old_page = finish(tasks)
+        if action == "simulate":
+            assert c.request("verify", choice=old_page.choices[0])
+            finish(tasks)
+        if action == "verify":
+            assert c.request(action, choice=old_page.choices[0])
+        else:
+            assert c.request(action, confirmed=True)
+        work, done = tasks[-1]
+        if phase == "after_worker":
+            value = work()
+            assert value is not None
+        assert c.cancel() and not c.cancel() and not c.request("list")
+        assert renders[-1][1] == "cancelling"
+        if phase == "before_worker":
+            value = work()
+            assert value is None
+        done(value)
+        done(value)
+        assert renders[-1][1:] == ("cancelled", None)
+        assert not c.busy and c.page is None and c.reviewed is None
+        assert not c.request("simulate", confirmed=True)
+        if old_page is not None:
+            assert c.broker.verify(token=old_page.choices[0].token, confirmed=True) is None
+        if action == "list" and value is not None:
+            assert c.broker.verify(token=value.choices[0].token, confirmed=True) is None
+        if action == "verify" and value is not None:
+            assert c.broker.simulate(token=value, confirmed=True) == "review_required"
+        assert c.request("list")
+        fresh = finish(tasks)
+        assert fresh is not None and c.page is fresh
+        assert db.metadata_get(reservation.key) == before and len(db.placements()) == 1
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_cancel_idle_review_and_error_recover_without_mutation(tmp_path, monkeypatch):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        _, _, _, c, tasks, renders = rig(service)
+        assert c.request("list")
+        page = finish(tasks)
+        assert c.request("verify", choice=page.choices[0])
+        token = finish(tasks)
+        assert c.cancel() and not c.cancel()
+        assert c.broker.simulate(token=token, confirmed=True) == "review_required"
+        assert renders[-1][1] == "cancelled"
+
+        def fail(**kwargs):
+            raise RuntimeError("SYNTHETIC_PRIVATE_EXCEPTION")
+
+        monkeypatch.setattr(c.broker, "list_receipts", fail)
+        assert c.request("list") and finish(tasks) is None
+        assert renders[-1] == ("list", "ready", None)
+        assert not c.busy and c.page is None and c.reviewed is None
+        assert "SYNTHETIC_PRIVATE_EXCEPTION" not in repr(renders)
+        assert db.metadata_get(reservation.key) is not None
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
