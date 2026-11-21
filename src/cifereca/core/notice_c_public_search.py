@@ -411,10 +411,14 @@ def search_public_notice_c(
     no cached entitlement. No per-viewer key: 3 reader profiles see the same
     admitted public C. Private observations are discarded before projection.
     """
+    # Refuse foreign request values BEFORE frozenset membership or SQL
+    # preparation. A hostile __hash__/__eq__ on field/scope is not a safe
+    # unsupported filter; it must not execute on a Core search worker.
     if (type(query) is not str or not 2 <= len(query.strip()) <= 160
-            or field not in _FIELDS or scope not in _SCOPES
+            or type(field) is not str or field not in _FIELDS
+            or type(scope) is not str or scope not in _SCOPES
             or type(provider_ids) is not tuple or len(provider_ids) > 128
-            or any(type(provider) is not str or not provider
+            or any(type(provider) is not str or not 1 <= len(provider) <= 64
                    for provider in provider_ids)
             or type(content_types) is not tuple or len(content_types) > 32
             or any(type(value) is not str or not 0 < len(value) <= 64
@@ -426,7 +430,8 @@ def search_public_notice_c(
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= _MAX_MATCHES
             or type(max_scan) is not int or not 1 <= max_scan <= 30000
-            or (now is not None and (type(now) is not int or now < 1))):
+            or (now is not None and (type(now) is not int
+                                     or not 1 <= now <= 2**63 - 1))):
         raise ValueError("invalid_notice_c_search_request")
     now = int(time.time()) if now is None else now
     needle = query.strip()
