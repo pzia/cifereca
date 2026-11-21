@@ -17,7 +17,9 @@ def _native_canonical_ref(document):
     # native scalar members before a dataclass equality comparison executes
     # on a mutable row or plug-in presentation.
     return (type(document) is CoverDocumentScope
-            and all(type(getattr(document, name)) is str for name in (
+            and all(type(getattr(document, name)) is str
+                    and len(getattr(document, name)) <= 512
+                    and getattr(document, name).isprintable() for name in (
                 "kind", "source_key", "provider_id", "credential_id",
                 "loan_id", "artifact_id", "placement_id",
             ))
