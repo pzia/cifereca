@@ -507,3 +507,63 @@ def test_private_source_documents_reject_mutated_scalar_before_hash_or_click(
             host, menu, choice_id=choice.choice_id,
         ) == URL
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+@pytest.mark.parametrize("change", [
+    "canonical_kind", "canonical_source_key", "canonical_provider",
+    "lease_identity", "lease_epoch", "lease_service", "lease_control",
+])
+def test_private_menu_and_click_reject_tampered_canonical_or_reader_scope(
+    tmp_path, change,
+):
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("untrusted equality in private C lease")
+
+        def __hash__(self):
+            raise AssertionError("untrusted hash in private C lease")
+
+    with closing(Storage(tmp_path / "altered-lease.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        scope = capture_search_read_scope(host, "alice")
+        menu = read_authenticated_web_choices(
+            host, canonical.document, reader_scope=scope,
+            source_documents=(source.document,),
+        )
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        if change.startswith("canonical_"):
+            changed_document = replace(canonical.document)
+            field_name = change.removeprefix("canonical_")
+            object.__setattr__(changed_document, field_name, Hostile())
+            assert read_authenticated_web_choices(
+                host, changed_document, reader_scope=scope,
+                source_documents=(source.document,),
+            ) is None
+            changed = replace(menu, document=changed_document)
+        else:
+            if change == "lease_identity":
+                altered_scope = replace(scope, identity_id=Hostile())
+            elif change == "lease_epoch":
+                altered_scope = replace(scope, source_epoch=Hostile())
+            elif change == "lease_service":
+                altered_scope = replace(scope, service=Hostile())
+            else:
+                altered_scope = replace(scope, identity_id="alice\x00alternate")
+            assert read_authenticated_web_choices(
+                host, canonical.document, reader_scope=altered_scope,
+                source_documents=(source.document,),
+            ) is None
+            changed = replace(menu, _scope=altered_scope)
+        assert resolve_authenticated_web_choice(
+            host, changed, choice_id=choice.choice_id,
+        ) is None
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
