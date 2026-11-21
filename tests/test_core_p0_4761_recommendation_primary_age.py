@@ -4,6 +4,7 @@ One retained two-source C is built from synthetic same-call observations.
 CoreUI consumes only the original, current opaque C receipt.
 """
 from contextlib import closing
+from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
@@ -76,7 +77,7 @@ def test_primary_age_exact_and_provider_scoped_after_reopening_sqlite(tmp_path):
 
         # The inherited DTO is not an authority once it diverges from its
         # native receipt; no unscoped metadata fallback is allowed.
-        before = dict(item.metadata)
+        before = deepcopy(item.metadata)
         item.metadata["youth_age_ranges"][0]["age_kind"] = "reading"
         assert known_public_c_primary_hit(item) is None
         assert fields() == ()
