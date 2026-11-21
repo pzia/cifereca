@@ -112,7 +112,7 @@ def test_partial_ambiguous_or_non_eur_prices_are_rejected_with_no_secret(mutatio
 
 def test_missing_optional_metadata_is_unknown_not_inferred_from_title_cover_or_facets():
     bad = FIRST
-    for name in ('product_meta', 'ColPrice', 'Author', 'FormatLivre', 'AvailableFormat', 'list-group-item-text', 'lazy-image'):
+    for name in ('product_meta', 'ColPrice', 'Author', 'FormatLivre', 'BuySelectedFormat', 'AvailableFormat', 'list-group-item-text', 'lazy-image'):
         # Remove selector membership while retaining real neighboring content.
         bad = re.sub(r'(?<=class=")' + name + r'(?=[ "\t])', 'unselected', bad)
         bad = bad.replace(' ' + name + ' ', ' unselected ')
@@ -306,3 +306,42 @@ def test_advanced_price_without_currency_is_not_monetary_proof():
         '<span class="LblDecimal">99</span></div></td>')
     with pytest.raises(PublicSearchParseError):
         parse_public_search(advanced_page(total=1, cards=cards), ADVANCED)
+
+
+def test_simple_search_native_counter_without_styling_class():
+    # Derived from the exact native ID in observed_search-loup-0.html.
+    html = page_of().replace('<span class="ResultatDetail">',
+        '<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">')
+    page = parse_public_search(html, URL)
+    assert page.complete and page.total_results == len(page.items) == 1
+    assert not page.items[0].owned
+
+
+@pytest.mark.parametrize("extra", [
+    '<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">1</span>',
+    '<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">9</span>',
+    '<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">unknown</span>',
+])
+def test_counter_id_and_class_are_not_independent_ambiguous_proofs(extra):
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(page_of() + extra, URL)
+
+
+def test_same_native_counter_node_with_class_counts_once():
+    html = page_of().replace('<span class="ResultatDetail">',
+        '<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres" class="ResultatDetail">')
+    assert parse_public_search(html, URL).total_results == 1
+
+
+def test_advanced_gridless_cards_require_observed_item_container():
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page().replace('BestSalesItem', 'unqualified'), ADVANCED)
+
+
+def test_selected_format_has_exact_selector_provenance():
+    cards = advanced_card("1792964").replace('</td>',
+        '<span class="BuySelectedFormat">ePub sans DRM</span></td>')
+    item, = parse_public_search(advanced_page(1, cards), ADVANCED).items
+    assert item.metadata['field_evidence']['selected_format_label'] == {
+        'source_url': ADVANCED, 'source': '.BuySelectedFormat', 'kind': 'observed_public_html'}
+    assert item.metadata['isbn_digital'] is None and not item.owned
