@@ -15,12 +15,12 @@ session, acquisition, ni équivalence d'édition déduite.
 | Paris (catalogue via session) | `FriendlyUrl` dans `Results[]` de `POST Search.svc/Search`. Les réponses historiques attestent les scénarios `CATALOGUE` et `EBOOKS`. [Relevés #3415](https://github.com/pzia/cifereca/issues/3415#issuecomment-6587935035) | RscBase, RscId, scénario et credential. Le scénario ne détermine pas à lui seul le support. | La déclaration publique retire `friendly_url`. La fixture de parsing ne qualifie ni sa destination par édition ni le mode d'accès. [Test du parseur](../src/plugins/provider-paris/tests/test_p1_3415_search_response_facets.py) · [Frontière inter-profils](../tests/test_core_p0_4673_paris_foreign_search.py) |
 | Kobo Vault, catalogue public | `/api/v2/catalog/search` fournit `product_url`, validé par `_public_product_url`. | ID de produit et révision. `scope=catalog` exclut la bibliothèque de compte. | URL en résultat lorsque qualifiée. La déclaration publique retire `friendly_url`. [Fixtures URL produit](../src/plugins/provider-kobo/tests/test_kobo_public_product_url_p1.py) · [Qualification API #6875](https://github.com/pzia/cifereca/issues/6875) |
 | Kobo Vault, bibliothèque de compte | `/api/v2/library/search` peut transmettre un `product_url` public et sûr. | Collection, compte et édition exacts, y compris quand la recherche combine les deux sources. | URL publique en résultat. Aucun locator de fiche authentifiée ne passe dans C. [Fixtures de séparation](../src/plugins/provider-kobo/tests/test_kobo_search_capabilities_p1.py) |
-| BnF-Prêt (session lecteur) | HTML `/resources?q=…`. `resource_url(record.resource_id)` produit `/resources/<id>` après validation. | Ressource exacte. Le détail lie provider et credential. | Fiche en résultat. Son mode d'accès et sa persistance C restent à qualifier. [Fixtures DOM](../src/plugins/provider-bnf-pret/tests/test_web_dom.py) |
+| BnF-Prêt (session lecteur) | HTML `/resources?q=…`. `resource_url(record.resource_id)` produit `/resources/<id>` après validation. | Ressource exacte, session, identité, compte et credential ; déclaration privée du même appel, aucun relabel public. | [#7250](https://github.com/pzia/cifereca/pull/7250) : Search fédérée propriétaire → C privée self opaque → relecture et clic revalidé. [Recette SQLite](../src/plugins/provider-bnf-pret/tests/test_p0_6397_federated_private_web_c.py), [#7266](https://github.com/pzia/cifereca/pull/7266) : menu GTK authentifié 0/1/N contrôlé. Pas de preuve de navigateur connecté ni de lien prêt/édition publique. |
 | Gallica (public) | OPDS EPUB/PDF documentaire, fiche canonique `https://gallica.bnf.fr/ark:/…` issue de l'ARK Atom exact et sans contradiction. SRU audio non qualifié pour C. | Singleton anonyme, identifiant Atom unique et support attesté par acquisition native, document et livraison séparés. | [#7144](https://github.com/pzia/cifereca/pull/7144) fusionnée ; [recette producteur→C→choix et restart](../src/plugins/provider-gallica/tests/test_p0_3724_public_notice_c.py) ajoutée, réception CI requise. ARK contradictoire : refus. [HTTP 403 observé](https://github.com/pzia/cifereca/issues/6938#issuecomment-7031280233) |
 | Gutenberg (public) | Enveloppe OPDS documentaire distincte de l'offre legacy ; `alternate` HTML HTTPS canonique observé, identifiant Atom explicite unique et coordonnées non contradictoires. | ID Gutenberg exact, singleton anonyme `__public__`, collection `public_catalog`. | [#7130](https://github.com/pzia/cifereca/pull/7130) et [#7139](https://github.com/pzia/cifereca/pull/7139) fusionnées : déclaration de fiche `public_search_record_identifier` uniquement si qualifiée. [Test producteur→C→choix après éviction/restart](../src/plugins/provider-gutenberg/tests/test_p0_3724_public_notice_c.py) ajouté, réception CI requise. Absence/ambiguïté : pas de lien, pas de droit. [HTTP 503 observé](https://github.com/pzia/cifereca/issues/6938#issuecomment-7031280233) |
 | EbooksGratuits (public) | OPDS/COPS par défaut, `alternate` HTML validé sur l'origine. Le backend HTML optionnel extrait son propre lien de détail. | ID Atom ou ID du chemin de détail HTML. | OPDS : référence C publique durable lorsque `alternate` désigne le livre exact, même après éviction/restart et changement de profil (#7212). Routes Search génériques exclues (#7179). Absence de lien : aucun choix. Identifiant contradictoire : réponse partielle sans C inventée. Backend HTML optionnel non qualifié pour C. Le relevé terrain confirme la navigation et des offres EPUB, pas la recette C live. [Fixtures OPDS](../src/plugins/ebooksgratuits/tests/test_opds_calibre_1084.py) · [Relevé terrain](https://github.com/pzia/cifereca/issues/6938#issuecomment-7028733010) |
-| Baen (public opt-in) | Produit JSON Free Library et carte HTML à href qualifié. | Produit exact et URL dédiée. | Fiche en résultat, sans preuve C web. L'accès personnel My Books relève du [#539](https://github.com/pzia/cifereca/issues/539). [Fixtures HTML](../src/plugins/baen/tests/test_public_improvements.py) |
-| BiblioAccess La Rochelle (public) | HTML `SearchResultSummary` → `Search`, ancre `/1409/Catalog/Book/{id}[/slug]`. Détail JSON-LD sur action explicite. | Tenant 1409, identifiant et URL de l’ancre retenue, session sans emprunteur. Un titre d’un autre slug ne qualifie pas cette URL. | [#7049](https://github.com/pzia/cifereca/pull/7049) relie la déclaration anonyme du même appel à l’observation C et à une fiche publique durable pour les URL admissibles. Les titres génériques et contradictoires restent exclus. Les slugs encodés restent soumis à la garde URL Core. |
+| Baen (public opt-in) | Produit JSON Free Library (ID natif positif et `productUrl` exact, tous deux uniques) ; carte HTML legacy. | Produit exact, réponse anonyme, URL stable dédiée ; ID historique dérivé de l'URL conservé, aucun droit. | [#7237](https://github.com/pzia/cifereca/pull/7237) : `baen.public_search_product_card` sur catégorie JSON anonyme qualifiée, C durable et choix public après éviction/restart. [Recette](../src/plugins/baen/tests/test_p0_3724_public_notice_c.py). Le GET texte libre reste partiel sans déclaration C. My Books relève du [#539](https://github.com/pzia/cifereca/issues/539). |
+| BiblioAccess La Rochelle (public) | HTML `SearchResultSummary` → `Search`, ancre `/1409/Catalog/Book/{id}[/slug]`. Détail JSON-LD sur action explicite. | Tenant 1409, identifiant et URL de l’ancre retenue, session sans emprunteur. | [#7049](https://github.com/pzia/cifereca/pull/7049) : déclaration anonyme même appel, C publique durable. [#7389](https://github.com/pzia/cifereca/pull/7389) : refus meta refresh pour le zéro terminal, liens/rel contradictoires et conteneurs masqués exclus du parseur. Aucun nouveau GET ni preuve de lien issue d'une carte cachée. |
 | BiblioAccess compte lecteur | Ancre fiche de la page de prêts, `biblioaccess_loans_page.py` et même garde book_id_from_url ; livraison séparée. | Compte/tenant et identifiant natif de prêt distincts de l'id fiche. | Aucun locator authentifié C générique reçu ; pas de GET ni mutation. |
 | CifericaOPDS / Reference | Aucun manifeste CifericaOPDS sous `src/plugins` sur `main` au 20/11. Reference est un provider de simulation désactivé par défaut et sans capacité `search`. | Les fixtures n'attestent aucun endpoint de fiche. | Pas de recherche de fiche activable sur ce SHA. [Provider Reference](../src/plugins/provider-reference/cifereca_reference.py) · [CifericaOPDS #969](https://github.com/pzia/cifereca/issues/969) |
 
@@ -63,8 +63,39 @@ l'absence d'entitlement/acquisition/placement, le cas sans fiche et le
 refus d'un autre livre. Le cas 2+ GTK de #7037 reste synthétique et ne
 qualifie pas le navigateur authentifié.
 
-**Reliquats** : les références C authentifiées et leur revalidation de compte,
-les producteurs non admis et leurs preuves d'édition, ainsi que la matrice
-exhaustive des fixtures et gates par parcours restent ouverts. Aucun
-nouveau GET, aucune extension d'autorité, aucune qualification de navigateur
-authentifié. Ce document n'est pas un reçu de clôture #6397.
+## Réception complémentaire au 21/11 — sources et clics désormais reçus
+
+| PR | HEAD testé | Gates SUCCESS | Commit de fusion |
+|---|---|---|---|
+| [#7237](https://github.com/pzia/cifereca/pull/7237) — Baen JSON public | `9082e502fd48d5da23d71969bc2db607e51814b9` | [PR CI](https://github.com/pzia/cifereca/actions/runs/44873194073) | `dd1cc345ebf586c98a06442398de23c39e57a63d` |
+| [#7250](https://github.com/pzia/cifereca/pull/7250) — BnF-Prêt privé | `e2fde865c16c8b523fa9f821839795b93940fd19` | [PR CI](https://github.com/pzia/cifereca/actions/runs/44876027438), [AST](https://github.com/pzia/cifereca/actions/runs/44876027477), [install](https://github.com/pzia/cifereca/actions/runs/44876027394), [E2E](https://github.com/pzia/cifereca/actions/runs/44876027491) | `6ae3bc38ce452aa1e8379ebf9798a2c8340dac66` |
+| [#7266](https://github.com/pzia/cifereca/pull/7266) — menu authentifié GTK 0/1/N | `ccae76f04758f20f947bd1af2e6416133dffaea9` | [PR CI](https://github.com/pzia/cifereca/actions/runs/44886360567), [E2E](https://github.com/pzia/cifereca/actions/runs/44886360467) | `4eb696c8a69d0f6f34efd1b72d45179bc42a9d94` |
+| [#7372](https://github.com/pzia/cifereca/pull/7372) — reçu privé type-first | `ba6b7e530f7d58589d59c5257aaea952d0105880` | [PR CI](https://github.com/pzia/cifereca/actions/runs/44922574320), [AST](https://github.com/pzia/cifereca/actions/runs/44922574329), [install](https://github.com/pzia/cifereca/actions/runs/44922574397) | `88611a9d10a3fc7f4d53a2088a7d6de306ef3752` |
+| [#7389](https://github.com/pzia/cifereca/pull/7389) — HTML BiblioAccess | `deea9862b3a5d823b7cf941e5c39721f2c5c1595` | [PR CI](https://github.com/pzia/cifereca/actions/runs/44920217228) | `aa45b2170432cb21cb8669394f73a8e9fa0a471e` |
+
+La recette privée BnF-Prêt vérifie notamment l'absence d'écriture de C
+sur résultat recopié, révoqué ou batch non admis, refus d'un lecteur
+étranger, et un seul échange de transport contrôlé. Elle ne donne
+aucune session au navigateur externe. Les données C privées restent
+distinctes des C publiques et des droits A/B.
+
+**Reliquats précis** (pas de clôture générale) :
+
+- Paris et Kobo : le champ de fiche est disponible dans les résultats,
+  mais la destination et l'autorité exactes pour une admission C
+  publique anonyme ou privée propriétaire restent à recevoir ; ne pas
+  promouvoir une session authentifiée en singleton public.
+- Numilog achats et BiblioAccess prêts : aucun locator de fiche
+  authentifiée générique qualifié pour C, pas de relation catalogue-prêt
+  déduite. L'enrichissement public Numilog #1072 reste acquis.
+- EbooksGratuits backend HTML optionnel, Baen GET texte libre et les
+  parcours non attestés ci-dessus restent sans admission C web positive.
+- Matrice recherche/liste/détail par source, garde de clic et recette
+  réelle d'un navigateur nécessitant authentification : qualification
+  distincte des tests synthétiques, en coordination avec #6875.
+- #4980 conserve la réception transverse intégrée, aucune nouvelle
+  collecte ne doit être entreprise pour répéter les preuves reçues.
+
+Aucun nouveau GET, extension d'autorité ou droit A/B. Les reçus exacts
+ci-dessus remplacent seulement les anciennes mentions « non reçu »
+concernant Baen catégorie JSON et BnF-Prêt privé, pas les autres limites.
