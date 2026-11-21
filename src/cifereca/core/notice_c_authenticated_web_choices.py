@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+from sqlite3 import Error as SQLiteError
 import json
 import re
 from urllib.parse import urlsplit
@@ -252,7 +253,12 @@ def read_authenticated_web_choices(service, document, *, reader_scope, source_do
                      if (b := _capture(service, reader_scope, doc)) is not None)
     if not bindings:
         return None
-    epoch, pairs = _read(service, document, bindings)
+    try:
+        epoch, pairs = _read(service, document, bindings)
+    except (SQLiteError, ValueError, TypeError, KeyError, AttributeError):
+        # A damaged private C or temporary local SQLite failure never
+        # authorizes a web action and must not abort the surrounding Search.
+        return None
     if (epoch is None or not reader_scope.current(service)
             or not all(b.current(service, reader_scope) for b in bindings)):
         return None
@@ -269,7 +275,12 @@ def resolve_authenticated_web_choice(service, menu, *, choice_id):
             or not all(b.current(service, menu._scope) for b in menu._bindings)
             or sum(c.choice_id == choice_id for c in menu.choices) != 1):
         return None
-    epoch, pairs = _read(service, menu.document, menu._bindings)
+    try:
+        epoch, pairs = _read(service, menu.document, menu._bindings)
+    except (SQLiteError, ValueError, TypeError, KeyError, AttributeError):
+        # The click resolves only this already-attested C. On a broken
+        # snapshot, refuse navigation instead of using the old URL.
+        return None
     if (epoch != menu.epoch or tuple(c for c, _ in pairs) != menu.choices
             or not menu._scope.current(service)
             or not all(b.current(service, menu._scope) for b in menu._bindings)):
