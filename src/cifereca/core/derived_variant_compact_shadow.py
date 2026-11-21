@@ -1,4 +1,4 @@
-"""#6937: supervised durable shadow witness, without retiring any receipt.
+"""#6937: supervised durable shadow and exact logical compaction.
 
 Unwired private Core foundation. Does not grant a replay, prove consumers
 absent, establish reader usability, release quota or remove physical names.
@@ -9,6 +9,7 @@ import sqlite3
 from . import derived_variant_compact_receipt as compact
 from .derived_variant_journal import (
     DerivedJournalConflict, _COMMITTED, _decode, _digest, _measure, _receipt_digest,
+    _read_logical_receipt,
 )
 from .derived_variant_publication import DerivedPublicationConflict, _verified_variant_file
 from .derived_variant_retention_physical import _pair
@@ -26,13 +27,9 @@ def _require(ok, code="derived_shadow_unverified"):
 
 
 def _read_committed(db, key):
-    row = db.execute(
-        "SELECT value FROM metadata WHERE key=? AND "
-        "length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
-        (key, compact._MAX_PROOF_BYTES),
-    ).fetchone()
-    _require(row is not None and type(row[0]) is str, "derived_shadow_receipt_changed")
-    raw = row[0]
+    raw = _read_logical_receipt(db, key)
+    _require(type(raw) is str and 0 < len(raw.encode("utf-8")) <= compact._MAX_PROOF_BYTES,
+             "derived_shadow_receipt_changed")
     _require(key == _COMMITTED + _receipt_digest(raw), "derived_shadow_receipt_changed")
     return raw, _decode(key, raw)
 
@@ -44,7 +41,7 @@ def _journal_current(db, key, intent):
     rows, _ = _measure(db)
     paths, inodes = {}, {}
     for other, _size in rows:
-        raw = db.execute("SELECT value FROM metadata WHERE key=?", (other,)).fetchone()[0]
+        raw = _read_logical_receipt(db, other)
         prior = _decode(other, raw)
         _index_receipt_references(paths, inodes, other, prior)
     _require(not _other_receipt_dependency(paths, inodes, key, intent),
@@ -57,12 +54,34 @@ def _journal_current(db, key, intent):
 def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                          approved_receipt_sha256, shared_lock, scope_current,
                          explicitly_requested=False):
-    """Insert one exact reversible shadow in a FULL SQLite transaction.
+    """Insert one exact reversible shadow in a FULL SQLite transaction."""
+    return _write_or_retire(storage, library_root=library_root, identity_id=identity_id,
+                            receipt_sha256=receipt_sha256,
+                            approved_receipt_sha256=approved_receipt_sha256,
+                            shared_lock=shared_lock, scope_current=scope_current,
+                            explicitly_requested=explicitly_requested)
 
-    The old receipt remains the sole authoritative format for all current
-    readers. Replay of this preparation is idempotent after fresh review.
-    No UI or broker calls this function; isolated recipe only for now.
+
+def retire_compact_original(storage, *, library_root, identity_id, receipt_sha256,
+                            approved_receipt_sha256, approved_compact_sha256,
+                            shared_lock, scope_current, explicitly_requested=False):
+    """Isolated logical compaction: retire only the byte-exact duplicate row.
+
+    No FS mutation, quota refund, automatic call or production activation.
+    A prior durable shadow and exact separate confirmation are mandatory.
     """
+    _require(_digest(approved_compact_sha256), "derived_compact_approval_required")
+    return _write_or_retire(storage, library_root=library_root, identity_id=identity_id,
+                            receipt_sha256=receipt_sha256,
+                            approved_receipt_sha256=approved_receipt_sha256,
+                            shared_lock=shared_lock, scope_current=scope_current,
+                            explicitly_requested=explicitly_requested,
+                            approved_compact_sha256=approved_compact_sha256)
+
+
+def _write_or_retire(storage, *, library_root, identity_id, receipt_sha256,
+                     approved_receipt_sha256, shared_lock, scope_current,
+                     explicitly_requested, approved_compact_sha256=None):
     _require(explicitly_requested is True and _digest(receipt_sha256)
              and approved_receipt_sha256 == receipt_sha256
              and isinstance(library_root, Path) and library_root.is_absolute()
@@ -87,6 +106,10 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
 
                     live()
                     raw, intent = _read_committed(db, key)
+                    _require(compact._retired_receipt(db, key) is None,
+                             "derived_compact_already_retired")
+                    before_charge = _measure(db)
+                    marker = compact._RETIRED_PREFIX + receipt_sha256
 
                     def canonical():
                         _require(_exact_scope(db, identity_id=identity_id,
@@ -110,6 +133,10 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                         _require(count < compact._MAX_PROOFS
                                  and total + len(proof.encode("ascii")) <= compact._MAX_PROOF_TOTAL,
                                  "derived_compact_capacity_exceeded")
+                    if approved_compact_sha256 is not None:
+                        _require(existing == (proof,) and _receipt_digest(proof) == approved_compact_sha256
+                                 and compact._raw_size(proof) + 64 < compact._raw_size(raw),
+                                 "derived_compact_approval_required")
                     parent, stage, target = map(Path, (
                         intent.parent_path, intent.staged_path, intent.candidate_path,
                     ))
@@ -134,9 +161,23 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                                      and _pair(stage, target, output) == pair)
 
                         recheck()
-                        if existing is None:
+                        if approved_compact_sha256 is None:
+                            if existing is None:
+                                db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                                           (proof_key, proof))
+                        else:
+                            # A reader cannot observe an intermediate state:
+                            # both writes and the revalidation are in one FULL
+                            # transaction, with an exact CAS on the old bytes.
+                            _require(db.execute("SELECT value FROM metadata WHERE key=?",
+                                                (proof_key,)).fetchone() == (proof,))
                             db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
-                                       (proof_key, proof))
+                                       (marker, approved_compact_sha256))
+                            _require(db.execute("DELETE FROM metadata WHERE key=? AND value=?",
+                                                (key, raw)).rowcount == 1,
+                                     "derived_shadow_receipt_changed")
+                            _require(compact._retired_receipt(db, key) == raw
+                                     and _measure(db) == before_charge)
                         _require(db.execute("SELECT value FROM metadata WHERE key=?",
                                             (proof_key,)).fetchone() == (proof,))
                         recheck()
@@ -144,6 +185,10 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                 # FULL commit is completed here before returning any result.
             finally:
                 db.execute(f"PRAGMA synchronous={int(sync)}")
+        if approved_compact_sha256 is not None:
+            return {"status": "logical_original_retired", "original_retained": False,
+                    "receipt_reconstructible": True, "retention_authorized": False,
+                    "quota_refund_authorized": False, "destructive_cleanup_allowed": False}
         return {"status": "shadow_written" if existing is None else "shadow_already_present",
                 "original_retained": True, "retention_authorized": False,
                 "quota_refund_authorized": False, "destructive_cleanup_allowed": False}
