@@ -75,3 +75,21 @@ def test_available_with_pending_refresh_counts_once_and_exposes_subset():
     assert documentary_summary({"available": 1, "refresh_pending": 2}) == ""
     conflicting = remote("conflicting", a, state="available")
     assert projected_purchase_counts([row, conflicting, second], identity_id="A") == {"pending": 1}
+
+
+def test_retained_notice_with_proof_to_revalidate_keeps_other_terminal_counts():
+    a, b, c = (source(edition=x) for x in ("one", "two", "three"))
+    retained = remote("available", a, state="available")
+    retained["_purchase_library_status"] = PurchaseLibraryStatus(
+        "available", a, "proof_unavailable", 0)
+    failed = remote("failed", b, state="failed")
+    omitted = remote("omitted", c, state="direct_locator_unattested")
+    counts = projected_purchase_counts([retained, failed, omitted], identity_id="A")
+    assert counts == {"available": 1, "refresh_proof_unavailable": 1,
+                      "failed": 1, "not_attested": 1}
+    summary = documentary_summary(counts)
+    assert "1 fiches disponibles" in summary
+    assert "1 non abouties" in summary
+    assert "1 candidats non attestés" in summary
+    assert "Fiches conservées, dont actualisation : 1 preuves à revalider" in summary
+    assert documentary_summary({"available": 1, "refresh_proof_unavailable": 2}) == ""
