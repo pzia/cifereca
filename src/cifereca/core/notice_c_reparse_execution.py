@@ -101,8 +101,8 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
 
     The selected parser must return a Core-admitted public observation via
     the established admission projector, not arbitrary plugin raw fields.
-    This first port accepts only complete Search v2 observations; no
-    downgrade to missing/partial, rights, identity change or fresh GET.
+    Accept exact Search v2 with an available cover or explicit cover
+    omission. No downgrade from available, rights, identity change or GET.
     """
     if type(registry) is not PublicReplayRegistry:
         raise ValueError("notice_reparse_invalid_registry")
@@ -111,10 +111,12 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
     except ValueError as exc:
         raise UnavailableNoticeWork("notice_reparse_input_unavailable") from exc
     old = request.source
+    coverless = (raw._coverless_public_search_observation(old.observation)
+                 and old.attribute.state == "pending" and not old.attribute.candidates)
     if (old.observation.parser_id != "core.search.public-cover"
             or old.observation.parser_version != "2"
-            or old.observation.status != "complete"
-            or old.attribute.state != "available"
+            or (not coverless and (old.observation.status != "complete"
+                                   or old.attribute.state != "available"))
             or old.attribute.field_path != ("search_result", "thumbnail_url")):
         raise UnavailableNoticeWork("notice_reparse_unsupported_source")
     port = registry.select(request)
@@ -129,14 +131,18 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             or result.key != old.observation.key
             or result.parser_id != old.observation.parser_id
             or result.parser_version != old.observation.parser_version
-            or result.status != "complete"
+            or (result.status != "complete" and not (
+                coverless and raw._coverless_public_search_observation(result)))
             # Parsing an existing response NEVER advances source freshness.
             or result.observed_at != old.observation.observed_at):
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
     attribute = project_notice_cover_attribute(
         result, field_path=old.attribute.field_path, cover_inventory_complete=True,
     )
-    if attribute.document != old.document or attribute.state != "available":
+    if (attribute.document != old.document
+            or (attribute.state != "available" and not (
+                coverless and raw._coverless_public_search_observation(result)
+                and attribute.state == "pending" and not attribute.candidates))):
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
 
     @contextmanager

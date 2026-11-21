@@ -2008,6 +2008,18 @@ class UxRecommendationsView:
         if state is None:
             return False
         text, sources, languages = state
+        # The shared control can evaluate the exact retained C sources.
+        # A source facet and a bibliographic predicate must match the same
+        # observation, not a union of the group's unrelated descriptions.
+        match_known = getattr(getattr(self, "_query_controls", None),
+                              "matches_known_public_notice", None)
+        if callable(match_known):
+            try:
+                known = match_known(ranked.item)
+            except Exception:
+                return False
+            if known is not None:
+                return known is True
         if sources and set(sources).isdisjoint(_public_ranked_values(ranked.sources)):
             return False
         if languages and set(languages).isdisjoint(_candidate_languages(ranked.item)):

@@ -240,6 +240,10 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
         self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+        from .notice_c_private_series_controller import request_selected_retained_series
+        request_selected_retained_series(
+            self, item, selected_id=item.id, context=self._search_detail_request_context(),
+        )
         # A stale public row must remain purely descriptive. Do not even
         # capture a private selection lease for an anonymous row.
         if (getattr(item, "source_credential", None)
@@ -268,6 +272,8 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     context = self._search_detail_request_context()
     from cifereca.gui.notice_c_web_action_controller import request_selected_authenticated_web_actions
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
+    from .notice_c_private_series_controller import request_selected_retained_series
+    request_selected_retained_series(self, item, selected_id=selected_id, context=context)
     # The four-field selection lease predates Core's independent account
     # and source epochs. A disconnect/rebind can replace the credential
     # session *without changing the selected book ID or GTK generation*.
@@ -471,6 +477,8 @@ def _apply_search_detail(
     self._request_cached_book_details("search", item.id, result_row(item))
     from cifereca.gui.notice_c_web_action_controller import request_selected_authenticated_web_actions
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
+    from .notice_c_private_series_controller import request_selected_retained_series
+    request_selected_retained_series(self, item, selected_id=selected_id, context=context)
     # Capability-based action; legacy headless hosts without an installed
     # session registry cannot offer it and must not import GTK adapters.
     if getattr(getattr(self, "service", None), "_sessions", None) is not None:
@@ -499,6 +507,8 @@ def _search_detail_error(
     self._request_cached_book_details("search", item.id, result_row(item))
     from cifereca.gui.notice_c_web_action_controller import request_selected_authenticated_web_actions
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
+    from .notice_c_private_series_controller import request_selected_retained_series
+    request_selected_retained_series(self, item, selected_id=selected_id, context=context)
     # Provider exceptions can embed account IDs, private file paths or signed
     # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
