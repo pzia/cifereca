@@ -7,7 +7,15 @@ An activation-scoped lease will additionally guard entry and result delivery.
 from secrets import token_hex
 from threading import Lock
 
-from ..plugin_api.local_origin_detail import LocalOriginDetailMatch, LocalOriginDetailPage
+from ..plugin_api.local_origin_detail import (
+    LocalOriginDetailMatch, LocalOriginDetailPage, LocalOriginPublicChoice,
+    LocalOriginPublicMatch, LocalOriginPublicReport,
+)
+from .activation_scoped_broker import ActivationScopedReadFactory
+from .local_origin_public_catalogue import (
+    PublicCatalogueCandidate, available_local_public_catalogues,
+    search_local_public_catalogue,
+)
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
 from .local_origin_suggestion_operator import (
     admit_local_origin_suggestion, continue_local_origin_suggestion,
@@ -16,8 +24,10 @@ from .local_origin_suggestion_operator import (
 
 
 class LocalOriginDetailReadBrokerImpl:
-    def __init__(self, service):
+    def __init__(self, service, *, activation_current=None):
         self._service = service
+        self._activation_current = activation_current
+        self._public = {}
         self._lock = Lock()
         self._generation = 0
         self._active = None
@@ -28,7 +38,8 @@ class LocalOriginDetailReadBrokerImpl:
             if self._revoked or generation != self._generation:
                 return False
         try:
-            return view() is True and request.current() is True
+            return ((self._activation_current is None or self._activation_current() is True)
+                    and view() is True and request.current() is True)
         except Exception:
             return False
 
@@ -53,6 +64,13 @@ class LocalOriginDetailReadBrokerImpl:
             following = continue_local_origin_suggestion(self._service, request, result)
             if not self._live(generation, view, request):
                 return None
+            # Only a verified first OPF page can offer an explicit anonymous
+            # comparison. Discovery is inert and never dispatches a provider.
+            choices = ()
+            if (request.page == 0 and self._activation_current is not None
+                    and result["metadata_evidence"] == "verified_epub_opf_description"):
+                choices = tuple((token_hex(32), choice)
+                                for choice in available_local_public_catalogues(self._service, request))
             page = LocalOriginDetailPage(
                 token_hex(32), known.page + 1,
                 tuple(LocalOriginDetailMatch(
@@ -62,11 +80,14 @@ class LocalOriginDetailReadBrokerImpl:
                 ) for match in known.suggestions),
                 known.known_matches, known.has_more, following is not None,
                 known.status, result["metadata_evidence"],
+                public_choices=tuple(LocalOriginPublicChoice(token, choice.provider_id)
+                                     for token, choice in choices),
             )
             with self._lock:
                 if self._revoked or self._generation != generation:
                     return None
                 self._active = (page.token, following, view)
+                self._public = {token: (choice, view, generation) for token, choice in choices}
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -85,6 +106,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._generation += 1
             generation = self._generation
             self._active = None
+            self._public.clear()
         try:
             if still_current() is not True:
                 return None
@@ -108,14 +130,64 @@ class LocalOriginDetailReadBrokerImpl:
             if token != expected or request is None:
                 return None
             self._active = None
+            self._public.clear()
             self._generation += 1
             generation = self._generation
         return self._read(request, view, generation)
+
+    def search_public(self, *, token, confirmed=False):
+        if (confirmed is not True or type(token) is not str
+                or self._activation_current is None):
+            return None
+        with self._lock:
+            if self._revoked:
+                return None
+            selected = self._public.pop(token, None)
+            if selected is None:
+                return None
+            choice, view, generation = selected
+        request = choice.request
+
+        def live():
+            return self._live(generation, view, request)
+
+        try:
+            if not live():
+                return None
+            result = search_local_public_catalogue(
+                self._service, request, provider_id=choice.provider_id,
+                confirmed=True, choice=choice, still_current=live,
+            )
+            if (not live() or type(result) is not dict
+                    or result.get("status") not in ("partial", "excluded", "scope_changed",
+                                                   "unavailable", "response_unverified")
+                    or type(result.get("provider_access_performed")) is not bool
+                    or any(result.get(flag) is not False for flag in (
+                        "coverage_complete", "fresh_network_verified",
+                        "association_authorized", "may_write_origin_or_right"))
+                    or type(result.get("candidates")) is not tuple
+                    or len(result["candidates"]) > 50):
+                return None
+            if any(type(row) is not PublicCatalogueCandidate or row.provider_id != choice.provider_id
+                   for row in result["candidates"]):
+                return None
+            report = LocalOriginPublicReport(
+                choice.provider_id, result["status"],
+                tuple(LocalOriginPublicMatch(
+                    row.provider_id, row.record_id, row.docbase, row.medium, row.title,
+                    row.author, row.media_format, row.isbns, row.comparison,
+                ) for row in result["candidates"]),
+                result["provider_access_performed"],
+            )
+            return report if live() else None
+        except Exception:
+            return None
 
     def cancel(self, *, token):
         with self._lock:
             if self._active is not None and type(token) is str and token == self._active[0]:
                 self._active = None
+                self._public.clear()
                 self._generation += 1
 
     def revoke(self):
@@ -123,4 +195,20 @@ class LocalOriginDetailReadBrokerImpl:
         with self._lock:
             self._revoked = True
             self._active = None
+            self._public.clear()
             self._generation += 1
+
+
+class LocalOriginDetailReadFactory:
+    """Inject the actual activation predicate into remote admission, not merely
+    a post-call wrapper. The scoped resolver still owns lifetime and allowlist.
+    """
+    def __init__(self, service):
+        self._service = service
+
+    def for_activation(self, plugin_id, *, current):
+        factory = ActivationScopedReadFactory(
+            lambda: LocalOriginDetailReadBrokerImpl(self._service, activation_current=current),
+            ("preview", "next_page", "search_public", "cancel"),
+        )
+        return factory.for_activation(plugin_id, current=current)
