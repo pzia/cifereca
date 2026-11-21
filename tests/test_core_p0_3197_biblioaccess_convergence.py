@@ -24,7 +24,7 @@ from test_biblioaccess_sso import _canonical_row, _synced_session
 @pytest.mark.parametrize("scenario", ["on", "off", "unset", "revoked_during_get",
                                       "historical_attention", "other_loan_attention",
                                       "adept_failed", "adept_raised", "receipt_failed",
-                                      "promotion_failed", "publication_failed"])
+                                      "promotion_failed", "publication_failed", "sql_failed"])
 def test_biblioaccess_core_canonical_convergence(
     tmp_path, monkeypatch, first_opening, scenario,
 ):
@@ -145,17 +145,28 @@ def test_biblioaccess_core_canonical_convergence(
                             if item["identity_id"] == "default")
             return service.synchronize_account_source(account)
 
-        recovered_after_checkpoint = scenario in {"promotion_failed", "publication_failed"}
+        recovered_after_checkpoint = scenario in {"promotion_failed", "publication_failed", "sql_failed"}
         if recovered_after_checkpoint:
             from cifereca.core import convergence_execution as engine
-            fault = ("promote_completed_delivery" if scenario == "promotion_failed"
-                     else "publish_completed_acquisition")
-            original_operation = getattr(engine, fault)
+            if scenario == "sql_failed":
+                # Real SQLite failure *inside* B, after Artifact/Placement/
+                # SourceReference inserts and before provider OriginLink.
+                # The FULL transaction must roll back all three.
+                with db._lock, db._connect() as sql:
+                    sql.execute(
+                        "CREATE TRIGGER synthetic_b_rollback "
+                        "BEFORE INSERT ON origin_links "
+                        "BEGIN SELECT RAISE(ABORT, 'synthetic_b_failure'); END"
+                    )
+            else:
+                fault = ("promote_completed_delivery" if scenario == "promotion_failed"
+                         else "publish_completed_acquisition")
+                original_operation = getattr(engine, fault)
 
-            def unavailable_after_checkpoint(*_a, **_kw):
-                raise RuntimeError("synthetic failure after durable canonical receipt")
+                def unavailable_after_checkpoint(*_a, **_kw):
+                    raise RuntimeError("synthetic failure after durable canonical receipt")
 
-            monkeypatch.setattr(engine, fault, unavailable_after_checkpoint)
+                monkeypatch.setattr(engine, fault, unavailable_after_checkpoint)
 
         if scenario == "receipt_failed":
             from cifereca.core import convergence_execution as engine
@@ -192,7 +203,11 @@ def test_biblioaccess_core_canonical_convergence(
             # and only a fresh canonical Sync is allowed to publish it.
             db.acquisition_recover_interrupted()
             assert journal(db) == [staged]
-            monkeypatch.setattr(engine, fault, original_operation)
+            if scenario == "sql_failed":
+                with db._lock, db._connect() as sql:
+                    sql.execute("DROP TRIGGER synthetic_b_rollback")
+            else:
+                monkeypatch.setattr(engine, fault, original_operation)
             recovered = sync(not first_opening)["canonical_execution"]
             assert recovered["recovered"] == 1 and recovered["downloaded"] == 0
             assert calls == ["GET", "ADEPT"]
