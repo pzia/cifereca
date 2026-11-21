@@ -35,13 +35,27 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
     for matrix in matrices:
         if type(matrix) is not CapabilityMatrix:
             raise ValueError("capability_invalid_matrix")
+        # Frozen plugin DTOs can still be altered via object.__setattr__.
+        # Revalidate at the consumer before displaying any provider id or
+        # treating a claimed observation as evidence.
+        try:
+            matrix.__post_init__()
+            for row in matrix.observations:
+                row.__post_init__()
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("capability_invalid_matrix") from None
         statuses: list[str] = []
         for label, prefix in _FAMILIES:
             rows = tuple(row for row in matrix.observations
                          if row.operation.startswith(prefix))
             observed = tuple(row for row in rows
-                             if row.source_kind != "code"
+                             if row.source_kind in (
+                                 "provider_observation", "account_observation",
+                             )
                              and row.status in ("supported", "partial"))
+            manual = tuple(row for row in rows
+                           if row.source_kind == "manual"
+                           and row.status in ("supported", "partial"))
             declared = tuple(row for row in rows
                              if row.source_kind == "code"
                              and row.status == "unverified")
@@ -51,6 +65,10 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
                 state = ("observation, action non autorisée (partielle ou mixte)"
                          if any(row.status != "supported" for row in rows)
                          else "observation, action non autorisée")
+            elif manual:
+                # A human-entered report is not an independent provider
+                # observation, even if its producer marked it 'supported'.
+                state = "signalement manuel, non vérifié par le fournisseur"
             elif declared:
                 state = "déclaré, non vérifié"
             elif rows and all(row.status == "unsupported" for row in rows):
