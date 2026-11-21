@@ -65,16 +65,21 @@ class BatchController:
         def cancelled():
             return event.is_set() or not self.current()
 
+        def discard(page):
+            if type(page) is LocalOriginBatchPage:
+                self._cancel_token(page.token)
+
         def work():
             if cancelled():
+                discard(old)
                 return None
             if restart:
                 result = self.broker.preview(identity_id=self.identity, confirmed=True, cancelled=cancelled)
             else:
                 result = self.broker.next_page(token=old.token, confirmed=True, cancelled=cancelled)
             if cancelled():
-                if type(result) is LocalOriginBatchPage:
-                    self.broker.cancel(token=result.token)
+                discard(result)
+                discard(old)
                 return None
             return result
 
@@ -84,9 +89,13 @@ class BatchController:
                 return
             delivered = True
             self.stop = None
-            if not self.current():
+            if cancelled():
+                discard(result)
+                discard(old)
+                if self.current():
+                    self.render(None, "ready")
                 return
-            if (not event.is_set() and type(result) is LocalOriginBatchPage
+            if (type(result) is LocalOriginBatchPage
                     and all(flag is False for flag in (result.coverage_complete,
                             result.provider_access_performed, result.association_authorized))):
                 self.page = result
@@ -107,10 +116,19 @@ class BatchController:
         self.render(None, "cancelling")
         return True
 
+    def _cancel_token(self, token):
+        # Revoke only the exact token of this view, not another page.
+        try:
+            self.broker.cancel(token=token)
+        except Exception:
+            pass
+
     def dispose(self):
         self.disposed = True
         if self.stop is not None:
             self.stop.set()
+        if self.page is not None:
+            self._cancel_token(self.page.token)
         self.page = None
 
 
