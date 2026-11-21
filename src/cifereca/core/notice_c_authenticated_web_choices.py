@@ -47,6 +47,17 @@ def _native_source_document(document):
                  or type(document.account_id) is str))
 
 
+def _native_reader_scope(scope, service):
+    # Reject altered Core-only reader leases before touching identity_by_id
+    # (which can hash/compare its argument) or a source-context generation.
+    return (type(scope) is SearchReadScope
+            and scope.service is service
+            and type(scope.identity_id) is str
+            and 0 < len(scope.identity_id) <= 1024
+            and not any(char in scope.identity_id for char in "\\x00\\r\\n")
+            and type(scope.source_epoch) is int and scope.source_epoch >= 0)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _Binding:
     document: CoverDocumentScope
@@ -257,8 +268,10 @@ def _read(service, document, bindings):
 
 def read_authenticated_web_choices(service, document, *, reader_scope, source_documents):
     """Read only explicit account-scoped source locators from trusted Core."""
-    if (not is_canonical_cover_document(document)
-            or type(reader_scope) is not SearchReadScope or not reader_scope.current(service)
+    if (not _native_source_document(document)
+            or not is_canonical_cover_document(document)
+            or not _native_reader_scope(reader_scope, service)
+            or not reader_scope.current(service)
             or type(source_documents) is not tuple or not 1 <= len(source_documents) <= 32
             or any(not _native_source_document(d) for d in source_documents)
             or len(set(source_documents)) != len(source_documents)):
@@ -287,10 +300,11 @@ def resolve_authenticated_web_choice(service, menu, *, choice_id):
     # or comparing a supplied choice id. Foreign equality or callbacks must
     # not be invoked from an invalid click receipt.
     if (type(menu) is not AuthenticatedWebChoices or menu._witness is not _TOKEN
+            or not _native_source_document(menu.document)
             or not is_canonical_cover_document(menu.document)
             or not _epoch(menu.epoch) or type(choice_id) is not str
             or re.fullmatch(r"[0-9a-f]{64}", choice_id) is None
-            or type(menu._scope) is not SearchReadScope
+            or not _native_reader_scope(menu._scope, service)
             or type(menu._bindings) is not tuple
             or not 1 <= len(menu._bindings) <= 32
             or any(type(binding) is not _Binding
