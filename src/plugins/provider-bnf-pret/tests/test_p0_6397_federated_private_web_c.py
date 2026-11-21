@@ -153,6 +153,38 @@ def test_invalid_new_batch_revokes_stale_private_web_receipt(harness, batch):
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
 
 
+@pytest.mark.parametrize("damage", [
+    "metadata_key", "evidence_key", "metadata_oversized",
+])
+def test_non_native_private_web_evidence_never_stamps_or_persists(harness, damage):
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    row, = session.search("fiction")
+
+    class ForeignKey:
+        def __hash__(self):
+            return hash("synthetic.unrelated.key.for.private.web")
+
+        def __eq__(self, other):
+            raise AssertionError("provider-defined dictionary key comparison")
+
+    if damage == "metadata_key":
+        row.metadata[ForeignKey()] = "synthetic"
+    elif damage == "evidence_key":
+        row.metadata["authenticated_web_evidence"][ForeignKey()] = "synthetic"
+    else:
+        row.metadata.update({f"extra-field-{i}": "untrusted" for i in range(257)})
+    stamp_authenticated_search_rows(service, call, [row])
+    assert "_core_private_web_search_receipt" not in row.__dict__
+    assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 0
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'"
+        ).fetchone()[0] == 0
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
 def test_private_call_cannot_be_captured_as_foreign_reader(harness):
     service, session, _, client = harness
     assert capture_authenticated_search_call(service, session, "bob") is None
