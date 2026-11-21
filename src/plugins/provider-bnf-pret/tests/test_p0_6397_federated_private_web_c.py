@@ -185,6 +185,36 @@ def test_non_native_private_web_evidence_never_stamps_or_persists(harness, damag
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
 
 
+@pytest.mark.parametrize("invalid", ["tuple", "oversized", "iterator"])
+def test_private_writer_rejects_nonadmitted_batch_even_with_valid_old_receipt(
+    harness, invalid,
+):
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    row, = session.search("fiction")
+    stamp_authenticated_search_rows(service, call, [row])
+    assert "_core_private_web_search_receipt" in row.__dict__
+    if invalid == "tuple":
+        batch = (row,)
+    elif invalid == "oversized":
+        batch = [row] * 10001
+    else:
+        batch = iter([row])
+    assert persist_authenticated_search_rows(
+        service, batch, identity_id="alice",
+    ) == 0
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'"
+        ).fetchone()[0] == 0
+    # A valid batch is still allowed to commit the same Core-attested row.
+    assert persist_authenticated_search_rows(
+        service, [row], identity_id="alice",
+    ) == 1
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
 def test_private_call_cannot_be_captured_as_foreign_reader(harness):
     service, session, _, client = harness
     assert capture_authenticated_search_call(service, session, "bob") is None
