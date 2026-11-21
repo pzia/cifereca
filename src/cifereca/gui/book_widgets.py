@@ -849,18 +849,32 @@ class BookListCell(Gtk.Box):
         self._bind_epoch += 1
         binding_epoch = self._bind_epoch
         self._bound_key = item.key
+        row_key = item.key
+
+        def guard_link(callback):
+            # Facet/author widgets are rebuilt on each bind. A queued
+            # activation from a detached child must not navigate from a
+            # previous occurrence, even after an A→B→A key transition.
+            if not callable(callback):
+                return None
+
+            def activate(button):
+                if self._bind_epoch == binding_epoch and self._bound_key == row_key:
+                    return callback(button)
+                return None
+            return activate
+
         child = self.facet_box.get_first_child()
         while child:
             nxt = child.get_next_sibling(); self.facet_box.remove(child); child = nxt
         tags=getattr(item,'tags',None)
         if tags is not None:
             for facet,callback in tags:
-                guarded=None
-                if callable(callback):
-                    guarded=lambda _b,cb=callback,key=item.key:cb(_b) if self._bound_key==key else None
+                guarded = guard_link(callback)
                 self.facet_box.insert(attribute_tag(facet.label,guarded,group=facet.group,tooltip=facet.tooltip),-1)
         else:
-            for label,callback in getattr(item,'facet_actions',()):self.facet_box.insert(attribute_tag(label,callback),-1)
+            for label, callback in getattr(item, 'facet_actions', ()):
+                self.facet_box.insert(attribute_tag(label, guard_link(callback)), -1)
         self.facet_box.set_visible(bool(tags if tags is not None else getattr(item,'facet_actions',())))
         self.title_label.set_label(item.title)
         self.title_label.set_tooltip_text(item.title)
@@ -876,8 +890,10 @@ class BookListCell(Gtk.Box):
             link.set_ellipsize(Pango.EllipsizeMode.END)
             link.set_max_width_chars(LIST_FACET_MAX_CHARS)
             link.set_tooltip_text(name)
-            def activate(_label, _uri, cb=callback):
-                cb(None); return True
+            def activate(_label, _uri, cb=guard_link(callback)):
+                if cb is not None:
+                    cb(None)
+                return True
             link.connect("activate-link", activate)
             self.author_box.insert(link, -1)
         self.author_box.set_visible(bool(authors))
