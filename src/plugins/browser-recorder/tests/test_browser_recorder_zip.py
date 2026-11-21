@@ -1386,3 +1386,57 @@ def test_reviewed_zip_exports_only_safe_auth_field_names_not_values():
     finally:
         review.destroy()
         trace.destroy()
+
+
+@pytest.mark.parametrize("case", ["digest_only", "body", "manifest_text", "bad_digest"])
+def test_public_manifest_pin_collision_only_excludes_verified_checksum(monkeypatch, case):
+    import browser_recorder_zip as module
+    pin = "1234"
+    path = "plugin-dev-kit/contracts/synthetic.py"
+    manifest_path = "plugin-dev-kit/manifest.json"
+    # Generate a public dummy source with a deterministic checksum collision;
+    # the dummy source itself never contains the captured PIN.
+    for index in range(100000):
+        data = ("# public fixture " + str(index) + "\n").encode()
+        digest = sha256(data).hexdigest()
+        if pin in digest and pin.encode() not in data:
+            break
+    else:
+        pytest.fail("no synthetic digest collision")
+    if case == "body":
+        data += pin.encode()
+        digest = sha256(data).hexdigest()
+    manifest = {
+        "schema": "cifereca.browser-recorder.plugin-dev-kit/1",
+        "files": [{"path": path, "sha256": digest if case != "bad_digest"
+                   else pin + "0" * 60, "bytes": len(data),
+                   "source": "public " + (pin if case == "manifest_text" else "fixture")}],
+    }
+    kit = {path: data, manifest_path: json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, indent=2,
+    ).encode("utf-8")}
+    monkeypatch.setattr(module, "core_contract_kit", lambda: kit)
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api/books",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({"pin": pin, "BookId": 214}), status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        if case != "digest_only":
+            with pytest.raises(RecorderError, match="bundle_secret_risk"):
+                prepare_reviewed_zip(review)
+        else:
+            plan = prepare_reviewed_zip(review)
+            members = plan.preview()["members"]
+            assert pin not in "\n".join(
+                row["text"] for row in members if not row["name"].startswith("plugin-dev-kit/")
+            )
+            # The public contract manifest is byte-identical in the export.
+            assert next(row["text"] for row in members if row["name"] == manifest_path) == kit[manifest_path].decode()
+    finally:
+        review.destroy()
+        trace.destroy()
