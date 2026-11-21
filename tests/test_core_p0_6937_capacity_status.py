@@ -89,3 +89,21 @@ def test_pending_reservation_is_counted_without_publication(tmp_path):
         assert capacity.review_derived_capacity_status(db) == before
     finally:
         db.close()
+
+def test_profile_diagnostic_is_not_a_second_quota(committed):
+    db, intent, _placement, _key, _raw, _proof_key, _proof, _args = committed
+    total = capacity.review_derived_capacity_status(db)
+    same = capacity.review_derived_capacity_status(db, identity_id="id1")
+    foreign = capacity.review_derived_capacity_status(db, identity_id="id2")
+    assert same["profile_scoped"] and not total["profile_scoped"]
+    assert total["profile_committed_receipts"] is None
+    assert same["profile_committed_receipts"] == 1
+    assert same["profile_pending_receipts"] == 0
+    assert same["profile_declared_output_bytes"] == intent.output_size
+    assert foreign["profile_committed_receipts"] == 0
+    assert foreign["profile_declared_output_bytes"] == 0
+    for field in ("receipt_count_remaining", "receipt_payload_remaining",
+                  "declared_output_remaining", "declared_output_limit"):
+        assert same[field] == foreign[field] == total[field]
+    with pytest.raises(journal.DerivedJournalConflict, match="derived_capacity_invalid_profile"):
+        capacity.review_derived_capacity_status(db, identity_id="foreign\\x00id")
