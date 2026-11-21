@@ -49,7 +49,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 51)
+        self.assertEqual(len(mod.ALL), 54)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
@@ -419,6 +419,22 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("      - 'tests/test_e2e_ci_paths.py'\n", workflow)
         self.assertIn("      - name: Test E2E scenario selector", workflow)
         self.assertIn("      - name: Validate privacy-safe E2E publication policy", workflow)
+
+
+    def test_7100_independent_guided_maintenance_scenarios(self):
+        for folder, scenario, selection in (
+            ("maintenance-library-organizer", "maintenance-organizer-1366", mod.MAINT_ORGANIZER),
+            ("maintenance-local-origin", "maintenance-origin-1366", mod.MAINT_ORIGIN),
+            ("maintenance-derived-variants", "maintenance-derived-1366", mod.MAINT_DERIVED),
+        ):
+            self.assertIn(scenario, mod.ALL)
+            self.assertEqual(mod.select(["src/plugins/" + folder + "/cifereca-plugin.json"]),
+                             mod.MAINT_GLOBAL + selection)
+        self.assertEqual(mod.select(["src/plugins/maintenance-page/cifereca-plugin.json"]), mod.MAINT)
+        probe = (ROOT / "e2e/maintenance_tools_probe.py").read_text(encoding="utf-8")
+        self.assertIn('--guided-only', probe)
+        self.assertIn('P0_7100_single_installed_tool_optional', probe)
+        self.assertIn('if args.guided_only:', probe)
 
     def test_docs_only(self):
         self.assertEqual(mod.select(["e2e/README.md", "docs/e2e-guide.md"]), ())
