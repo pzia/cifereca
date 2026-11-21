@@ -195,14 +195,21 @@ def _prepare(service, row, identity):
     # Never call a foreign equality, .current() or provider descriptor.
     from .search_orchestration import SearchReadScope
     from .notice_source_observation import _valid_key
-    if (type(identity) is not str or not identity
+    if (type(identity) is not str or not 0 < len(identity) <= 1024
             or type(call.scope) is not SearchReadScope
+            or call.scope.service is not service
+            or type(call.scope.identity_id) is not str
+            or not 0 < len(call.scope.identity_id) <= 1024
+            or type(call.scope.source_epoch) is not int
+            or call.scope.source_epoch < 0
             or type(call.binding) is not _Binding
+            or type(call.binding.descriptor) is not ProviderDescriptor
             or type(call.observed_at) is not int
             or not 1 <= call.observed_at <= 2**63 - 1
             or type(key) is not NoticeSourceKey or not _valid_key(key)
             or type(proof) is not tuple or len(proof) != 3
-            or any(type(value) is not str for value in proof)):
+            or any(type(value) is not str or len(value) > 512
+                   for value in proof)):
         return None
     if (identity != call.scope.identity_id or _source_key(row, identity) != key
             or _evidence(row, key, call.binding.descriptor.homepage) != proof):
@@ -249,7 +256,8 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
     # A generator/tuple can replay old receipts outside the call's batch;
     # an oversized batch cannot bypass stamp's all-or-nothing admission.
     if (type(rows) is not list or len(rows) > 10000
-            or type(identity_id) is not str or not identity_id):
+            or type(identity_id) is not str
+            or not 0 < len(identity_id) <= 1024):
         return 0
     count = 0
     for row in rows:
