@@ -30,7 +30,7 @@ def test_public_c_cursor_cost_live_mixed_retained(tmp_path, capsys, size):
               "physical_io_measured": False,
               "python": platform.python_version(), "sqlite": sqlite3.sqlite_version,
               "runner": "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local",
-              "head": os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_ACTIONS") == "true" else None,
+              "workflow_sha": os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_ACTIONS") == "true" else None,
               "selective_retained": {}}
     expected = {f"book-{i}" for i in range(0, size, 2)}
 
@@ -129,7 +129,7 @@ def test_public_c_cursor_cost_live_mixed_retained(tmp_path, capsys, size):
                     db, query, max_scan=1, page_size=1, now=101,
                     group_by_document=True,
                 )
-                assert page.status == "partial"
+                assert page.status == ("budget_exceeded" if expected_more else "partial")
                 assert len(page.hits) == expected_count
                 assert page.has_more is expected_more
                 assert all(hit.record_id in expected for hit in page.hits)
