@@ -15,6 +15,27 @@ from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from ..core.notice_c_local_origin_projection import valid_local_public_c_link
 
 
+def recent_provider_label(provider: str, provider_display_name=None) -> str:
+    """One bounded presentation label for Recent rows and their detail."""
+    if provider == "local":
+        return "Local"
+    if not callable(provider_display_name):
+        # Preserve headless/legacy hosts, with the same text boundary.
+        candidate = provider.capitalize()
+    else:
+        try:
+            candidate = provider_display_name(provider)
+        except Exception:
+            return "Source"
+    return (
+        candidate if type(candidate) is str
+        and 0 < len(candidate) <= 80
+        and candidate == candidate.strip()
+        and all(character.isprintable() for character in candidate)
+        else "Source"
+    )
+
+
 def project_recent_rows(
     items: Iterable[dict[str, Any]], *,
     row_factory: Callable[..., Any],
@@ -41,22 +62,7 @@ def project_recent_rows(
         objects[key] = item
         provider = str(item.get("provider_id") or "local")
         temporal = format_recent_timestamp(item.get("acquired_at"))
-        if provider == "local":
-            label = "Local"
-        elif provider_display_name is None:
-            label = provider.capitalize()  # Headless compatibility only.
-        else:
-            try:
-                candidate = provider_display_name(provider)
-                label = (
-                    candidate if type(candidate) is str
-                    and 0 < len(candidate) <= 80
-                    and candidate == candidate.strip()
-                    and all(character.isprintable() for character in candidate)
-                    else "Source"
-                )
-            except Exception:
-                label = "Source"
+        label = recent_provider_label(provider, provider_display_name)
         packet = item.get("_exact_local_cover_evidence")
         link = item.get("_public_canonical_cover_link")
         safe_link = (
