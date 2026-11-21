@@ -175,3 +175,57 @@ def test_bnf_fresh_capability_refusal_leaves_attempt_unmarked(adapter):
     assert a.runtime_calls == []
     assert not pending_loan_adept_attempt(a.db, a.source)
     assert a.db.placements() == []
+
+
+def test_bnf_profile_changed_during_preflight_can_resume_after_correction(adapter):
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+    a = adapter
+    original = a.service.resolve_adept_profile_for_identity
+    def rebind(_name):
+        a.service.resolve_adept_profile_for_identity = lambda _i: ("other-profile", "configured")
+        return True
+    a.fresh_runtime.preflight_acsm_profile = rebind
+    with pytest.raises(ValueError, match="adept_borrower_profile_changed"):
+        a.complete()
+    assert not pending_loan_adept_attempt(a.db, a.source)
+    assert a.runtime_calls == []
+    a.service.resolve_adept_profile_for_identity = original
+    a.fresh_runtime.preflight_acsm_profile = lambda name: name == "borrower-adobe"
+    completed = a.complete()
+    assert completed.path.read_bytes() == PDF
+    assert len(a.token_gets) == 2 and len(a.runtime_calls) == 1
+
+
+def test_bnf_local_refusal_after_claim_releases_only_unsubmitted_claim(adapter, monkeypatch):
+    from cifereca.core import canonical_selected_delivery as delivery
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+    a = adapter
+    original = delivery.begin_loan_adept_attempt
+    original_binding = a.service._originating_adept_profile_id
+    def claim(*args, **kwargs):
+        operation = original(*args, **kwargs)
+        a.service._originating_adept_profile_id = lambda *_: "changed-id"
+        return operation
+    monkeypatch.setattr(delivery, "begin_loan_adept_attempt", claim)
+    with pytest.raises(ValueError, match="adept_borrower_profile_changed"):
+        a.complete()
+    assert a.runtime_calls == []
+    assert not pending_loan_adept_attempt(a.db, a.source)
+    a.service._originating_adept_profile_id = original_binding
+    monkeypatch.setattr(delivery, "begin_loan_adept_attempt", original)
+    assert a.complete().path.read_bytes() == PDF
+
+
+def test_bnf_uncertain_runtime_result_keeps_claim(adapter):
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+    a = adapter
+    def fail(request):
+        a.runtime_calls.append(request)
+        raise OSError("synthetic ambiguous completion")
+    a.service.execute_acquisition_request = fail
+    with pytest.raises(OSError):
+        a.complete()
+    assert pending_loan_adept_attempt(a.db, a.source)
+    with pytest.raises(ValueError, match="canonical_adept_attempt_pending"):
+        a.complete()
+    assert len(a.token_gets) == len(a.runtime_calls) == 1
