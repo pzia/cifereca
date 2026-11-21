@@ -350,3 +350,61 @@ def test_foreign_opaque_source_digest_cannot_be_rebound_to_own_scope(tmp_path):
         menu = host.menu(c, forged)
         assert menu is None or menu.choices == ()
         assert host.menu(c, foreign.document, owner="bob").choices
+
+
+def test_malformed_durable_private_c_cannot_open_saved_choice_or_menu(tmp_path):
+    from cifereca.core.notice_c_cover_index import _db_key
+    with closing(Storage(tmp_path / "corrupt-private-menu.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        menu = host.menu(canonical, source.document)
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == URL
+        # Actual SQLite corruption after a valid menu was built. The stored
+        # source, account and session are intact; only canonical C is invalid.
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                ('{"schema":true,"sources":{}}', _db_key(canonical.document)),
+            )
+        assert host.menu(canonical, source.document) is None
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) is None
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+@pytest.mark.parametrize("error", [
+    "sqlite", "value", "type", "key", "attribute",
+])
+def test_private_menu_and_click_contain_local_read_failure(tmp_path, monkeypatch, error):
+    from sqlite3 import OperationalError
+    from cifereca.core import notice_c_authenticated_web_choices as private_web
+    errors = {
+        "sqlite": OperationalError, "value": ValueError, "type": TypeError,
+        "key": KeyError, "attribute": AttributeError,
+    }
+    with closing(Storage(tmp_path / "fault-private-menu.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        menu = host.menu(canonical, source.document)
+        choice, = menu.choices
+
+        def unavailable(*_args):
+            raise errors[error]("synthetic read failure")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(private_web, "_read", unavailable)
+            assert host.menu(canonical, source.document) is None
+            assert resolve_authenticated_web_choice(
+                host, menu, choice_id=choice.choice_id,
+            ) is None
+
+        # The original receipt still works after a transient local failure;
+        # neither the read nor the click used a provider/network operation.
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
