@@ -114,21 +114,29 @@ def capture_authenticated_search_call(service, session, identity_id):
 
 
 def _evidence(row, key, homepage):
-    if (type(row.metadata) is not dict
-            or row.metadata.get("catalogue_access") == "shared_read_only"
-            or row.metadata.get("search_provenance") is not None
+    metadata = row.metadata
+    # Evidence is a fixed native parser declaration, not an extensible
+    # provider dictionary. Refuse non-string keys before any .get() that
+    # could invoke key equality on an untrusted mapping.
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)
+            or (metadata.get("catalogue_access") is not None
+                and type(metadata["catalogue_access"]) is not str)
+            or metadata.get("catalogue_access") == "shared_read_only"
+            or metadata.get("search_provenance") is not None
             or row.owned is not None and row.owned is not False
             or row.downloadable is not None and row.downloadable is not False
             or row.download_url is not None
             or not _stable_url(row.friendly_url, homepage)):
         return None
-    raw = row.metadata.get("authenticated_web_evidence")
+    raw = metadata.get("authenticated_web_evidence")
     expected = {
         "schema": 1, "provider_id": key.provider_id, "record_id": row.record_id,
         "docbase": row.docbase, "medium": row.medium, "source_revision": row.revision_id,
         "scenario": row.scenario, "access_mode": "authenticated",
     }
-    if (type(raw) is not dict
+    if (type(raw) is not dict or len(raw) != len(expected) + 2
+            or any(type(name) is not str for name in raw)
             or set(raw) != set(expected) | {"evidence", "source_field"}
             or any(type(raw[k]) is not type(v) or raw[k] != v for k, v in expected.items())
             or type(raw["evidence"]) is not str or raw["evidence"] not in (
@@ -142,12 +150,17 @@ def _evidence(row, key, homepage):
 
 def stamp_authenticated_search_rows(service, call, rows):
     """Only the exact returned objects get the transient Core observation receipt."""
-    if type(rows) is not list or len(rows) > 10000:
+    if type(rows) not in (list, tuple):
         return
+    # Invalidate receipts BEFORE admission and its 10k budget check.
+    # A reused row in an oversized or wrong-container response must not
+    # keep an older call's private publication authority. Even rejected
+    # materialized batches are cleared (persistence already walks each row).
     for row in rows:
         if type(row) is SearchResult:
             row.__dict__.pop(_MARKER, None)
-    if type(call) is not _Call or not call.binding.current(service, call.scope):
+    if (type(rows) is not list or len(rows) > 10000
+            or type(call) is not _Call or not call.binding.current(service, call.scope)):
         return
     seen = {}
     for row in rows:
@@ -173,9 +186,31 @@ def _prepare(service, row, identity):
         return None
     receipt = row.__dict__.get(_MARKER)
     if (type(receipt) is not _Receipt or receipt.token is not _WITNESS
-            or receipt.row_id != id(row) or type(receipt.call) is not _Call):
+            or type(receipt.row_id) is not int or receipt.row_id != id(row)
+            or type(receipt.call) is not _Call):
         return None
     call, key, proof = receipt.call, receipt.key, receipt.proof
+    # These packet objects are Core-issued, but an opaque dataclass/tuple
+    # can still be substituted on a mutable SearchResult before the writer.
+    # Never call a foreign equality, .current() or provider descriptor.
+    from .search_orchestration import SearchReadScope
+    from .notice_source_observation import _valid_key
+    if (type(identity) is not str or not 0 < len(identity) <= 1024
+            or type(call.scope) is not SearchReadScope
+            or call.scope.service is not service
+            or type(call.scope.identity_id) is not str
+            or not 0 < len(call.scope.identity_id) <= 1024
+            or type(call.scope.source_epoch) is not int
+            or call.scope.source_epoch < 0
+            or type(call.binding) is not _Binding
+            or type(call.binding.descriptor) is not ProviderDescriptor
+            or type(call.observed_at) is not int
+            or not 1 <= call.observed_at <= 2**63 - 1
+            or type(key) is not NoticeSourceKey or not _valid_key(key)
+            or type(proof) is not tuple or len(proof) != 3
+            or any(type(value) is not str or len(value) > 512
+                   for value in proof)):
+        return None
     if (identity != call.scope.identity_id or _source_key(row, identity) != key
             or _evidence(row, key, call.binding.descriptor.homepage) != proof):
         return None
@@ -217,6 +252,13 @@ def _sql_binding_current(db, doc, epoch):
 
 def persist_authenticated_search_rows(service, rows, *, identity_id):
     """Consume same-call receipts under the existing write fence, independently."""
+    # The write port must accept exactly the stamped, bounded response shape.
+    # A generator/tuple can replay old receipts outside the call's batch;
+    # an oversized batch cannot bypass stamp's all-or-nothing admission.
+    if (type(rows) is not list or len(rows) > 10000
+            or type(identity_id) is not str
+            or not 0 < len(identity_id) <= 1024):
+        return 0
     count = 0
     for row in rows:
         if type(row) is not SearchResult or type(row.__dict__.get(_MARKER)) is not _Receipt:

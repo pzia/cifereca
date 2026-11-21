@@ -109,6 +109,41 @@ def test_unadmitted_public_lookup_never_dispatches(rig, change):
     assert not result["provider_access_performed"] and calls == []
 
 
+@pytest.mark.parametrize("registry", ["over_budget", "untyped"])
+def test_confirmed_public_search_refuses_unbounded_or_untrusted_registry(rig, registry):
+    service, session, request, calls, path = rig
+    before, contents = rows(service.storage), path.read_bytes()
+    if registry == "over_budget":
+        service._sessions.update({f"extra-{i}": object() for i in range(256)})
+    else:
+        service._sessions = [session]
+    result = _run(service, request)
+    assert result["status"] == "excluded"
+    assert result["provider_access_performed"] is False
+    assert calls == []
+    assert rows(service.storage) == before and path.read_bytes() == contents
+
+
+def test_public_discovery_caps_sessions_before_enumerating_sources(rig):
+    from cifereca.core.local_origin_public_catalogue import available_local_public_catalogues
+    from cifereca.core.local_origin_suggestion_preview import _PublicComparisonEvidence
+
+    service, _session, request, calls, path = rig
+    evidence = _PublicComparisonEvidence(
+        request.storage, request.root, request.identity_id,
+        request.placement_id, (), (),
+    )
+    class UntrustedRegistry(dict):
+        def values(self):
+            pytest.fail("non-native registry must never be enumerated")
+
+    service._sessions = UntrustedRegistry(service._sessions)
+    assert available_local_public_catalogues(service, request, evidence=evidence) == ()
+    service._sessions = {f"extra-{i}": object() for i in range(257)}
+    assert available_local_public_catalogues(service, request, evidence=evidence) == ()
+    assert calls == [] and path.is_file()
+
+
 @pytest.mark.parametrize("change", ["navigation", "source", "bytes", "failure", "overflow"])
 def test_changed_or_invalid_response_is_not_a_candidate(rig, change):
     service, session, request, calls, path = rig

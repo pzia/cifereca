@@ -15,12 +15,43 @@ from typing import Any
 from dataclasses import asdict
 
 from .notice_c_public_search import PublicNoticeCPage, PublicNoticeCHit
+from .book_cover_projection import CoverDocumentScope
 from .notice_cover_repository import is_notice_cover_document
 from .notice_c_cover_index import _MAX_SOURCES
 
 _MAX = 50
 _PRIMARY_FACT_TOKEN = object()
 _PRIMARY_FACT_FIELD = "_core_notice_c_primary_facts"
+
+
+def _native_c_source_ref(document):
+    # Guard a frozen DocumentRef's mutable scalar members before dataclass
+    # equality or repository source routing; a correct class alone is not
+    # sufficient when a view has substituted foreign __eq__/__hash__.
+    if type(document) is not CoverDocumentScope:
+        return False
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return False
+    if (document.identity_id is not None
+            and (type(document.identity_id) is not str
+                 or len(document.identity_id) > 512
+                 or not document.identity_id.isprintable())):
+        return False
+    if (document.account_id is not None
+            and (type(document.account_id) is not str
+                 or len(document.account_id) > 512
+                 or not document.account_id.isprintable())):
+        return False
+    try:
+        # Reapply the dataclass's original scope constraints after mutation:
+        # public C remains anonymous; private catalogue stays owner-scoped.
+        document.__post_init__()
+    except (ValueError, TypeError):
+        return False
+    return is_notice_cover_document(document)
 
 
 def known_public_primary_facts(row):
@@ -30,25 +61,42 @@ def known_public_primary_facts(row):
     supplying a provider name, a proof-shaped dict or a DocumentRef alone.
     The view still owns its existing mapped-row/context/epoch lease.
     """
-    if type(row) is not dict or row.get("source") != "notice_c_public":
+    # A view mapping is mutable, unlike the Core-only sealed packet.
+    # Validate native types BEFORE equality: an injected source/identity,
+    # DocumentRef or display field must not execute foreign __eq__ in UI.
+    if (type(row) is not dict or len(row) > 256
+            or any(type(name) is not str for name in row)
+            or type(row.get("source")) is not str
+            or row["source"] != "notice_c_public"):
         return None
     packet = row.get(_PRIMARY_FACT_FIELD)
     meta = row.get("metadata")
+    identity = row.get("identity_id")
     if (type(packet) is not tuple or len(packet) != 3
             or packet[0] is not _PRIMARY_FACT_TOKEN
-            or packet[1] != row.get("identity_id")
+            or type(identity) is not str or type(packet[1]) is not str
+            or packet[1] != identity
             or type(packet[2]) is not PublicNoticeCHit
-            or type(meta) is not dict):
+            or type(meta) is not dict or len(meta) > 256
+            or any(type(name) is not str for name in meta)):
         return None
     hit = packet[2]
-    if (hit.document != row.get("_cover_document_ref")
-            or hit.provider_id != row.get("provider_id")
-            or hit.record_id != row.get("item_id")
-            or hit.title != row.get("title")
+    document = row.get("_cover_document_ref")
+    if (not _native_c_source_ref(hit.document)
+            or not _native_c_source_ref(document)
+            or hit.document != document
+            or type(hit.epoch) is not int
             or type(meta.get("notice_c_epoch")) is not int
-            or hit.epoch != meta.get("notice_c_epoch")
-            or not is_notice_cover_document(hit.document)):
+            or hit.epoch != meta["notice_c_epoch"]):
         return None
+    for name, expected in (
+        ("provider_id", hit.provider_id),
+        ("item_id", hit.record_id),
+        ("title", hit.title),
+    ):
+        supplied = row.get(name)
+        if type(expected) is not str or type(supplied) is not str or supplied != expected:
+            return None
     return hit
 
 
@@ -68,24 +116,40 @@ def known_public_alternative_facts(row):
 
 def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None:
     """Only an exact, unpossessed, descriptive anonymous mirror is redundant."""
-    if (type(row) is not dict
-            or row.get("source") != "known_catalog"
-            or row.get("identity_id") != identity_id
-            or row.get("local") is not False
-            or any(row.get(name) for name in ("placement_id", "artifact_id", "local_path"))
-            or row.get("state") not in ("remote_catalog", "available_to_buy")):
+    # These are provider-mirrored presentation dictionaries, not an
+    # immutable Core witness. Inspect native keys/values before any equality
+    # or truthiness: foreign __eq__/__bool__ must not affect a C-first view.
+    if type(row) is not dict or any(type(name) is not str for name in row):
         return None
+    source, owner, state = (
+        row.get("source"), row.get("identity_id"), row.get("state"),
+    )
+    if (type(source) is not str or source != "known_catalog"
+            or type(owner) is not str or owner != identity_id
+            or row.get("local") is not False
+            or type(state) is not str
+            or state not in ("remote_catalog", "available_to_buy")):
+        return None
+    for name in ("placement_id", "artifact_id", "local_path"):
+        value = row.get(name)
+        if value is not None and (type(value) is not str or bool(value)):
+            return None
     meta = row.get("metadata")
     if (type(meta) is not dict
+            or any(type(name) is not str for name in meta)
             or type(meta.get("catalogue_scope_version")) is not int
-            or meta.get("catalogue_scope_version") not in (2, 3)
-            or meta.get("source_credential") != "__public__"
-            or meta.get("source_collection") != "public_catalog"
-            or meta.get("source_account_id") not in (None, "")):
+            or meta["catalogue_scope_version"] not in (2, 3)
+            or type(meta.get("source_credential")) is not str
+            or meta["source_credential"] != "__public__"
+            or type(meta.get("source_collection")) is not str
+            or meta["source_collection"] != "public_catalog"):
+        return None
+    account = meta.get("source_account_id")
+    if account is not None and (type(account) is not str or account != ""):
         return None
     revision = meta.get("source_revision")
     if meta["catalogue_scope_version"] == 2:
-        if revision not in (None, ""):
+        if revision is not None and (type(revision) is not str or revision != ""):
             return None
         revision = None
     elif type(revision) is not str or not revision:
@@ -95,7 +159,6 @@ def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None
     if any(type(value) is not str or not value for value in coords):
         return None
     return (*coords, revision)
-
 
 def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
     metadata = hit.classification.wire() if hit.classification is not None else {}
@@ -143,9 +206,29 @@ def merge_public_notice_c_known_rows(
     stage has no claim to full query coverage. An empty page is unknown, not
     evidence that a provider has zero documents.
     """
+    # PublicNoticeCPage is frozen but its collection members may have been
+    # replaced after a Core read. Validate native shape before len(), hashes,
+    # document comparisons or rendering any untrusted source fact.
     if (type(known) is not list or type(page) is not PublicNoticeCPage
             or type(identity_id) is not str or not identity_id
-            or len(page.hits) > _MAX):
+            or type(page.hits) is not tuple or len(page.hits) > _MAX
+            or any(type(hit) is not PublicNoticeCHit
+                   or not _native_c_source_ref(hit.document)
+                   for hit in page.hits)
+            or type(page.matching_sources) is not tuple
+            or len(page.matching_sources) > _MAX * _MAX_SOURCES
+            or any(type(hit) is not PublicNoticeCHit
+                   or not _native_c_source_ref(hit.document)
+                   for hit in page.matching_sources)
+            or any(type(value) is not int or not 0 <= value < 2**63
+                   for value in (page.known_matches, page.scanned_sources,
+                                 page.unindexed_sources))
+            or (page.known_documents is not None
+                and (type(page.known_documents) is not int
+                     or not 0 <= page.known_documents < 2**63))
+            or type(page.has_more) is not bool
+            or type(page.status) is not str
+            or page.status not in ("partial", "budget_exceeded")):
         raise ValueError("invalid_known_public_c_projection")
 
     hits = page.hits
@@ -154,9 +237,7 @@ def merge_public_notice_c_known_rows(
         # Do not reintroduce an unrelated group or silently truncate its
         # admitted matching alternatives when suppressing public mirrors.
         hits = page.matching_sources
-        if (type(hits) is not tuple or len(hits) > _MAX * _MAX_SOURCES
-                or any(type(hit) is not PublicNoticeCHit for hit in hits)
-                or any(type(hit) is not PublicNoticeCHit for hit in page.hits)
+        if (len(hits) > _MAX * _MAX_SOURCES
                 or {hit.document for hit in hits} != {hit.document for hit in page.hits}):
             raise ValueError("invalid_grouped_public_c_projection")
     rows: list[dict[str, Any]] = []

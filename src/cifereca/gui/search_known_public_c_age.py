@@ -25,7 +25,42 @@ def _same_native(actual, expected, depth=0):
                 and len(actual) <= 16
                 and all(_same_native(left, right, depth + 1)
                         for left, right in zip(actual, expected)))
+    # Exact matching object types are NOT enough: two identical hostile
+    # instances still execute plugin-defined __eq__. The proof wire format
+    # contains only these native scalar types, never arbitrary DTO objects.
+    if type(expected) not in (str, int, bool, float, type(None)):
+        return False
     return type(actual) is type(expected) and actual == expected
+
+
+def _qualified_primary_age(age, hit):
+    # Frozen public C facts can still be replaced inside a copied Core
+    # packet. Validate their entire native payload before calling .wire()
+    # or filter_ranges(), whose set membership would hash foreign bounds.
+    from ..core.notice_c_public_age import (
+        PublicAgeObservation, PublicAgeRange, decode_public_age_observation,
+    )
+    if (type(age) is not PublicAgeObservation
+            or any(type(getattr(age, name)) is not str for name in (
+                "provider_id", "record_id", "docbase", "medium", "source_field",
+            ))
+            or (age.source_revision is not None
+                and type(age.source_revision) is not str)
+            or type(age.ranges) is not tuple or not 1 <= len(age.ranges) <= 16):
+        return None
+    for part in age.ranges:
+        if (type(part) is not PublicAgeRange
+                or any(value is not None and type(value) is not int for value
+                       in (part.age_min, part.age_max))
+                or type(part.age_kind) is not str
+                or type(part.source_label) is not str
+                or len(part.source_label) > 120):
+            return None
+    return decode_public_age_observation(
+        age.wire(), provider_id=hit.provider_id, record_id=hit.record_id,
+        docbase=hit.docbase, medium=hit.medium,
+        source_revision=hit.source_revision,
+    )
 
 
 def primary_known_public_c_ages(item):
@@ -33,7 +68,9 @@ def primary_known_public_c_ages(item):
     hit = known_public_primary_facts(item)
     if hit is None or hit.age_observation is None:
         return ()
-    age = hit.age_observation
+    age = _qualified_primary_age(hit.age_observation, hit)
+    if age is None:
+        return ()
     meta = item.get("metadata")
     if type(meta) is not dict:
         return ()
