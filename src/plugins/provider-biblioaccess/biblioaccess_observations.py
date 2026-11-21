@@ -155,6 +155,10 @@ class _Links(HTMLParser):
         self.book_urls = {}
         self.book_titles = {}
         self._observed_book_titles = {}
+        # Public catalogue HTML must not promote template/hidden anchors to
+        # a durable bibliographic observation or a trusted pager.
+        self._catalogue_stack = []
+        self._catalogue_depth_exceeded = False
         self._book_anchor = None
         self._book_anchor_text = []
         self.next_page_url = None
@@ -236,11 +240,42 @@ class _Links(HTMLParser):
             self._summary_text = None
         self._summary_stack.pop()
 
+    def _catalogue_start(self, tag, attrs):
+        """Return true for an anchor in a non-visible or ambiguous subtree."""
+        if self._catalogue_depth_exceeded:
+            return True
+        values = dict(attrs)
+        # The browser/HTMLParser may keep only the last duplicate value.
+        # Reject contradictory visibility attributes before they can expose
+        # hidden template or advertisement anchors as Core proof.
+        repeated = len(values) != len(attrs)
+        hidden = (
+            repeated or tag in {
+                "head", "script", "style", "template", "noscript", "iframe",
+                "svg", "textarea", "select", "button",
+            } or "hidden" in values
+            or str(values.get("aria-hidden", "")).strip().casefold() == "true"
+            or bool(re.search(r"display\\s*:\\s*none|visibility\\s*:\\s*hidden",
+                              str(values.get("style", "")), re.I))
+            or bool(set(str(values.get("class", "")).casefold().split())
+                    & {"hidden", "d-none", "sr-only", "visually-hidden"})
+            or bool(self._catalogue_stack and self._catalogue_stack[-1][1])
+        )
+        if tag not in {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr",
+        }:
+            if len(self._catalogue_stack) >= 128:
+                self._catalogue_depth_exceeded = True
+                return True
+            self._catalogue_stack.append((tag, bool(hidden)))
+        return bool(hidden)
+
     def handle_starttag(self, tag, attrs):
         if self.summary_query is not None:
             self._summary_start(tag, attrs)
             return
-        if tag != "a":
+        if self._catalogue_start(tag, attrs) or tag != "a":
             return
         self._book_anchor = None
         self._book_anchor_text = []
@@ -293,6 +328,9 @@ class _Links(HTMLParser):
             if self._summary_text is not None:
                 self._summary_text.append(data)
             return
+        if (self._catalogue_depth_exceeded
+                or self._catalogue_stack and self._catalogue_stack[-1][1]):
+            return
         if self._book_anchor is not None:
             self._book_anchor_text.append(data[:200])
         if self._candidate is not None:
@@ -301,6 +339,14 @@ class _Links(HTMLParser):
     def handle_endtag(self, tag):
         if self.summary_query is not None:
             self._summary_end(tag)
+            return
+        if self._catalogue_depth_exceeded:
+            return
+        hidden = bool(self._catalogue_stack and self._catalogue_stack[-1][1])
+        if (self._catalogue_stack and self._catalogue_stack[-1][0] == tag):
+            self._catalogue_stack.pop()
+        # A hidden <a> must never finalize a visible book/title or pager.
+        if hidden:
             return
         if tag == "a" and self._book_anchor is not None:
             title = " ".join("".join(self._book_anchor_text).split())
@@ -339,6 +385,8 @@ def extract_catalogue_links(page_url: str, html: str) -> CatalogueLinks:
     parser = _Links(page_url)
     parser.feed(html)
     parser.close()
+    if parser._catalogue_depth_exceeded:
+        return CatalogueLinks((), None)
     return CatalogueLinks(tuple(parser.book_ids), parser.next_page_url,
                           book_urls=tuple(parser.book_urls.items()),
                           book_titles=tuple(parser.book_titles.items()))
