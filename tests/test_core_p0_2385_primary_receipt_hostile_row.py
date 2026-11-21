@@ -58,6 +58,19 @@ def test_hostile_row_fields_cannot_invoke_equality_or_mint_primary_c_provenance(
             assert known_public_primary_facts(candidate) is None
             assert known_public_alternative_facts(candidate) == ()
             assert with_known_public_field_provenance(presentation, candidate) is presentation
+        class ForeignKey:
+            def __hash__(self):
+                return hash("unrelated.native.c.source.key")
+
+            def __eq__(self, other):
+                raise AssertionError("foreign primary C dictionary key equality")
+
+        poisoned = {**row, ForeignKey(): "foreign"}
+        assert known_public_primary_facts(poisoned) is None
+        assert with_known_public_field_provenance(presentation, poisoned) is presentation
+        poisoned = {**row, "metadata": {**row["metadata"], ForeignKey(): "foreign"}}
+        assert known_public_primary_facts(poisoned) is None
+        assert with_known_public_field_provenance(presentation, poisoned) is presentation
         packet = row["_core_notice_c_primary_facts"]
         for member in ("kind", "source_key", "provider_id",
                        "credential_id", "identity_id", "account_id"):
