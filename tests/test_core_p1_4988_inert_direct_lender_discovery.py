@@ -37,7 +37,7 @@ def test_normal_borrow_lender_visible_without_prior_positive_eligibility(harness
     candidate, = choices
     assert type(candidate) is PossibleBorrowLender
     assert candidate.lender_identity_id == "alex"
-    assert candidate.label == "Alex"
+    assert candidate.label == "Alex sur Paris"
     assert candidate.supplier_eligibility == "not_verified"
     assert candidate.executable is False
     assert candidate._account is account and candidate._notice is notice
@@ -121,6 +121,7 @@ def test_two_distinct_lender_accounts_are_not_assumed_one_edition_or_one_right(
     assert [choice._notice.source_credential for choice in choices] == [
         "card-alex", "card-second",
     ]
+    assert all("sur Paris" in choice.label for choice in choices)
     assert all(not choice.executable and
                choice.supplier_eligibility == "not_verified" for choice in choices)
     assert len({choice.label for choice in choices}) == 2
@@ -229,3 +230,18 @@ def test_composed_choice_label_cannot_collide_with_literal_profile_label(harness
     assert result[0].label.startswith("Choix 1/3 · ")
     assert all(account.credential_id not in row.label for row in result)
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("display, expected", [
+    ("Bibliothèque locale", "Alex sur Bibliothèque locale"),
+    ("https://example.org/account", "Alex sur Compte bibliothèque"),
+    ("private@example.org", "Alex sur Compte bibliothèque"),
+    ("A" * 80, "Alex sur " + "A" * 32),
+])
+def test_lender_label_uses_safe_installed_library_descriptor(harness, display, expected):
+    service, account, session = harness
+    session.descriptor = replace(session.descriptor, display_name=display)
+    choice, = _discover(service, _candidate().notice)
+    assert choice.label == expected
+    assert account.credential_id not in choice.label
+    assert choice.executable is False and session.calls == 0
