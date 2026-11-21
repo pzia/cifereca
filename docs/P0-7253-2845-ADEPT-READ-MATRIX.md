@@ -38,3 +38,48 @@ L'optimisation déjà reçue #3663 (capabilities 3→1 dans le même lot, mêmes
 ## Suite strictement utile
 
 Aucune modification du fichier runtime partagé avec #7236 Publication. Après libération de ce fichier, attribuer les consommateurs encore unattributed au point d'entrée exact et reporter la phase (préflight GET/fulfillment, rapprochement, dashboard/refresh explicite). Ne pas inférer de phase depuis argv, durée ou proximité temporelle. Recompter une même recette instrumentée avant/après, sans demander de nouvel emprunt ou fulfillment. Si aucune paire n'a de fenêtre de fraîcheur et d'epoch équivalentes, verdict de non-optimisation recevable. Aucun cache supplémentaire ni nouvelle autorité ADEPT.
+
+
+## Attribution statique complémentaire — 21/11/2026
+
+Audit de main (les liens désignent les symboles, non une attribution d'événement terrain).
+La PR Publication #7236 est fusionnée ; aucune modification des fichiers partagés
+dans cette tranche. Le runtime `profiles()` exécute une commande par appel et
+`_loan_inventory()` distingue explicitement le nom de profil et l'opération.
+Les catégories actuelles ne suffisent pas à distinguer les consommateurs suivants :
+
+| Catégorie à instrumenter | Point d'entrée attesté | Fenêtre et frontière |
+| --- | --- | --- |
+| dashboard_opening | `core/sync_coordination.py`: boucle identités → `adept_profiles_for_identity` → `_adept_profile_row` → `kobo_profiles` | Inventaire pour chaque identité liée du cycle ; erreur lookup distincte d'un inventaire vide |
+| source_runtime_inspection | `services.py:_inspect_source_adept_runtime` → `kobo_profiles` | Lecture explicite, état local avant/après identique exigé |
+| profile_choices | `services.py:adept_profile_choices` → `kobo_profiles` | Liste explicite de sélection ; pas de partage avec un contrôle d'exécution |
+| execution_profile_resolution | `services.py:resolve_adept_profile_for_identity` → `kobo_profiles` | Résolution fraîche de la référence ; chemin existant susceptible de mettre à jour un binding historique, hors périmètre diagnostic |
+| origin_profile_resolution | `services.py:_originating_adept_profile_id` → `adept_profiles.originating_profile_id` | Lié à l'origine attestée de l'identité ; ne pas inférer depuis le profil actif |
+| reconciliation_candidates | `services.py:adept_inventory_candidates_for_acquisition` → `_adept_profile_row` | Cache appelant existant, clé identité + scope + références uniques ; ne pas partager entre cycles |
+| loan_choices | `services.py:adept_loan_choices` → `kobo_profiles`, puis `runtime.loan_inventories` | Consultation explicite, par ensemble de profils candidats ; réponse partielle distincte d'absence |
+| loan_attach_revalidation | `services.py:attach_adept_loan` → `kobo_profiles`, puis `runtime.loans` | Revalidation sous verrou d'une action utilisateur existante ; hors périmètre de mutation ADEPT |
+| acsm_fresh_preflight | `core/adept_runtime_preflight.py` → `runtime.preflight_acsm_profile` | Capabilities fraîches, indépendantes du cache descriptif |
+| acsm_execution_preflight | `runtime.download` → `preflight_acsm_profile` | Nouvelle capacité fraîche immédiatement avant la commande ; ne pas fusionner avec préflight Core |
+| core_probe | `runtime.probe_core` → `contract`, `capabilities` | Catégorie déjà explicite, cache descriptif distinct dans `acquisition_capabilities` |
+
+Points de lecture vérifiés dans
+[`services.py`](https://github.com/pzia/cifereca/blob/main/src/cifereca/services.py),
+[`sync_coordination.py`](https://github.com/pzia/cifereca/blob/main/src/cifereca/core/sync_coordination.py),
+[`adept_runtime_preflight.py`](https://github.com/pzia/cifereca/blob/main/src/cifereca/core/adept_runtime_preflight.py)
+et [runtime](https://github.com/pzia/cifereca/blob/main/src/plugins/runtime-kobo-adept/cifereca_kobo_adept_runtime.py).
+
+La classification des 42 lectures terrain reste inconnue. Noter notamment que
+`adept_profiles_for_identity` restreint la projection retournée, mais appelle
+indirectement la commande d'inventaire complet : le command scope seul ne
+distingue donc pas deux identités. La boucle des références dans
+`adept_inventory_candidates_for_acquisition` constitue une **hypothèse**
+de répétition intra-opération, pas une mesure : vérifier d'abord le nombre
+de références distinctes, la génération, les changements d'état ou erreurs
+entre lectures et les droits de chaque appelant. Ne pas élargir le cache existant.
+
+Réception du lot : l'audit statique permet de définir les points de mesure,
+pas de déclarer les onze invocations historiques identifiées ni d'attribuer
+les 38 appels profile list du 21/11. Garder le verdict de zéro suppression
+supplémentaire démontrée ; une instrumentation contractuelle future devra
+utiliser des catégories fermées sans coordonnées privées et être coordonnée
+avec Publication avant édition de fichiers partagés.
