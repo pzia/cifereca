@@ -107,6 +107,10 @@ def clear_loan_download_retry(storage, source: SourceKey, *, shared_lock) -> Non
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
     key = _key(source)
+    # Verified existing B is frequent on opening Sync. Avoid a write
+    # transaction for each of the already-satisfied loans with no budget.
+    if storage.metadata_get(key) is None:
+        return
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):

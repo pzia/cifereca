@@ -114,3 +114,38 @@ def test_cancel_and_revocation_do_not_consume_budget(rig):
         raise OSError("synthetic rebind")
     run(service, account, snap, root, lock_path, {source}, rebind)
     assert read_loan_download_retry(service.storage, source).failures == 0
+
+
+def test_review_and_reset_one_paused_loan_without_provider_io(rig, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+    from cifereca.models import Loan
+    service, account, source, snap, root, lock_path = loan_snapshot(rig)
+    service.current_identity = SimpleNamespace(identity_id="A")
+    service.last_loans = [
+        Loan(id=source.right_id, provider="backend", medium="digital",
+             record_id=source.edition_id, title="Exact synthetic book",
+             source_provider=source.scope.provider_id,
+             source_credential=source.scope.credential_id,
+             source_account_id=source.scope.account_id, identity_id="A"),
+    ]
+    persist_attested_source_references(service.storage, snap)
+    monkeypatch.setattr("cifereca.core.loan_download_retry_review.acquisition_lock_file",
+                        lambda: lock_path)
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(service.storage, source,
+                                         reason="canonical_delivery_failed", shared_lock=lease)
+    row, = review_loan_download_retries(service, identity_id="A")
+    assert row.source == source and row.title == "Exact synthetic book"
+    assert row.can_reset and row.retry.paused
+    with pytest.raises(ValueError, match="scope_changed"):
+        review_loan_download_retries(service, identity_id="B")
+    reset_reviewed_loan_download_retry(service, identity_id="A", row=row)
+    assert review_loan_download_retries(service, identity_id="A") == ()
+    assert service.calls == 0
+    with pytest.raises(ValueError, match="reset_changed"):
+        reset_reviewed_loan_download_retry(service, identity_id="A", row=row)

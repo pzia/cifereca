@@ -107,6 +107,15 @@ def _build_sync_page(self):
     jump.connect("clicked", jump_to_attention)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
+    retries = self.action_button("Téléchargements à reprendre", "dialog-warning-symbolic")
+    def show_retries(button):
+        action_scope = capture_sync_action_scope(self, page_token=page_token)
+        if action_scope is None:
+            return
+        from cifereca.gui.loan_download_retry_dialog import open_loan_download_retry_dialog
+        open_loan_download_retry_dialog(self, action_scope, Gtk=Gtk, Adw=Adw, control=button)
+    retries.connect("clicked", show_retries)
+    add_sync_action(heading, retries)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
         label="L'action globale actualise les inventaires et peut recevoir les fichiers disponibles "
