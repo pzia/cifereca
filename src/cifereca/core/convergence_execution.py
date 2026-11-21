@@ -37,6 +37,9 @@ from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 from .canonical_loan_retry_guard import historical_adept_retry_blocked
 from .canonical_adept_attempt import describe_loan_adept_attempt
+from .loan_download_retry import (
+    clear_loan_download_retry, read_loan_download_retry, record_loan_download_failure,
+)
 
 _LOG = logging.getLogger("cifereca")
 
@@ -470,6 +473,11 @@ def execute_admitted_convergence(
                     initial_storage, library_root=library_root,
                     placement_id=decision.placement_ids[0],
                 )
+            if key.kind == "loan" and current():
+                try:
+                    clear_loan_download_retry(initial_storage, key, shared_lock=shared_lock)
+                except Exception:
+                    _LOG.warning("TRACE convergence code=loan_download_retry_clear_failed")
             results.append(ConvergenceOutcome(
                 key, "recovered" if repaired else "present_attested",
                 "canonical_stock_relocated" if repaired else "exact_verified_origin",
@@ -537,6 +545,13 @@ def execute_admitted_convergence(
                         key, "blocked", "scope_or_consent_before_delivery",
                     ))
                     continue
+                # Budget is only a negative gate. Recovery, exact B and the
+                # historical one-use ADEPT fence always take precedence.
+                if key.kind == "loan":
+                    retry = read_loan_download_retry(initial_storage, key)
+                    if retry.paused:
+                        results.append(ConvergenceOutcome(key, "blocked", "loan_download_paused"))
+                        continue
                 phase = "delivery"
                 trace.emit(key, "delivery", "start")
                 completed = deliver(key, row)
@@ -663,6 +678,11 @@ def execute_admitted_convergence(
                 initial_storage, library_root=library_root,
                 placement_id=published.placement_id,
             )
+            if key.kind == "loan" and current():
+                try:
+                    clear_loan_download_retry(initial_storage, key, shared_lock=shared_lock)
+                except Exception:
+                    _LOG.warning("TRACE convergence code=loan_download_retry_clear_failed")
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
@@ -698,6 +718,16 @@ def execute_admitted_convergence(
                     "publication": "canonical_publication_failed",
                 }[phase]
             )
+            if (phase == "delivery" and key.kind == "loan" and not cancelled()
+                    and current() and live_consent(key)):
+                try:
+                    retry = record_loan_download_failure(
+                        initial_storage, key, reason=reason, shared_lock=shared_lock,
+                    )
+                    if retry.paused:
+                        reason = "loan_download_paused"
+                except Exception:
+                    _LOG.warning("TRACE convergence code=loan_download_retry_record_failed")
             results.append(ConvergenceOutcome(key, "failed", reason))
     # Every terminal result is correlated to the same ephemeral item handle.
     # Emit only after the transaction: no callback or logging can create B.
