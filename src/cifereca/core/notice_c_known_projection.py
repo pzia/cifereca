@@ -188,9 +188,29 @@ def merge_public_notice_c_known_rows(
     stage has no claim to full query coverage. An empty page is unknown, not
     evidence that a provider has zero documents.
     """
+    # PublicNoticeCPage is frozen but its collection members may have been
+    # replaced after a Core read. Validate native shape before len(), hashes,
+    # document comparisons or rendering any untrusted source fact.
     if (type(known) is not list or type(page) is not PublicNoticeCPage
             or type(identity_id) is not str or not identity_id
-            or len(page.hits) > _MAX):
+            or type(page.hits) is not tuple or len(page.hits) > _MAX
+            or any(type(hit) is not PublicNoticeCHit
+                   or not _native_c_source_ref(hit.document)
+                   for hit in page.hits)
+            or type(page.matching_sources) is not tuple
+            or len(page.matching_sources) > _MAX * _MAX_SOURCES
+            or any(type(hit) is not PublicNoticeCHit
+                   or not _native_c_source_ref(hit.document)
+                   for hit in page.matching_sources)
+            or any(type(value) is not int or not 0 <= value < 2**63
+                   for value in (page.known_matches, page.scanned_sources,
+                                 page.unindexed_sources))
+            or (page.known_documents is not None
+                and (type(page.known_documents) is not int
+                     or not 0 <= page.known_documents < 2**63))
+            or type(page.has_more) is not bool
+            or type(page.status) is not str
+            or page.status not in ("partial", "budget_exceeded")):
         raise ValueError("invalid_known_public_c_projection")
 
     hits = page.hits
@@ -199,9 +219,7 @@ def merge_public_notice_c_known_rows(
         # Do not reintroduce an unrelated group or silently truncate its
         # admitted matching alternatives when suppressing public mirrors.
         hits = page.matching_sources
-        if (type(hits) is not tuple or len(hits) > _MAX * _MAX_SOURCES
-                or any(type(hit) is not PublicNoticeCHit for hit in hits)
-                or any(type(hit) is not PublicNoticeCHit for hit in page.hits)
+        if (len(hits) > _MAX * _MAX_SOURCES
                 or {hit.document for hit in hits} != {hit.document for hit in page.hits}):
             raise ValueError("invalid_grouped_public_c_projection")
     rows: list[dict[str, Any]] = []
