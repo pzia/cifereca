@@ -107,6 +107,21 @@ def _build_sync_page(self):
     jump.connect("clicked", jump_to_attention)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
+    retries = self.action_button("Téléchargements à reprendre", "dialog-warning-symbolic")
+    def show_retries(button):
+        action_scope = capture_sync_action_scope(self, page_token=page_token)
+        if action_scope is None:
+            return
+        from cifereca.gui.loan_download_retry_dialog import open_loan_download_retry_dialog
+        open_loan_download_retry_dialog(self, action_scope, Gtk=Gtk, Adw=Adw, control=button)
+    retries.connect("clicked", show_retries)
+    self._sync_retry_button = retries
+    retry_summary = Gtk.Label(label="", xalign=0)
+    retry_summary.set_wrap(True)
+    retry_summary.set_visible(False)
+    self._sync_retry_summary = retry_summary
+    heading.append(retry_summary)
+    add_sync_action(heading, retries)
     root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
         label="L'action globale actualise les inventaires et peut recevoir les fichiers disponibles "
@@ -177,6 +192,8 @@ def _build_sync_page(self):
         self._sync_attention_cursor = 0
         clear_box(self._sync_sources_box)
         all_now.set_sensitive(False)
+        retries.set_sensitive(False)
+        retry_summary.set_visible(False)
         alert_row.set_visible(False)
         jump.set_visible(False)
         self._sync_summary.set_label("État des sources à actualiser")
@@ -208,6 +225,12 @@ def _refresh_sync_page(self) -> None:
     broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
     identity = self.service.current_identity
     all_now = getattr(self, "_sync_all_button", None)
+    retries = getattr(self, "_sync_retry_button", None)
+    retry_summary = getattr(self, "_sync_retry_summary", None)
+    if retries is not None:
+        retries.set_sensitive(False)
+    if retry_summary is not None:
+        retry_summary.set_visible(False)
     summary = getattr(self, "_sync_summary", None)
     alert_row = getattr(self, "_sync_attention_row", None)
     self._sync_attention_targets = []
@@ -249,6 +272,11 @@ def _refresh_sync_page(self) -> None:
         ))
         return
     self._sync_attention_scope = scope
+    if retries is not None:
+        retries.set_sensitive(True)
+    if retry_summary is not None and hasattr(self.service, "storage"):
+        from cifereca.gui.loan_download_retry_dialog import refresh_loan_download_retry_summary
+        refresh_loan_download_retry_summary(self, scope, retry_summary)
     # A failed or malformed broker enumeration must not crash the entire
     # Synchronisation page or masquerade as an empty, healthy inventory.
     def sources_unavailable():
