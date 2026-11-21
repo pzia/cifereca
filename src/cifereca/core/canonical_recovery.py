@@ -366,7 +366,7 @@ def mark_completed_delivery_published(
                 or len(provider_receipt) > 1024
                 or type(adept_receipt) is not str or len(adept_receipt) > 1024
                 or any(ch in item for item in (provider_receipt, adept_receipt)
-                       for ch in "\\x00\\r\\n")):
+                       for ch in "\x00\r\n")):
             raise ValueError("canonical_intake_checkpoint_conflict")
         source_id = _stable(
             "source", scope.identity_id, scope.provider_id, scope.credential_id,
