@@ -11,6 +11,7 @@ from ..models import Account, Loan
 from ..plugin_api.downloadable_resources import SourceReference
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_recovery import _exact_borrower_bound_in_db
+from .library_sqlite_freshness import sqlite_source_stamp
 from .local_origin_documentary_suggestions import _fold
 from .local_origin_epub_evidence import read_verified_epub_bibliography
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
@@ -22,6 +23,7 @@ _MAX_REFERENCES = 128
 _MAX_LOANS = 4096
 _MAX_MATCHES = 50
 _MAX_CHOICES = 16
+_MAX_PAGES = 32
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -71,7 +73,7 @@ def _loan_titles(service, scope):
     return {key: entry for key, entry in matched.items() if counts[key] == 1}
 
 
-def _snapshot(storage, scope, kind, loan_titles, title, authors):
+def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
     """Reuse exact existing C reader; do not manufacture a private Notice."""
     with storage._lock:
         db = storage._connect()
@@ -86,12 +88,13 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors):
                 "FROM source_references WHERE identity_id=? AND provider_id=? "
                 "AND credential_id=? AND account_id=? AND reference_kind=? "
                 "AND state='active' AND evidence_kind='provider_response' AND evidence_ref<>'' "
-                "ORDER BY edition_id,right_id,branch_id LIMIT ?",
-                (*_scope_coords(scope), kind, _MAX_REFERENCES + 1),
+                "ORDER BY edition_id,right_id,branch_id LIMIT ? OFFSET ?",
+                (*_scope_coords(scope), kind, _MAX_REFERENCES + 1, offset),
             ).fetchall()
             matches = []
             truncated = len(rows) > _MAX_REFERENCES
-            for branch, edition, right, _, _ in rows[:_MAX_REFERENCES]:
+            consumed = min(len(rows), _MAX_REFERENCES)
+            for index, (branch, edition, right, _, _) in enumerate(rows[:_MAX_REFERENCES]):
                 try:
                     source = SourceReference(scope, branch, edition, right, kind)
                 except ValueError:
@@ -136,11 +139,14 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors):
                     comparison = "title_concordant_author_divergent"
                 if len(matches) >= _MAX_MATCHES:
                     truncated = True
+                    # This additional matching row has not been delivered.
+                    # Resume AT it rather than skipping the rest of the window.
+                    consumed = index
                     break
                 matches.append(PrivateDocumentaryMatch(
                     source, pair[0], author, comparison, evidence, observed_at,
                 ))
-            return tuple(rows), tuple(matches), truncated
+            return tuple(rows), tuple(matches), truncated, offset + consumed
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -151,6 +157,21 @@ class PrivateCatalogueChoice:
     kind: str
     binding: tuple
     evidence: _PublicComparisonEvidence
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PrivateCatalogueContinuation:
+    """Private, process-local continuation, never a provider or right receipt."""
+    request: LocalOriginSuggestionRequest
+    account: Account
+    scope: ProviderRightsScope
+    kind: str
+    binding: tuple
+    evidence: _PublicComparisonEvidence
+    database_stamp: tuple
+    offset: int
+    page: int
+    loan_titles: tuple
 
 
 def _binding(service, request, account, scope):
@@ -250,15 +271,18 @@ def available_known_private_catalogues(service, request, *, evidence=None):
 
 
 def compare_known_private_catalogue(service, request, *, account, kind,
-                                    confirmed=False, choice=None, still_current=lambda: True):
+                                    confirmed=False, choice=None, still_current=lambda: True,
+                                    continuation=None):
     """One expressly selected connected account; cached claims only.
 
-    A partial first window is not a complete inventory or a negative result.
+    A partial window is not a complete inventory or a negative result.
+    Further explicit pages require the same file, scope and SQLite image.
     Only a verified unlinked local EPUB supplies the query. No query is
     transmitted to the account and no remote read is attempted.
     """
-    def report(status, matches=(), more=False):
+    def report(status, matches=(), more=False, following=None):
         return {"status": status, "candidates": matches, "window_truncated": more,
+                "next_cursor": following,
                 "coverage_complete": False, "fresh_network_verified": False,
                 "provider_access_performed": False, "association_authorized": False,
                 "may_write_origin_or_right": False}
@@ -289,12 +313,36 @@ def compare_known_private_catalogue(service, request, *, account, kind,
 
         if not live():
             return report("excluded")
+        stamp = sqlite_source_stamp(request.database)
+        if stamp is None:
+            return report("excluded")
+        offset, page = 0, 1
+        if continuation is not None:
+            if (type(continuation) is not PrivateCatalogueContinuation
+                    or continuation.request is not request
+                    or continuation.account is not account
+                    or continuation.scope != scope or continuation.kind != kind
+                    or len(continuation.binding) != len(binding)
+                    or not all(old is new for old, new in zip(continuation.binding, binding))
+                    or type(continuation.evidence) is not _PublicComparisonEvidence
+                    or not continuation.evidence.matches_scope(request)
+                    or continuation.database_stamp != stamp
+                    or type(continuation.page) is not int
+                    or not 2 <= continuation.page <= _MAX_PAGES
+                    or type(continuation.offset) is not int
+                    or not 0 < continuation.offset <= _MAX_REFERENCES * (continuation.page - 1)):
+                return report("scope_changed")
+            offset, page = continuation.offset, continuation.page
         with _verified_candidate(request.storage, library_root=request.root,
                                  identity_id=request.identity_id,
                                  placement_id=request.placement_id,
                                  catalogue=True) as (local, path, signature):
             if choice is not None and (choice.evidence.evidence != local
                                        or choice.evidence.signature != signature):
+                return report("scope_changed")
+            if continuation is not None and (
+                    continuation.evidence.evidence != local
+                    or continuation.evidence.signature != signature):
                 return report("scope_changed")
             if local[6] not in ("epub", "kepub"):
                 return report("excluded")
@@ -303,12 +351,26 @@ def compare_known_private_catalogue(service, request, *, account, kind,
                 return report("excluded")
             title, authors, _isbns = description
             loan_titles = _loan_titles(service, scope) if kind == "loan" else {}
-            first = _snapshot(request.storage, scope, kind, loan_titles, title, authors)
-            if not live() or (kind == "loan" and _loan_titles(service, scope) != loan_titles):
+            loan_witness = tuple(sorted(loan_titles.items()))
+            if continuation is not None and continuation.loan_titles != loan_witness:
                 return report("scope_changed")
-            if _snapshot(request.storage, scope, kind, loan_titles, title, authors) != first:
+            first = _snapshot(request.storage, scope, kind, loan_titles, title, authors, offset)
+            if (not live() or sqlite_source_stamp(request.database) != stamp
+                    or (kind == "loan" and _loan_titles(service, scope) != loan_titles)):
                 return report("scope_changed")
-            result = report("partial", first[1], first[2])
-        return result if live() else report("scope_changed")
+            if _snapshot(request.storage, scope, kind, loan_titles, title, authors, offset) != first:
+                return report("scope_changed")
+            following = None
+            if first[2] and page < _MAX_PAGES and first[3] > offset:
+                evidence = _PublicComparisonEvidence(
+                    request.storage, request.root, request.identity_id,
+                    request.placement_id, local, signature,
+                )
+                following = PrivateCatalogueContinuation(
+                    request, account, scope, kind, binding, evidence,
+                    stamp, first[3], page + 1, loan_witness,
+                )
+            result = report("partial", first[1], first[2], following)
+        return result if live() and sqlite_source_stamp(request.database) == stamp else report("scope_changed")
     except Exception:
         return report("unavailable")

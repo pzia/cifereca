@@ -235,3 +235,117 @@ def test_cached_purchase_date_is_source_date_not_refresh_time(private_rig, monke
     assert "1970-01-01 00:01 UTC" in visible
     assert "Occurrence : " + key.right_id in visible
     assert "fraîcheur réseau" not in visible and not calls
+
+
+
+def _populate_windows(fixture):
+    service, request, account, session, calls, path, *_ = fixture
+    for index in range(2, 7):
+        key, snap = new_source(kind="loan", right=f"loan-{index}", branch="loans")
+        persist_attested_source_references(service.storage, snap)
+        service.last_loans.append(replace(service.last_loans[0], id=key.right_id))
+
+
+@pytest.mark.parametrize("reference_budget,match_budget", [(3, 50), (128, 2), (3, 2)])
+def test_private_reference_windows_do_not_drop_matches(private_rig, monkeypatch,
+                                                       reference_budget, match_budget):
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    before, data = rows(service.storage), path.read_bytes()
+    monkeypatch.setattr(private, "_MAX_REFERENCES", reference_budget)
+    monkeypatch.setattr(private, "_MAX_MATCHES", match_budget)
+    result = _run(private_rig)
+    seen = []
+    for _ in range(10):
+        assert result["status"] == "partial"
+        assert not result["coverage_complete"]
+        seen.extend(row.source.resource_id for row in result["candidates"])
+        cursor = result["next_cursor"]
+        if cursor is None:
+            break
+        assert result["window_truncated"]
+        assert _run(private_rig, confirmed=False, continuation=cursor)["candidates"] == ()
+        result = _run(private_rig, continuation=cursor)
+    assert seen == [f"loan-{index}" for index in range(1, 7)]
+    assert not result["window_truncated"] and result["next_cursor"] is None
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("change", ["database", "loan_projection", "inode", "account", "kind"])
+def test_private_reference_continuation_is_bound_to_previous_review(private_rig, monkeypatch, change):
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    cursor = _run(private_rig)["next_cursor"]
+    assert cursor is not None
+    options = {}
+    if change == "database":
+        service.storage.metadata_set("test-private-review-drift", "changed")
+    elif change == "loan_projection":
+        service.last_loans[0] = replace(service.last_loans[0], title="changed")
+    elif change == "inode":
+        content = path.read_bytes()
+        path.rename(path.with_suffix(".old"))
+        path.write_bytes(content)
+    elif change == "account":
+        other = replace(account)
+        service.accounts[:] = [other]
+        session.accounts[:] = [other]
+        options["account"] = other
+    else:
+        options["kind"] = "purchase"
+    result = _run(private_rig, continuation=cursor, **options)
+    assert result["status"] != "partial"
+    assert not result["candidates"] and result["next_cursor"] is None and not calls
+
+
+
+@pytest.mark.parametrize("change", ["none", "cancel", "preview", "activation", "view", "sqlite", "navigation"])
+def test_private_broker_continuation_is_one_use_and_revocable(private_rig, monkeypatch, change):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    active, visible = [True], [True]
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: active[0])
+    def preview():
+        return broker.preview(identity_id="A", placement_id=request.placement_id,
+                              still_current=lambda: visible[0], confirmed=True)
+    page = preview()
+    choice, = page.private_choices
+    first = broker.compare_private(token=choice.token, confirmed=True)
+    assert first.status == "partial" and first.page == 1
+    assert [m.resource_id for m in first.matches] == ["loan-1", "loan-2"]
+    token = first.next_token
+    assert token and first.window_truncated
+    assert not hasattr(first, "continuation") and not hasattr(first, "next_cursor")
+    assert token not in repr(first) and str(path) not in repr(first)
+    assert broker.compare_private(token=choice.token, confirmed=True) is None
+    assert broker.compare_private(token=token) is None
+    assert broker.search_public(token=token, confirmed=True) is None
+    if change == "cancel":
+        broker.cancel(token=page.token)
+    elif change == "preview":
+        preview()
+    elif change == "activation":
+        active[0] = False
+    elif change == "view":
+        visible[0] = False
+    elif change == "sqlite":
+        service.storage.metadata_set("test-private-page", "changed")
+    elif change == "navigation":
+        service._account_context_epoch += 2
+    second = broker.compare_private(token=token, confirmed=True)
+    if change == "none":
+        assert second.status == "partial" and second.page == 2
+        assert [m.resource_id for m in second.matches] == ["loan-3", "loan-4"]
+        assert second.next_token and second.next_token != token
+        third = broker.compare_private(token=second.next_token, confirmed=True)
+        assert third.status == "partial" and third.page == 3
+        assert [m.resource_id for m in third.matches] == ["loan-5", "loan-6"]
+        assert third.next_token is None and not third.window_truncated
+    else:
+        assert second is None or (second.status != "partial"
+                                  and not second.matches and second.next_token is None)
+    assert broker.compare_private(token=token, confirmed=True) is None
+    assert not calls
