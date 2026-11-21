@@ -37,6 +37,11 @@ _CORE_READ_CALLERS = {
     "reconciliation_candidates": frozenset({"profile list"}),
     "reconciliation_lease": frozenset({"profile list"}),
     "reconciliation_inventory": frozenset({"profile list", "loans list"}),
+    "source_runtime_inspection": frozenset({"profile list"}),
+    "profile_choices": frozenset({"profile list"}),
+    "execution_profile_resolution": frozenset({"profile list"}),
+    "origin_profile_resolution": frozenset({"profile list"}),
+    "loan_choices": frozenset({"profile list", "loans list"}),
 }
 _CALLER_CATEGORIES = _RUNTIME_CALLERS | frozenset(_CORE_READ_CALLERS)
 _CORE_READ_CALLER = ContextVar("adept_core_read_caller", default=None)
