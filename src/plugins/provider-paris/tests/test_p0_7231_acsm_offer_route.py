@@ -106,3 +106,63 @@ def test_complete_source_cycle_reuses_route_class_without_new_inventory(tmp_path
         assert session._selected_acsm_route.get() is None
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("outcome", ["body_unavailable", "revoked", "503", "429", "403"])
+def test_real_selected_paris_route_reports_only_qualified_get_retry(
+    tmp_path, monkeypatch, outcome,
+):
+    """#7231: a failed admitted GET never becomes an implicit PNB borrow.
+
+    Delivery mode, exact current offer and live Core admission are all
+    checked by the actual selected-right adapter. Signed URLs stay private.
+    """
+    import httpx
+    from cifereca.plugin_api import (
+        RetryableContentDownload, ProviderConfigurationError,
+    )
+    from cifereca_paris_client import ParisContentTransferUnavailable
+
+    session, account, _, client, gets = prepare(tmp_path, monkeypatch)
+    signed = urls()[0] + "&SYNTHETIC_PRIVATE_TOKEN"
+    client.digital = [raw_loan(signed)]
+    live, attempts, posts = [True], [], []
+    client.pnb_preferences = lambda: posts.append("prefs")
+    client.download_digital_document = lambda *_: posts.append("borrow")
+    try:
+        right, = session.rights_observation_snapshot(account).rights
+        assert right.delivery_attested
+        assert session.downloadable_selected_candidate_is_acsm(
+            account, **args(right.delivery_offer_id),
+        ) is True
+
+        def response(url, **_):
+            attempts.append(url)
+            if outcome in ("body_unavailable", "revoked"):
+                if outcome == "revoked":
+                    live[0] = False
+                raise ParisContentTransferUnavailable(
+                    "Transport HTTPS PNB indisponible",
+                )
+            status = int(outcome)
+            return httpx.Response(
+                status, content=b"", request=httpx.Request("GET", url),
+            )
+
+        client._get_pnb_response = response
+        with pytest.raises((RetryableContentDownload, ProviderConfigurationError)) as raised:
+            session.rights_selected_delivery_candidate(
+                account, edition_id="edition-1", right_id="loan-1",
+                kind="loan", branch="dilicom",
+                delivery_offer_id=right.delivery_offer_id,
+                target_dir=tmp_path, explicit_user_action=True,
+                admission_current=lambda: live[0],
+            )
+        assert (type(raised.value) is RetryableContentDownload) is (
+            outcome in ("body_unavailable", "503", "429")
+        )
+        assert "SYNTHETIC_PRIVATE_TOKEN" not in str(raised.value)
+        assert attempts == [signed] and not posts and not gets
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
