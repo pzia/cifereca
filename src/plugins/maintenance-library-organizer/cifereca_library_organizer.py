@@ -67,6 +67,9 @@ def display(page):
     if page.dry_run_state:
         lines.extend(("", "Simulation confirmée — aucune exécution."
                       if page.dry_run_state == "confirmed" else "Plan à blanc — à confirmer."))
+        lines.append("Périmètre simulé : " + (
+            "toute cette page" if page.dry_run_group is None
+            else f"groupe {page.dry_run_group + 1} de cette page"))
         labels = {"rename": "Renommage", "classify": "Classement", "keeper": "Copie à conserver"}
         states = {"review_only": "Avis uniquement", "relocation_held": "Déplacement bloqué",
                   "cleanup_held": "Retrait bloqué", "destination_conflict": "Collision"}
@@ -103,8 +106,10 @@ class GuidedOrganizer:
                 # Never leak private broker errors to the tool row.
                 pass
 
-    def request(self, action):
-        if self.busy or not self.current():
+    def request(self, action, *, group_index=None):
+        if (self.busy or not self.current()
+                or (group_index is not None and (action != "prepare"
+                    or type(group_index) is not int or group_index < 0))):
             return False
         page = self.page
         if action == "preview":
@@ -114,7 +119,11 @@ class GuidedOrganizer:
         elif action == "select" and page is not None and page.eligible and not page.selected and not page.dry_run_state:
             operation = lambda: self.broker.select_all_advice(token=page.token, confirmed=True)
         elif action == "prepare" and can_prepare(page) and callable(getattr(self.broker, "prepare_dry_run", None)):
-            operation = lambda: self.broker.prepare_dry_run(token=page.token, confirmed=True)
+            if group_index is not None and group_index >= len(page.groups):
+                return False
+            operation = lambda: self.broker.prepare_dry_run(
+                token=page.token, confirmed=True,
+                **({"group_index": group_index} if group_index is not None else {}))
         elif (action == "confirm" and page is not None and page.dry_run_state == "prepared"
               and callable(getattr(self.broker, "confirm_dry_run", None))):
             operation = lambda: self.broker.confirm_dry_run(token=page.token, confirmed=True)
@@ -263,6 +272,11 @@ class OrganizerPlugin:
         outer.append(actions)
         simulation = Gtk.Button(label="Préparer le plan à blanc")
         simulation.set_sensitive(False)
+        simulation_scope = Gtk.ComboBoxText()
+        simulation_scope.append("all", "Tous les groupes de cette page")
+        simulation_scope.set_active_id("all")
+        simulation_scope.set_sensitive(False)
+        outer.append(simulation_scope)
         outer.append(simulation)
         detail = Gtk.Label(xalign=0)
         detail.set_wrap(True)
@@ -275,6 +289,18 @@ class OrganizerPlugin:
             following.set_sensitive(not busy and page is not None and page.has_more)
             accept.set_sensitive(not busy and page is not None and bool(page.eligible) and not page.selected and not page.dry_run_state)
             prepared = page is not None and page.dry_run_state == "prepared"
+            simulation_scope.remove_all()
+            simulation_scope.append("all", "Tous les groupes de cette page")
+            if page is not None:
+                for index, group in enumerate(page.groups):
+                    if (group.keeper or any(
+                            f.reason == "rename_advice_only" or f.classified_path
+                            for f in group.files)):
+                        simulation_scope.append(str(index), f"Groupe {index + 1}")
+            simulation_scope.set_active_id(
+                str(page.dry_run_group) if page is not None and page.dry_run_group is not None
+                else "all")
+            simulation_scope.set_sensitive(not busy and can_prepare(page))
             simulation.set_label("Confirmer la simulation" if prepared else "Préparer le plan à blanc")
             simulation.set_sensitive(not busy and ((prepared and callable(getattr(controller.broker, "confirm_dry_run", None)))
                 or (can_prepare(page) and callable(getattr(controller.broker, "prepare_dry_run", None)))))
@@ -291,8 +317,15 @@ class OrganizerPlugin:
         start.connect("clicked", lambda _b: controller.request("preview"))
         following.connect("clicked", lambda _b: controller.request("next"))
         accept.connect("clicked", lambda _b: controller.request("select"))
-        simulation.connect("clicked", lambda _b: controller.request(
-            "confirm" if controller.page is not None and controller.page.dry_run_state == "prepared" else "prepare"))
+        def simulate(_button):
+            if controller.page is not None and controller.page.dry_run_state == "prepared":
+                controller.request("confirm")
+            else:
+                selection = simulation_scope.get_active_id()
+                if selection is None:
+                    return
+                controller.request("prepare", group_index=None if selection == "all" else int(selection))
+        simulation.connect("clicked", simulate)
         cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)
 
