@@ -85,3 +85,40 @@ def test_revoked_view_never_renders_and_queued_work_never_dispatches(rig, change
     assert len(groups) == 1 and not toasts
     assert len(calls) == (phase == "after_worker")
     assert search() is False
+
+
+@pytest.mark.parametrize("public_count,private_count", [(0,16),(8,16),(3,2),(8,0)])
+def test_choice_window_respects_actual_host_action_budget(rig, public_count, private_count):
+    from dataclasses import replace
+    from cifereca.plugin_api.local_origin_detail import (
+        LocalOriginPrivateChoice, LocalOriginPublicChoice,
+    )
+    service, session, request, calls, path = rig
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    page = c.broker.preview(identity_id=request.identity_id, placement_id=request.placement_id,
+                            still_current=lambda: True, confirmed=True)
+    public = tuple(LocalOriginPublicChoice(f"pub-{i}", f"catalogue-{i}") for i in range(public_count))
+    private = tuple(LocalOriginPrivateChoice(
+        f"priv-{i}", "provider-" + "p"*120,
+        "credential-" + "c"*220, f"account-{i}-" + "a"*200,
+        "purchase" if i < 8 else "loan",
+    ) for i in range(private_count))
+    c.broker = NS(preview=lambda **kw: replace(page, public_choices=public, private_choices=private))
+    original = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12 and len(title) <= 256 and len(tooltip) <= 1024
+        original(key, title, tooltip, action)
+    host.add_action = limited
+    assert actions["preview"][2]()
+    deliver(tasks)
+    remaining = min(private_count, 11-public_count)
+    assert len(actions) == 1 + public_count + remaining
+    assert len(groups) == (2 if private_count else 1)
+    if private_count:
+        text = repr(groups[-1])
+        for index in range(remaining):
+            assert private[index].account_id in text
+            assert private[index].account_id in actions[f"private-{index}"][1]
+        if private_count > remaining:
+            assert f"{private_count-remaining} choix supplémentaires" in text
+    assert not calls
