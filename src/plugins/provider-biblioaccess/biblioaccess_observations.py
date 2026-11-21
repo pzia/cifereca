@@ -186,7 +186,7 @@ class _Links(HTMLParser):
                 or tag == "form" and re.search(
                     r"login|logon|signin|connexion|authent", str(values.get("action", "")), re.I)
                 or tag == "a" and re.search(
-                    r"/catalog/(?:book|search)(?:[/?#]|$)", str(values.get("href", "")), re.I)):
+                    r"(?:^|/)(?:book|search)(?:[/?#]|$)", str(values.get("href", "")), re.I)):
             self.summary_refused = True
         hidden = (tag in {"head", "script", "style", "template", "noscript", "textarea",
                           "select", "button", "svg", "iframe"}
