@@ -686,12 +686,42 @@ def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
 
     service = LibraryService(config, Storage(path), Diagnostics())
     try:
+        from cifereca.core.source_context import revoke_source_context
+
         assert not service._sessions
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: True)
         lease = capture_search_read_scope(service, "alice")
         relation = read_series_for_search(service, row, reader_scope=lease)
         assert relation.label == "Cycle astral"
         assert relation.scope == scenario
         assert relation.source_field == "Search.CustomResult"
+
+        # A disabled provider is not an offline authority even though the
+        # durable connection is still enabled. Exercise both entry and exit
+        # policy checks; no session or mocked supplier request is involved.
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: False)
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        policy = iter((True, False))
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: next(policy))
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        revoke_source_context(service)
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: True)
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        lease = capture_search_read_scope(service, "alice")
+        assert read_series_for_search(service, row, reader_scope=lease) == relation
+
+        # Durable connection disable/re-enable is a separate ABA fence.
+        # A fresh read lease is still not evidence of the old source epoch.
+        connection = {
+            "identity_id": "alice", "provider_id": row.source_provider,
+            "credential_id": row.source_credential,
+        }
+        service.storage.provider_connection_put(dict(connection, enabled=False))
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        service.storage.provider_connection_put(dict(connection, enabled=True))
+        assert read_series_for_search(service, row, reader_scope=capture_search_read_scope(
+            service, "alice",
+        )) is None
         assert search_public_notice_c(service.storage, "Cycle astral").hits == ()
         assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
         assert len(calls) == 1
