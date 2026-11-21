@@ -1141,7 +1141,9 @@ class LibraryService:
         if before.get("status") != "ready":
             return describe_adept_runtime(before, None)
         try:
-            profiles = self.kobo_profiles()
+            from .core.diagnostic_adept import adept_read_caller
+            with adept_read_caller("source_runtime_inspection"):
+                profiles = self.kobo_profiles()
             if type(profiles) is not list or len(profiles) > 2048:
                 raise ValueError("adept_profile_inventory_invalid")
             selected = self._adept_profile_row(
@@ -1272,7 +1274,10 @@ class LibraryService:
         """Fetch only usable profile references; choosing/persisting stays explicit."""
         choices = []
         seen = set()
-        for row in self.kobo_profiles():
+        from .core.diagnostic_adept import adept_read_caller
+        with adept_read_caller("profile_choices"):
+            profiles = self.kobo_profiles()
+        for row in profiles:
             if not isinstance(row, dict) or not AdeptProfileResolver._fetch_capable(row):
                 continue
             reference = self._adept_profile_ref(row)
@@ -1303,7 +1308,9 @@ class LibraryService:
             )
         identity_profile = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
-            profiles = self.kobo_profiles()
+            from .core.diagnostic_adept import adept_read_caller
+            with adept_read_caller("execution_profile_resolution"):
+                profiles = self.kobo_profiles()
         except Exception as exc:
             # A failed inventory is not an empty, successfully read inventory.
             # In particular never pass a stable UUID as a CLI name on failure.
@@ -2913,12 +2920,14 @@ class LibraryService:
         return result
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:
-        return adept_profiles.originating_profile_id(
-            identity_id, profile_name,
-            binding_get=self.storage.adept_profile_binding_get,
-            list_profiles=self.kobo_profiles, name_of=self._adept_profile_name,
-            reference_of=self._adept_profile_ref,
-        )
+        from .core.diagnostic_adept import adept_read_caller
+        with adept_read_caller("origin_profile_resolution"):
+            return adept_profiles.originating_profile_id(
+                identity_id, profile_name,
+                binding_get=self.storage.adept_profile_binding_get,
+                list_profiles=self.kobo_profiles, name_of=self._adept_profile_name,
+                reference_of=self._adept_profile_ref,
+            )
 
     def _adept_acquisition_path(self, row):
         paths = {str(r.get("metadata", {}).get("path")) for r in self.storage.catalog_entries()
@@ -3125,14 +3134,17 @@ class LibraryService:
         row = self.storage.acquisition_get(acquisition_id)
         if not row or row.get("status") != "complete":
             raise AttentionRequired("Acquisition locale inconnue.", code="adept_acquisition_unknown")
-        profiles = self.kobo_profiles()
+        from .core.diagnostic_adept import adept_read_caller
+        with adept_read_caller("loan_choices"):
+            profiles = self.kobo_profiles()
         candidates = self._adept_inventory_candidates(row, profiles, profile_references)
         if not candidates:
             raise AttentionRequired("Associez un profil ADEPT à l’identité.", code="adept_profile_required")
         runtime = self._required_plugin_service("runtime.kobo-adept")
         if not callable(getattr(runtime, "loan_inventories", None)):
             raise AttentionRequired("Runtime Kobo-Adept 1.2.2 requis.", code="adept_inventory_unavailable")
-        inventory = runtime.loan_inventories([self._adept_profile_name(p) for p in candidates])
+        with adept_read_caller("loan_choices"):
+            inventory = runtime.loan_inventories([self._adept_profile_name(p) for p in candidates])
         provider_active = self._provider_loan_active_for_acquisition(row)
         options = []
         for group in inventory["profiles"]:

@@ -17,18 +17,21 @@ def reconcile_adept_acquisition(
     if not path or not path.is_file():
         return {"status": "artifact_missing", "acquisition_id": row["acquisition_id"]}
     cache = cache if cache is not None else {}
-    candidates = self.adept_inventory_candidates_for_acquisition(
-        row, profile_references=profile_references, cache=cache,
-    )
+    from .diagnostic_adept import adept_read_caller
+    with adept_read_caller("reconciliation_candidates"):
+        candidates = self.adept_inventory_candidates_for_acquisition(
+            row, profile_references=profile_references, cache=cache,
+        )
     if not candidates:
         return {"status": "profile_missing", "acquisition_id": row["acquisition_id"]}
     names = tuple(self._adept_profile_name(p) for p in candidates)
     # Each reconciliation must obtain an exact-origin, runtime-attested read
     # lease, including when a batch cache already contains prior inventory.
     # No vendor-specific adapter or ambient UI session is consulted here.
-    inventory_fn = self.adept_inventory_reader_for_acquisition(
-        row, profile_references=profile_references,
-    )
+    with adept_read_caller("reconciliation_lease"):
+        inventory_fn = self.adept_inventory_reader_for_acquisition(
+            row, profile_references=profile_references,
+        )
     if not callable(inventory_fn):
         raise AttentionRequired(
             "Inventaire ADEPT indisponible.", code="adept_inventory_unavailable",
@@ -42,7 +45,8 @@ def reconcile_adept_acquisition(
     inventory_key = ("adept_inventory", scope, names)
     if inventory_key not in cache:
         try:
-            cache[inventory_key] = inventory_fn(list(names))
+            with adept_read_caller("reconciliation_inventory"):
+                cache[inventory_key] = inventory_fn(list(names))
         except Exception:
             binding.update(inventory_status="inventory_error", return_available=False, return_verification="verification_failed")
             metadata["adept_binding"] = binding
