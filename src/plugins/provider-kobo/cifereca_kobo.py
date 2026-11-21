@@ -796,7 +796,7 @@ class KoboSession(ProviderSession):
         # The account-bound route above retains its historical semantics.
         # On catalog-only, use explicit and concordant bibliographic format
         # aliases from this page. Never infer a file/delivery from a product ID.
-        from cifereca.plugin_api.acquisition import file_format, format_family
+        from cifereca.plugin_api import normalize_acquisition_format as file_format
         ebook_formats = {"epub", "kepub", "pdf"}
         audio_formats = {"mp3", "m4a", "ogg", "opus", "flac", "wav"}
         supported = ebook_formats | audio_formats | {"ebook", "audiobook"}
@@ -813,7 +813,7 @@ class KoboSession(ProviderSession):
                          else "")
                 if exact != file_format(row.format):
                     exact = ""
-                matching = bool(exact and (exact in requested or format_family(exact) in requested))
+                matching = bool(exact and (exact in requested or (exact == "kepub" and "epub" in requested)))
                 if ("ebook" in requested and (exact in ebook_formats
                         or not exact and row.content_type == "ebook")):
                     matching = True
