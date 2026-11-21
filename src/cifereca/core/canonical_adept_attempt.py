@@ -8,6 +8,7 @@ a hold for explicit intervention; a changed offer ID cannot revive it.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 import hashlib
 import json
 import secrets
@@ -47,10 +48,14 @@ def _read_marker(storage, source):
         db = storage._connect()
         if db.in_transaction:
             raise ValueError("canonical_adept_attempt_nested_transaction")
-        return db.execute(
-            "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND 8192 "
-            "THEN value ELSE NULL END FROM metadata WHERE key=?", (_key(source),),
-        ).fetchone()
+        return _marker_row(db, source)
+
+
+def _marker_row(db, source):
+    return db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND 8192 "
+        "THEN value ELSE NULL END FROM metadata WHERE key=?", (_key(source),),
+    ).fetchone()
 
 
 @contextmanager
@@ -99,14 +104,21 @@ def describe_loan_adept_attempt(storage, source: SourceKey, *, offer_id: str) ->
         return result("unreadable")
     if row is None:
         return result("none")
-    raw = row[0]
-    # No raw marker, operation ID, token or source coordinates in the report.
-    if type(raw) is not str or not 0 < len(raw) <= 8192:
+    saved = _decode_marker(row[0])
+    if saved is None:
         return result("held_invalid")
+    digest = hashlib.sha256(offer_id.encode()).hexdigest()
+    return result("held_same_offer" if saved["offer_digest"] == digest
+                  else "held_other_offer")
+
+
+def _decode_marker(raw):
+    if type(raw) is not str or not 0 < len(raw) <= 8192:
+        return None
     try:
         saved = json.loads(raw)
     except (ValueError, TypeError, RecursionError):
-        return result("held_invalid")
+        return None
     if (type(saved) is not dict or set(saved) != {
             "schema", "offer_digest", "operation_id"}
             or type(saved["schema"]) is not int or saved["schema"] != 1
@@ -117,10 +129,61 @@ def describe_loan_adept_attempt(storage, source: SourceKey, *, offer_id: str) ->
             or len(saved["operation_id"]) != 32
             or any(c not in "0123456789abcdef" for c in saved["operation_id"])
             or _value_from_digest(saved["offer_digest"], saved["operation_id"]) != raw):
-        return result("held_invalid")
-    digest = hashlib.sha256(offer_id.encode()).hexdigest()
-    return result("held_same_offer" if saved["offer_digest"] == digest
-                  else "held_other_offer")
+        return None
+    return saved
+
+
+@dataclass(frozen=True, slots=True)
+class LoanAdeptMarkerReview:
+    """Private negative-only witness; never exposes the operation or offer."""
+    state: str
+    fingerprint: str = field(default="", repr=False)
+
+    @property
+    def unlock_authorized(self) -> bool:
+        return False
+
+
+def _marker_review(row, source):
+    if row is None:
+        return LoanAdeptMarkerReview("none")
+    if _decode_marker(row[0]) is None:
+        return LoanAdeptMarkerReview("held_invalid")
+    # Bind the exact canonical TEXT to every scope coordinate via its key.
+    # No fingerprint is produced for invalid, ambiguous or missing values.
+    fingerprint = _stable("canonical.adept_marker_review.v1", _key(source), row[0])
+    return LoanAdeptMarkerReview("held_phase_unknown", fingerprint)
+
+
+def review_loan_adept_marker(storage, source: SourceKey) -> LoanAdeptMarkerReview:
+    """Select one exact v1 marker for private review, even with no fresh offer.
+
+    No historical phase, current activation, or right is inferred. The witness
+    is not a credential and must never be interpreted as an unlock permit.
+    """
+    if type(source) is not SourceKey or source.kind != "loan":
+        return LoanAdeptMarkerReview("invalid_source")
+    try:
+        return _marker_review(_read_marker(storage, source), source)
+    except Exception:
+        return LoanAdeptMarkerReview("unreadable")
+
+
+def matches_reviewed_loan_adept_marker_in_transaction(db, *, source, review) -> bool:
+    """Compare the reviewed negative fact within a caller-owned SQL snapshot.
+
+    A later supervisor must independently prove activation, permission, safe
+    replay and local recovery precedence under the acquisition lock. This
+    helper does not acquire that lock, mutate SQLite or establish authority.
+    """
+    if (not db.in_transaction or type(review) is not LoanAdeptMarkerReview
+            or review.state != "held_phase_unknown" or not review.fingerprint
+            or type(source) is not SourceKey or source.kind != "loan"):
+        return False
+    try:
+        return _marker_review(_marker_row(db, source), source) == review
+    except Exception:
+        return False
 
 
 def begin_loan_adept_attempt(storage, *, source: SourceKey, offer_id: str,
