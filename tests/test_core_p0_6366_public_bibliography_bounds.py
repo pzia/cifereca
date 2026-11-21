@@ -122,3 +122,70 @@ def test_structured_public_series_proof_keeps_its_own_kind():
     actual = project({"series": ["Cycle A"], "bibliography_evidence": {"series": proof}})
     assert actual.metadata["bibliography_evidence"] == {"series": proof}
     assert actual.metadata["series"] == ["Cycle A"]
+
+
+
+class _CollidingForeignKey:
+    def __init__(self, native_name):
+        self.native_name = native_name
+
+    def __hash__(self):
+        return hash(self.native_name)
+
+    def __eq__(self, other):
+        raise AssertionError("foreign provider-key equality executed")
+
+
+def test_public_bibliography_rejects_foreign_hash_collisions_without_lookup():
+    from cifereca.core.public_search_projection import (
+        declared_public_classification, declared_public_series_relation,
+        declared_public_language_observation,
+    )
+
+    # The key collides with the exact field which older code queried with
+    # metadata.get("subjects"). Its __eq__ must never execute on admission.
+    hostile = {_CollidingForeignKey("subjects"): "Roman"}
+    assert _public_bibliographic_metadata(hostile) is None
+    assert project(hostile) is None
+    assert declared_public_classification(hostile) is None
+    assert declared_public_series_relation(
+        hostile, provider_id="synthetic-a", scenario="search",
+    ) is None
+    assert declared_public_language_observation(
+        hostile, provider_id="synthetic-a", scenario="search",
+    ) is None
+
+
+@pytest.mark.parametrize("field,decoder", (
+    ("classification", "classification"), ("series", "series"),
+    ("language", "language"),
+))
+def test_structured_public_proof_rejects_foreign_keys_before_set_or_get(field, decoder):
+    from cifereca.core.public_search_projection import (
+        decode_public_classification, decode_public_series_relation,
+        decode_public_language_observation,
+        declared_public_series_relation, declared_public_language_observation,
+    )
+    if field == "classification":
+        assert decode_public_classification({
+            _CollidingForeignKey("subjects"): ["Roman"],
+        }) is None
+        return
+    if field == "series":
+        injected = {_CollidingForeignKey("source"): "synthetic-a.search"}
+        assert decode_public_series_relation(
+            injected, provider_id="synthetic-a", scenario="search",
+        ) is None
+        assert declared_public_series_relation(
+            {"series": ["Cycle A"], "bibliography_evidence": {"series": injected}},
+            provider_id="synthetic-a", scenario="search",
+        ) is None
+    else:
+        injected = {_CollidingForeignKey("raw_tags"): ["fr"]}
+        assert decode_public_language_observation(
+            injected, provider_id="synthetic-a", scenario="search",
+        ) is None
+        assert declared_public_language_observation(
+            {"languages": ["fr"], "bibliography_evidence": {"languages": injected}},
+            provider_id="synthetic-a", scenario="search",
+        ) is None
