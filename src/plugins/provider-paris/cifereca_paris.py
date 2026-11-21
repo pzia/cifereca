@@ -121,10 +121,29 @@ def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
         return False
 
 
-def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
-    """Stable opaque scoped action ID; never encode a signed PNB URL."""
+def _paris_pnb_acsm_route(loan, *, client) -> bool:
+    """Only the actual observed EbookUrl token path, not the book's format."""
+    raw = loan.raw
+    extra = raw.get("AdditionalProperties") if type(raw) is dict else None
+    url = loan.ebook_url
+    if (type(extra) is not dict or extra.get("EbookUrl") != url
+            or not _pnb_direct_url_observed(url, client=client)):
+        return False
+    try:
+        absolute = urljoin(client.base_url.rstrip("/") + "/", url)
+        parsed = urlparse(absolute)
+        return (parsed.scheme == "https"
+                and parsed.path.casefold().endswith(".acsm")
+                and not _paris_mutating_pnb_endpoint(absolute))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _paris_pnb_offer_id(scope, edition_id: str, right_id: str, *, acsm=False) -> str:
+    """Stable scoped action and route class; never encode a signed PNB URL."""
+    route = "dilicom:pnb-acsm/1" if acsm else "dilicom:pnb-direct/1"
     parts = (scope.identity_id, scope.provider_id, scope.credential_id,
-             scope.account_id, edition_id, right_id, "dilicom:pnb-direct/1")
+             scope.account_id, edition_id, right_id, route)
     return "paris.pnb:" + hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()
 
 
@@ -1196,8 +1215,10 @@ class ParisProviderSession(ProviderSession):
                     observed_at=observed,
                     delivery="available" if has_pnb else "unknown",
                     delivery_offer_id=(
-                        _paris_pnb_offer_id(scope, edition_text, right_key)
-                        if has_pnb else ""
+                        _paris_pnb_offer_id(
+                            scope, edition_text, right_key,
+                            acsm=_paris_pnb_acsm_route(loan, client=self.client),
+                        ) if has_pnb else ""
                     ),
                 )
             # Core may mutate the mutable borrower independently from the
@@ -1517,6 +1538,24 @@ class ParisProviderSession(ProviderSession):
             )
         )
 
+    def downloadable_selected_candidate_is_acsm(
+        self, account, *, edition_id, resource_id, kind, branch, selected_offer_id,
+    ):
+        """Local classification of the exact offered transport, no supplier I/O."""
+        scope = self._downloadable_scope(account)
+        if (kind != "loan" or branch != "dilicom"
+                or scope.provider_id != self.provider_id
+                or scope.credential_id != self.credential_id
+                or any(type(value) is not str or not 0 < len(value) <= 256
+                       for value in (edition_id, resource_id))):
+            raise ProviderCapabilityError("paris_selected_delivery_scope_mismatch")
+        if selected_offer_id == _paris_pnb_offer_id(
+                scope, edition_id, resource_id, acsm=True):
+            return True
+        if selected_offer_id == _paris_pnb_offer_id(scope, edition_id, resource_id):
+            return False
+        raise ProviderCapabilityError("paris_selected_delivery_scope_mismatch")
+
     def downloadable_selected_delivery_candidate(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
@@ -1739,6 +1778,15 @@ class ParisProviderSession(ProviderSession):
                     candidates.append(loan)
                 if len(candidates) != 1:
                     raise ProviderCapabilityError("paris_candidate_source_unobserved")
+                # The final selected inventory can change transport class
+                # even while the borrower's exact right stays the same.
+                # Do not bypass an early ADEPT check (or silently reuse an
+                # obsolete ACSM route) when the current card changes.
+                if _paris_pnb_offer_id(
+                        observed.scope, edition_id, right_id,
+                        acsm=_paris_pnb_acsm_route(candidates[0], client=self.client),
+                ) != delivery_offer_id:
+                    raise ProviderCapabilityError("paris_candidate_route_changed")
                 # Another fresh ListLoans inside download_digital rejects a
                 # disappeared link, rebind or loan mismatch before any PNB GET.
                 pin = self._selected_delivery_inventory.set(inventory)
