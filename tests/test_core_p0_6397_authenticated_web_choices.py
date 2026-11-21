@@ -511,7 +511,7 @@ def test_private_source_documents_reject_mutated_scalar_before_hash_or_click(
 
 
 @pytest.mark.parametrize("change", [
-    "canonical_kind", "canonical_source_key", "canonical_provider",
+    "canonical_kind", "canonical_source_key", "canonical_provider_id",
     "lease_identity", "lease_epoch", "lease_service", "lease_control",
 ])
 def test_private_menu_and_click_reject_tampered_canonical_or_reader_scope(
