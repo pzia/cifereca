@@ -19,6 +19,28 @@ from .borrow_for_identity_preview import _display_account_label
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
 
+def _notice_binding(account: Account, notice: SearchResult):
+    """Extra exact source coordinates, separate from the durable replay key.
+
+    A revision change must revoke a displayed selection, but must not mint
+    a second borrow claim for the same upstream borrower/record.
+    """
+    scenario, revision, source_account = (
+        notice.scenario, notice.revision_id, notice.source_account_id,
+    )
+    if (type(scenario) is not str or not 0 < len(scenario) <= 1024
+            or not scenario.isprintable()
+            or (revision is not None and (
+                type(revision) is not str or not 0 < len(revision) <= 1024
+                or not revision.isprintable()))
+            or (source_account is not None and (
+                type(source_account) is not str or len(source_account) > 1024
+                or (source_account and not source_account.isprintable())
+                or source_account != account.unique_id))):
+        return None
+    return scenario, revision, source_account
+
+
 @dataclass(frozen=True, slots=True)
 class PossibleBorrowLender:
     """Inert local account candidate, never an upstream offer or permission."""
@@ -35,6 +57,10 @@ class PossibleBorrowLender:
         init=False, repr=False, compare=False,
     )
 
+    _captured_notice_binding: tuple[object, ...] = field(
+        init=False, repr=False, compare=False,
+    )
+
     def __post_init__(self) -> None:
         # Future UI callers must never reinterpret a locally found account
         # as provider permission or an executable loan admission.
@@ -48,9 +74,11 @@ class PossibleBorrowLender:
                 or type(notice) is not SearchResult
                 or self.lender_identity_id != account.identity_id
                 or account.is_primary is not True
-                or borrow_claim_key(account, notice) is None):
+                or borrow_claim_key(account, notice) is None
+                or _notice_binding(account, notice) is None):
             raise ValueError("invalid_possible_borrow_lender")
         object.__setattr__(self, "_captured_fields", _fields(account, notice))
+        object.__setattr__(self, "_captured_notice_binding", _notice_binding(account, notice))
 
 
 
@@ -75,7 +103,11 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             or not _valid_fields(candidate._captured_fields)):
         return False
     fields = _fields(account, notice)
-    return (_valid_fields(fields)
+    binding = _notice_binding(account, notice)
+    return (binding is not None
+            and type(candidate._captured_notice_binding) is tuple
+            and binding == candidate._captured_notice_binding
+            and _valid_fields(fields)
             and candidate.lender_identity_id == fields[0]
             and candidate._captured_fields == fields)
 
@@ -112,8 +144,7 @@ def discover_possible_borrow_lenders(
     except Exception:
         return ()
 
-    result: list[PossibleBorrowLender] = []
-    seen: set[tuple[str, ...]] = set()
+    result: dict[tuple[str, ...], PossibleBorrowLender | None] = {}
     for item in notices:
         try:
             if (item.medium != "digital"
@@ -150,7 +181,16 @@ def discover_possible_borrow_lenders(
                 account.identity_id, provider, credential, account.unique_id,
                 item.docbase, item.record_id, item.source_collection or "",
             )
-            if route in seen or borrow_claim_key(account, item) is None:
+            binding = _notice_binding(account, item)
+            if binding is None or borrow_claim_key(account, item) is None:
+                continue
+            if route in result:
+                previous = result[route]
+                # One stable anti-replay route, but two source observations
+                # disagree on the exact revision/scenario/account. Never
+                # select the first notice just because it arrived first.
+                if previous is not None and previous._captured_notice_binding != binding:
+                    result[route] = None
                 continue
             if service.identity_by_id(account.identity_id) is None:
                 continue
@@ -223,12 +263,16 @@ def discover_possible_borrow_lenders(
                         service._session_key(provider, credential)) is not session):
                 return ()  # ABA/rebind invalidates the *whole* list.
             lender = service.identity_by_id(account.identity_id)
-            label = _lender_label(getattr(lender, "label", None))
-            result.append(PossibleBorrowLender(
+            # Name the issuing library, not merely the lender profile.
+            # Use the already validated installed descriptor, never a
+            # supplier URL, credential, account ID or notice metadata.
+            profile_label = _lender_label(getattr(lender, "label", None))
+            library_label = _display_account_label(state["descriptor"].display_name)
+            label = f"{profile_label[:32].rstrip()} sur {library_label[:32].rstrip()}"
+            result[route] = PossibleBorrowLender(
                 label=label, lender_identity_id=account.identity_id,
                 _account=account, _notice=item,
-            ))
-            seen.add(route)
+            )
         except Exception:
             # One malformed/offline provider cannot suppress unrelated lenders.
             continue
@@ -239,7 +283,7 @@ def discover_possible_borrow_lenders(
             return ()
     except Exception:
         return ()
-    return _label_lenders(result)
+    return _label_lenders([row for row in result.values() if row is not None])
 
 
 def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLender, ...]:

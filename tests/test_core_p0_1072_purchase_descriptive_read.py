@@ -24,8 +24,9 @@ def allowed():
     yield True
 
 
+@pytest.mark.parametrize("blank_optional", (False, True))
 @pytest.mark.parametrize("extended", (False, True))
-def test_public_descriptive_facts_keep_source_provenance_not_association_time(tmp_path, extended):
+def test_public_descriptive_facts_keep_source_provenance_not_association_time(tmp_path, extended, blank_optional):
     path = tmp_path / "description.sqlite"
     db = Storage(path)
     execution = PurchaseIntentExecution(db, clock=lambda: 100)
@@ -51,11 +52,14 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
                                        "scope": "search", "confidence": "linked_search_relation",
                                        "freshness": "search_response"},
                         }}
+        incoming = observation(candidate, at=98, bibliography_metadata=metadata)
+        if blank_optional:
+            from tests.test_core_p0_1072_purchase_field_comparison import modified
+            incoming = modified(incoming, author="", publisher="  ", published_at="\t")
         with db._lock, db._connect() as sql:
             sql.execute("BEGIN IMMEDIATE")
             published = publish_purchase_public_txn(
-                sql, spec, snapshot, candidate,
-                observation(candidate, at=98, bibliography_metadata=metadata), now=100,
+                sql, spec, snapshot, candidate, incoming, now=100,
             )
             record_purchase_association_txn(
                 sql, lease, snapshot, candidate, published, observed_at=99, now=100,
@@ -80,6 +84,8 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         additions = {"languages": "fr", "genres": "Policier", "keywords": "enquête, mer",
                      "series": "Série attestée"} if extended else {}
         assert set(facts) - basic == set(additions)
+        if blank_optional:
+            assert not {"author", "publisher", "published_at"} & set(facts)
         assert all(facts[key] == value for key, value in additions.items())
         assert all(f.observed_at == 98 and f.provider_id == "seller-a"
                    and f.source_ref == published.source.document.source_key

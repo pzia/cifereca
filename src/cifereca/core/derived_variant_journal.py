@@ -219,6 +219,11 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
             db.execute("PRAGMA synchronous=FULL")
             with db:
                 db.execute("BEGIN IMMEDIATE")
+                # A missing original with a surviving shadow is not an
+                # approved quota refund. Validate the separate namespace
+                # in the same serialized admission transaction.
+                from .derived_variant_compact_receipt import _measure_compact_in_transaction
+                _measure_compact_in_transaction(db, require_paired=True)
                 rows, total = _measure(db)
                 if len(rows) >= _MAX_RECORDS or total + size > _MAX_TOTAL_BYTES:
                     raise DerivedJournalConflict("derived_journal_capacity_exceeded")

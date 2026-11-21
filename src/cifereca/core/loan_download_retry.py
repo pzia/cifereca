@@ -1,4 +1,4 @@
-"""#7161: negative-only budget for automatic delivery failures of an exact loan.
+"""#7161: negative-only budget for automatic content transfer failures of an exact resource.
 
 A budget is not rights evidence, consent, a DRM replay permit or a receipt.
 The existing canonical acquisition lock serializes writes across processes.
@@ -17,7 +17,9 @@ from .canonical_recovery import (
 from .source_convergence import SourceKey
 
 FAILURE_LIMIT = 3
-_PREFIX = "canonical.loan_download_retry.v1"
+_LOAN_PREFIX = "canonical.loan_download_retry.v1"
+_OWNED_KEY_PREFIX = "canonical.download_retry.v1:"
+_INTERVENTION_PREFIX = "canonical.download_intervention.v1:"
 _REASONS = frozenset({"canonical_delivery_failed", "drm_unresolved"})
 
 
@@ -32,13 +34,52 @@ class LoanDownloadRetry:
         return self.failures >= FAILURE_LIMIT
 
 
-def _key(source: SourceKey) -> str:
-    if type(source) is not SourceKey or source.kind != "loan":
-        raise ValueError("loan_download_retry_invalid_source")
+def _source_coordinates(source: SourceKey) -> tuple[str, ...]:
     scope = source.scope
-    return _stable(_PREFIX, scope.identity_id, scope.provider_id,
-                   scope.credential_id, scope.account_id, source.branch,
-                   source.edition_id, source.right_id)
+    return (scope.identity_id, scope.provider_id, scope.credential_id,
+            scope.account_id, source.branch, source.edition_id, source.right_id)
+
+
+def _intervention_key(source: SourceKey) -> str:
+    return _INTERVENTION_PREFIX + _stable("source", *_source_coordinates(source), source.kind)
+
+
+def read_adept_intervention(db, source: SourceKey) -> int:
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_intervention_key(source),)).fetchone()
+    if row is None:
+        return 0
+    raw = row[0]
+    if type(raw) is str and raw.isascii() and raw.isdecimal() and len(raw) <= 12:
+        date = int(raw)
+        if 0 < date <= 253402300799:
+            return date
+    raise ValueError("download_intervention_state_invalid")
+
+
+def record_adept_intervention(storage, source: SourceKey, *, shared_lock) -> None:
+    if not _lock_ok(shared_lock):
+        raise ValueError("loan_download_retry_lock_required")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if not _exact_borrower_bound_in_db(db, source.scope):
+            raise ValueError("loan_download_retry_source_rebound")
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (_intervention_key(source), str(int(time.time()))),
+        )
+
+
+def _key(source: SourceKey) -> str:
+    if type(source) is not SourceKey:
+        raise ValueError("download_retry_invalid_source")
+    coordinates = _source_coordinates(source)
+    if source.kind == "loan":
+        return _stable(_LOAN_PREFIX, *coordinates)
+    # Match the durable source reference key so the queue can select failed
+    # purchases without loading a complete owned library into Python.
+    return _OWNED_KEY_PREFIX + _stable("source", *coordinates, source.kind)
 
 
 def _decode(raw) -> LoanDownloadRetry:
@@ -98,21 +139,20 @@ def record_loan_download_failure(storage, source: SourceKey, *, reason: str,
 
 
 def clear_loan_download_retry(storage, source: SourceKey, *, shared_lock) -> None:
-    """Forget only this budget after verified B (or a future explicit reset).
+    """Clear the download queue entry after verifying the exact local B.
 
-    Callers must independently attest the verified B or exact user action.
-    In particular, this cannot clear a pending ADEPT attempt or any other
-    negative admission evidence, even if the exact source is the same.
+    The acquisition ledger and pending ADEPT attempts have their own
+    verification and transition rules.
     """
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
-    key = _key(source)
-    # Verified existing B is frequent on opening Sync. Avoid a write
-    # transaction for each of the already-satisfied loans with no budget.
-    if storage.metadata_get(key) is None:
-        return
+    keys = (_key(source), _intervention_key(source))
     with storage._lock, storage._connect() as db:
+        # Verified B is common on opening Sync. Avoid writes for resources
+        # without a recorded download failure.
+        if db.execute("SELECT 1 FROM metadata WHERE key IN (?, ?) LIMIT 1", keys).fetchone() is None:
+            return
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("loan_download_retry_source_rebound")
-        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+        db.execute("DELETE FROM metadata WHERE key IN (?, ?)", keys)

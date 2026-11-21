@@ -316,6 +316,7 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(920, 1024, 1280, 1366, 1600, 1728))
     parser.add_argument("--display-height", required=True, type=int, choices=(620, 768, 800, 895, 900, 1000))
+    parser.add_argument("--guided-only", choices=("organizer", "origin", "derived"))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     from tempfile import TemporaryDirectory
@@ -335,8 +336,13 @@ def main():
         state_store=PluginStateStore(fixture_root / "state.json"),
         brokers=core.brokers,
     )
-    for folder in ("maintenance-page", "maintenance-library-organizer",
-                   "maintenance-local-origin", "maintenance-derived-variants"):
+    guided_packages = {
+        "organizer": ("maintenance-library-organizer", "maintenance.library.organizer"),
+        "origin": ("maintenance-local-origin", "maintenance.library.local-origin"),
+        "derived": ("maintenance-derived-variants", "maintenance.library.derived-variants"),
+    }
+    selection = (guided_packages[args.guided_only],) if args.guided_only else tuple(guided_packages.values())
+    for folder in ("maintenance-page", *(folder for folder, _key in selection)):
         package = fixture_root / (folder + ".zip")
         with ZipFile(package, "w") as archive:
             for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
@@ -344,24 +350,27 @@ def main():
                     archive.write(source, source.name)
         manager.install(package)
     assert manager.service("ui.page.maintenance") is not None
-    for key in ("maintenance.library.organizer", "maintenance.library.local-origin",
-                "maintenance.library.derived-variants"):
+    for _folder, key in selection:
         assert manager.service(key) is not None
+    assert {r.plugin_id for r in manager.services("maintenance.tool")} == {
+        key for _folder, key in selection
+    }
     original_services, original_service = manager.services, manager.service
     def fixture_services(category):
-        if category == "maintenance.tool":
+        if category == "maintenance.tool" and not args.guided_only:
             return (ResolvedPluginService(
                 "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
                 registry_generation=manager.registry_generation,
             ),) + tuple(original_services(category))
         return original_services(category)
     def fixture_service(key):
-        return tool if key == "e2e.maintenance" else original_service(key)
+        return tool if not args.guided_only and key == "e2e.maintenance" else original_service(key)
     manager.services, manager.service = fixture_services, fixture_service
     core.library.attach_plugin_manager(manager)
     report = {
         "status": "RUNNING", "scenario": "maintenance-tools", "width": args.width,
-        "scope": "real GTK MainWindow/XTEST; simulated tool with zero destructive IO",
+        "scope": ("real installed single guided tool; GTK signals, no destructive IO"
+                  if args.guided_only else "real GTK MainWindow/XTEST; simulated tool with zero destructive IO"),
         "display_height": args.display_height,
         "checks": {}, "screenshots": [], "pointer_actions": [],
     }
@@ -548,6 +557,35 @@ def main():
         assert w._page_lifecycle_dispatcher.handles("tools")
         assert w._tools_box is not None
         report["checks"]["P0_7100_real_installed_page_contribution"] = True
+        if args.guided_only:
+            key = guided_packages[args.guided_only][1]
+            assert {r.plugin_id for r in manager.services("maintenance.tool")} == {key}
+            expected = {
+                "organizer": "Organiser la bibliothèque",
+                "origin": "Suggestions de provenance — par lots",
+                "derived": "Publications dérivées interrompues",
+            }
+            title = expected[args.guided_only]
+
+            def titles():
+                return [node.get_title() for node in walk(w._tools_box)
+                        if isinstance(node, Adw.ActionRow)]
+
+            host = w._plugin_page_widgets["tools"]
+            assert titles().count(title) == 1
+            assert not any(other in titles() for kind, other in expected.items()
+                           if kind != args.guided_only)
+            manager.set_enabled(key, False)
+            refresh_tools()
+            assert manager.service(key) is None and title not in titles()
+            assert w._plugin_page_widgets["tools"] is host
+            manager.set_enabled(key, True)
+            refresh_tools()
+            assert manager.service(key) is not None and titles().count(title) == 1
+            assert w._plugin_page_widgets["tools"] is host
+            report["checks"]["P0_7100_single_installed_tool_optional"] = True
+            until(lambda: not w.view_stack.get_transition_running(), guided_actions)
+            return
         review_rows = [node for node in walk(w._tools_box)
                        if isinstance(node, Adw.ActionRow)
                        and node.get_title() == "Publications dérivées interrompues"]
@@ -645,6 +683,14 @@ def main():
             ("Sélection des publications interrompues", "Lister…",
              "coordonnées non vérifiées. Aucune reprise ni suppression.", "derived_list"),
         )
+        if args.guided_only:
+            keys = {
+                "organizer": {"organizer_preview"},
+                "origin": {"origin_preview"},
+                "derived": {"derived_overview", "derived_capacity", "derived_list"},
+            }
+            checks = tuple(check for check in checks if check[3] in keys[args.guided_only])
+            assert checks
         storage = core.library.storage
 
         def durable_counts():
@@ -654,14 +700,61 @@ def main():
                              for table in ("artifacts", "placements", "origin_links",
                                            "acquisition_ledger", "entitlements"))
 
+        # A real corpus (not a fake page DTO): five distinct, unlinked
+        # registered PDFs in the runner's isolated library/profile. This
+        # exceeds both four-entry Core page limits without any provider call.
+        service = core.library
+        owner = service.current_identity
+        root = Path(service.config.get("library.directory")).expanduser()
+        assert root.is_absolute() and root.resolve().is_relative_to(Path.home().resolve())
+        assert storage.exact_profile_directory_binding(owner.identity_id) == (
+            owner.directory_name, True,
+        )
+        profile = root / owner.directory_name
+        corpus = profile / "Maintenance pagination fixture"
+        corpus.mkdir(parents=True, exist_ok=False)
+        witnesses = []
+        for index in range(5):
+            book = corpus / f"pagination-{index}.pdf"
+            content = f"%PDF-1.7\\nSynthetic maintenance page {index}\\n".encode("ascii")
+            book.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            artifact = "sha256:" + digest
+            storage.artifact_put({"artifact_id": artifact, "sha256": digest,
+                                  "size": len(content), "media_format": "pdf"})
+            pid = storage.placement_put({"artifact_id": artifact,
+                "identity_id": owner.identity_id, "path": str(book), "state": "present"})
+            storage.catalog_entry_put({"catalog_entry_id": "maintenance-pagination-" + pid,
+                "identity_id": owner.identity_id, "provider_id": "local",
+                "artifact_id": artifact, "placement_id": pid,
+                "title": f"Témoin de pagination {index}", "author": "Auteur témoin",
+                "media_format": "pdf", "local_state": "local"})
+            witnesses.append((book, content, pid, artifact))
+
+        def fixture_evidence():
+            return tuple((book.read_bytes(), storage.placement_get(pid), artifact)
+                         for book, _content, pid, artifact in witnesses)
+
         before = durable_counts()
+        evidence = fixture_evidence()
 
         def step(index=0):
             if index == len(checks):
                 assert durable_counts() == before, "Read-only guided actions changed inventory"
+                assert fixture_evidence() == evidence, "Guided review changed a fixture Placement or PDF"
                 assert tool.plan_calls == tool.run_calls == 0
+                report["checks"]["P0_7100_guided_fixture_bytes_and_placements_unchanged"] = True
                 report["checks"]["P0_7100_guided_actions_no_inventory_mutation"] = True
                 capture("00-guided-actions")
+                if args.guided_only:
+                    # No other packages, no dummy legacy workflow and no
+                    # destructive cleanup opt-in for isolated tool scenarios.
+                    report["status"] = "PASS"
+                    result[0] = 0
+                    gtk_phase_2027("maint_done")
+                    save()
+                    app.quit()
+                    return
                 # Clear expanded text and restore the exact old XTEST layout.
                 refresh_tools()
                 preview_button[0] = next(b for b in walk(window[0]._tools_box)
@@ -694,7 +787,31 @@ def main():
 
             def received():
                 report["checks"]["P0_7100_real_guided_" + key] = True
-                step(index + 1)
+                if key not in ("organizer_preview", "origin_preview"):
+                    step(index + 1)
+                    return
+
+                def page_visible(number):
+                    return any(f"Page {number} ·" in node.get_text()
+                               for node in walk(outer) if isinstance(node, Gtk.Label)
+                               and node.get_visible())
+
+                assert page_visible(1) and not page_visible(2)
+                following, = (node for node in walk(outer)
+                              if isinstance(node, Gtk.Button)
+                              and node.get_label() == "Page suivante")
+                assert following.get_sensitive(), "Five registered candidates must allow a second page"
+                # Real GTK signal to the installed contribution, not pointer
+                # geometry. No implicit continuation while page 1 is displayed.
+                following.emit("clicked")
+                assert not following.get_sensitive()
+
+                def second_page():
+                    assert page_visible(2) and not page_visible(1)
+                    report["checks"]["P0_7100_real_guided_page_two_" + key] = True
+                    step(index + 1)
+
+                until(lambda: button.get_sensitive() and page_visible(2), second_page)
 
             until(observed, received)
 

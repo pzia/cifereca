@@ -35,7 +35,10 @@ def _sources(row):
             or packet[1] != row.get("identity_id")
             or packet[2] != row.get("_cover_document_ref")
             or not is_notice_cover_document(packet[2])
-            or type(meta) is not dict or packet[3] != meta.get("notice_c_epoch")
+            or type(meta) is not dict
+            or type(packet[3]) is not int
+            or type(meta.get("notice_c_epoch")) is not int
+            or packet[3] != meta["notice_c_epoch"]
             or type(packet[4]) is not tuple or not 2 <= len(packet[4]) <= _MAX_SOURCES):
         return ()
     hits = packet[4]
@@ -67,6 +70,7 @@ def expand_filter_sources(rows, *, scope):
                 _MARKER: marker,
                 "source": "notice_c_public",
                 "provider_id": hit.provider_id,
+                "item_id": hit.record_id,
                 "title": hit.title, "author": hit.author,
                 "publisher": hit.publisher, "description": hit.description,
                 "medium": hit.medium, "media_format": hit.media_format,

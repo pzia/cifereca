@@ -11,6 +11,7 @@ from uuid import uuid4
 import time
 from urllib.parse import urljoin, urlsplit
 import httpx
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
 from cifereca_bnf_pret_paging import _params
@@ -22,6 +23,10 @@ ACTIVITY = ORIGIN + '/my_profile/activity'
 
 class ReaderHTTPError(RuntimeError):
     """Only closed codes may leave this transport boundary."""
+
+
+class TemporaryLoanTokenError(ReaderHTTPError):
+    """Transient failure after entering the read-only loan token transfer."""
 
 
 # A provider exception may embed a signed ACSM URL, nonce, session cookie
@@ -430,12 +435,18 @@ class ReaderHTTPClient:
                             if not admitted() or time.monotonic() >= deadline:
                                 raise ReaderHTTPError('download_redirect_refused')
                             return receipt.path.read_bytes()
+                    except getattr(plugin_api, "ContentTransferUnavailable", ()):
+                        raise TemporaryLoanTokenError('download_redirect_refused') from None
                     except (ValueError, OSError, httpx.HTTPError):
                         # Never expose signed URL, host, tokens or staging path.
                         raise ReaderHTTPError('download_redirect_refused') from None
+                if response.status_code == 429:
+                    raise TemporaryLoanTokenError("rate_limited")
+                if response.status_code in {408, 500, 502, 503, 504}:
+                    raise TemporaryLoanTokenError("http_unavailable")
                 if response.status_code != 200:
-                    code = {401: 'auth_required', 403: 'access_denied',
-                            429: 'rate_limited'}.get(response.status_code, 'http_unavailable')
+                    code = {401: 'auth_required', 403: 'access_denied'}.get(
+                        response.status_code, 'http_unavailable')
                     raise ReaderHTTPError(code)
                 length = response.headers.get('content-length', '')
                 if length:
@@ -453,13 +464,15 @@ class ReaderHTTPClient:
                 data = bytearray()
                 for chunk in response.iter_bytes():
                     if time.monotonic() >= deadline:
-                        raise ReaderHTTPError('operation_timeout')
+                        raise TemporaryLoanTokenError('operation_timeout')
                     if len(data) + len(chunk) > MAX_TOKEN_BYTES:
                         raise ReaderHTTPError('token_limit')
                     data.extend(chunk)
                 if not data:
                     raise ReaderHTTPError('invalid_loan_token')
                 return bytes(data)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+            raise TemporaryLoanTokenError('transport_unavailable') from None
         except httpx.HTTPError:
             # Errors may carry a private loan URL or response metadata.
             raise ReaderHTTPError('transport_unavailable') from None

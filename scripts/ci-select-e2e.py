@@ -6,7 +6,11 @@ from pathlib import Path
 
 THEME = ("modern-light-1366", "modern-light-1600")
 LLM = ("llm-settings-1366", "llm-settings-1600")
-MAINT = ("maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728")
+MAINT_GLOBAL = ("maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728")
+MAINT_ORGANIZER = ("maintenance-organizer-1366",)
+MAINT_ORIGIN = ("maintenance-origin-1366",)
+MAINT_DERIVED = ("maintenance-derived-1366",)
+MAINT = MAINT_GLOBAL + MAINT_ORGANIZER + MAINT_ORIGIN + MAINT_DERIVED
 # P0 source operations affect the real Synchronisation page even when no
 # GTK module changes. Baselines cover source rows, exact account targeting,
 # preview/audit gating and independent inventory/acquisition feedback.
@@ -162,6 +166,14 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/provider-bnf-pret/"):
             selected.update(BNF_COVERS)
+        elif path.startswith("src/plugins/maintenance-page/"):
+            selected.update(MAINT)
+        elif path.startswith("src/plugins/maintenance-library-organizer/"):
+            selected.update(MAINT_GLOBAL + MAINT_ORGANIZER)
+        elif path.startswith("src/plugins/maintenance-local-origin/"):
+            selected.update(MAINT_GLOBAL + MAINT_ORIGIN)
+        elif path.startswith("src/plugins/maintenance-derived-variants/"):
+            selected.update(MAINT_GLOBAL + MAINT_DERIVED)
         elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
         elif path.startswith("src/plugins/home-page/"):

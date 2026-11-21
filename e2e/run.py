@@ -182,6 +182,22 @@ SCENARIOS = {
         "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
         "runner": "gtk-maintenance", "width": 1728, "height": 895,
     },
+
+    "maintenance-organizer-1366": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #7087 : organisateur installé seul, pagination GTK et optionalité.",
+        "runner": "gtk-maintenance", "width": 1366, "height": 768, "guided_only": "organizer",
+    },
+    "maintenance-origin-1366": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #7092 : provenance par lots installée seule, pagination GTK et optionalité.",
+        "runner": "gtk-maintenance", "width": 1366, "height": 768, "guided_only": "origin",
+    },
+    "maintenance-derived-1366": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #7093 : variantes installées seules, revue/capacité/sélection GTK et optionalité.",
+        "runner": "gtk-maintenance", "width": 1366, "height": 768, "guided_only": "derived",
+    },
     "recommendations-detail-1024-hidpi": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
@@ -536,7 +552,7 @@ def main() -> int:
     for name, scenario in select(args.scenario, args.plugin):
         with tempfile.TemporaryDirectory(prefix="cifereca-e2e-") as tmp:
             fixture_env = materialize_fixture(scenario["fixture"], Path(tmp))
-            if scenario.get("runner") == "gtk-maintenance":
+            if scenario.get("runner") == "gtk-maintenance" and not scenario.get("guided_only"):
                 # #4496: real opt-in only in this temporary XDG fixture.
                 # The GTK probe uses a simulated writer; never modify the
                 # developer's config or the shared startup fixture.
@@ -662,6 +678,7 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/maintenance_tools_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     "--display-height", str(scenario.get("height", 1000 if width == 1600 else 900)),
+                    *(["--guided-only", scenario["guided_only"]] if scenario.get("guided_only") else []),
                 ]
             elif scenario.get("runner") == "gtk-llm-settings":
                 width = scenario["width"]

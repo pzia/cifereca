@@ -40,6 +40,10 @@ class _NullDiagnostics:
 class ParisError(RuntimeError):
     pass
 
+class ParisContentTransferUnavailable(ParisError):
+    """Temporary network failure of an attempted PNB GET."""
+
+
 class ParisRedirectError(AttentionRequired, ParisError):
     """PNB navigation refused; retrying the same policy cannot resolve it."""
 
@@ -1186,6 +1190,8 @@ class ParisClient:
             # HTTPX can embed a signed Location or request URL in exception
             # messages, even when follow_redirects=False. Never journal it.
             raise ParisRedirectError(public_site(url)) from None
+        except (httpx.TimeoutException, httpx.NetworkError):
+            raise ParisContentTransferUnavailable("Transport HTTPS PNB indisponible") from None
         except httpx.HTTPError:
             # Includes stream/decode and signed URL/nonce failures; expose
             # only a closed, retryable reason instead of a private traceback.

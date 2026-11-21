@@ -22,6 +22,7 @@ from .book_cover_projection import CoverDocumentScope
 from .notice_cover_projection import notice_cover_document_ref
 from .notice_cover_repository import (
     _PREFIX, _FENCE_PREFIX, _decode, _check_live_source_fence, _decode_source_fence,
+    _source_fingerprint,
 )
 from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
@@ -38,6 +39,8 @@ _MAX_MATCHES = 50
 _STALE_AFTER = 86400
 _FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "language"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
+from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
+
 _BIBLIO_FIELDS = frozenset((
     "schema", "record_id", "docbase", "scenario", "source_collection",
     "medium", "revision_id", "title", "author", "format", "publisher",
@@ -71,6 +74,7 @@ class PublicNoticeCHit:
     series_relation: PublicSeriesRelation | None = None
     language_observation: PublicLanguageObservation | None = None
     classification: PublicClassification | None = None
+    age_observation: PublicAgeObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +135,7 @@ def _public_observation(
             return None
         bio = parsed.get("public_bibliography")
         if (type(bio) is not dict or not _BIBLIO_FIELDS <= set(bio)
-                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification"}
+                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification", "age_observation"}
                 or type(bio["schema"]) is not int or bio["schema"] != 1
                 or bio["source_collection"] != "public_catalog"
                 or bio["medium"] not in ("digital", "physical", "unknown")):
@@ -190,6 +194,15 @@ def _public_observation(
             classification = decode_public_classification(bio["classification"])
             if classification is None:
                 return None
+        age = None
+        if "age_observation" in bio:
+            age = decode_public_age_observation(
+                bio["age_observation"], provider_id=key.provider_id,
+                record_id=bio["record_id"], docbase=bio["docbase"],
+                medium=bio["medium"], source_revision=bio["revision_id"],
+            )
+            if age is None:
+                return None
         last_seen = payload.get("last_seen_at", persisted.observation.observed_at)
         if (type(last_seen) is not int
                 or last_seen < persisted.observation.observed_at
@@ -216,7 +229,7 @@ def _public_observation(
             edition_id=key.edition_id,
             published_at=bio["published_at"], series_relation=relation,
             language_observation=language,
-            classification=classification,
+            classification=classification, age_observation=age,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -491,17 +504,21 @@ def search_public_notice_c(
         # A live observation outside the initial source budget still wins
         # over its retained older bibliography. Look it up by the *exact*
         # opaque source key inside the same read; no text-based join.
+        absent_fences = {}
         remaining = sorted(set(staged) - present_source_refs)
         if remaining:
             keys = [_PREFIX + ref[len("notice-c:v1:"):] for ref in remaining
                     if ref.startswith("notice-c:v1:")]
             cursor = db.execute(
-                "SELECT m.key,m.value,f.value FROM json_each(?) AS requested "
-                "JOIN metadata AS m ON m.key=requested.value "
-                "LEFT JOIN metadata AS f ON f.key=? || substr(m.key,?)",
+                "SELECT requested.value,m.key,m.value,f.value FROM json_each(?) AS requested "
+                "LEFT JOIN metadata AS m ON m.key=requested.value "
+                "LEFT JOIN metadata AS f ON f.key=? || substr(requested.value,?)",
                 (json.dumps(keys), _FENCE_PREFIX, len(_PREFIX) + 1),
             )
-            for key_string, raw, fence_raw in cursor:
+            for requested_key, key_string, raw, fence_raw in cursor:
+                if key_string is None:
+                    absent_fences['notice-c:v1:' + requested_key[len(_PREFIX):]] = fence_raw
+                    continue
                 present_source_refs.add('notice-c:v1:' + key_string[len(_PREFIX):])
                 current = _public_observation(raw, key_string=key_string, now=now,
                                               source_proofs=source_proofs, fence_raw=fence_raw)
@@ -559,6 +576,23 @@ def search_public_notice_c(
                 # Never substitute older canonical text for it. Rebind
                 # admitted live N2 only if its exact proof still matches.
                 continue
+            # A missing transient body is compatible with legacy retention,
+            # but an existing fence must not contradict the retained source.
+            # The fingerprint binds revision and projection, not title/URL.
+            try:
+                fence = _decode_source_fence(absent_fences.get(source_ref))
+                if fence is not None and (
+                    fence['epoch'] < source.source_epoch
+                    or fence['proof'] not in {
+                        _source_fingerprint(source, ('search_result', 'thumbnail_url'), complete)
+                        for complete in (True, False)
+                    }
+                ):
+                    unindexed += 1
+                    continue
+            except ValueError:
+                unindexed += 1
+                continue
             hit = PublicNoticeCHit(
                 document=ref, provider_id=source.provider_id,
                 record_id=bib.record_id, docbase=bib.docbase,
@@ -576,7 +610,7 @@ def search_public_notice_c(
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
                 language_observation=bib.language_observation,
-                classification=bib.classification,
+                classification=bib.classification, age_observation=bib.age_observation,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
@@ -632,7 +666,8 @@ def search_public_notice_c(
                         and src.observed_at == hit.observed_at
                         and bib.series_relation == hit.series_relation
                         and bib.language_observation == hit.language_observation
-                        and bib.classification == hit.classification):
+                        and bib.classification == hit.classification
+                        and bib.age_observation == hit.age_observation):
                     hit = replace(
                         hit, document=ref, epoch=epoch,
                         cover_state=cover_state,

@@ -133,3 +133,36 @@ def test_single_letter_subject_term_requires_a_word_not_a_prefix():
     assert filter_loaded_results(
         [subject_x, unrelated], "x", field="title",
     ) == []
+
+
+class _NonBibliographicObject:
+    def __str__(self):
+        raise AssertionError("foreign value must not be stringified")
+
+
+class _ForeignList(list):
+    def __iter__(self):
+        raise AssertionError("foreign container must not be traversed")
+
+
+@pytest.mark.parametrize("field", ["subject", "all"])
+@pytest.mark.parametrize("bad", [
+    _NonBibliographicObject(), _ForeignList(["hidden-marker"]),
+    {"secret": "hidden-marker"}, [object(), {"hidden": "hidden-marker"}],
+])
+def test_loaded_filter_preserves_native_sibling_without_foreign_callbacks(field, bad):
+    row = _item("typed", "alice", subjects=[bad, "Minéralogie"])
+    assert filter_loaded_results([row], "Minéralogie", field=field) == [row]
+    assert filter_loaded_results([row], "hidden-marker", field=field) == []
+
+
+@pytest.mark.parametrize("field", ["subject", "all"])
+def test_loaded_filter_bounds_cycles_and_large_containers_per_field(field):
+    cycle = []
+    cycle.append(cycle)
+    valid = _item("cycle", "alice", subjects=[cycle, "Minéralogie"])
+    excess = _item("large", "alice", subjects=["Minéralogie"] * 4097)
+    independent = _item("independent", "alice", keywords=("Minéralogie",))
+    assert filter_loaded_results([valid, excess, independent], "Minéralogie",
+                                 field=field) == [valid, independent]
+    assert local_match_explanation(valid, "Minéralogie") == "Correspondance : Sujet"

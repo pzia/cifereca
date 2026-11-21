@@ -36,6 +36,23 @@ _TRACE_LOG = logging.getLogger("cifereca")
 CACHE_SCHEMA = "v2"
 _UI_DECODE_WINDOW = 1024
 _N3_URL_WINDOW = 1024
+# Fixed installation-wide aggregate buckets: no URL, host, response body,
+# account, provider or per-request identity. Only actual response status.
+_N3_HTTP_FAILURE_BUCKETS = ("401", "403", "404", "429", "other_4xx", "5xx", "other", "unknown")
+
+
+def _n3_http_failure_bucket(exc: httpx.HTTPStatusError) -> str:
+    status = getattr(exc.response, "status_code", None)
+    if type(status) is not int or not 100 <= status <= 599:
+        return "unknown"
+    if status in (401, 403, 404, 429):
+        return str(status)
+    if 400 <= status <= 499:
+        return "other_4xx"
+    if 500 <= status <= 599:
+        return "5xx"
+    return "other"
+
 
 
 def _cover_failure_code(exc: BaseException) -> str:
@@ -146,6 +163,7 @@ class CoverLoader:
             "cache_invalid": 0,
             "download_ok": 0,
             "download_failed": 0,
+            **{f"n3_url_http_failure_{bucket}": 0 for bucket in _N3_HTTP_FAILURE_BUCKETS},
             "n3_url_published_bytes": 0,
             "n3_url_ok_total_ms": 0.0,
             "n3_url_ok_max_ms": 0.0,
@@ -804,6 +822,9 @@ class CoverLoader:
                     with self._lock:
                         elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000)
                         self._stats["download_failed"] += 1
+                        if isinstance(exc, httpx.HTTPStatusError):
+                            bucket = _n3_http_failure_bucket(exc)
+                            self._stats[f"n3_url_http_failure_{bucket}"] += 1
                         self._stats["n3_url_failed_total_ms"] += elapsed_ms
                         if math.isfinite(elapsed_ms):
                             self._n3_url_recent["failed"].append(elapsed_ms)

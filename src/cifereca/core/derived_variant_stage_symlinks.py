@@ -1,4 +1,4 @@
-"""#4520: bounded, read-only observation of symlinks in one exact profile.
+"""#4520: bounded, read-only observation of symlinks in the library root.
 
 Never follows a symlink, opens a linked target or claims absence of external
 dependencies. Even an unmatched symlink is an unresolved alias. No writer.
@@ -130,8 +130,9 @@ def review_stage_symlinks(storage, *, library_root, identity_id,
     """Observe up to four committed staging coordinates against local symlinks.
 
     Two bounded directory walks must agree, with journal/root revalidation.
-    Counts describe symlink entries, not unique receipts; no full FS or
-    external-consumer proof, including symlink chains outside this profile.
+    Counts describe symlink entries in the supplied library root, not unique
+    receipts; no full FS or external-consumer proof, including symlink chains
+    outside that root.
     """
     def report(status, *, checked=0, entries=0, direct=0, unresolved=0):
         return {
@@ -165,10 +166,25 @@ def review_stage_symlinks(storage, *, library_root, identity_id,
                or Path(intent.staged_path) == profile for intent in selected):
             return report("unavailable")
         stages = tuple(intent.staged_path for intent in selected)
-        first = _walk(profile, stages, deadline=deadline)
-        second = _walk(profile, stages, deadline=deadline)
-        if second != first or _snapshot(storage, identity_id) != snapshot:
-            return report("evidence_changed")
+        # The selected receipts belong to one profile, but a symlink in a
+        # sibling profile or unregistered library directory can consume them.
+        # Keep the owner's nofollow admission before the broader observation.
+        owner_fd = _open_root(profile)
+        try:
+            owner_stamp = _stamp(os.fstat(owner_fd))
+            first = _walk(library_root, stages, deadline=deadline)
+            second = _walk(library_root, stages, deadline=deadline)
+            if second != first or _snapshot(storage, identity_id) != snapshot:
+                return report("evidence_changed")
+            fresh_owner = _open_root(profile)
+            try:
+                if (_stamp(os.fstat(fresh_owner)) != owner_stamp
+                        or _stamp(os.fstat(owner_fd)) != owner_stamp):
+                    return report("evidence_changed")
+            finally:
+                os.close(fresh_owner)
+        finally:
+            os.close(owner_fd)
         current = _open_root(library_root)
         try:
             if _stamp(os.fstat(current)) != root_stamp:

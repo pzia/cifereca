@@ -18,12 +18,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urljoin, urlparse
 
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     Account, HistoryItem, ItemDetail, Loan, SearchResult,
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
+from cifereca_paris_client import (
+    AuthenticationError, ParisClient, ParisContentTransferUnavailable, ParisSummaryHTTPError,
+    ParisLoanListError, ParisError,
+)
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -117,8 +121,26 @@ def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
         return False
 
 
+def _paris_pnb_acsm_route(loan, *, client) -> bool:
+    """Only the actual observed EbookUrl token path, not the book's format."""
+    raw = loan.raw
+    extra = raw.get("AdditionalProperties") if type(raw) is dict else None
+    url = loan.ebook_url
+    if (type(extra) is not dict or extra.get("EbookUrl") != url
+            or not _pnb_direct_url_observed(url, client=client)):
+        return False
+    try:
+        absolute = urljoin(client.base_url.rstrip("/") + "/", url)
+        parsed = urlparse(absolute)
+        return (parsed.scheme == "https"
+                and parsed.path.casefold().endswith(".acsm")
+                and not _paris_mutating_pnb_endpoint(absolute))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
-    """Stable opaque scoped action ID; never encode a signed PNB URL."""
+    """Stable existing ID: preserve recovery of already-completed receipts."""
     parts = (scope.identity_id, scope.provider_id, scope.credential_id,
              scope.account_id, edition_id, right_id, "dilicom:pnb-direct/1")
     return "paris.pnb:" + hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()
@@ -404,6 +426,11 @@ class ParisProviderSession(ProviderSession):
         self._source_sync_offer_lease: ContextVar[dict | None] = ContextVar(
             "paris_source_sync_offer_lease", default=None,
         )
+        # One ephemeral route witness consumed by the subsequent candidate.
+        # It contains only the scope/class, never a signed link or DRM token.
+        self._selected_acsm_route: ContextVar[tuple | None] = ContextVar(
+            "paris_selected_acsm_route", default=None,
+        )
         self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
@@ -460,9 +487,10 @@ class ParisProviderSession(ProviderSession):
                 "scope": scope, "epoch": getattr(self, "_epoch", None),
                 "accounts_id": id(self._accounts),
                 "account_object_id": id(owners[0]),
-                "inventory": None, "rights": None,
+                "inventory": None, "rights": None, "acsm_routes": {},
             }
             token = self._source_sync_offer_lease.set(lease)
+            self._selected_acsm_route.set(None)
         try:
             yield
         finally:
@@ -470,6 +498,8 @@ class ParisProviderSession(ProviderSession):
             # cancellation or exception. Never retain an inter-cycle URL.
             lease["inventory"] = None
             lease["rights"] = None
+            lease["acsm_routes"] = {}
+            self._selected_acsm_route.set(None)
             self._source_sync_offer_lease.reset(token)
 
     @staticmethod
@@ -1047,7 +1077,7 @@ class ParisProviderSession(ProviderSession):
                                                    for b in branches) else None),
         )
 
-    def rights_observation_snapshot(self, account: Account) -> ProviderRightsSnapshot:
+    def rights_observation_snapshot(self, account: Account, *, _capture_routes=None) -> ProviderRightsSnapshot:
         """Read-only DILICOM loan claims from the already-scoped two-branch GET.
 
         Paris loan normalization has a *descriptive* fallback based on title or
@@ -1144,6 +1174,7 @@ class ParisProviderSession(ProviderSession):
             )
             observed = datetime.now(timezone.utc).isoformat()
             rights_by_id: dict[str, ProviderRightObservation] = {}
+            acsm_routes = {}
             ambiguous_right_ids: set[str] = set()
             for loan in (() if dilicom_failed else inventory.loans):
                 if loan.provider != "DILICOM" or loan.medium != "digital":
@@ -1184,6 +1215,10 @@ class ParisProviderSession(ProviderSession):
                 # happens while observing the inventory. Actual download
                 # requires a fresh exact-card recheck and the Core consent.
                 has_pnb = _pnb_direct_url_observed(loan.ebook_url, client=self.client)
+                if has_pnb:
+                    acsm_routes[(edition_text, right_key)] = _paris_pnb_acsm_route(
+                        loan, client=self.client,
+                    )
                 rights_by_id[right_key] = ProviderRightObservation(
                     edition_id=edition_text, right_id=right_key,
                     kind="loan", state="unknown",
@@ -1254,6 +1289,14 @@ class ParisProviderSession(ProviderSession):
             # Only an exact, complete two-branch typed inventory can serve
             # as an offer proof inside this already-locked Core source cycle.
             # A failed/partial read never replaces an earlier attestation.
+            # Retain only route classes of validated, unambiguous positive
+            # actions, optionally for this one call's route classifier.
+            routes = {
+                (right.edition_id, right.right_id): acsm_routes[(right.edition_id, right.right_id)]
+                for right in report.rights if right.delivery_attested
+            }
+            if type(_capture_routes) is dict:
+                _capture_routes.update(routes)
             lease = self._current_source_sync_offer_lease(account)
             if (lease is not None and complete
                     and inventory.status == "success"
@@ -1261,6 +1304,7 @@ class ParisProviderSession(ProviderSession):
                     and report.status == "success"):
                 lease["inventory"] = inventory
                 lease["rights"] = report
+                lease["acsm_routes"] = routes
             return report
 
     def history(self, account: Account) -> list[HistoryItem]:
@@ -1513,6 +1557,47 @@ class ParisProviderSession(ProviderSession):
             )
         )
 
+    def _route_witness_scope(self, account):
+        return (
+            self._downloadable_scope(account), id(account), id(self._accounts),
+            id(self.client), id(self.identity_broker), getattr(self, "_epoch", None),
+            id(self._source_sync_offer_lease.get()),
+        )
+
+    def downloadable_selected_candidate_is_acsm(
+        self, account, *, edition_id, resource_id, kind, branch, selected_offer_id,
+    ):
+        """Use this cycle's attested card, or fresh inventory only; no token GET."""
+        with self._loan_inventory_lock:
+            self._selected_acsm_route.set(None)
+            scope = self._downloadable_scope(account)
+            if (kind != "loan" or branch != "dilicom"
+                    or scope.provider_id != self.provider_id
+                    or scope.credential_id != self.credential_id
+                    or any(type(value) is not str or not 0 < len(value) <= 256
+                           for value in (edition_id, resource_id))
+                    or selected_offer_id != _paris_pnb_offer_id(scope, edition_id, resource_id)):
+                raise ProviderCapabilityError("paris_selected_delivery_scope_mismatch")
+            pin = self._route_witness_scope(account)
+            lease = self._current_source_sync_offer_lease(account)
+            if self._source_sync_offer_lease.get() is not None and lease is None:
+                raise ProviderCapabilityError("paris_source_sync_lease_revoked")
+            cached = lease.get("rights") if lease is not None else None
+            if (type(cached) is ProviderRightsSnapshot and cached.scope == scope
+                    and cached.status == "success" and cached.coverage == "complete"):
+                snapshot = cached
+                routes = lease["acsm_routes"]
+            else:
+                routes = {}
+                snapshot = self.rights_observation_snapshot(account, _capture_routes=routes)
+            row = snapshot.exact(edition_id, resource_id, "loan")
+            route = routes.get((edition_id, resource_id))
+            if (row is None or not row.delivery_attested or row.delivery_offer_id != selected_offer_id
+                    or type(route) is not bool or self._route_witness_scope(account) != pin):
+                raise ProviderCapabilityError("paris_candidate_route_unobserved")
+            self._selected_acsm_route.set((pin, edition_id, resource_id, selected_offer_id, route))
+            return route
+
     def downloadable_selected_delivery_candidate(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
@@ -1643,6 +1728,8 @@ class ParisProviderSession(ProviderSession):
         requires the *current* matching DILICOM card and its direct EbookUrl.
         The result remains a candidate, not a Core receipt or OriginLink.
         """
+        route_witness = self._selected_acsm_route.get()
+        self._selected_acsm_route.set(None)
         if (explicit_user_action is not True or type(account) is not Account
                 or kind != "loan" or branch != "dilicom"
                 or type(edition_id) is not str or not edition_id
@@ -1653,6 +1740,9 @@ class ParisProviderSession(ProviderSession):
                 or any(c not in "0123456789abcdef"
                        for c in delivery_offer_id[len("paris.pnb:"):])):
             raise ProviderCapabilityError("paris_candidate_not_admitted")
+        if route_witness is not None and route_witness[:4] != (
+                self._route_witness_scope(account), edition_id, right_id, delivery_offer_id):
+            raise ProviderCapabilityError("paris_candidate_route_changed")
         if not _paris_core_admission_current(admission_current):
             raise ProviderCapabilityError("paris_core_admission_revoked")
         directory = Path(target_dir)
@@ -1735,6 +1825,14 @@ class ParisProviderSession(ProviderSession):
                     candidates.append(loan)
                 if len(candidates) != 1:
                     raise ProviderCapabilityError("paris_candidate_source_unobserved")
+                # The final selected inventory can change transport class
+                # even while the borrower's exact right stays the same.
+                # Do not bypass an early ADEPT check (or silently reuse an
+                # obsolete ACSM route) when the current card changes.
+                if route_witness is not None and (
+                        self._route_witness_scope(account) != route_witness[0]
+                        or _paris_pnb_acsm_route(candidates[0], client=self.client) is not route_witness[4]):
+                    raise ProviderCapabilityError("paris_candidate_route_changed")
                 # Another fresh ListLoans inside download_digital rejects a
                 # disappeared link, rebind or loan mismatch before any PNB GET.
                 pin = self._selected_delivery_inventory.set(inventory)
@@ -2047,6 +2145,7 @@ class ParisProviderSession(ProviderSession):
             book_id, public_site(url),
         )
         current = url
+        retryable = getattr(plugin_api, "RetryableContentDownload", None)
         visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
@@ -2070,11 +2169,17 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("Boucle de redirections PNB détectée")
             visited_urls.add(current)
             hop_started = time.monotonic()
-            response = self.client._get_pnb_response(
-                current,
-                **({"admission_current": stream_admission_current}
-                   if stream_admission_current is not None else {}),
-            )
+            try:
+                response = self.client._get_pnb_response(
+                    current,
+                    **({"admission_current": stream_admission_current}
+                       if stream_admission_current is not None else {}),
+                )
+            except ParisContentTransferUnavailable as error:
+                if retryable is not None and selected_offer_only and callable(stream_admission_current):
+                    ensure_scope()
+                    raise retryable(str(error)) from None
+                raise
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             if initial_offer_only and response.status_code in {301, 302, 303, 307, 308}:
@@ -2100,9 +2205,12 @@ class ParisProviderSession(ProviderSession):
         except httpx.HTTPStatusError:
             # HTTPX messages include the full signed response URL. Preserve
             # only a closed numeric status in provider diagnostics.
-            raise ProviderConfigurationError(
-                f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
-            ) from None
+            message = f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
+            if (retryable is not None and selected_offer_only
+                    and callable(stream_admission_current) and response.status_code in {408, 429, 500, 502, 503, 504}):
+                ensure_scope()
+                raise retryable(message) from None
+            raise ProviderConfigurationError(message) from None
         content = response.content
         content_type = response.headers.get("content-type", "")
         fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')

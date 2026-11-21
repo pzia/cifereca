@@ -256,7 +256,9 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
             if (request.page == 0 and worker_current(route, request)
                     and type(result) is dict and result.get("status") == "partial"
                     and result.get("metadata_evidence") == "verified_epub_opf_description"):
-                return {**result, "public_choices": available_local_public_catalogues(core, request)}
+                return {**result, "public_choices": available_local_public_catalogues(
+                    core, request, evidence=result.get("public_comparison_evidence"),
+                )}
             return result
 
         try:

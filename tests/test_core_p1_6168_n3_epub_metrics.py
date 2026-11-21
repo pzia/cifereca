@@ -249,3 +249,45 @@ def test_n3_refuses_growth_between_archive_read_and_publication(physical, monkey
     assert EpubCoverPhysicalCache._restore(source, path) is None
     assert calls == [source.member]
     assert not image.exists()
+
+
+def test_cancelled_queued_n3_is_not_a_failure_or_negative_cache(physical, monkeypatch):
+    path, source, image = physical
+    other = path.with_name("second.epub")
+    other.write_bytes(path.read_bytes())
+    image.unlink()
+    cache = EpubCoverPhysicalCache(max_workers=1, max_inflight=2, negative_ttl=120)
+    entered, release = Event(), Event()
+    original_restore = cache._restore
+    calls = []
+
+    def gated(resource, source_path):
+        calls.append(source_path)
+        if source_path == path:
+            entered.set()
+            assert release.wait(10)
+            # Do not create a warm cache hit that could conceal cooldown.
+            return None
+        return original_restore(resource, source_path)
+
+    monkeypatch.setattr(cache, "_restore", gated)
+    try:
+        busy = cache.request(source, source_path=path)
+        assert entered.wait(10)
+        queued = cache.request(source, source_path=other)
+        assert queued.cancel()
+        stats = cache.stats()
+        assert stats["inflight"] == 1
+        assert stats["n3_epub_failed"] == stats["n3_epub_cooldown"] == 0
+        assert stats["n3_epub_failed_recent_count"] == 0
+        again = cache.request(source, source_path=other)
+        assert again is not queued and not again.done()
+        release.set()
+        assert busy.result(timeout=10) is None
+        assert again.result(timeout=10) == image.resolve().as_uri()
+        assert calls == [path, other]
+        assert cache.stats()["n3_epub_cooldown"] == 0
+        assert cache.stats()["n3_epub_ok_recent_count"] == 1
+    finally:
+        release.set()
+        cache.close()

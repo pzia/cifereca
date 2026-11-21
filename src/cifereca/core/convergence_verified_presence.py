@@ -99,6 +99,10 @@ def plan_existing_verified_presence(
     """
     if type(snapshot) is not ProviderRightsSnapshot or not isinstance(library_root, Path):
         raise ValueError("invalid_verified_presence_request")
+    # Storage.schema_version itself enters the worker-local connection
+    # context, which would implicitly settle an outer SQLite transaction.
+    if storage._connect().in_transaction:
+        raise ValueError("canonical_presence_nested_transaction")
     if storage.schema_version() < 14:
         raise ValueError("canonical_source_schema_required")
 
@@ -111,87 +115,104 @@ def plan_existing_verified_presence(
         return plan_convergence((snapshot,))
 
     scope = snapshot.scope
-    with storage._lock, storage._connect() as db:
-        # Owner, source receipts and physical placements must be observed in
-        # one consistent SQLite read snapshot, even across other processes.
-        db.execute("BEGIN")
-        # Exact local B presence must belong to this identity's registered
-        # physical directory. The full identity registry can be arbitrarily
-        # large and is irrelevant to one provider/source plan. A duplicate
-        # directory in imported/corrupt SQLite must fail closed even if an
-        # OriginLink and SHA are otherwise valid.
-        owner_row = db.execute(
-            "SELECT directory_name FROM identities WHERE identity_id=?",
-            (scope.identity_id,),
-        ).fetchone()
-        owner_dir = (
-            owner_row[0]
-            if owner_row is not None and type(owner_row[0]) is str and owner_row[0]
-            else ""
-        )
-        if owner_dir and db.execute(
-            "SELECT 1 FROM identities WHERE directory_name=? "
-            "AND identity_id<>? LIMIT 1",
-            (owner_dir, scope.identity_id),
-        ).fetchone() is not None:
-            owner_dir = ""
-        # _verified_copy checks the exact owner folder as the first path
-        # component, and only needs that owner's name in this membership set.
-        reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
-        # Positive local B evidence may suppress a fresh GET. It must
-        # therefore be tied not only to the exact borrower coordinates but
-        # also to the one currently enabled provider connection. A migrated
-        # account row with a foreign connection_id cannot satisfy this A.
-        # Reuse the bounded Core journal guard in this same SQLite snapshot.
-        bound = _exact_borrower_bound_in_db(db, scope)
-        origins_raw = db.execute(
-            "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
-            "s.branch_id, s.edition_id, s.right_id, s.reference_kind,"
-            "o.artifact_id, a.sha256, a.size "
-            "FROM origin_links AS o "
-            "JOIN source_references AS s "
-            "ON s.source_reference_id=o.source_reference_id "
-            "JOIN artifacts AS a ON a.artifact_id=o.artifact_id "
-            "WHERE o.origin_kind='provider' AND o.identity_id=? "
-            "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
-            "AND s.account_id=? AND s.branch_id=? "
-            "AND s.evidence_kind='provider_response' "
-            "AND s.evidence_ref<>'' "
-            "ORDER BY o.origin_link_id LIMIT ?",
-            (scope.identity_id, scope.identity_id, scope.provider_id,
-             scope.credential_id, scope.account_id, snapshot.branch,
-             _MAX_EVIDENCE_ROWS + 1),
-        ).fetchall()
-        if len(origins_raw) > _MAX_EVIDENCE_ROWS:
-            # Never turn truncated local proof into an apparent absence that
-            # could send an otherwise satisfied source back into acquisition.
-            raise ValueError("canonical_presence_evidence_over_budget")
-        # Read B inside the same SQLite snapshot, but ONLY for an Artifact
-        # linked to this exact source account and branch. EXISTS avoids the
-        # OriginLink x Placement multiplication when many rights or physical
-        # copies share one Artifact. Foreign-profile/local-only Placements
-        # must not consume this source's finite verification budget.
-        placements_raw = db.execute(
-            "SELECT p.placement_id,p.path,p.identity_id,p.state,"
-            "p.artifact_id,a.sha256,a.size FROM placements AS p "
-            "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
-            "WHERE p.identity_id=? AND p.state='present' AND EXISTS ("
-            "SELECT 1 FROM origin_links AS o "
-            "JOIN source_references AS s "
-            "ON s.source_reference_id=o.source_reference_id "
-            "WHERE o.artifact_id=p.artifact_id AND o.identity_id=p.identity_id "
-            "AND o.origin_kind='provider' AND s.identity_id=? "
-            "AND s.provider_id=? AND s.credential_id=? "
-            "AND s.account_id=? AND s.branch_id=? "
-            "AND s.evidence_kind='provider_response' "
-            "AND s.evidence_ref<>'') "
-            "ORDER BY p.placement_id LIMIT ?",
-            (scope.identity_id, scope.identity_id, scope.provider_id,
-             scope.credential_id, scope.account_id, snapshot.branch,
-             _MAX_EVIDENCE_ROWS + 1),
-        ).fetchall()
-        if len(placements_raw) > _MAX_EVIDENCE_ROWS:
-            raise ValueError("canonical_presence_evidence_over_budget")
+
+    def database_stamp(db):
+        # total_changes detects writes on this worker connection; data_version
+        # detects commits from other workers/processes. A change triggers
+        # scoped revalidation, not an automatic failure for unrelated writes.
+        return (db.total_changes, db.execute("PRAGMA data_version").fetchone()[0])
+
+    def read_evidence(db):
+        if db.in_transaction:
+            raise ValueError("canonical_presence_nested_transaction")
+        with db:
+            # Owner, source receipts and physical placements must be observed in
+            # one consistent SQLite read snapshot, even across other processes.
+            db.execute("BEGIN")
+            # Exact local B presence must belong to this identity's registered
+            # physical directory. The full identity registry can be arbitrarily
+            # large and is irrelevant to one provider/source plan. A duplicate
+            # directory in imported/corrupt SQLite must fail closed even if an
+            # OriginLink and SHA are otherwise valid.
+            owner_row = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (scope.identity_id,),
+            ).fetchone()
+            owner_dir = (
+                owner_row[0]
+                if owner_row is not None and type(owner_row[0]) is str and owner_row[0]
+                else ""
+            )
+            if owner_dir and db.execute(
+                "SELECT 1 FROM identities WHERE directory_name=? "
+                "AND identity_id<>? LIMIT 1",
+                (owner_dir, scope.identity_id),
+            ).fetchone() is not None:
+                owner_dir = ""
+            # Positive local B evidence may suppress a fresh GET. It must
+            # therefore be tied not only to the exact borrower coordinates but
+            # also to the one currently enabled provider connection. A migrated
+            # account row with a foreign connection_id cannot satisfy this A.
+            # Reuse the bounded Core journal guard in this same SQLite snapshot.
+            bound = _exact_borrower_bound_in_db(db, scope)
+            origins_raw = db.execute(
+                "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
+                "s.branch_id, s.edition_id, s.right_id, s.reference_kind,"
+                "o.artifact_id, a.sha256, a.size "
+                "FROM origin_links AS o "
+                "JOIN source_references AS s "
+                "ON s.source_reference_id=o.source_reference_id "
+                "JOIN artifacts AS a ON a.artifact_id=o.artifact_id "
+                "WHERE o.origin_kind='provider' AND o.identity_id=? "
+                "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
+                "AND s.account_id=? AND s.branch_id=? "
+                "AND s.evidence_kind='provider_response' "
+                "AND s.evidence_ref<>'' "
+                "ORDER BY o.origin_link_id LIMIT ?",
+                (scope.identity_id, scope.identity_id, scope.provider_id,
+                 scope.credential_id, scope.account_id, snapshot.branch,
+                 _MAX_EVIDENCE_ROWS + 1),
+            ).fetchall()
+            if len(origins_raw) > _MAX_EVIDENCE_ROWS:
+                # Never turn truncated local proof into an apparent absence that
+                # could send an otherwise satisfied source back into acquisition.
+                raise ValueError("canonical_presence_evidence_over_budget")
+            # Read B inside the same SQLite snapshot, but ONLY for an Artifact
+            # linked to this exact source account and branch. EXISTS avoids the
+            # OriginLink x Placement multiplication when many rights or physical
+            # copies share one Artifact. Foreign-profile/local-only Placements
+            # must not consume this source's finite verification budget.
+            placements_raw = db.execute(
+                "SELECT p.placement_id,p.path,p.identity_id,p.state,"
+                "p.artifact_id,a.sha256,a.size FROM placements AS p "
+                "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
+                "WHERE p.identity_id=? AND p.state='present' AND EXISTS ("
+                "SELECT 1 FROM origin_links AS o "
+                "JOIN source_references AS s "
+                "ON s.source_reference_id=o.source_reference_id "
+                "WHERE o.artifact_id=p.artifact_id AND o.identity_id=p.identity_id "
+                "AND o.origin_kind='provider' AND s.identity_id=? "
+                "AND s.provider_id=? AND s.credential_id=? "
+                "AND s.account_id=? AND s.branch_id=? "
+                "AND s.evidence_kind='provider_response' "
+                "AND s.evidence_ref<>'') "
+                "ORDER BY p.placement_id LIMIT ?",
+                (scope.identity_id, scope.identity_id, scope.provider_id,
+                 scope.credential_id, scope.account_id, snapshot.branch,
+                 _MAX_EVIDENCE_ROWS + 1),
+            ).fetchall()
+            if len(placements_raw) > _MAX_EVIDENCE_ROWS:
+                raise ValueError("canonical_presence_evidence_over_budget")
+            return owner_dir, bound, origins_raw, placements_raw
+
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("canonical_presence_nested_transaction")
+        stamp = database_stamp(db)
+        exact = read_evidence(db)
+    owner_dir, bound, origins_raw, placements_raw = exact
+    reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
 
     origins = []
     hashes: set[str] = set()
@@ -232,6 +253,20 @@ def plan_existing_verified_presence(
                 size=size, verified=valid,
                 verification_ref="sha256:" + sha if valid else "",
             ))
+    # Hashing happened outside the SQLite lock. Do not return a stale
+    # positive OR a speculative negative plan when the evidence database
+    # changed during that interval. Never settle a caller-owned transaction.
+    with storage._lock:
+        active = storage._connect()
+        if active is not db or active.in_transaction:
+            raise ValueError("canonical_presence_snapshot_changed")
+        changed = database_stamp(active)
+        if changed != stamp:
+            # A journal/notice for another source must not prevent Sync.
+            # Re-read only the same bounded account/branch proof; if it
+            # changes again during the read, do not spin or infer absence.
+            if read_evidence(active) != exact or database_stamp(active) != changed:
+                raise ValueError("canonical_presence_snapshot_changed")
     # Deliberately no completed ProfileScan: this checks possible positive
     # satisfaction only, not exhaustive local absence or download permission.
     return plan_convergence(

@@ -38,7 +38,8 @@ def known_recommendation_public_c_snapshot(
             or row.get("local") is not False
             or credential != "__public__"
             or source_collection != "public_catalog"
-            or metadata.get("catalogue_scope_version") != 2
+            or type(metadata.get("catalogue_scope_version")) is not int
+            or metadata["catalogue_scope_version"] != 2
             or metadata.get("source_credential") != credential
             or metadata.get("source_collection") != source_collection
             or metadata.get("docbase") != docbase

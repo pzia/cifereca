@@ -177,3 +177,42 @@ def test_existing_resolution_and_direct_n1_publication_share_contract():
     assert direct.peek(decision.scope, revision=5).uri == (
         inferred.peek(decision.scope, revision=5).uri
     )
+
+
+@pytest.mark.parametrize("field,value", [
+    ("revision", True), ("revision", 1.0),
+    ("generation", True), ("generation", 1.0),
+    ("generation", 0), ("generation", -1),
+])
+@pytest.mark.parametrize("direct", [True, False])
+def test_malformed_token_does_not_consume_valid_slot(field, value, direct):
+    cache = CoverDecisionCache()
+    valid = project_exact_loan_cover(
+        loan(), (local_row(loan()),), revision=1, snapshot_complete=True,
+    )
+    events = []
+    cache.subscribe(valid.scope, events.append)
+    token = cache.begin(valid.scope, revision=1)
+    malformed = replace(token, **{field: value})
+    with pytest.raises(ValueError, match="invalid cover cache token"):
+        if direct:
+            cache.publish_resolved(malformed, valid)
+        else:
+            cache.resolve_and_publish(malformed, (), snapshot_complete=True)
+    assert cache.peek(valid.scope, revision=1) is None
+    assert [event.kind for event in events] == ["refresh"]
+    assert all(cache.n1_latency_stats()[f"n1_{status}_count"] == 0
+               for status in ("selected", "missing", "pending", "ambiguous"))
+    assert cache.publish_resolved(token, valid)
+    assert cache.peek(valid.scope, revision=1) is valid
+    assert [event.kind for event in events] == ["refresh", "resolved"]
+
+
+def test_zero_revision_remains_valid_for_initial_snapshot():
+    cache = CoverDecisionCache()
+    valid = project_exact_loan_cover(
+        loan(), (), revision=0, snapshot_complete=False,
+    )
+    token = cache.begin(valid.scope, revision=0)
+    assert cache.publish_resolved(token, valid)
+    assert cache.peek(valid.scope, revision=0) is valid

@@ -142,3 +142,46 @@ def test_nested_presence_read_cannot_commit_or_rollback_caller(store, tmp_path):
     finally:
         if db.in_transaction:
             db.rollback()
+
+
+@pytest.mark.parametrize("protection", [None, 0, "false", "unknown"])
+def test_unknown_protection_is_not_openable(store, tmp_path, protection):
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    key, snapshot = new_source("A", branch="loans", right="cycle-1", kind="loan")
+    publish(store, root, path, key, snapshot)
+    service = NS(storage=store, library_dir=lambda: root)
+    inspector = Mock(return_value=NS(valid=True, protected=protection))
+    before = rows(store)
+    assert canonical_loan_presence(service, _loan(), "A", inspector=inspector) is False
+    assert rows(store) == before and path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("changed", [
+    "root", "storage", "id", "record_id", "source_provider",
+    "source_credential", "source_account_id", "identity_id",
+])
+def test_inspection_cannot_transfer_presence_to_changed_scope(store, tmp_path, changed):
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    key, snapshot = new_source("A", branch="loans", right="cycle-1", kind="loan")
+    publish(store, root, path, key, snapshot)
+    loan = _loan()
+    loan.identity_id = "A"
+    service = NS(storage=store, library_dir=lambda: root)
+    before = rows(store)
+
+    def inspect(_path):
+        assert _path == path
+        if changed == "root":
+            service.library_dir = lambda: tmp_path / "another-root"
+        elif changed == "storage":
+            service.storage = object()
+        else:
+            setattr(loan, changed, "foreign")
+        return NS(valid=True, protected=False)
+
+    assert canonical_loan_presence(service, loan, "A", inspector=inspect) is False
+    assert rows(store) == before and path.read_bytes() == BYTES

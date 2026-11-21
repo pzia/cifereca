@@ -16,11 +16,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from ..providers.base import ProviderCapabilityError
 from .provider_rights_observation import (
     ProviderRightObservation, ProviderRightsScope, ProviderRightsSnapshot,
 )
 
 DOWNLOADABLE_RESOURCE_CONTRACT = "cifereca.downloadable-resource/2"
+
+class RetryableContentDownload(ProviderCapabilityError):
+    """An attempted content transfer failed and can use a fresh offer next Sync.
+
+    Raise only at a transport boundary that can attest that the attempted
+    action was a repeatable content read. An inventory read, missing offer,
+    preflight refusal or potentially mutating request must not emit this.
+    This signal never grants consent or qualifies a runtime mutation replay.
+    """
+
 
 ResourceKind = Literal["purchase", "loan"]
 CapabilityState = Literal["available", "unavailable", "unknown"]

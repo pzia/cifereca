@@ -280,3 +280,51 @@ def test_alternative_series_and_language_keep_their_own_provenance_after_restart
         assert remaining == [language]
         assert all(f.provenance is None for f in known_public_alternative_section(meta).fields)
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_plain_primary_catalogue_fields_keep_exact_source_provenance(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    from cifereca.gui.detail_model import book_detail_presentation
+    from cifereca.gui.search_known_public_c_bibliography import with_known_public_field_provenance
+
+    path = tmp_path / "catalogue-provenance.sqlite"
+    with closing(Storage(path)) as db:
+        source = persist(db, verified_public(record_id="exact-catalogue",
+            title="Notice primaire", publisher="Éditeur témoin", published_at="2025-01-02",
+        ), at=100)
+        persist_exact_public_search_cover(db, source)
+        assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    with closing(Storage(path)) as db:
+        item, = merge_public_notice_c_known_rows(
+            [], search_public_notice_c(db, "Notice primaire", now=100),
+            identity_id="alice",
+        )
+        def present(row, *, display_override=None):
+            values = [("Format", row["media_format"]),
+                      ("Éditeur", row["metadata"]["publisher"]),
+                      ("Publication", row["published_at"])]
+            if display_override is not None:
+                values[1] = ("Éditeur", display_override)
+            p = book_detail_presentation(title=row["title"], section_rows=(
+                ("Catalogue", values),
+                ("Bibliothèque", values),
+            ))
+            return with_known_public_field_provenance(p, row)
+
+        p = present(item)
+        catalogue, local = p.sections
+        assert {f.label for f in catalogue.fields} == {"Format", "Éditeur", "Publication"}
+        for field in catalogue.fields:
+            assert field.provenance.source == "Notice C · observation de source"
+            assert field.provenance.provider_id == item["provider_id"]
+            assert field.provenance.source_id == "exact-catalogue"
+            assert field.provenance.observed_at == "1970-01-01T00:01:40+00:00"
+        assert all(f.provenance is None for f in local.fields)
+        changed = {**item, "metadata": {**item["metadata"], "publisher": "Autre éditeur"}}
+        for altered in (present(changed), present(item, display_override="Autre éditeur")):
+            fields = {f.label: f.provenance for f in altered.sections[0].fields}
+            assert fields["Éditeur"] is None
+            assert fields["Format"] is not None and fields["Publication"] is not None
+        assert all(f.provenance is None for f in present({**item, "identity_id": "bob"}).sections[0].fields)
+        assert not p.actions and not p.links
+        assert db.entitlements() == [] and db.acquisitions() == []

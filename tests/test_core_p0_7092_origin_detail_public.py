@@ -87,3 +87,50 @@ def test_unscoped_private_reader_has_no_public_authority(rig):
     assert preview(reader, request).public_choices == ()
     assert reader.search_public(token="forged", confirmed=True) is None
     assert calls == []
+
+
+@pytest.mark.parametrize("change", ["same_bytes_new_inode", "new_catalogue_claim", "new_artifact"])
+def test_choice_pins_exact_reviewed_file_and_sql_evidence(rig, change):
+    import hashlib
+    from tests.test_core_p0_2835_epub_layout import _book
+    from tests.test_core_p0_4030_epub_evidence import META
+
+    service, session, request, calls, path = rig
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    page = preview(broker, request)
+    choice, = page.public_choices
+    if change == "same_bytes_new_inode":
+        data = path.read_bytes()
+        path.rename(path.with_suffix(".old"))
+        path.write_bytes(data)
+    elif change == "new_catalogue_claim":
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        service.storage.catalog_entry_put({
+            "catalog_entry_id": "later-description", "artifact_id": "sha256:" + digest,
+            "placement_id": request.placement_id, "identity_id": request.identity_id,
+            "title": "Roman commun", "author": "Autrice", "local_state": "local",
+        })
+    else:
+        data = _book(META.replace("Roman commun", "Autre titre privé")).getvalue()
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        artifact = "sha256:" + digest
+        service.storage.artifact_put({
+            "artifact_id": artifact, "sha256": digest, "size": len(data), "media_format": "epub",
+        })
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("UPDATE placements SET artifact_id=? WHERE placement_id=?",
+                       (artifact, request.placement_id))
+    report = broker.search_public(token=choice.token, confirmed=True)
+    assert report is None or (report.status == "scope_changed"
+                              and not report.provider_access_performed and not report.matches)
+    assert calls == []
+    # A fresh explicit review can approve the new observation; old token cannot.
+    assert broker.search_public(token=choice.token, confirmed=True) is None
+    new_page = preview(broker, request)
+    new_choice, = new_page.public_choices
+    assert new_choice.token != choice.token
+    new_report = broker.search_public(token=new_choice.token, confirmed=True)
+    assert new_report is not None and new_report.provider_access_performed
+    assert len(calls) == 1
+    assert calls[0][0] == ("Autre titre privé" if change == "new_artifact" else "Roman commun")

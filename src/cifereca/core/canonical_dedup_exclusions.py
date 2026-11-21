@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
+from .derived_variant_region_paths import private_derived_path
+
 
 # The reserved prefix is projected beneath EVERY registered identity. No
 # Outbox is created, no USB target is discovered and no deletion is granted.
@@ -43,7 +45,7 @@ def ordinary_dedup_path_excluded(
         relative = candidate.relative_to(owner)
     except ValueError:
         return True
-    if not relative.parts:
+    if not relative.parts or private_derived_path(relative):
         return True
 
     # Never authorize a plan through a symbolic parent or a renamed alias.

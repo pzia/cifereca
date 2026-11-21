@@ -108,6 +108,36 @@ transports effectifs** ; leur rôle Plugins doit adopter l'extension et fournir
 les tests d'absence de fuite, de révocation au milieu d'un flux, de refus DNS/
 URL dangereux et de non-rejeu. Voir #3848, #3867, #3252.
 
+## Échec retentable de téléchargement automatique (#7161)
+
+Le candidat gardé peut lever `RetryableContentDownload` après une tentative
+de transfert de contenu déjà admise, lorsqu’une prochaine synchronisation
+peut demander une offre fraîche pour la même ressource. Les contrôles
+d’identité, de compte et de consentement restent applicables à chaque cycle.
+Le transport HTTPS attesté expose `ContentTransferUnavailable` pour certains
+échecs transitoires. Le fournisseur qualifie lui-même la nature de la
+requête avant de la signaler au Core.
+
+Après trois échecs qualifiés, la synchronisation suspend le téléchargement
+de la ressource exacte. La file de reprise permet de réinitialiser ce compteur
+individuellement. Une copie locale vérifiée ou un reçu final admissible reste
+prioritaire. Les acquisitions explicitement confirmées suivent leur propre
+contrat.
+
+Un inventaire indisponible, une offre absente, un préflight refusé et un
+résultat mutateur ambigu ne consomment pas ce compteur. La permission de
+rejouer un emprunt, un achat ou un fulfillment ne peut jamais provenir de
+cette exception. Le fournisseur conserve les gardes de ses opérations
+potentiellement mutatrices, y compris lorsqu’elles empruntent un HTTP GET.
+
+Lorsqu’une offre de prêt atteste précisément un candidat ACSM, l’adaptateur
+peut exposer `downloadable_selected_candidate_is_acsm(account, *, edition_id,
+resource_id, kind, branch, selected_offer_id)`. Ce lecteur local retourne un
+booléen pour l’offre exacte, sans accès au fournisseur. Le Core vérifie alors
+le profil et la capacité ADEPT avant le transfert du jeton, puis contrôle
+de nouveau ce même profil avant le fulfillment. Un refus local du profil
+apparaît dans la file de reprise avec une action de vérification.
+
 ## Required execution sequence
 
 1. Sync observes and confirms the exact offered resource under global source

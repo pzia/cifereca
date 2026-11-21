@@ -261,3 +261,29 @@ def test_normal_bibliographic_semicolon_and_public_query_are_preserved():
         "Cover": "https://covers.example.org/book.jpg?size=medium&lang=fr",
     }
     assert admit(raw=raw).fields_copy() == raw
+
+
+class _ForeignCoordinate:
+    def __eq__(self, other):
+        raise AssertionError("source admission must not invoke foreign equality")
+
+
+class _StringCoordinate(str):
+    def __eq__(self, other):
+        raise AssertionError("source admission must reject non-native strings")
+
+
+@pytest.mark.parametrize("field,valid", [("visibility", "public"), ("manifestation_role", "print")])
+@pytest.mark.parametrize("kind", ["object", "subclass", "bool", "list"])
+def test_source_enums_are_native_before_comparison(field, valid, kind):
+    value = {"object": _ForeignCoordinate(), "subclass": _StringCoordinate(valid),
+             "bool": True, "list": [valid]}[kind]
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(key=replace(PUBLIC, **{field: value}))
+
+
+def test_source_timestamp_respects_durable_integer_boundary():
+    assert admit(observed_at=2**63 - 1).observed_at == 2**63 - 1
+    for timestamp in (2**63, 2**100):
+        with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+            admit(observed_at=timestamp)

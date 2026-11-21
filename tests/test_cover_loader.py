@@ -286,3 +286,47 @@ def test_n3_url_recent_windows_are_bounded_and_outcome_specific(tmp_path, monkey
         assert stats["ui_decode_recent_count"] == 0
     finally:
         loader.close()
+
+
+def test_n3_http_failure_buckets_count_worker_attempts_without_source_identifiers(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    original = loader.client
+    codes = (401, 403, 404, 429, 410, 503, 302, 200)
+    calls = []
+
+    def handler(request):
+        status = int(request.url.path.rsplit("/", 1)[-1])
+        calls.append(status)
+        # 200 with invalid image body must not be counted as HTTP failure.
+        return httpx.Response(status, content=b"not image",
+                              headers={"content-type": "text/html"})
+
+    loader.client = httpx.Client(transport=httpx.MockTransport(handler))
+    original.close()
+
+    def fetch(url):
+        done = threading.Event()
+        seen = []
+        loader.load(url, lambda value: (seen.append(value), done.set()))
+        assert done.wait(3.0)
+        loader._queue.join()
+        assert seen == [None]
+
+    try:
+        for status in codes:
+            url = f"https://private-cover.example.test/{status}"
+            fetch(url)
+            fetch(url)  # cooldown must never add a worker count
+        stats = loader.stats()
+        buckets = {key.removeprefix("n3_url_http_failure_"): value
+                   for key, value in stats.items()
+                   if key.startswith("n3_url_http_failure_")}
+        assert buckets == {"401": 1, "403": 1, "404": 1, "429": 1,
+                           "other_4xx": 1, "5xx": 1, "other": 1, "unknown": 0}
+        assert stats["download_failed"] == len(codes)
+        assert sum(buckets.values()) == len(codes) - 1
+        assert stats["download_ok"] == 0 and calls == list(codes)
+        assert "private-cover" not in repr(stats)
+    finally:
+        loader.close()

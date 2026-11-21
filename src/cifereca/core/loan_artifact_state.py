@@ -13,7 +13,7 @@ import re
 from typing import Any, Callable, Iterable, Mapping
 
 from .loan_provider_delivery import _physical_witness
-from .derived_variant_publication import _verified_variant_file
+from .derived_variant_publication import DerivedPublicationConflict, _verified_variant_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,11 +156,24 @@ def inspect_catalog_local_file(
     # symlink, FIFO or concurrently replaced file. Keep inspector exceptions
     # distinct from physical witness failures (the caller owns invalidation).
     try:
-        with _physical_witness(path, _InvalidCatalogWitness) as (_, current):
-            inspection = artifact_inspector(path)
+        with _physical_witness(path, _InvalidCatalogWitness) as (size, current):
+            artifact_id = entry.get("artifact_id")
+            if artifact_id is None:
+                inspection = artifact_inspector(path)
+            else:
+                # An explicit content address cannot attest a different
+                # valid book at the same path. Preserve path-only legacy
+                # projections, but never downgrade a stated SHA to one.
+                if (type(artifact_id) is not str
+                        or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_id)
+                        or not 0 < size <= 1024 ** 3):
+                    return False, path
+                with _verified_variant_file(path, artifact_id[7:], expected_size=size) as recheck:
+                    inspection = artifact_inspector(path)
+                    recheck()
             current()
             if inspection.valid is True and inspection.protected is not True:
                 return True, path
-    except _InvalidCatalogWitness:
+    except (_InvalidCatalogWitness, DerivedPublicationConflict):
         pass
     return False, path

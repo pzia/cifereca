@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 import zipfile
 
 import httpx
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     Account, HTTPX_TRANSPORT, ProviderCapabilityError, ProviderError,
 )
@@ -344,9 +345,16 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 staged = True
                 try:
                     runtime_execute(request)
-                except Exception:
+                except Exception as error:
                     if not core_current():
                         raise ProviderCapabilityError("kobo_candidate_admission_changed") from None
+                    refusal = getattr(plugin_api, "RuntimeDispatchNotSubmitted", None)
+                    if type(error) is refusal and bound() and stage_current():
+                        # The Core callback already validated and released its
+                        # exact live claim. Preserve the typed refusal, not
+                        # the private text or command of an upstream runtime.
+                        raise refusal("Runtime indisponible avant livraison.",
+                                      code="kobo_runtime_preflight_refused") from None
                     raise ProviderCapabilityError("kobo_candidate_runtime_failed") from None
                 require_core()
                 if not bound():
@@ -387,6 +395,11 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             return receipt.path, ""
         except ValueError as exc:
             code = str(exc)
+            retryable = getattr(plugin_api, "RetryableContentDownload", None)
+            if (retryable is not None and type(exc) is getattr(plugin_api, "ContentTransferUnavailable", None)
+                    and callable(admission_current)
+                    and bound() and stage_current() and core_current()):
+                raise retryable(code) from None
             # #4882: the public refusal deliberately groups multiple unsafe
             # URL/redirect forms. Preserve the exact *closed* transport code
             # locally for diagnosis without ever logging Location, signed URL,

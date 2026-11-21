@@ -174,3 +174,45 @@ def test_catalog_preflight_requires_boolean_validity(tmp_path):
         _entry(path),
         artifact_inspector=lambda _: SimpleNamespace(valid="yes", protected=False),
     ) == (False, path)
+
+
+@pytest.mark.parametrize("address", ["exact", "different", "malformed", "nontext", "empty"])
+def test_catalog_preflight_honors_explicit_content_address(tmp_path, address):
+    import hashlib
+
+    path = tmp_path / "loan.epub"
+    path.write_bytes(b"actual book")
+    digest = hashlib.sha256(b"actual book").hexdigest()
+    artifact_id = {
+        "exact": "sha256:" + digest,
+        "different": "sha256:" + hashlib.sha256(b"other book").hexdigest(),
+        "malformed": "sha256:xyz",
+        "nontext": True,
+        "empty": "",
+    }[address]
+    entry = _entry(path, artifact_id=artifact_id)
+    before = deepcopy(entry)
+    calls = []
+
+    def inspect(received):
+        calls.append(received)
+        return SimpleNamespace(valid=True, protected=False)
+
+    assert inspect_catalog_local_file(entry, artifact_inspector=inspect) == (address == "exact", path)
+    assert calls == ([path] if address == "exact" else [])
+    assert entry == before
+    assert path.read_bytes() == b"actual book"
+
+
+def test_catalog_content_address_rechecks_after_inspection(tmp_path):
+    import hashlib
+
+    path = tmp_path / "loan.epub"
+    path.write_bytes(b"actual book")
+    entry = _entry(path, artifact_id="sha256:" + hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def inspect(received):
+        received.write_bytes(b"other book!")
+        return SimpleNamespace(valid=True, protected=False)
+
+    assert inspect_catalog_local_file(entry, artifact_inspector=inspect) == (False, path)

@@ -85,7 +85,15 @@ def _series_query_selects_index(query: str) -> bool:
     if len(fields) > 1 or len(queries) > 1:
         return False
     if fields:
-        return _SERIES_TOKEN.fullmatch(fields[0]) is not None
+        if _SERIES_TOKEN.fullmatch(fields[0]) is None:
+            return False
+        if queries:
+            index, separator, term = queries[0].partition(":")
+            # Explicit indexed queries must agree with the field selector.
+            if (separator and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9_]*_(?:idx|exact)", index, re.I)):
+                return bool(term.strip() and index.casefold() == fields[0].casefold())
+        return True
     if not queries:
         return False
     index, separator, term = queries[0].partition(":")
@@ -108,6 +116,13 @@ def _safe_series_search_href(href: object) -> bool:
         # authority separators, fragments and credentials cannot qualify.
         raw_url = urlsplit(href)
         for parsed in (raw_url, urlsplit(decoded)):
+            # Only qualified Search routes can attest a series relation.
+            if parsed.path.casefold() not in {
+                "/search", "/search.aspx",
+                "./search", "./search.aspx",
+                "../search", "../search.aspx",
+            }:
+                return False
             if parsed.scheme:
                 if (parsed.scheme != "https" or parsed.hostname not in _SERIES_ALLOWED_HOSTS
                         or parsed.username is not None or parsed.password is not None

@@ -9,6 +9,7 @@ N2 derives its decisions from this record; N3 owns image bytes/previews.
 from __future__ import annotations
 
 from .public_search_projection import PublicSeriesRelation, PublicLanguageObservation, PublicClassification
+from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
 
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -54,6 +55,7 @@ class ConsolidatedPublicBibliography:
     series_relation: PublicSeriesRelation | None = None
     language_observation: PublicLanguageObservation | None = None
     classification: PublicClassification | None = None
+    age_observation: PublicAgeObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +182,7 @@ def _decode_public_bibliography(
     )
 
     if (type(raw) is not dict or not _BIB_KEYS <= set(raw)
-            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation", "classification"}):
+            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation", "classification", "age_observation"}):
         raise ValueError("corrupt_canonical_cover")
     def coord(value, *, optional=False):
         return (value is None and optional) or (
@@ -247,6 +249,15 @@ def _decode_public_bibliography(
         if classification is None:
             raise ValueError("corrupt_canonical_cover")
         values["classification"] = classification
+    if "age_observation" in values:
+        age = decode_public_age_observation(
+            values["age_observation"], provider_id=provider,
+            record_id=raw["record_id"], docbase=raw["docbase"],
+            medium=raw["medium"], source_revision=raw["source_revision"],
+        )
+        if age is None:
+            raise ValueError("corrupt_canonical_cover")
+        values["age_observation"] = age
     return ConsolidatedPublicBibliography(**values)
 
 
@@ -493,6 +504,8 @@ def _persist_consolidated_cover_source_txn(
                 incoming["public_bibliography"]["language_observation"] = hit.language_observation.wire()
             if hit.classification is not None:
                 incoming["public_bibliography"]["classification"] = hit.classification.wire()
+            if hit.age_observation is not None:
+                incoming["public_bibliography"]["age_observation"] = hit.age_observation.wire()
     # The extension belongs to this exact validated public source, not
     # the per-profile mirror or a different member of the canonical group.
     source_fields = source.observation.fields_copy().get("search_result")

@@ -569,3 +569,60 @@ def test_p0_3252_final_verdict_captures_all_four_checks_before_cleanup(
         ("catalog_reason", catalog_reason),
     ):
         assert f"{key}={value}" in verdict
+
+
+@pytest.mark.parametrize("failure", ["timeout", "bad_result", "false_retry", "not_submitted", "success"])
+def test_owned_acsm_fulfillment_has_exact_negative_replay_fence(rig, failure):
+    from cifereca.core.canonical_runtime_attempt import pending_runtime_attempt, read_runtime_attempt_in_db
+    from cifereca.core.loan_download_retry import read_loan_download_retry
+    from cifereca.plugin_api.errors import AdeptFulfillmentNotSubmitted
+    from cifereca.plugin_api.downloadable_resources import RetryableContentDownload
+
+    service, db, root = rig
+    _prepare(service)
+    calls = []
+
+    def candidate(_account, *, target_dir, **_kwargs):
+        calls.append("get")
+        token = Path(target_dir) / "token.acsm"
+        token.write_text('<fulfillmentToken><format>application/pdf</format></fulfillmentToken>')
+        return token, ""
+
+    service.session.rights_selected_delivery_candidate = candidate
+    service.resolve_adept_profile_for_identity = lambda _: ("borrower-profile", "configured")
+    service._originating_adept_profile_id = lambda *_: "profile-id"
+
+    def execute(request):
+        calls.append("fulfill")
+        assert request["source"]["type"] == "acsm"
+        assert pending_runtime_attempt(db, service.source)
+        with db._lock:
+            held, started, phase = read_runtime_attempt_in_db(db._connect(), service.source)
+        assert held and started > 0 and phase == "purchase_acsm"
+        if failure == "timeout":
+            raise TimeoutError("synthetic interrupted fulfillment")
+        if failure == "bad_result":
+            return {"ok": False}
+        if failure == "false_retry":
+            raise RetryableContentDownload("unqualified fulfillment replay")
+        if failure == "not_submitted" and calls.count("fulfill") == 1:
+            raise AdeptFulfillmentNotSubmitted("synthetic local refusal", code="profile_missing")
+        path = Path(request["destination"])
+        path.write_bytes(BYTES)
+        return {"ok": True, "profile": "borrower-profile", "artifact": {"path": str(path)}}
+
+    service.execute_acquisition_request = execute
+    first = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert first["downloaded"] == int(failure == "success")
+    assert read_loan_download_retry(db, service.source).failures == 0
+    assert pending_runtime_attempt(db, service.source) is (failure in ("timeout", "bad_result", "false_retry"))
+    second = synchronize_account_source(service, service.account)["canonical_execution"]
+    if failure == "not_submitted":
+        assert second["downloaded"] == 1 and calls == ["get", "fulfill", "get", "fulfill"]
+        assert not pending_runtime_attempt(db, service.source)
+    elif failure == "success":
+        assert second["present_attested"] == 1 and calls == ["get", "fulfill"]
+    else:
+        assert second["blocked"] == 1 and calls == ["get", "fulfill"]
+        assert not db.placements()
+    assert db.entitlements() == []

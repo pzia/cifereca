@@ -301,6 +301,42 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(
                             ("Résumé de recette", "all")):
             assert filter_loaded_results(rows, term, field=field) == [direct]
             assert "catalogue public" in local_match_explanation(direct, term)
+        # Render the actual Library summary from this reopened Core snapshot,
+        # not the historical Sync handoff. A text/facet filter must not turn
+        # a partially enriched inventory into an all-enriched result.
+        from cifereca.gui.library_render_controller import render_library
+        summaries, displayed = [], []
+        page = SimpleNamespace(
+            set_documentary_summary=summaries.append,
+            show_rows=lambda items, **kw: displayed.append((items, kw["total_count"])),
+            selection=SimpleNamespace(get_selected_item=lambda: None),
+        )
+        window = SimpleNamespace(
+            service=SimpleNamespace(current_identity=SimpleNamespace(identity_id=owner),
+                                    provider_display_name=str),
+            library_page=page,
+            library_controls=SimpleNamespace(state=lambda: SimpleNamespace(
+                filter=lambda entries: [entries[0]], text="", field="all")),
+            _library_availability_label=lambda _: "",
+            _kobo_backup_status_label=str,
+            _attach_row_facets=lambda *_: None,
+            _select_pending_library_item=lambda: False,
+            _library_selected=lambda _: None,
+            ui_perf=SimpleNamespace(record=lambda *_: None),
+        )
+        def render():
+            render_library(window, rows[:2], perf_counter=monotonic,
+                           project_library_rows=project_library_rows,
+                           BookListItem=lambda *args: SimpleNamespace(key=args[0], values=args),
+                           fr_date=str)
+        render()
+        assert len(displayed[-1][0]) == 1 and displayed[-1][1] == 2
+        assert summaries[-1] == ("Enrichissement documentaire (achats qualifiés) : "
+                                 "1 fiches disponibles · 1 candidats non attestés")
+        # A different selected owner cannot inherit the old source summary.
+        window.service.current_identity.identity_id = "B"
+        render()
+        assert summaries[-1] == ""
         # No fresh network or change to rights/physical state at read time.
         assert requests == prefix + ["detail", "inventory"]
         assert reopened.entitlements() == [] and reopened.acquisitions() == [] and reopened.placements() == []

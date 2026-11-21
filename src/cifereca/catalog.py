@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .acquisition_engine import Artifact, stable_id
+from .core.derived_variant_region_paths import private_derived_path, PRIVATE_DERIVED_REGION
 from .artifact_inspection import detect_artifact_format
 from .epub_metadata import SCHEMA as EPUB_METADATA_SCHEMA, inspect_epub, cached_cover_url
 from .plugin_api import BUNDLE_MANIFEST_NAME, BundleError, load_bundle_manifest
@@ -202,6 +203,10 @@ class LocalCatalog:
                 relative = path.relative_to(self.root.resolve())
         except ValueError:
             return False
+        # A versioned private derived region is never ordinary library stock,
+        # even if a historical/erroneous Placement exists for its bytes.
+        if private_derived_path(relative):
+            return False
         # #3909: copied canonical final bytes stay invisible until their
         # exact provider OriginLink and Placement have been committed.
         # Reserved 64-hex file names distinguish Core-managed acquisitions
@@ -364,6 +369,10 @@ class LocalCatalog:
         if relative is None or anchor is None:
             return {"status": "invalid", "path": str(submitted),
                     "reason": "catalog_index_path_not_local"}
+
+        if private_derived_path(relative):
+            return {"status": "invalid", "path": str(submitted),
+                    "reason": "canonical_staging_not_published"}
 
         def linked_child() -> bool:
             current = anchor
@@ -631,6 +640,7 @@ class LocalCatalog:
         negative_candidate_ids = {
             row["placement_id"] for row in self.storage.placements()
             if row.get("state") != "missing"
+            and not private_derived_path(Path(row.get("path") or ""))
         }
         seen_paths: set[str] = set()
         scanned = cataloged = invalid = unsupported = artifacts_new = placements_new = 0
@@ -655,7 +665,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if not private_derived_path(p.relative_to(self.root)) and p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
         bundle_root_set = set(bundle_roots)
         for bundle_root in bundle_roots:
             scanned += 1
@@ -692,7 +702,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts) and self._canonical_stage_visible(p)):
+        for path in sorted(p for p in self.root.rglob("*") if not private_derived_path(p.relative_to(self.root)) and p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts) and self._canonical_stage_visible(p)):
             scanned += 1
             if not is_unlinked_local_file(path):
                 invalid += 1
@@ -919,9 +929,10 @@ class LocalCatalog:
         def fail_incomplete(_error):
             raise OSError("catalog_scan_incomplete") from None
 
-        for _ in os.walk(self.root, topdown=True, onerror=fail_incomplete,
-                         followlinks=False):
-            pass
+        for _directory, subdirectories, _files in os.walk(
+                self.root, topdown=True, onerror=fail_incomplete, followlinks=False):
+            subdirectories[:] = [name for name in subdirectories
+                                 if name != PRIVATE_DERIVED_REGION]
 
         # A file can reappear after the earlier rglob snapshot, yet before
         # the negative SQLite transition. A full directory walk alone does
@@ -938,6 +949,7 @@ class LocalCatalog:
             candidate = Path(previous_path)
             if (candidate.is_absolute()
                     and candidate.is_relative_to(self.root)
+                    and not private_derived_path(candidate)
                     and candidate.is_file()
                     and is_unlinked_local_file(candidate)):
                 raise OSError("catalog_scan_changed_during_inventory")

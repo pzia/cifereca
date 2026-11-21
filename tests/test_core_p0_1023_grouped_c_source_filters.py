@@ -64,4 +64,19 @@ def test_filter_contributions_after_real_sqlite_restart(tmp_path):
         fake = {key: value for key, value in row.items()
                 if key != "_core_notice_c_filter_sources"}
         assert state.filter([fake]) == []
+
+        # Python bool is an int subclass: epoch=True must never be
+        # accepted as a sealed generation 1 for the grouped source filter.
+        # Recreate a genuine Core source packet at epoch 1 so this test is
+        # independent from the initial SQLite canonical revision number.
+        from cifereca.core.notice_c_loaded_filter import _sources, attach_filter_sources
+        epoch_one_hits = tuple(replace(hit, epoch=1) for hit in page.matching_sources)
+        strict = dict(row, metadata={**row["metadata"], "notice_c_epoch": 1})
+        attach_filter_sources(strict, epoch_one_hits)
+        assert _sources(strict) == epoch_one_hits
+        coerced = dict(strict, metadata={**strict["metadata"], "notice_c_epoch": True})
+        assert _sources(coerced) == ()
+        assert state.filter([coerced]) == []
+        negative = dict(strict, metadata={**strict["metadata"], "notice_c_epoch": False})
+        assert _sources(negative) == ()
         assert db.entitlements() == [] and db.acquisitions() == []

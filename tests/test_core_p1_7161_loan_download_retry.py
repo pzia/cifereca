@@ -11,6 +11,7 @@ from cifereca.core.loan_download_retry import (
     record_loan_download_failure,
 )
 from cifereca.locking import InterProcessLock
+from cifereca.plugin_api import RetryableContentDownload
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_convergence_execution import rig, run, fake_delivery
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, rows
@@ -33,7 +34,7 @@ def test_three_failures_pause_exact_loan_across_store_reopen(rig):
     calls = []
     def fail(*args):
         calls.append(args[0])
-        raise OSError("synthetic delivery failure")
+        raise RetryableContentDownload("synthetic transfer failure")
     for n in range(1, FAILURE_LIMIT + 1):
         result, = run(service, account, snap, root, lock_path, {source}, fail)
         assert result.status == "failed"
@@ -111,7 +112,7 @@ def test_cancel_and_revocation_do_not_consume_budget(rig):
     assert read_loan_download_retry(service.storage, source).failures == 0
     def rebind(*_):
         service.enabled = False
-        raise OSError("synthetic rebind")
+        raise RetryableContentDownload("synthetic rebind")
     run(service, account, snap, root, lock_path, {source}, rebind)
     assert read_loan_download_retry(service.storage, source).failures == 0
 
@@ -184,3 +185,117 @@ def test_old_ledger_attention_without_marker_is_visible_and_cannot_reset(rig, mo
     with pytest.raises(ValueError, match="reset_changed"):
         reset_reviewed_loan_download_retry(service, identity_id="A", row=before)
     assert read_loan_download_retry(service.storage, source).paused
+
+
+def test_owned_resource_pause_uses_same_queue_and_isolated_occurrence(rig, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+
+    service, account, source, snapshot, root, lock_path = rig
+    other = replace(source, right_id="second-copy")
+    other_row = replace(snapshot.rights[0], right_id=other.right_id)
+    both = replace(snapshot, rights=(snapshot.rights[0], other_row))
+    service.current_identity = SimpleNamespace(identity_id=source.scope.identity_id)
+    persist_attested_source_references(service.storage, both)
+    monkeypatch.setattr("cifereca.core.loan_download_retry_review.acquisition_lock_file",
+                        lambda: lock_path)
+    attempts = []
+    def fail(key, offer):
+        attempts.append((key, offer.delivery_offer_id))
+        raise RetryableContentDownload("temporary transport error")
+
+    for attempt in range(FAILURE_LIMIT):
+        fresh = replace(both, rights=(
+            replace(both.rights[0], delivery_offer_id=f"offer-{attempt}"), other_row,
+        ))
+        run(service, account, fresh, root, lock_path, {source}, fail)
+    assert attempts == [(source, f"offer-{n}") for n in range(FAILURE_LIMIT)]
+    queued, = review_loan_download_retries(service, identity_id="A")
+    assert queued.source == source
+    assert queued.can_reset
+    assert read_loan_download_retry(service.storage, other).failures == 0
+
+    result = run(service, account, both, root, lock_path, {source, other},
+                 lambda key, row: fake_delivery(service, root)(key, row)
+                 if key == other else pytest.fail("paused purchase fetched"))
+    assert [(row.source, row.status, row.reason) for row in result] == [
+        (source, "blocked", "download_paused"),
+        (other, "downloaded", "canonical_delivery_committed"),
+    ]
+    reset_reviewed_loan_download_retry(service, identity_id="A", row=queued)
+    assert read_loan_download_retry(service.storage, source).failures == 0
+    assert review_loan_download_retries(service, identity_id="A") == ()
+
+
+@pytest.mark.parametrize("exception", [OSError, ValueError])
+def test_unqualified_failure_does_not_consume_a_retry(rig, exception):
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    def refuse(*_):
+        raise exception("synthetic preflight failure or ambiguous runtime")
+    for _ in range(FAILURE_LIMIT):
+        outcome, = run(service, account, snapshot, root, lock_path, {source}, refuse)
+        assert outcome.reason == "canonical_delivery_failed"
+    assert read_loan_download_retry(service.storage, source).failures == 0
+
+
+def test_pause_does_not_gate_a_separately_confirmed_owned_download(rig):
+    from cifereca.core.convergence_execution import execute_admitted_convergence
+
+    service, account, source, snapshot, root, lock_path = rig
+    observed, = snapshot.rights
+    attempted = []
+    def fail(key, _offer):
+        attempted.append(key)
+        raise RetryableContentDownload("temporary transfer failure")
+
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(service.storage, source,
+                                         reason="canonical_delivery_failed",
+                                         shared_lock=lease)
+        result, = execute_admitted_convergence(
+            service, account, service._sessions[service._session_key(
+                account.provider_id, account.credential_id,
+            )], snapshot, admitted_epoch=service._source_context_epoch,
+            shared_lock=lease, library_root=root,
+            persisted_consent=frozenset({source}),
+            consent_still_current=lambda key: key == source, deliver=fail,
+            publication_guard=lambda *_: True, explicitly_confirmed_once=True,
+            explicit_offer_id=observed.delivery_offer_id,
+        )
+    assert attempted == [source]
+    assert result.reason == "canonical_delivery_failed"
+    assert read_loan_download_retry(service.storage, source).paused
+
+
+@pytest.mark.parametrize("kind", ["loan", "purchase"])
+def test_local_adept_profile_refusal_is_visible_before_any_pause(rig, kind):
+    from types import SimpleNamespace
+    from cifereca.core.adept_runtime_preflight import AdeptProfileUnavailable
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import review_loan_download_retries
+
+    service, account, source, snapshot, root, lock_path = (
+        loan_snapshot(rig) if kind == "loan" else rig
+    )
+    service.current_identity = SimpleNamespace(identity_id=source.scope.identity_id)
+    persist_attested_source_references(service.storage, snapshot)
+
+    def refuse_profile(*_):
+        raise AdeptProfileUnavailable("canonical_adept_preflight_unavailable")
+
+    outcome, = run(service, account, snapshot, root, lock_path, {source}, refuse_profile)
+    assert outcome.reason == "canonical_adept_profile_attention"
+    row, = review_loan_download_retries(service, identity_id=source.scope.identity_id)
+    assert row.source == source
+    assert row.profile_refused_at > 0
+    assert row.retry.failures == 0
+    assert not row.adept_hold and not row.can_reset
+
+    outcome, = run(service, account, snapshot, root, lock_path, {source},
+                   fake_delivery(service, root))
+    assert outcome.status == "downloaded"
+    assert review_loan_download_retries(service, identity_id=source.scope.identity_id) == ()

@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (HTTPX_TRANSPORT, Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderSearchCapabilities, ProviderError,
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
@@ -1205,13 +1206,21 @@ class NumilogSession(ProviderSession):
             # rejects changed offer/owner before the delivery GET and stages
             # a candidate. A returned Path is NOT a canonical Core receipt.
             require_core()
-            staged = self.download_direct(
-                matches[0], target_dir,
-                expected_offer_id=delivery_offer_id,
-                expected_identity_id=pinned[0],
-                stage_acsm_only=True,
-                core_admission_current=admitted,
-            )
+            try:
+                staged = self.download_direct(
+                    matches[0], target_dir,
+                    expected_offer_id=delivery_offer_id,
+                    expected_identity_id=pinned[0],
+                    stage_acsm_only=True,
+                    core_admission_current=admitted,
+                )
+            except getattr(plugin_api, "RetryableContentDownload", ()) as error:
+                # The transport's narrower local guard does not own the
+                # mutable Account passed to Core. Revalidate it before
+                # admitting the negative retry signal, too.
+                if not selected_owner_still_bound() or not core_current():
+                    raise ProviderCapabilityError('numilog_candidate_admission_changed') from None
+                raise
             # A broker rebind, disconnected session or even A→A replacement
             # after the last signed GET is not a Core receipt. Withdraw the
             # private candidate before it can be admitted by Core.
@@ -1688,6 +1697,8 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError('numilog_candidate_admission_changed')
 
         require_core()
+        retryable = getattr(plugin_api, "RetryableContentDownload", None)
+
         def selected_candidate_path(file):
             if stage_dirfd is None:
                 return file
@@ -1738,6 +1749,13 @@ class NumilogSession(ProviderSession):
                 else None
             )
             selected_kind = authorized_kind if selected_link is not None else None
+            # The final content type cannot qualify replay of an earlier
+            # readBook/confirmation action. Freeze the ORIGINAL exact offer
+            # class before navigation can replace selected_link/selected_kind.
+            repeatable_offer = (
+                selected_link is not None and selected_kind == 'epub_direct'
+                and stage_acsm_only is True and callable(core_admission_current)
+            )
             signed_redirect_chain = False
             # Only a freshly revalidated, Core-selected MesLivres dwld offer
             # can attest the *first* external readBook redirect. A raw URL,
@@ -1769,6 +1787,30 @@ class NumilogSession(ProviderSession):
                 raise ProviderError(
                     'Numilog : livraison externe non liée à un achat ; téléchargement arrêté'
                 )
+            def admitted():
+                try:
+                    if (not core_current()
+                            or self.connected is not True or owner is None
+                            or self.client is not delivery_client
+                            or self._accounts is not delivery_accounts
+                            or (self.provider_id, self.credential_id)
+                                != delivery_session_scope):
+                        return False
+                    self._validate_download_owner(
+                        owner, owner_scope=owner_scope,
+                    )
+                    pinned = os.fstat(stage_dirfd)
+                    current = os.stat(
+                        destination.parent, follow_symlinks=False,
+                    )
+                    return (
+                        pinned.st_dev == current.st_dev
+                        and pinned.st_ino == current.st_ino
+                        and (current.st_mode & 0o170000) == 0o040000
+                    )
+                except (OSError, ValueError, ProviderCapabilityError):
+                    return False
+
             for hop in range(12):
                 require_core()
                 trace.fail('adept_unconfirmed')
@@ -1812,30 +1854,6 @@ class NumilogSession(ProviderSession):
                     # public-peer-pinned transport touches external HTTPS.
                     # This branch is restricted to Core-selected staging:
                     # it neither invokes ADEPT nor publishes a Placement.
-                    def admitted():
-                        try:
-                            if (not core_current()
-                                    or self.connected is not True or owner is None
-                                    or self.client is not delivery_client
-                                    or self._accounts is not delivery_accounts
-                                    or (self.provider_id, self.credential_id)
-                                        != delivery_session_scope):
-                                return False
-                            self._validate_download_owner(
-                                owner, owner_scope=owner_scope,
-                            )
-                            pinned = os.fstat(stage_dirfd)
-                            current = os.stat(
-                                destination.parent, follow_symlinks=False,
-                            )
-                            return (
-                                pinned.st_dev == current.st_dev
-                                and pinned.st_ino == current.st_ino
-                                and (current.st_mode & 0o170000) == 0o040000
-                            )
-                        except (OSError, ValueError, ProviderCapabilityError):
-                            return False
-
                     target = destination.parent / (
                         '.numilog-pinned-' + secrets.token_hex(12) + '.part'
                     )
@@ -1855,7 +1873,22 @@ class NumilogSession(ProviderSession):
                                 timeout=25, max_bytes=self.maximum,
                                 max_redirects=8,
                             )
-                        except ValueError:
+                        except ValueError as error:
+                            if (type(error) is getattr(plugin_api, "ContentTransferUnavailable", None)
+                                    and admitted()):
+                                trace.fail('transport_unavailable')
+                                if retryable is not None and repeatable_offer:
+                                    raise retryable(str(error)) from None
+                                # This is a transport failure, not a URL veto;
+                                # replay of the preceding selected action was
+                                # not qualified. Keep closed route evidence.
+                                reason = (
+                                    'acsm_replay_unqualified' if selected_kind == 'acsm'
+                                    else 'readbook_replay_unqualified'
+                                )
+                                raise ProviderCapabilityError(
+                                    'numilog_candidate_transport_refused:' + reason
+                                ) from None
                             trace.fail('origin_rejected')
                             raise ProviderCapabilityError(
                                 'numilog_candidate_transport_refused'
@@ -2021,6 +2054,19 @@ class NumilogSession(ProviderSession):
                         )
                         trace.fail('redirect_limit')
                         continue
+                    if (stage_acsm_only is True and callable(core_admission_current)
+                            and (attested_hop or selected_readbook or owned_confirmation)
+                            and r.status_code in {408, 429, 500, 502, 503, 504}
+                            and admitted()):
+                        if retryable is not None and repeatable_offer and attested_hop:
+                            raise retryable(public_http_code(r.status_code))
+                        reason = ('confirmation_replay_unqualified'
+                                  if owned_confirmation or attested_confirmation_redirect is not None
+                                  else 'acsm_replay_unqualified' if selected_kind == 'acsm'
+                                  else 'readbook_replay_unqualified')
+                        raise ProviderCapabilityError(
+                            'numilog_candidate_transport_refused:' + reason
+                        ) from None
                     self._status(r)
                     trace.fail('mime_unexpected')
                     mime = r.headers.get('content-type','').split(';')[0].lower().strip()

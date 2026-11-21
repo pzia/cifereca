@@ -108,6 +108,11 @@ def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
         proof = hit.language_observation.wire()
         metadata["languages"] = proof.pop("languages")
         proofs["languages"] = proof
+    if hit.age_observation is not None:
+        proofs["youth_age"] = hit.age_observation.wire()
+        ranges = hit.age_observation.filter_ranges()
+        if ranges:
+            metadata["youth_age_ranges"] = ranges
     if proofs:
         metadata["bibliography_evidence"] = proofs
     return metadata

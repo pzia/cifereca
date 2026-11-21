@@ -328,3 +328,45 @@ def test_source_scope_predicate_requires_reader_and_fails_closed(
             service.close()
     finally:
         loader.close()
+
+
+@pytest.mark.parametrize("damage", ["epoch", "watermark", "proof", "evicted", "malformed", "legacy"])
+@pytest.mark.parametrize("private", [False, True])
+def test_exact_n2_checks_durable_source_fence_after_restart(tmp_path, damage, private):
+    from contextlib import closing
+    import json
+    from cifereca.core.notice_cover_repository import _fence_key, _opaque_key
+    path = tmp_path / "n2-fence.sqlite"
+    with closing(Storage(path)) as db:
+        source = store(db, notice(key=PRIVATE if private else PUBLIC))
+        independent = store(db, notice(key=replace(PUBLIC, edition_id="digital:other")))
+        key = _fence_key(_opaque_key(source.document))
+        with db._lock, db._connect() as sql:
+            raw, = sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            fence = json.loads(raw)
+            if damage == "legacy":
+                sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+            else:
+                if damage == "epoch":
+                    fence["epoch"] += 1
+                elif damage == "watermark":
+                    fence["last_seen_at"] += 1
+                elif damage == "proof":
+                    fence["proof"] = "0" * 64
+                elif damage == "evicted":
+                    fence["epoch"] += 1
+                    fence["evicted"] = True
+                else:
+                    fence = {}
+                sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                            (json.dumps(fence), key))
+    with closing(Storage(path)) as db:
+        # Raw diagnostic body is retained; it is not N2 authority.
+        assert read_notice_cover(db, source.document) == source
+        if damage == "legacy":
+            assert cached_notice_cover_snapshot(NS(storage=db), source.document).revision == source.epoch
+        else:
+            with pytest.raises(ValueError, match="notice_c_source_fence_corrupt"):
+                cached_notice_cover_snapshot(NS(storage=db), source.document)
+        assert cached_notice_cover_snapshot(NS(storage=db), independent.document).revision == independent.epoch
+        assert db.entitlements() == [] and db.acquisitions() == []

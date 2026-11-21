@@ -78,15 +78,17 @@ def plugin_public_c_current(receipt: object) -> bool:
     window = getattr(view, "_window", None)
     service = getattr(window, "service", None)
     mapped = getattr(view, "_rows", None)
+    account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
+    page_generation = getattr(view, "_public_c_page_generation", None)
     return (
         getattr(window, "_closed", False) is not True
         and service is receipt.service
         and getattr(getattr(service, "current_identity", None),
                     "identity_id", None) == receipt.identity_id
-        and getattr(service, "_account_context_epoch", None) == receipt.account_epoch
-        and getattr(service, "_source_context_epoch", None) == receipt.source_epoch
-        and getattr(view, "_public_c_page_generation", None)
-            == receipt.page_generation
+        and type(account_epoch) is int and account_epoch == receipt.account_epoch
+        and type(source_epoch) is int and source_epoch == receipt.source_epoch
+        and type(page_generation) is int and page_generation == receipt.page_generation
         and type(mapped) is dict
         and mapped.get(receipt.key) is receipt.source_row
         # Duplicate source keys receive occurrence-local display keys;

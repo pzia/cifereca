@@ -538,6 +538,47 @@ def _member_bytes(payload):
                       separators=(",", ":")).encode("ascii")
 
 
+def _public_kit_pin_scan_members(kit: dict[str, bytes]) -> dict[str, bytes]:
+    """Exclude only independently verified public manifest checksums for PIN scans.
+
+    Do not change exported bytes. The kit is generated independently of the
+    capture, but still scan every source, guide and other manifest field.
+    A damaged/noncanonical manifest gets the original strict scan.
+    """
+    name = "plugin-dev-kit/manifest.json"
+    raw = kit.get(name)
+    try:
+        if type(raw) is not bytes:
+            return kit
+        manifest = json.loads(raw)
+        def encode():
+            return json.dumps(manifest, ensure_ascii=False, sort_keys=True,
+                              indent=2).encode("utf-8")
+        if (type(manifest) is not dict or encode() != raw
+                or manifest.get("schema") != "cifereca.browser-recorder.plugin-dev-kit/1"
+                or type(manifest.get("files")) is not list):
+            return kit
+        seen = set()
+        for row in manifest["files"]:
+            if type(row) is not dict or set(row) != {"path", "sha256", "bytes", "source"}:
+                return kit
+            path = row["path"]
+            if (type(path) is not str or path == name or path in seen
+                    or not path.startswith("plugin-dev-kit/")
+                    or type(kit.get(path)) is not bytes
+                    or type(row["bytes"]) is not int or row["bytes"] != len(kit[path])
+                    or row["sha256"] != hashlib.sha256(kit[path]).hexdigest()):
+                return kit
+            seen.add(path)
+        if seen != set(kit) - {name}:
+            return kit
+        for row in manifest["files"]:
+            row["sha256"] = "[PUBLIC_CHECKSUM]"
+        return {**kit, name: encode()}
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        return kit
+
+
 def _zip_bytes(members: dict[str, bytes]) -> bytes:
     if len(members) > MAX_MEMBERS or sum(len(x) for x in members.values()) > MAX_UNCOMPRESSED:
         raise RecorderError("bundle_limit")
@@ -964,8 +1005,20 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     # even if an upstream review missed a secret, known secret values and
     # their encodings cannot appear in the assembled ZIP member payloads.
     all_plain = b"\n".join(files.values()).decode("utf-8", "replace")
+    pin_scan = None
     for secret in review._secret_values:
-        if any(form in all_plain for form in _variants(secret)):
+        # A short numeric credential can collide with unrelated public
+        # SHA-256 digits. Only the verified kit-manifest checksum values
+        # are excluded from this check, never captured values or fields.
+        scan = all_plain
+        if type(secret) is str and re.fullmatch(r"[0-9]{4,8}", secret):
+            if pin_scan is None:
+                public_scan = _public_kit_pin_scan_members(kit)
+                pin_scan = b"\n".join(
+                    public_scan.get(name, data) for name, data in files.items()
+                ).decode("utf-8", "replace")
+            scan = pin_scan
+        if any(form in scan for form in _variants(secret)):
             raise RecorderError("bundle_secret_risk")
     if _JWT.search(all_plain) or re.search(
         r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", all_plain,

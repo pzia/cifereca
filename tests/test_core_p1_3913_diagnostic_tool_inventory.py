@@ -107,6 +107,7 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
         "scripts/recette-doctor.py",
         "scripts/benchmark_diagnostics.py",
         "scripts/benchmark_task_admission.py",
+        "scripts/benchmark-notice-cover-epub.py",
     )
     for path in sources:
         assert (ROOT / path).is_file(), path

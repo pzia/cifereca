@@ -144,6 +144,9 @@ class CatalogRecord:
     availability: str = "unknown"
     # Public image belongs only to this exact, observed catalogue record.
     thumbnail_url: str | None = field(default=None, repr=False)
+    # Only a complete native results card, not suggestions/detail fallback,
+    # can attest the exact catalogue resource coordinate for this tranche.
+    web_reference_evidence: bool = False
 
 
 @dataclass(frozen=True)
@@ -272,6 +275,7 @@ def parse_search_page(html: str) -> CatalogPage:
             single("publisher"), single("isbn"), single("inLanguage"),
             descriptions[0] if len(descriptions) == 1 else None,
             thumbnail_url=_catalog_book_cover(book, rid),
+            web_reference_evidence=True,
         )
         if rid in records and records[rid] != record:
             partial = True
@@ -281,6 +285,12 @@ def parse_search_page(html: str) -> CatalogPage:
             records[rid] = record
     if not records:
         raise WebParseError("unrecognized_search")
+    # A conflicting or malformed occurrence anywhere on the returned
+    # page is not a complete native reference inventory. Keep the ordinary
+    # bibliographic rows, but do not issue an authenticated web proof.
+    if partial:
+        records = {rid: replace(record, web_reference_evidence=False)
+                   for rid, record in records.items()}
     return CatalogPage(tuple(records.values()), "partial" if partial else "ok",
                        scope="results")
 

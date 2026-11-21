@@ -128,3 +128,35 @@ def test_explicit_bad_receipt_is_not_a_legacy_document_bind(tmp_path, kind):
         assert rendered.thumbnail_url is None and guard is None
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("coordinate", ["_account_context_epoch", "_source_context_epoch", "_public_c_page_generation"])
+@pytest.mark.parametrize("alias", [True, 1.0])
+@pytest.mark.parametrize("opaque", [False, True])
+def test_live_plugin_c_receipt_rejects_equal_noninteger_context(tmp_path, coordinate, alias, opaque):
+    from tests.test_core_p0_6366_plugin_public_c_n3_revocation import CANONICAL
+    db = Storage(tmp_path / "strict-context.sqlite")
+    view, window, service = _view()
+    try:
+        service._account_context_epoch = service._source_context_epoch = 1
+        doc = CANONICAL
+        binding = None
+        if opaque:
+            item = witnessed(public_row())
+            assert mirror(db, [item]) == 1
+            doc, binding = host_type()(window).public_notice_cover_binding(item, identity_id="alice")
+        row = replace(_book(document=doc), cover_document_receipt=binding)
+        view.show_rows((row,))
+        visible = view._page.rows[0]
+        receipt = visible._cover_plugin_c_receipt
+        assert receipt is not None
+        assert plugin_public_c_current(receipt)
+        assert view._public_c_page_generation == 1
+        target = view if coordinate == "_public_c_page_generation" else service
+        setattr(target, coordinate, alias)
+        assert not plugin_public_c_current(receipt)
+        if opaque and target is service:
+            assert public_c_binding_revision(window, doc, binding) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

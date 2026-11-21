@@ -21,10 +21,11 @@ def walk(widget):
 
 
 def verify_local_notice_c_views(window, later, capture, report, complete):
-    """One retained C, two actual Origins, six real GTK list/detail views.
+    """One retained C, three completed test Origins, six real GTK list/detail views.
 
-    Supplier envelopes, completed deliveries and borrower occurrences are
-    synthetic. Core writers, C cursor, ranking, public GTK plugin host,
+    One source is the unmodified recorded Numilog HTML through its actual
+    parser/session; the other envelopes, deliveries and borrower occurrences
+    are synthetic. Core writers, C cursor, ranking, public GTK plugin host,
     N2/N3/N4 and the five native pages are production. The plugin widget
     is temporarily mounted in the fixture MainWindow, not registered.
     No provider call or rights action is performed.
@@ -105,8 +106,11 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     recommendation_route = "notice-c-recommendations-fixture"
     report["local_c_stage"] = "seed"
     gets = []
-    url = "https://covers.example.org/local-origin-c.png"
-    title = "Notice C locale témoin"
+    url = "https://couverture.numilog.com/9782702194287_GRANDE.jpg"
+    title = "Les Enfants du Pas du Loup"
+    author = "Marie-Bernadette Dupuy"
+    recorded_provider = "numilog-catalog"
+    recorded_record = "numilog:public:1947941"
     pixels = (47, 108, 162)
     png = BytesIO()
     Image.new("RGB", (400, 600), pixels).save(png, format="PNG")
@@ -127,9 +131,44 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             data = b"%PDF-1.7\nSynthetic completed local C publication\n"
             book.write_bytes(data)
             stamp = "2026-10-28T08:00:00+00:00"
-            docs = []
+            # Use the existing recorded web response, not a live request.
+            from notice_c_cover_contract import PLUGIN, URL_SEARCH
+            sys.path.insert(0, str(PLUGIN))
+            session = None
+            try:
+                import cifereca_numilog_public_provider as numilog
+                from cifereca_numilog_public import parse_public_search
+                parsed = parse_public_search(
+                    (PLUGIN / "tests/fixtures/observed_search-loup-0.html").read_text(
+                        encoding="utf-8"), URL_SEARCH,
+                )
+                calls = []
+                session = numilog.NumilogPublicSession(
+                    credential_id="__public__", label="Recorded catalogue",
+                    credentials={}, options={},
+                )
+                session.connect()
+                with patch.object(numilog, "fetch_public_search",
+                                  side_effect=lambda *_a, **_k: calls.append(1) or parsed):
+                    response = session.search_with_response_facets("loup", scope="catalog")
+                parsed_rows = _public_rows_from_response(response, session)
+                assert calls == [1] and len(parsed_rows) == 1
+                actual = parsed_rows[0]
+                assert (actual.source_provider, actual.record_id, actual.title,
+                        actual.author, actual.thumbnail_url) == (
+                            recorded_provider, recorded_record, title, author, url)
+                assert actual.publisher == "Calmann-Lévy"
+                assert actual.owned is actual.downloadable is False
+                assert actual.download_url is actual.source_account_id is None
+            finally:
+                if session is not None:
+                    session.close()
+                sys.path.remove(str(PLUGIN))
+
+            admitted = []
             for provider, record in (("fixture-c-a", "edition-a"),
-                                     ("fixture-c-b", "edition-b")):
+                                     ("fixture-c-b", "edition-b"),
+                                     (recorded_provider, recorded_record)):
                 credential, account = "fixture-card", "fixture-buyer"
                 connection = db.provider_connection_put({
                     "identity_id": owner, "provider_id": provider,
@@ -155,6 +194,10 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     snapshot=proof, final_sha256=hashlib.sha256(data).hexdigest(),
                     delivery_receipt_ref="synthetic-completed-delivery",
                 )
+                if provider == recorded_provider:
+                    # Keep the exact Core-produced row, not a rebuilt DTO.
+                    admitted.append(actual)
+                    continue
                 metadata = {
                     "subjects": ["Astronomie" if provider == "fixture-c-a" else "Cuisine"],
                     "genre": "Roman" if provider == "fixture-c-a" else "Essai",
@@ -174,7 +217,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     )
                 row = SearchResult(
                     id=record, record_id=record, docbase="digital-books",
-                    medium="digital", title=title, author="Autrice témoin",
+                    medium="digital", title=title, author=author,
                     type="book", format="PDF", publisher=None, published_at=None,
                     description=None, thumbnail_url=url, friendly_url=None,
                     scenario="search", source_provider=provider,
@@ -190,21 +233,28 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     credentials={}, _accounts=[],
                 ))
                 assert len(rows) == 1
-                assert _mirror_remote_results(
-                    NS(storage=db), rows, identity_id=owner,
-                    require_public_cover_witness=True,
-                ) == 1
-                docs.append(rows[0]._core_notice_cover_document_ref)
-            doc = rows[0]._core_notice_canonical_cover_document_ref
+                admitted.extend(rows)
+            assert _mirror_remote_results(
+                NS(storage=db), admitted, identity_id=owner,
+                require_public_cover_witness=True,
+            ) == 3
+            doc = actual._core_notice_canonical_cover_document_ref
+            assert all(row._core_notice_canonical_cover_document_ref == doc for row in admitted)
             c = read_consolidated_notice_cover(db, doc)
-            assert len(c.sources) == 2 and {x.url for x in c.candidates} == {url}
-            for source in docs:
+            assert len(c.sources) == 3 and {x.url for x in c.candidates} == {url}
+            member, = [source for source in c.sources if source.provider_id == recorded_provider]
+            assert member.public_bibliography.record_id == recorded_record
+            assert member.public_bibliography.publisher == actual.publisher
+            assert member.public_bibliography.published_at == actual.published_at
+            ref, = member.public_web_references
+            assert ref.url == actual.friendly_url
+            for source in (row._core_notice_cover_document_ref for row in admitted):
                 observation = read_notice_cover(db, source)
                 assert observation is not None
                 assert evict_notice_cover(db, source, expected_epoch=observation.epoch)
                 assert read_notice_cover(db, source) is None
             assert db.entitlements() == [] and db.acquisitions() == []
-            # A third source deliberately shares only the image URL. It has
+            # An independent source deliberately shares only the image URL. It has
             # neither a matching Origin nor a strong edition relation.
             independent = SearchResult(
                 id="independent-c", record_id="independent-c", docbase="digital-books",
@@ -229,7 +279,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             other = read_consolidated_notice_cover(db, other_doc)
             assert other_doc != doc and other is not None
             assert len(other.sources) == 1 and {x.url for x in other.candidates} == {url}
-            assert len(read_consolidated_notice_cover(db, doc).sources) == 2
+            assert len(read_consolidated_notice_cover(db, doc).sources) == 3
             other_source = read_notice_cover(db, separate[0]._core_notice_cover_document_ref)
             assert other_source is not None
             assert evict_notice_cover(db, other_source.document, expected_epoch=other_source.epoch)
@@ -344,7 +394,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 "artifact_id": artifact, "placement_id": placement,
                 "local": True, "state": "local", "source": "catalog",
                 "provider_id": "local", "providers": ["local"],
-                "title": title, "author": "Autrice témoin", "media_format": "pdf",
+                "title": title, "author": author, "media_format": "pdf",
                 "medium": "digital", "path": str(book),
                 "thumbnail_url": "https://covers.example.org/unqualified.png",
                 "metadata": {},
@@ -355,7 +405,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             for row in (local, recent):
                 link = row["_public_canonical_cover_link"]
                 assert link.document == doc and link.epoch == epoch
-                assert len(link.source_refs) == 2
+                assert len(link.source_refs) == 3
             # Reuse these exact origins for the other view families rather
             # than constructing independently seeded, equal-looking C rows.
             known = merge_public_notice_c_known_rows(
@@ -364,9 +414,20 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             )
             assert len(known) == 1 and known[0]["_cover_document_ref"] == doc
             assert known[0]["metadata"]["notice_c_epoch"] == epoch
+            from cifereca.core.notice_c_known_projection import known_public_alternative_facts
+            observed, = [hit for hit in known_public_alternative_facts(known[0])
+                         if hit.provider_id == recorded_provider]
+            assert observed.record_id == recorded_record and observed.publisher == "Calmann-Lévy"
+            from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
+            menu = read_public_web_choices(db, doc)
+            choice, = menu.choices
+            assert choice.provider_id == recorded_provider and menu.epoch == epoch
+            assert resolve_public_web_choice(db, doc, expected_epoch=epoch,
+                                             choice_id=choice.choice_id) == (
+                "https://www.numilog.com/1947941/les-enfants-du-pas-du-loup.ebook")
             common = dict(
                 provider="fixture-branch", medium="digital", record_id="edition-a",
-                title=title, author="Autrice témoin", thumbnail_url=None,
+                title=title, author=author, thumbnail_url=None,
                 source_provider="fixture-c-a", source_credential="fixture-card",
                 source_account_id="fixture-buyer", identity_id=owner,
             )
@@ -400,10 +461,10 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 search_progressive = search
 
             library = NS(library_entries=lambda **_kw: [
-                {"title": "Autre livre", "author": "Autrice témoin"},
+                {"title": "Autre livre", "author": author},
             ])
             with patch.object(recommendation_service, "build_queries",
-                              return_value=("Notice", "témoin")):
+                              return_value=("Enfants", "Loup")):
                 # Keep the pre-existing six-view ranking corpus isolated:
                 # the extra Atlas fixture shares N3, not either query term.
                 ranking = recommendation_service.compute_recommendations(
@@ -424,7 +485,80 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             window._library_entries_cache = [rows[0]]
             window._recent_entries_cache = [rows[1]]
             state["projected_rows"] = rows
-            show_route("library")
+            verify_documentary_summary()
+
+        def verify_documentary_summary():
+            # Complement the real SQLite/adapter receipt in #1072 by checking
+            # the actual mapped GTK label and list with controlled projection
+            # packets. These DTOs are presentation fixtures, NOT new rights,
+            # supplier evidence, or a second documentary writer.
+            from cifereca.core.notice_c_purchase_descriptive_read import (
+                PurchaseDescriptiveFact, PurchaseDescriptiveNotice,
+            )
+            from cifereca.core.notice_c_purchase_library_projection import (
+                PurchaseLibraryNotice, PurchaseLibraryStatus,
+            )
+            from cifereca.plugin_api import SourceReference
+            page = window.library_page
+            items = []
+            for record, provider, book_title in (
+                ("edition-a", "fixture-c-a", "Roman documentaire"),
+                ("edition-b", "fixture-c-b", "Atlas à actualiser"),
+            ):
+                scope = ProviderRightsScope(owner, provider, "fixture-card", "fixture-buyer")
+                source = SourceReference(scope, "purchases", record, "purchase", "purchase")
+                key = "fixture-purchase:" + record
+                item = {
+                    "key": key, "identity_id": owner, "provider_id": provider,
+                    "item_id": record, "source": "private_catalog_observation",
+                    "state": "remote_catalog", "local": False,
+                    "title": book_title, "author": "", "metadata": {},
+                    "possessions": [], "source_refs": [{
+                        "identity_id": owner, "provider_id": provider,
+                        "credential_id": scope.credential_id,
+                        "account_id": scope.account_id, "item_id": record,
+                        "kind": "purchase",
+                    }],
+                }
+                if record == "edition-a":
+                    fact = PurchaseDescriptiveFact("title", book_title, provider,
+                                                  "synthetic", "synthetic", 100)
+                    item["_purchase_library_notice"] = PurchaseLibraryNotice(
+                        key, source, PurchaseDescriptiveNotice(doc, epoch, 100, (fact,)))
+                else:
+                    item["_purchase_library_status"] = PurchaseLibraryStatus(
+                        key, source, "failed", 1)
+                items.append(item)
+            expected = ("Enrichissement documentaire (achats qualifiés) : "
+                        "1 fiches disponibles · 1 non abouties")
+            window._library_entries_cache = items
+            window.navigate("library")
+            window._render_library(items)
+
+            def check(deadline):
+                if not page._documentary_summary.get_mapped():
+                    assert monotonic() < deadline, "documentary summary GTK not mapped"
+                    later(40, guard(lambda: check(deadline)))
+                    return
+                assert page.store.get_n_items() == 2
+                assert page._documentary_summary.get_text() == expected
+                window.library_controls.set_state(
+                    QueryState(text="Roman documentaire", field="title"), notify=False)
+                window._render_library(items)
+                assert page.store.get_n_items() == 1
+                assert page._documentary_summary.get_text() == expected
+                assert page._documentary_summary.get_mapped()
+                capture("00-purchase-documentary-mixed-" + label)
+                report["checks"]["P0_1072_mixed_documentary_native_gtk_" + label] = True
+                # Restore the original six-view corpus before any cover
+                # subscription. Synthetic packets must not enter its metrics.
+                page.clear_rows()
+                window.library_controls.set_state(QueryState(), notify=False)
+                window._library_entries_cache = [state["projected_rows"][0]]
+                assert not reads
+                show_route("library")
+
+            later(80, guard(lambda: check(monotonic() + 8)))
 
         label = "offline" if offline else "cold"
         route_timings = {}
@@ -471,7 +605,8 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert view.selected_identity_id() == owner
                 view._ranked = [state["projected_rows"][5]]
                 view._reload_providers((("fixture-c-a", "Catalogue A"),
-                                        ("fixture-c-b", "Catalogue B")))
+                                        ("fixture-c-b", "Catalogue B"),
+                                        (recorded_provider, "Numilog")))
                 view._reload_languages(view._ranked)
                 view._reload_document_choices()
                 view._render()
@@ -595,6 +730,18 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 ]
                 assert alternative_tooltip.splitlines()[-4:-1] == proof_lines
                 assert alternative_tooltip.splitlines()[-1].startswith("Observation déclarée : ")
+                observed_rows = [
+                    widget for widget in walk(page.detail.content)
+                    if isinstance(widget, Adw.ActionRow)
+                    and widget.get_title() == "Source 3 · " + recorded_provider
+                ]
+                observed_row, = observed_rows
+                assert observed_row.get_mapped()
+                observed_text = observed_row.get_subtitle()
+                observed_tooltip = observed_row.get_tooltip_text() or ""
+                assert "Éditeur : Calmann-Lévy" in observed_text
+                assert "Fournisseur déclaré : " + recorded_provider in observed_tooltip
+                assert "Référence déclarée : " + recorded_record in observed_tooltip
                 if route == "search":
                     # Check the native action rows made by the same selection
                     # whose DetailPanel and cover are mapped above.
@@ -618,9 +765,11 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     state["source_alternative_tooltip_" + label] = alternative_tooltip
                     report["checks"]["P0_3688_search_native_field_provenance_" + label] = True
                     state["source_alternative_" + label] = subtitle
+                    state["recorded_alternative_" + label] = (observed_text, observed_tooltip)
                 else:
                     assert subtitle == state["source_alternative_" + label]
                     assert alternative_tooltip == state["source_alternative_tooltip_" + label]
+                    assert (observed_text, observed_tooltip) == state["recorded_alternative_" + label]
                     report["checks"]["P0_4761_same_source_alternative_search_recommendations_" + label] = True
             if route in narrow_context:
                 receipt = narrow_context[route]

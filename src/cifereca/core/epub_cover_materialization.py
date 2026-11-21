@@ -182,7 +182,9 @@ class EpubCoverPhysicalCache:
             if self._pending.get(key) is not finished:
                 return
             self._pending.pop(key, None)
-            if result is not None or self._closed:
+            if result is not None or self._closed or finished.cancelled():
+                # Cancellation before execution is not an observed physical
+                # failure. A later subscriber must be able to retry now.
                 self._negative_until.pop(key, None)
             else:
                 self._counts["n3_epub_failed"] += 1

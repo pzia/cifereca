@@ -15,6 +15,7 @@ from contextvars import ContextVar
 
 from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
 from cifereca_kobo_adept_loan_envelope import attested_readonly_loans_list
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
     PluginContext, UserFacingError,
@@ -726,14 +727,28 @@ class KoboAdeptRuntime:
         raise AttentionRequired('Opération DRM non publiée par Kobo-Adept.',code='kobo_adept_drm_mutation_unsupported')
 
     def download_request(self, request):
-        if self.contract_version is None: self.contract()
         payload = dict(request)
         # Core 0.9.5 emits compatible schema-1 recipes; the v2 fields are identical here.
         payload['schema_version'] = 2
-        if (type(payload.get('source')) is dict
-                and payload['source'].get('type') == 'acsm'):
-            self.preflight_acsm_profile(payload.get('profile'))
-        self._require_download(payload)
+        is_acsm = (type(payload.get('source')) is dict
+                   and payload['source'].get('type') == 'acsm')
+        try:
+            if self.contract_version is None:
+                self.contract()
+            if is_acsm:
+                self.preflight_acsm_profile(payload.get('profile'))
+            self._require_download(payload)
+        except UserFacingError as error:
+            # Only this synchronous, pre-command boundary attests that
+            # the installed runtime has not submitted a delivery.
+            kind = payload.get('source', {}).get('type') if type(payload.get('source')) is dict else None
+            refusal_name = ("AdeptFulfillmentNotSubmitted" if is_acsm
+                            else "RuntimeDispatchNotSubmitted" if kind == 'kobo' else None)
+            refusal = getattr(plugin_api, refusal_name, None) if refusal_name else None
+            if refusal is None:
+                raise
+            raise refusal(error.user_message, code=error.code,
+                          technical_detail=error.technical_detail) from error
         value = self.run_json(['download','request','-','--json'],payload=payload,
             timeout=int(self.config.get('download_timeout_seconds') or 900))
         artifact = value.get('artifact')

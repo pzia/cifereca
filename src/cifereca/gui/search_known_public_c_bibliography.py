@@ -217,23 +217,36 @@ def with_known_public_field_provenance(presentation, item):
     if language is not None and metadata.get("languages") == list(language.languages):
         for value in language.languages:
             proven[("Langue", value)] = language
-    if not proven:
-        return presentation
+    # The primary source's plain catalogue fields carry source-level
+    # provenance, not a fabricated parser field-path. Never decorate local
+    # metadata or a changed value merely because its label matches.
+    catalogue = {}
+    for label, supplied, expected in (
+        ("Format", item.get("media_format"), hit.media_format),
+        ("Éditeur", metadata.get("publisher"), hit.publisher),
+        ("Publication", item.get("published_at"), hit.published_at),
+    ):
+        if type(supplied) is str and type(expected) is str and supplied == expected:
+            catalogue[label] = expected
 
-    def annotate(field):
+    def annotate(field, section_title):
         if type(field.value) is not str or field.provenance is not None:
             return field
         proof = proven.get((field.label, field.value))
-        if proof is None:
+        if proof is not None:
+            source = proof.source + " · " + proof.source_field
+        elif section_title == "Catalogue" and catalogue.get(field.label) == field.value:
+            source = "Notice C · observation de source"
+        else:
             return field
         return replace(field, provenance=Provenance(
-            source=proof.source + " · " + proof.source_field,
+            source=source,
             provider_id=hit.provider_id,
             source_id=hit.record_id,
             observed_at=observed_at,
         ))
 
     return replace(presentation, sections=tuple(
-        replace(section, fields=tuple(annotate(field) for field in section.fields))
+        replace(section, fields=tuple(annotate(field, section.title) for field in section.fields))
         for section in presentation.sections
     ))

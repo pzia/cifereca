@@ -361,3 +361,20 @@ def test_disconnected_without_epoch_change_rejects_completed_candidate(
         assert not list(tmp_path.rglob("*.part"))
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("status,retryable", [(429, True), (503, True), (403, False)])
+def test_bnf_qualifies_only_transient_signed_token_get_failure(tmp_path, status, retryable):
+    from cifereca.plugin_api import RetryableContentDownload
+
+    session, account, _, calls, token_gets, offer = ready(status=status)
+    try:
+        writes_before = [row for row in calls if row[0] == "POST"]
+        with pytest.raises(ProviderError) as result:
+            stage(session, account, offer, tmp_path, admission_current=lambda: True)
+        assert (type(result.value) is RetryableContentDownload) is retryable
+        assert [request.method for request in token_gets] == ["GET"]
+        assert [row for row in calls if row[0] == "POST"] == writes_before
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()

@@ -1,10 +1,12 @@
 from __future__ import annotations
 import hashlib, html, re
+from collections import Counter
+from dataclasses import replace
 from unicodedata import category
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 import httpx
-from cifereca.plugin_api import HTTPX_TRANSPORT
+from cifereca.plugin_api import HTTPX_TRANSPORT, ProviderSearchResponse, PublicSearchNotice
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 FREE_JSON=BASE+'allbooks/category/getBooks'
@@ -92,7 +94,42 @@ def _listing_product_href(href, attrs, page_html):
                 and re.search(r'\bShowing\s+\d+\s*-\s*\d+\s+of\s+\d+\b',
                               page_html, re.I))
 
-def _observed_free_library_json(response, credential_id, page):
+def _documentary_product_coordinates(entry):
+    """Unique native product and exact observed product URL, not a title join."""
+    if type(entry) is not dict:
+        return None, None
+    product = entry.get("id")
+    if type(product) is not int or not 0 < product < 2**63:
+        product = None
+    href = entry.get("productUrl")
+    url = None
+    if type(href) is str and 0 < len(href) <= 2048:
+        try:
+            candidate = urljoin(BASE, href)
+            parts = urlsplit(candidate)
+            if (_trusted_baen_url(candidate) and parts.netloc == "www.baen.com"
+                    and href in (candidate, parts.path)
+                    and not parts.query and re.fullmatch(
+                        r"/[A-Za-z0-9][A-Za-z0-9_-]*\.html", parts.path)):
+                url = candidate
+        except ValueError:
+            pass
+    return product, url
+
+
+def _anonymous_category_response(response):
+    """Do not confer public authority on a cookie/authenticated response."""
+    try:
+        request = response.request
+        return (request.method == "POST" and str(request.url) == FREE_JSON
+                and "cookie" not in request.headers
+                and "authorization" not in request.headers
+                and "proxy-authorization" not in request.headers)
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def _observed_free_library_json(response, credential_id, page, *, documentary=False):
     """Parse only Baen's observed Free Library AJAX schema (#2333).
 
     A category listing is not a general q search or a reader entitlement.
@@ -123,8 +160,20 @@ def _observed_free_library_json(response, credential_id, page):
             or type(payload.get('productData')) is not list
             or len(payload['productData']) != payload['numOfBooks']):
         raise ValueError('unverified_public_json')
+    if documentary:
+        if credential_id != "__public__" or not _anonymous_category_response(response):
+            return [], len(payload["productData"]) or 1
+        # Count even malformed siblings before the descriptive filter.
+        coords = [_documentary_product_coordinates(entry) for entry in payload["productData"]]
+        ids = Counter(product for product, _ in coords if product is not None)
+        urls = Counter(url for _, url in coords if url is not None)
     out=[];seen=set();rejected=0
-    for entry in payload['productData']:
+    for index, entry in enumerate(payload['productData']):
+        if documentary:
+            product, exact_url = coords[index]
+            if product is None or exact_url is None or ids[product] != 1 or urls[exact_url] != 1:
+                rejected += 1
+                continue
         if type(entry) is not dict or entry.get('isFree') is not True:
             rejected += 1
             continue
@@ -279,7 +328,15 @@ class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=HTTPX_TRANSPORT.client(producer="provider.baen",timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
-        self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
+        self.connected = True
+        # The installation singleton is anonymous, not a fabricated borrower.
+        # Preserve the legacy standalone test/client account convention.
+        self._accounts = [] if self.credential_id == "__public__" and not self.credentials else [
+            Account(display_name='Baen Free Library', unique_id='baen-public',
+                    provider_id='baen', credential_id=self.credential_id,
+                    provider_label=self.descriptor.display_name, is_primary=True)
+        ]
+        return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
     @staticmethod
     def _search_params(query, page, page_size=50):
@@ -317,7 +374,46 @@ class BaenSession(ProviderSession):
         return item
 
     def search(self,query,scope='all',page=0,field='all'):
-        self.last_search_warnings = []
+        warnings = []
+        self.last_search_warnings = warnings
+        return self._search_page(query, scope, page, field, warnings=warnings)
+
+    def search_with_response_facets(self, query, scope="all", *, field="all", content_types=()):
+        """Only the observed anonymous category JSON contributes durable C.
+
+        Free-text GET is still a legacy, partial search, with no same-call
+        documentary authority. No detail request or delivery is performed.
+        """
+        if not (self.connected and self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials
+                and type(self._accounts) is list and not self._accounts):
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Baen : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
+        if requested and "ebook" not in requested:
+            # The observed category does not attest EPUB/PDF variants.
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        scope = "all" if scope == "catalog" else scope
+        warnings = []
+        self.last_search_warnings = warnings
+        documentary = query is None or (type(query) is str and not query.strip())
+        rows = self._search_page(query, scope, 0, field, warnings=warnings,
+                                 documentary=documentary)
+        if not documentary:
+            return ProviderSearchResponse(rows, partial=True, catalogue_complete=False)
+        # The unverified pagination warning is independent from actual
+        # rejected records on this source page. Do not consult a previous
+        # call's mutable warnings or insert a second HTTP request.
+        return ProviderSearchResponse(
+            rows, partial=bool(requested - {"ebook"}) or len(warnings) > 1,
+            catalogue_complete=False,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        )
+
+    def _search_page(self,query,scope,page,field,*,warnings,documentary=False):
         # A direct caller must not mistake a general search for an exact
         # author/ISBN query. The Core broker also checks these declarations.
         if type(field) is not str or field.strip().casefold() != 'all':
@@ -383,17 +479,24 @@ class BaenSession(ProviderSession):
         if browse_category:
             try:
                 out, rejected = _observed_free_library_json(
-                    r, self.credential_id, page,
+                    r, self.credential_id, page, documentary=documentary,
                 )
             except ValueError:
                 # Invalid JSON/shape must not be mistaken for a genuine
                 # empty public category, even on HTTP 200.
                 raise ProviderError('Baen : catalogue_schema_unverified') from None
-            self.last_search_warnings.append(UNVERIFIED_SEARCH_WARNING)
+            warnings.append(UNVERIFIED_SEARCH_WARNING)
             if rejected:
-                self.last_search_warnings.append(
+                warnings.append(
                     'partial_results : Baen : lignes de catalogue non qualifiées'
                 )
+            if documentary:
+                # The native product ID and URL were both present and unique
+                # in this response. Keep the legacy stable URL-based record
+                # coordinate, but do not publish inventory, price or delivery.
+                return [replace(row, source_collection="public_catalog",
+                                metadata={"public_url_evidence": "baen.public_search_product_card"})
+                        for row in out]
             return out
         out=[]; seen=set()
         for attrs,body in re.findall(r'<a\b([^>]*)>(.*?)</a\s*>',r.text,re.I|re.S):
@@ -411,14 +514,14 @@ class BaenSession(ProviderSession):
         # Neither cards nor zero markers establish that this legacy route
         # applied q/page/pageSize. Keep every successful response partial
         # until the server search and pagination contract is qualified.
-        self.last_search_warnings.append(UNVERIFIED_SEARCH_WARNING)
+        warnings.append(UNVERIFIED_SEARCH_WARNING)
         if not out:
             # Unknown markup additionally cannot attest even an empty page.
             if not (
                 re.search(r'\bShowing\s+0\s*-\s*0\s+of\s+0\b', r.text, re.I)
                 and re.search(r'\bNo\s+results\b', r.text, re.I)
             ):
-                self.last_search_warnings.append(
+                warnings.append(
                     'partial_results : Baen : absence de résultats non attestée'
                 )
         return out[:self.page_size]
