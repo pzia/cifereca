@@ -2103,8 +2103,7 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     c_page = None
     if (type(query) is str and 2 <= len(query.strip()) <= 160
             and field in ("all", "title", "author", "publisher", "subject", "series", "language")
-            and scope in ("all", "digital", "physical", "unknown")
-            and age is None):
+            and scope in ("all", "digital", "physical", "unknown")):
         from ..storage import Storage
         if isinstance(getattr(self, "storage", None), Storage):
             from .notice_c_public_search import search_public_notice_c
@@ -2115,6 +2114,7 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
                     self.storage, query, field=field, scope=scope,
                     provider_ids=tuple(provider_ids or ()), group_by_document=True,
                     content_types=tuple(content_types or ()),
+                    age=age, age_kind=age_kind,
                 )
             except (SQLiteError, ValueError, TypeError, AttributeError):
                 # Failed public metadata must never erase private possessions
