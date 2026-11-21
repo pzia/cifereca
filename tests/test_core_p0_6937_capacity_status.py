@@ -70,3 +70,22 @@ def test_exact_capacity_boundary_and_unrelated_caller_transaction(committed, mon
     finally:
         conn.rollback()
     assert db.metadata_get("synthetic.caller") is None
+
+
+def test_pending_reservation_is_counted_without_publication(tmp_path):
+    from tests.test_core_p0_4520_recovery_operator import _setup
+
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        before = capacity.review_derived_capacity_status(db)
+        assert before["pending_receipts"] == 1
+        assert before["committed_receipts"] == 0
+        assert before["receipt_count"] == 1
+        assert before["declared_output_bytes"] == intent.output_size
+        assert before["paired_compact_shadows"] == 0
+        assert not before["new_transform_admitted"]
+        assert db.metadata_get(reservation.key) is not None
+        assert capacity.review_derived_capacity_status(db) == before
+    finally:
+        db.close()
