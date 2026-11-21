@@ -17,6 +17,36 @@ class LocalOriginDetailMatch:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPublicChoice:
+    token: str
+    provider_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalOriginPublicMatch:
+    provider_id: str
+    record_id: str
+    docbase: str
+    medium: str
+    title: str
+    author: str | None
+    media_format: str | None
+    isbns: tuple[str, ...]
+    comparison: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPublicReport:
+    provider_id: str
+    status: str
+    matches: tuple[LocalOriginPublicMatch, ...]
+    provider_access_performed: bool
+    coverage_complete: bool = False
+    fresh_network_verified: bool = False
+    association_authorized: bool = False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class LocalOriginDetailPage:
     token: str
     page: int
@@ -29,17 +59,20 @@ class LocalOriginDetailPage:
     coverage_complete: bool = False
     provider_access_performed: bool = False
     association_authorized: bool = False
+    public_choices: tuple[LocalOriginPublicChoice, ...] = ()
 
 
 @runtime_checkable
 class LocalOriginDetailReadBroker(Protocol):
     """Worker-only exact local review, one transient view per activation.
 
-    The host supplies a revocable view guard. Tokens are opaque and do not
-    authorize provider activity, mutation, or selection of a different copy.
+    The host supplies a revocable view guard. Page tokens only continue
+    cache review. Separate public-choice tokens require explicit consent to
+    send the verified OPF title to that anonymous catalogue, once per token.
     """
     def preview(self, *, identity_id: str, placement_id: str,
                 still_current: Callable[[], bool], confirmed: bool = False,
                 page_size: int = 20) -> LocalOriginDetailPage | None: ...
     def next_page(self, *, token: str, confirmed: bool = False) -> LocalOriginDetailPage | None: ...
+    def search_public(self, *, token: str, confirmed: bool = False) -> LocalOriginPublicReport | None: ...
     def cancel(self, *, token: str) -> None: ...
