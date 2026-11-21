@@ -6,6 +6,7 @@ not an account- or ISBN-joined catalogue and never a complete query answer.
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import closing
 
 import pytest
 
@@ -194,7 +195,7 @@ class _HostileSearchRequestField:
 def test_public_c_search_request_rejects_non_native_fields_before_membership(
     tmp_path, updates,
 ):
-    with Storage(tmp_path / "non-native-request.sqlite") as db:
+    with closing(Storage(tmp_path / "non-native-request.sqlite")) as db:
         # The bad request is rejected before any SQLite query or supplier
         # lookup; a foreign value must never execute __hash__ / __eq__.
         with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
