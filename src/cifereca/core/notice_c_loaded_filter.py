@@ -93,7 +93,7 @@ def expand_filter_sources(rows, *, scope):
 
 
 def is_expanded_source(row):
-    return _MARKER in row
+    return type(row) is dict and type(row.get(_MARKER)) is object
 
 
 def collapse_filter_sources(rows, originals):
