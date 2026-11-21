@@ -74,3 +74,7 @@ Aucun moteur de refresh catalogue n'est introduit par ce lot.
 Ce lot respecte les frontières #2361 (sélecteur de Recherche), #1917
 (capacités de recherche), #2370/#2380 (diagnostics), #1120 (API stable).
 Aucune réactivation d'un plugin archivé ni collecte implicite.
+
+## Surfaces multiples et provenance documentaire (#4030)
+
+La capacité v1 ne classe pas un fournisseur dans une catégorie métier exclusive et ne confère aucun accès distant ni consentement à l'outil de suggestion. Les familles et limites A/B/C sont spécifiées dans [CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md](CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md). Les futurs résultats par surface exigent pagination, fraîcheur, preuve de compte et budget, sans créer de droit ou d'OriginLink.
