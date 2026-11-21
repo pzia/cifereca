@@ -143,3 +143,61 @@ def test_failed_public_endpoint_does_not_reuse_last_response():
         assert first.public_notices[0].result is not first.results[0]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("requested,ids,partial", [
+    (("epub",), ("epub", "kepub"), True),
+    (("kepub",), ("kepub",), True),
+    (("pdf",), ("pdf",), True),
+    (("mp3",), ("audio",), True),
+    (("ebook",), ("epub", "kepub", "pdf", "unknown", "conflict"), False),
+    (("audiobook",), ("audio",), False),
+    (("epub", "physical"), ("epub", "kepub"), True),
+    (("physical",), (), True),
+])
+def test_catalogue_only_formats_are_bound_to_exact_returned_rows(requested, ids, partial):
+    cards = [
+        dict(product_id="epub", title="EPUB", format="EPUB", file_format="epub"),
+        dict(product_id="kepub", title="KEPUB", format="KEPUB"),
+        dict(product_id="pdf", title="PDF", file_format="PDF"),
+        dict(product_id="unknown", title="Unknown"),
+        dict(product_id="conflict", title="Conflict", format="EPUB", file_format="PDF"),
+        dict(product_id="audio", title="Audio", format="MP3", content_type="audiobook"),
+    ]
+    paths = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        assert request.url.path == "/api/v2/catalog/search"
+        return httpx.Response(200, json={"items": cards})
+
+    session = _session(respond)
+    try:
+        response = session.search_with_response_facets("format", "catalog", content_types=requested)
+        assert tuple(row.record_id for row in response.results) == ids
+        assert response.partial is partial
+        assert response.catalogue_complete is False and response.terminal_empty is False
+        assert len(response.public_notices) == len(response.results)
+        for row, declaration in zip(response.results, response.public_notices):
+            assert declaration.result is not row
+            assert declaration.result.record_id == row.record_id
+            assert declaration.result.owned is declaration.result.downloadable is False
+            assert declaration.result.download_url is None
+        assert paths == ["/api/v2/catalog/search"]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("bad", ["epub", (False,), ("",), ("x"*81,), ("epub",)*33])
+def test_invalid_catalogue_formats_are_refused_before_http(bad):
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    def respond(request):
+        pytest.fail("invalid format must not issue HTTP")
+
+    session = _session(respond)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unsupported_content_type"):
+            session.search_with_response_facets("format", "catalog", content_types=bad)
+    finally:
+        session.close()
