@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import stat
 
 from .source_convergence import (
     ConvergencePlan, OriginEvidence, PlacementEvidence, SourceKey,
     plan_convergence,
 )
 from .canonical_recovery import _exact_borrower_bound_in_db
-from ..catalog import LocalCatalog
+from .derived_variant_publication import _verified_variant_file
+from .library_inventory import _open_root
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 
 
@@ -61,23 +61,32 @@ def _verified_copy(
                 # right first component but physically belongs to profile B.
                 or any(part == ".." for part in relative.parts)):
             return False
-        current = alias
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
+        # Only the configured root may be an alias. Resolve it once,
+        # then open every remaining component without following symlinks.
+        # Hash the exact descriptor whose named inode is rechecked.
+        root_fd = _open_root(resolved_root)
+        try:
+            root_info = os.fstat(root_fd)
+            expected_root = (root_info.st_dev, root_info.st_ino)
+            resolved = resolved_root.joinpath(*relative.parts)
+
+            def root_current():
+                if alias.resolve(strict=True) != resolved_root:
+                    return False
+                current_fd = _open_root(resolved_root)
+                try:
+                    info = os.fstat(current_fd)
+                    return (info.st_dev, info.st_ino) == expected_root
+                finally:
+                    os.close(current_fd)
+
+            if not root_current():
                 return False
-        resolved = physical.resolve(strict=True)
-        if not resolved.is_relative_to(resolved_root / owner_directory):
-            return False
-        before = os.stat(resolved, follow_symlinks=False)
-        if not stat.S_ISREG(before.st_mode) or before.st_size != size:
-            return False
-        digest = LocalCatalog.sha256(resolved)
-        after = os.stat(resolved, follow_symlinks=False)
-        return digest == sha256 and stat.S_ISREG(after.st_mode) and all(
-            getattr(before, name) == getattr(after, name)
-            for name in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-        )
+            with _verified_variant_file(resolved, sha256, expected_size=size) as recheck:
+                signature = recheck()
+                return root_current() and recheck() == signature
+        finally:
+            os.close(root_fd)
     except (OSError, ValueError, RuntimeError):
         return False
 
