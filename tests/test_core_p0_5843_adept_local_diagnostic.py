@@ -343,3 +343,68 @@ def test_legacy_only_evidence_does_not_invent_accounts_or_references(tmp_path):
         assert sibling["legacy_loan_right_rows_without_reference"] == 1
     finally:
         store.close()
+
+
+def test_local_canonical_artifact_and_placement_evidence_remains_non_authorizing(tmp_path):
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    try:
+        with store._lock, store._connect() as db:
+            for idx, placement_owner, placement_state, canonical in (
+                (1, "PRIVATE_A", "present", True),
+                (2, "PRIVATE_B", "present", True),
+                (3, "PRIVATE_A", "missing", True),
+                (4, "PRIVATE_A", "present", False),
+            ):
+                ref = f"PRIVATE_REF_{idx}"
+                digest = format(idx, "064x")
+                artifact = "sha256:" + digest if canonical else "PRIVATE_LEGACY_ARTIFACT"
+                db.execute(
+                    "INSERT INTO source_references(source_reference_id,identity_id,provider_id,"
+                    "credential_id,account_id,branch_id,edition_id,right_id,reference_kind,"
+                    "state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'loan','active',1,1)",
+                    (ref, "PRIVATE_A", "library1", "PRIVATE_C", "PRIVATE_ACCOUNT",
+                     "branch", ref, ref))
+                db.execute("INSERT INTO artifacts(artifact_id,sha256,size,media_format,"
+                           "created_at,updated_at) VALUES(?,?,1,'epub',1,1)",
+                           (artifact, digest))
+                db.execute("INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
+                           "artifact_id,source_reference_id,evidence_ref,created_at,updated_at)"
+                           " VALUES(?,'adept',?,?,?,?,1,1)",
+                           (f"PRIVATE_ORIGIN_{idx}", "PRIVATE_A", artifact, ref, "PRIVATE_RECEIPT"))
+                db.execute("INSERT INTO placements(placement_id,artifact_id,path,identity_id,"
+                           "state,created_at,updated_at) VALUES(?,?,?,?,?,1,1)",
+                           (f"PRIVATE_PLACEMENT_{idx}", artifact, f"/PRIVATE_PATH_{idx}",
+                            placement_owner, placement_state))
+            for idx, owner, ref in (
+                (1, "PRIVATE_A", None),
+                (2, "PRIVATE_A", "PRIVATE_ABSENT_REF"),
+                (3, "PRIVATE_B", None),
+            ):
+                db.execute("INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
+                           "artifact_id,source_reference_id,evidence_ref,created_at,updated_at)"
+                           " VALUES(?,'adept',?,?,?,?,1,1)",
+                           (f"PRIVATE_UNSCOPED_{idx}", owner, "sha256:" + format(1, "064x"),
+                            ref, f"PRIVATE_UNSCOPED_RECEIPT_{idx}"))
+        store.close()
+        selected = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", credential="PRIVATE_C")
+        assert selected["status"] == "complete"
+        record, = selected["accounts"]
+        assert record["adept_origin_records"] == 4
+        assert record["origin_artifact_unverified"] == 1
+        assert record["origin_without_same_identity_placement"] == 1
+        assert record["origin_without_same_identity_present_record"] == 2
+        assert "adept_origins_without_source_reference" not in selected["counts"]
+        assert "adept_origins_dangling_source_reference" not in selected["counts"]
+        assert selected["physical_bytes_checked"] is False
+        assert selected["authorization_attested"] is False
+        assert "PRIVATE" not in json.dumps(selected)
+        owner = diagnostic.diagnose_local_adept(database_path=path, identity="PRIVATE_A")
+        assert owner["counts"]["adept_origins_without_source_reference"] == 1
+        assert owner["counts"]["adept_origins_dangling_source_reference"] == 1
+        overall = diagnostic.diagnose_local_adept(database_path=path)
+        assert overall["counts"]["adept_origins_without_source_reference"] == 2
+        assert overall["counts"]["adept_origins_dangling_source_reference"] == 1
+    finally:
+        store.close()
