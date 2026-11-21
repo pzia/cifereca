@@ -15,8 +15,8 @@ from .canonical_runtime_attempt import RUNTIME_ATTEMPT_PREFIX, read_runtime_atte
 from .canonical_loan_retry_guard import historical_adept_ledger_hold
 from ..plugin_api.loan_inventory import LoanInventoryScope
 from .loan_download_retry import (
-    LoanDownloadRetry, _INTERVENTION_PREFIX, _OWNED_KEY_PREFIX, _decode, _key,
-    _retry_connection, read_adept_intervention,
+    LoanDownloadRetry, _INTERVENTION_PREFIX, _OWNED_KEY_PREFIX, _key,
+    _read_retry_in_db, _retry_connection, read_adept_intervention,
 )
 from .notice_c_purchase_descriptive_read import _read_descriptive_txn
 from .source_context import source_context_epoch
@@ -34,11 +34,13 @@ class LoanDownloadRetryRow:
     runtime_hold: bool = False
     runtime_started_at: int = 0
     runtime_phase: str = ""
+    local_state_invalid: bool = False
 
     @property
     def can_reset(self) -> bool:
         return self.retry.paused and not (
-            self.adept_hold or self.inactive or self.profile_refused_at or self.runtime_hold
+            self.adept_hold or self.inactive or self.profile_refused_at
+            or self.runtime_hold or self.local_state_invalid
         )
 
 
@@ -152,12 +154,21 @@ def review_loan_download_retries(service, *, identity_id: str):
         for provider, credential, account, branch, edition, right, state, kind in observed_sources():
             source = SourceKey(ProviderRightsScope(identity_id, provider, credential, account),
                                edition, right, kind, branch)
-            raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
-            retry = _decode(raw[0] if raw is not None else None)
+            invalid = False
+            try:
+                retry = _read_retry_in_db(db, source)
+            except ValueError:
+                retry = LoanDownloadRetry()
+                invalid = True
             hold = kind == "loan" and _has_adept_hold(db, source, scopes)
-            refused_at = read_adept_intervention(db, source)
+            try:
+                refused_at = read_adept_intervention(db, source)
+            except ValueError:
+                refused_at = 0
+                invalid = True
             runtime_hold, runtime_started_at, runtime_phase = read_runtime_attempt_in_db(db, source)
-            if not (retry.failures or hold or refused_at or runtime_hold):
+            invalid = invalid or runtime_phase == "unknown"
+            if not (retry.failures or hold or refused_at or runtime_hold or invalid):
                 continue
             if len(result) >= _MAX_SOURCES:
                 raise ValueError("loan_download_review_over_budget")
@@ -178,7 +189,7 @@ def review_loan_download_retries(service, *, identity_id: str):
                                       if fact.field == "title"), title)
             result.append(LoanDownloadRetryRow(
                 source, title, retry, hold, state == "inactive", refused_at,
-                runtime_hold, runtime_started_at, runtime_phase,
+                runtime_hold, runtime_started_at, runtime_phase, invalid,
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")
@@ -214,11 +225,15 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
                 (scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id,
                  source.branch, source.edition_id, source.right_id, source.kind),
             ).fetchall()
-            raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
+            try:
+                retry = _read_retry_in_db(db, source)
+                intervention = read_adept_intervention(db, source)
+            except ValueError:
+                raise ValueError("loan_download_retry_reset_changed") from None
             if (len(refs) != 1 or refs[0][0] == "inactive"
                     or (source.kind == "loan" and _has_adept_hold(db, source, scopes))
-                    or read_adept_intervention(db, source)
+                    or intervention
                     or read_runtime_attempt_in_db(db, source)[0]
-                    or raw is None or _decode(raw[0]) != row.retry or not current()):
+                    or retry != row.retry or not current()):
                 raise ValueError("loan_download_retry_reset_changed")
             db.execute("DELETE FROM metadata WHERE key=?", (_key(source),))
