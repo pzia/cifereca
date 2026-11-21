@@ -374,3 +374,54 @@ def test_publisher_checks_exact_borrower_with_large_sibling_account_roster(store
             (result.source_reference_id,),
         ).fetchone()
     assert exact == ("buyer-A",)
+
+
+def test_publication_full_commit_and_restore_on_refusal(store, tmp_path):
+    key, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    root = tmp_path / "EBooks"
+    db = store._connect()
+    db.execute("PRAGMA synchronous=NORMAL")
+    seen = []
+
+    def guard(sql):
+        assert sql is db and sql.in_transaction
+        seen.append(sql.execute("PRAGMA synchronous").fetchone()[0])
+        return len(seen) == 1
+
+    with pytest.raises(ValueError, match="canonical_publication_policy_changed"):
+        publish(store, root, path, key, snap, transaction_guard=guard)
+    assert seen == [2, 2]
+    assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+    assert rows(store) == (0, 0, 0, 0)
+    assert publish(store, root, path, key, snap).changed
+    assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+    other = Storage(store.path)
+    try:
+        assert rows(other) == (1, 1, 1, 1)
+    finally:
+        other.close()
+    assert path.read_bytes() == BYTES
+
+
+def test_publication_refuses_nested_transaction_before_preliminary_reads(store, tmp_path):
+    key, snap = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    db = store._connect()
+    other = sqlite3.connect(store.path)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT INTO metadata(key,value) VALUES('synthetic.publish.caller','pending')")
+        with pytest.raises(ValueError, match="canonical_write_nested_transaction"):
+            publish(store, tmp_path / "EBooks", path, key, snap)
+        assert db.in_transaction
+        assert other.execute("SELECT value FROM metadata WHERE key='synthetic.publish.caller'").fetchone() is None
+        assert db.execute("SELECT value FROM metadata WHERE key='synthetic.publish.caller'").fetchone() == ("pending",)
+    finally:
+        if db.in_transaction:
+            db.rollback()
+        other.close()
+    assert rows(store) == (0, 0, 0, 0)
+    assert path.read_bytes() == BYTES
