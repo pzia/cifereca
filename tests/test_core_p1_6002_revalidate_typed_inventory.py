@@ -127,3 +127,47 @@ def test_unknown_medium_is_partial_not_a_silent_complete_claim():
     assert partial.status == "partial"
     assert partial.pagination_complete is False
     assert partial.durably_committed is False
+
+
+
+@pytest.mark.parametrize("timestamp", [
+    "1999-12-31T23:00:00+00:00",
+    "2101-01-01T00:00:00+00:00",
+    "2026-11-15T07:00:00",
+    "2026-11-15",
+    42,
+    "2026-11-15T07:00:00+00:00" + " " * 40,
+])
+def test_mutated_inventory_timestamp_cannot_qualify_an_old_envelope(timestamp):
+    # The typed constructor validates dates, but a frozen object can be
+    # changed after that validation. The staging read must recheck them.
+    assert stage(altered(observed_at=timestamp)) is None
+
+
+@pytest.mark.parametrize("reason", ["read_failed", "cancelled",
+                                    "inventory_not_exhaustive", "unknown"])
+def test_success_with_failure_or_unknown_reason_is_not_complete(reason):
+    read = altered(reason_code=reason)
+    result = stage(read)
+    assert result is not None
+    assert result.status == "partial"
+    assert result.pagination_complete is False
+    assert result.durably_committed is False
+    assert evaluate_digital_remaining(
+        SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
+        inventory=result, manual_total=4,
+    ).remaining is None
+
+
+@pytest.mark.parametrize("reason", ["fake_complete", 0, True, [], {}])
+def test_mutated_unrecognized_inventory_reason_is_rejected(reason):
+    assert stage(altered(reason_code=reason)) is None
+
+
+def test_partially_observed_snapshot_keeps_a_valid_closed_reason():
+    read = altered(status="partial", reason_code="pagination_incomplete")
+    result = stage(read)
+    assert result is not None
+    assert result.status == "partial"
+    assert result.pagination_complete is False
+    assert result.durably_committed is False

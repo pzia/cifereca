@@ -6,6 +6,7 @@ not an account- or ISBN-joined catalogue and never a complete query answer.
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import closing
 
 import pytest
 
@@ -173,6 +174,32 @@ def test_search_c_rejects_invalid_queries(tmp_path, invalid):
             search_public_notice_c(db, **invalid)
     finally:
         db.close()
+
+
+class _HostileSearchRequestField:
+    def __hash__(self):
+        raise AssertionError("foreign hash invoked in public C request")
+
+    def __eq__(self, other):
+        raise AssertionError("foreign equality invoked in public C request")
+
+
+@pytest.mark.parametrize("updates", (
+    {"field": _HostileSearchRequestField()},
+    {"scope": _HostileSearchRequestField()},
+    {"field": {}}, {"scope": []},
+    {"field": b"all"}, {"scope": False},
+    {"field": "All"}, {"scope": "GLOBAL"},
+    {"provider_ids": ("x" * 161,)},
+))
+def test_public_c_search_request_rejects_non_native_fields_before_membership(
+    tmp_path, updates,
+):
+    with closing(Storage(tmp_path / "non-native-request.sqlite")) as db:
+        # The bad request is rejected before any SQLite query or supplier
+        # lookup; a foreign value must never execute __hash__ / __eq__.
+        with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
+            search_public_notice_c(db, "catalogue", **updates)
 
 
 def test_legacy_replay_cannot_downgrade_same_call_c_bibliography(tmp_path):

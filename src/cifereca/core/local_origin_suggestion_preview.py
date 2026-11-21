@@ -115,6 +115,14 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False):
                 # a convenient title from an ambiguous or foreign catalogue row.
                 if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
                     return "catalogue_evidence_unavailable", None
+                # SQLite's TEXT affinity does not guarantee a native TEXT
+                # value: BLOB/integer titles or authors are corrupt local
+                # catalogue evidence, even when the EPUB OPF is independently
+                # readable. Never silently bless an inconsistent catalogue.
+                if any((entry[4] is not None and type(entry[4]) is not str)
+                       or (entry[5] is not None and type(entry[5]) is not str)
+                       for entry in entries):
+                    return "catalogue_evidence_unavailable", None
                 descriptions = {(entry[4], entry[5]) for entry in entries}
                 if len(descriptions) > 1:
                     return "catalogue_evidence_ambiguous", None
