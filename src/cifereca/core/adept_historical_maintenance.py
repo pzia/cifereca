@@ -55,7 +55,7 @@ class HistoricalReviewRequest:
             return False
 
     def bound(self):
-        return (self.current()
+        return (self.current() and not self.storage._connect().in_transaction
                 and self.storage.exact_profile_directory_binding(self.identity)
                 == (self.directory, True))
 
@@ -199,5 +199,58 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
                 "coverage": "persisted_loan_auto_adept_ledger",
                 "complete_provider_inventory": False,
                 "common_snapshot_attested": False, "mutation_authorized": False}
+    except Exception:
+        return None
+
+
+def run_historical_hold_review(service, request, *, offset=0):
+    """Project the existing retry queue, not a second marker inventory.
+
+    A v1 marker can exist before any acquisition ledger receipt. This
+    explicit maintenance view includes those exact loan occurrences too.
+    The current provider status, activation, fresh offer and replay proof
+    remain unchecked. No marker value, operation ID or digest is exported.
+    """
+    from .loan_download_retry_review import review_loan_download_retries
+
+    if (type(request) is not HistoricalReviewRequest or request.service is not service
+            or type(offset) is not int or not 0 <= offset <= 2048):
+        return None
+    try:
+        if not request.bound():
+            return None
+        blocked = tuple(row for row in review_loan_download_retries(
+            service, identity_id=request.identity,
+        ) if row.source.kind == "loan" and row.adept_hold)
+        reports = []
+        for row in blocked[offset:offset + _PAGE]:
+            source = row.source
+            reports.append({
+                "provider_id": source.scope.provider_id,
+                "credential_id": source.scope.credential_id,
+                "account_id": source.scope.account_id,
+                "edition_id": source.edition_id,
+                "provider_loan_id": source.right_id,
+                "canonical_branch": source.branch,
+                "title": row.title,
+                "hold_origin": row.adept_hold_origin,
+                "recorded_inactive": row.inactive,
+                "provider_loan_state": "not_checked",
+                "activation_attested": False,
+                "fresh_offer_attested": False,
+                "replay_proof": "not_established",
+                "unlock_authorized": False,
+            })
+        if not request.bound():
+            return None
+        return {
+            "rows": tuple(reports),
+            "next_cursor": offset + _PAGE if offset + _PAGE < len(blocked) else None,
+            "known_holds": len(blocked),
+            "coverage": "persisted_source_retry_queue",
+            "complete_provider_inventory": False,
+            "common_snapshot_attested": False,
+            "mutation_authorized": False,
+        }
     except Exception:
         return None
