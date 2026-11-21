@@ -15,8 +15,17 @@ from .derived_variant_compact_receipt import (
 )
 
 
-def review_derived_capacity_status(storage):
-    """Read-only, bounded, fail-closed status for all recorded profiles."""
+def review_derived_capacity_status(storage, *, identity_id=None):
+    """Read-only, bounded, fail-closed global budget plus optional profile use.
+
+    Limits remain installation-wide; a profile's reported usage does not
+    grant its own separate quota or assert absence of files on disk.
+    """
+    if identity_id is not None and (
+        type(identity_id) is not str or not 0 < len(identity_id) <= 1024
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in identity_id)
+    ):
+        raise DerivedJournalConflict("derived_capacity_invalid_profile")
     with storage._lock:
         db = storage._connect()
         if db.in_transaction:
@@ -29,16 +38,23 @@ def review_derived_capacity_status(storage):
             )
             rows, payload_bytes = _measure(db)
             pending = committed = declared_output = 0
+            profile_pending = profile_committed = profile_output = 0
             for key, _size in rows:
                 raw = db.execute(
                     "SELECT value FROM metadata WHERE key=?", (key,),
                 ).fetchone()[0]
                 intent = _decode(key, raw)
                 declared_output += intent.output_size
+                if intent.identity_id == identity_id:
+                    profile_output += intent.output_size
                 if key.startswith(_PREFIX):
                     pending += 1
+                    if intent.identity_id == identity_id:
+                        profile_pending += 1
                 elif key.startswith(_COMMITTED):
                     committed += 1
+                    if intent.identity_id == identity_id:
+                        profile_committed += 1
                 else:
                     raise DerivedJournalConflict("derived_capacity_unrecognized_receipt")
             if declared_output > _MAX_RESERVED_OUTPUT_BYTES:
@@ -46,6 +62,10 @@ def review_derived_capacity_status(storage):
 
     return {
         "status": "observed",
+        "profile_scoped": identity_id is not None,
+        "profile_pending_receipts": profile_pending if identity_id is not None else None,
+        "profile_committed_receipts": profile_committed if identity_id is not None else None,
+        "profile_declared_output_bytes": profile_output if identity_id is not None else None,
         "pending_receipts": pending,
         "committed_receipts": committed,
         "receipt_count": len(rows),
