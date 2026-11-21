@@ -35,7 +35,12 @@ class PublicCatalogueCandidate:
 def _source(service, request, provider):
     if not request.current() or not service._provider_enabled_for_identity(provider, request.identity_id):
         return None
-    sessions = [s for s in service._sessions.values()
+    # The direct confirmed comparison must obey the same 256-session cap as
+    # discovery.  A stale or oversized registry is no permission to search.
+    registry = service._sessions
+    if type(registry) is not dict or len(registry) > 256:
+        return None
+    sessions = [s for s in registry.values()
                 if _inert_search_source_state(s) == (provider, "__public__", True)]
     if len(sessions) != 1:
         return None
