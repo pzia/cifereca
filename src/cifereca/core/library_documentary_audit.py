@@ -18,6 +18,7 @@ from ..plugin_api import normalize_language_tag
 _KEYS = {
     "covers": ("embedded", "origin", "catalog", "ambiguous", "missing", "unknown"),
     "languages": ("canonical", "noncanonical", "invalid", "unknown"),
+    "metadata": ("divergent", "complement", "observed", "unknown"),
 }
 _MAX_ROWS = 10000
 # One selected EPUB probe can read up to 8 MiB. Limit physical IO per audit.
@@ -131,16 +132,23 @@ def _classify_language_sources(values):
     return "partial" if len(values) < 2 or any(not value for value in values) else "concordant"
 
 
-def _language_provenance(storage, row, owner):
+def _retained_document(storage, row, owner):
     link = row.get("_public_canonical_document_link")
     if not valid_local_public_c_link(
         link, identity_id=owner, artifact_id=row.get("artifact_id"),
         placement_id=row.get("placement_id"),
     ):
-        return "unknown"
+        return None
     retained = read_consolidated_notice_cover(storage, link.document)
     if (retained is None or retained.epoch != link.epoch
             or tuple(source.source_ref for source in retained.sources) != link.source_refs):
+        return None
+    return retained
+
+
+def _language_provenance(storage, row, owner):
+    retained = _retained_document(storage, row, owner)
+    if retained is None:
         return "unknown"
     values = []
     for source in retained.sources:
@@ -150,6 +158,35 @@ def _language_provenance(storage, row, owner):
         values.append(None if observation is None else observation.languages)
     # Cover completeness is not evidence of language completeness.
     return _classify_language_sources(values)
+
+
+_METADATA_FIELDS = ("title", "author", "publisher", "published_at")
+
+
+def _metadata_provenance(storage, row, owner):
+    """Literal descriptive observations, never a selected canonical value."""
+    retained = _retained_document(storage, row, owner)
+    if retained is None:
+        return dict.fromkeys(_METADATA_FIELDS, "unknown")
+    result = {}
+    for field in _METADATA_FIELDS:
+        values, missing = set(), False
+        for member in retained.sources:
+            bio = member.public_bibliography if member.visibility == "public" else None
+            seen = set()
+            if bio is not None:
+                primary = getattr(bio, field)
+                if type(primary) is str and primary.strip():
+                    seen.add(primary.strip())
+                for detail in member.public_detail_facts:
+                    if detail.field == field and type(detail.value) is str and detail.value.strip():
+                        seen.add(detail.value.strip())
+            values.update(seen)
+            missing = missing or not seen
+        result[field] = ("divergent" if len(values) > 1 else
+                         "complement" if values and missing else
+                         "observed" if values else "unknown")
+    return result
 
 
 def library_documentary_audit(service, *, identity_id, kind, runtime=False,
@@ -167,6 +204,8 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False,
         if runtime:
             result.update(n2=n2 if n2 is not None else dict.fromkeys(_N2_KEYS, 0),
                           n3=n3 if n3 is not None else dict.fromkeys(_N3_KEYS, 0))
+        if kind == "metadata":
+            result["fields"] = {field: dict.fromkeys(keys, 0) for field in _METADATA_FIELDS}
         if language_provenance:
             result["provenance"] = (provenance if provenance is not None
                                     else dict.fromkeys(_LANGUAGE_PROVENANCE, 0))
@@ -186,7 +225,7 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False,
                 or any(type(row) is not dict or row.get("identity_id") != identity_id
                        for row in rows)):
             return empty()
-        if language_provenance:
+        if language_provenance or kind == "metadata":
             # Reattest the documentary relation even when EPUB N1 wins.
             # Never mutate the Library snapshot or trust a supplied receipt.
             rows = [dict(row) for row in rows]
@@ -198,15 +237,24 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False,
         observer = getattr(service, "_documentary_cover_observer", None) if runtime else None
         provenance = dict.fromkeys(_LANGUAGE_PROVENANCE, 0)
         probes = 0
+        fields = {field: dict.fromkeys(keys, 0) for field in _METADATA_FIELDS} if kind == "metadata" else None
         for row in rows:
             packet = None
             try:
                 if kind == "covers":
                     status, packet = _cover_state_and_packet(service.storage, row, identity_id)
-                else:
+                elif kind == "languages":
                     status = _language_state(row)
+                else:
+                    states = _metadata_provenance(service.storage, row, identity_id)
+                    status = next(key for key in keys if key in states.values())
             except (ValueError, TypeError, OSError, RuntimeError, AttributeError):
                 status = "unknown"
+                if fields is not None:
+                    states = dict.fromkeys(_METADATA_FIELDS, "unknown")
+            if fields is not None:
+                for field, state in states.items():
+                    fields[field][state] += 1
             counts[status if status in counts else "unknown"] += 1
             if language_provenance:
                 try:
@@ -234,4 +282,7 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False,
             return empty()
     except Exception:
         return empty()
-    return report("partial", len(rows), counts, n2, n3, provenance)
+    result = report("partial", len(rows), counts, n2, n3, provenance)
+    if fields is not None:
+        result["fields"] = fields
+    return result
