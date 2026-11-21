@@ -378,16 +378,11 @@ class EbooksSession(ProviderSession):
                 raise ProviderError(
                     'Ebooks libres et gratuits : transport_unavailable'
                 ) from None
-        # This is a local session registration, NOT a successful OPDS probe.
+        # This is a local catalogue registration, NOT a successful OPDS
+        # probe, authenticated reader, or private account. Legacy connection
+        # IDs and options remain available independently of runtime accounts.
         self.connected=True
-        if self.credential_id == "__public__" and type(self.credentials) is dict and not self.credentials:
-            self._accounts=[]
-            return self.accounts
-        self._accounts=[Account(
-            display_name='Catalogue public',unique_id='ebooksgratuits',
-            provider_id='ebooksgratuits',credential_id=self.credential_id,
-            provider_label=self.descriptor.display_name,is_primary=True,
-        )]
+        self._accounts=[]
         return self.accounts
 
     def close(self):

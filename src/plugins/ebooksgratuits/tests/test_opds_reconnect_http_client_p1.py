@@ -64,7 +64,7 @@ def make_session(monkeypatch, *, backend="opds", refuse=False, credential="__pub
     return result, requests, created
 
 
-@pytest.mark.parametrize("credential,account_count", [("__public__", 0), ("legacy-public", 1)])
+@pytest.mark.parametrize("credential,account_count", [("__public__", 0), ("legacy-public", 0)])
 def test_reconnect_restores_search_without_http_during_connect(monkeypatch, credential, account_count):
     session, requests, created = make_session(monkeypatch, credential=credential)
     try:
