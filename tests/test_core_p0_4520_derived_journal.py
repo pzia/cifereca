@@ -347,3 +347,39 @@ def test_canonical_origin_receipt_requires_bounded_text(tmp_path, corruption):
             )
     finally:
         service.storage.close()
+
+
+def test_historical_committed_receipt_keeps_target_reserved_even_without_placement(tmp_path):
+    """An incomplete/corrupt historical B state is not a free destination.
+
+    Simulate a committed journal row after the canonical target placement was
+    lost. A new recipe must not adopt the same path merely because the
+    placements index has no row for it.
+    """
+    service, intent = _fixture(tmp_path)
+    db = service.storage
+    try:
+        reservation = journal.reserve_derived_publication(db, intent)
+        raw = db.metadata_get(reservation.key)
+        historical = journal._COMMITTED + reservation.receipt_sha256
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (reservation.key,))
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (historical, raw))
+        assert not any(row["path"] == intent.candidate_path for row in db.placements())
+        second = replace(
+            intent, options_fingerprint="different-recipe",
+            staged_path=str(Path(intent.staged_path).with_name("second-stage.epub")),
+        )
+        with pytest.raises(journal.DerivedJournalConflict, match="slot_occupied"):
+            journal.reserve_derived_publication(db, second)
+        assert db.metadata_get(historical) == raw
+        assert db.metadata_get(journal._slot(second)) is None
+        assert journal.summarize_derived_journal(db)["count"] == 1
+
+        independent = replace(
+            second, candidate_path=str(Path(intent.candidate_path).with_name("independent.epub")),
+        )
+        journal.reserve_derived_publication(db, independent)
+        assert journal.summarize_derived_journal(db)["count"] == 2
+    finally:
+        db.close()
