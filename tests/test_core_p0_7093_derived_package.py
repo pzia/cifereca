@@ -123,3 +123,32 @@ def test_changed_file_requires_fresh_review(tmp_path):
         assert db.metadata_get(reservation.key) is not None
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("case", ["paired", "orphan", "corrupt"])
+def test_capacity_explains_compact_admission_refusal(tmp_path, case):
+    from cifereca.core import derived_variant_compact_receipt as compact
+    from cifereca.core import derived_variant_journal as journal
+    from tests.test_core_p0_4520_derived_journal import _publish_reserved
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        key = journal._COMMITTED + reservation.receipt_sha256
+        raw = db.metadata_get(key)
+        pk, proof = compact.encode_committed_witness(key, raw)
+        db.metadata_set(pk, proof if case != "corrupt" else "unreadable")
+        if case == "orphan":
+            with db._lock, db._connect() as sql:
+                sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+        mod, plugin, host, controller, tasks, renders = rig(service)
+        assert controller.request("capacity")
+        description = mod.capacity_text(finish(tasks))
+        assert "Traces compactes" in description
+        assert ("Nouvelles réservations refusées" in description) is (case != "paired")
+        if case == "orphan":
+            assert "reçu original non vérifié" in description
+        assert "Aucun quota libéré" in description
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()

@@ -124,3 +124,37 @@ def test_nested_snapshot_refuses_without_committing_or_rolling_back(committed):
         if sql.in_transaction:
             sql.rollback()
         other.close()
+
+
+@pytest.mark.parametrize("case", ["paired", "orphan", "changed_original", "corrupt_shadow", "over_budget"])
+def test_compact_shadow_cannot_refund_active_journal_admission(committed, monkeypatch, case):
+    from dataclasses import replace
+    db, intent, key, raw = committed
+    proof_key, proof = compact.encode_committed_witness(key, raw)
+    db.metadata_set(proof_key, proof if case != "corrupt_shadow" else "unreadable")
+    if case == "orphan":
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+    elif case == "changed_original":
+        db.metadata_set(key, raw + " ")
+    elif case == "over_budget":
+        monkeypatch.setattr(compact, "_MAX_PROOF_TOTAL", len(proof) - 1)
+    before = (db.metadata_get(key), db.metadata_get(proof_key))
+    next_intent = replace(
+        intent, options_fingerprint="another",
+        staged_path=str(Path(intent.staged_path).with_name("next.epub")),
+        candidate_path=str(Path(intent.candidate_path).with_name("next.epub")),
+    )
+    monkeypatch.setattr(journal, "_MAX_RECORDS", 2)
+    monkeypatch.setattr(journal, "_MAX_RESERVED_OUTPUT_BYTES", 18)
+    if case == "paired":
+        new = journal.reserve_derived_publication(db, next_intent)
+        assert db.metadata_get(new.key)
+        report = journal.summarize_derived_journal(db)
+        assert report["count"] == 2 and report["reserved_output_bytes"] == 18
+    else:
+        with pytest.raises(journal.DerivedJournalConflict, match="derived_compact_"):
+            journal.reserve_derived_publication(db, next_intent)
+        assert db.metadata_get(journal._slot(next_intent)) is None
+    assert (db.metadata_get(key), db.metadata_get(proof_key)) == before
+    assert Path(intent.staged_path).samefile(intent.candidate_path)

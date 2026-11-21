@@ -91,8 +91,12 @@ def decode_committed_witness(key, raw):
         raise DerivedJournalConflict("derived_compact_unverified") from None
 
 
-def _measure_compact_in_transaction(db):
-    """Bounded separate namespace. Read only while caller holds SQL snapshot."""
+def _measure_compact_in_transaction(db, *, require_paired=False):
+    """Bounded separate namespace, inside the caller's SQL snapshot.
+
+    Admission requires each shadow to retain its original: no authorized
+    retirement format exists yet. Reports may still inspect orphan shadows.
+    """
     _require(db.in_transaction, "derived_compact_snapshot_required")
     rows = db.execute(
         "SELECT key,length(CAST(value AS BLOB)) FROM metadata "
@@ -106,7 +110,14 @@ def _measure_compact_in_transaction(db):
         total += size
         _require(total <= _MAX_PROOF_TOTAL, "derived_compact_capacity_exceeded")
         raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-        decode_committed_witness(key, raw)
+        original_key, original = decode_committed_witness(key, raw)
+        if require_paired:
+            record = db.execute(
+                "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND ? "
+                "THEN value ELSE NULL END FROM metadata WHERE key=?",
+                (_MAX_RECORD_BYTES, original_key),
+            ).fetchone()
+            _require(record == (original,), "derived_compact_original_unverified")
     return len(rows), total
 
 

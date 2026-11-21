@@ -66,7 +66,7 @@ def _subtitle(value):
                 f'{rc["unobserved_receipts"]} reçus non observés. '
                 "Aucun orphelin supprimable attesté."
             )
-        compact_text = "Traces compactes : capacité indéterminée."
+        compact_text = "Traces compactes : capacité indéterminée. Nouvelles réservations refusées tant que les témoins ne sont pas vérifiés."
         compact = value.get("compact")
         if compact is not None:
             if (type(compact) is not dict
@@ -95,6 +95,8 @@ def _subtitle(value):
                     f'{exact} rattachés au reçu exact, {unpaired} non rattachés.'
                     f'{compact_limit} Capacité distincte, aucune retraite attestée.'
                 )
+                if unpaired:
+                    compact_text += " Nouvelles réservations refusées : reçu original non vérifié."
             elif compact.get("status") != "unavailable":
                 return _FALLBACK
         prefix = "" if value["output_bytes_complete"] else "Au moins "

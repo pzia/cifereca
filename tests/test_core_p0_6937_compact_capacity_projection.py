@@ -60,6 +60,9 @@ def test_compact_budget_independent_and_closed(tmp_path, monkeypatch, case):
             if case == "unpaired":
                 assert result["status"] == "partial"
         assert "Traces compactes" in text and "Aucun quota libéré" in text
+        assert ("Nouvelles réservations refusées" in text) is (
+            case in ("unpaired", "corrupt", "over_limit")
+        )
         assert str(tmp_path) not in repr(result) and pk not in repr(result)
         assert result["record_count"] == before["count"]
         assert result["known_output_bytes"] == before["reserved_output_bytes"]
