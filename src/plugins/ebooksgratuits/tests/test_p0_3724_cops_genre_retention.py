@@ -56,7 +56,7 @@ def test_opds_explicit_genre_is_retained_without_category_inference(tmp_path, sc
             projected, = _public_rows_from_response(response, session)
             assert _mirror_remote_results(SimpleNamespace(storage=db), [projected],
                                           identity_id="alice", require_public_cover_witness=True) == 1
-            canonical = projected._core_notice_c_canonical_cover_document_ref
+            canonical = projected._core_notice_canonical_cover_document_ref
             exact = projected._core_notice_cover_document_ref
             saved = read_notice_cover(db, exact)
             classification = read_consolidated_notice_cover(db, canonical).sources[0].public_bibliography.classification
