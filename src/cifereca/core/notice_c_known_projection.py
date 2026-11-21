@@ -15,6 +15,7 @@ from typing import Any
 from dataclasses import asdict
 
 from .notice_c_public_search import PublicNoticeCPage, PublicNoticeCHit
+from .book_cover_projection import CoverDocumentScope
 from .notice_cover_repository import is_notice_cover_document
 from .notice_c_cover_index import _MAX_SOURCES
 
@@ -30,25 +31,38 @@ def known_public_primary_facts(row):
     supplying a provider name, a proof-shaped dict or a DocumentRef alone.
     The view still owns its existing mapped-row/context/epoch lease.
     """
-    if type(row) is not dict or row.get("source") != "notice_c_public":
+    # A view mapping is mutable, unlike the Core-only sealed packet.
+    # Validate native types BEFORE equality: an injected source/identity,
+    # DocumentRef or display field must not execute foreign __eq__ in UI.
+    if (type(row) is not dict or type(row.get("source")) is not str
+            or row["source"] != "notice_c_public"):
         return None
     packet = row.get(_PRIMARY_FACT_FIELD)
     meta = row.get("metadata")
+    identity = row.get("identity_id")
     if (type(packet) is not tuple or len(packet) != 3
             or packet[0] is not _PRIMARY_FACT_TOKEN
-            or packet[1] != row.get("identity_id")
+            or type(identity) is not str or packet[1] != identity
             or type(packet[2]) is not PublicNoticeCHit
             or type(meta) is not dict):
         return None
     hit = packet[2]
-    if (hit.document != row.get("_cover_document_ref")
-            or hit.provider_id != row.get("provider_id")
-            or hit.record_id != row.get("item_id")
-            or hit.title != row.get("title")
+    document = row.get("_cover_document_ref")
+    if (type(hit.document) is not CoverDocumentScope
+            or type(document) is not CoverDocumentScope
+            or hit.document != document
+            or not is_notice_cover_document(hit.document)
             or type(meta.get("notice_c_epoch")) is not int
-            or hit.epoch != meta.get("notice_c_epoch")
-            or not is_notice_cover_document(hit.document)):
+            or hit.epoch != meta["notice_c_epoch"]):
         return None
+    for name, expected in (
+        ("provider_id", hit.provider_id),
+        ("item_id", hit.record_id),
+        ("title", hit.title),
+    ):
+        supplied = row.get(name)
+        if type(expected) is not str or type(supplied) is not str or supplied != expected:
+            return None
     return hit
 
 
