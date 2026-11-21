@@ -136,3 +136,66 @@ def test_unavailable_detail_does_not_claim_available():
         assert transport.calls == []
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("href", [
+    "/customer/account/login",
+    "/customer/account/login.epub",
+    "/account/profile.epub",
+    "/checkout/cart/add",
+    "/cart/download.epub",
+    "/sso/private.epub",
+    "/admin/content.epub",
+    "/oauth/authorize.epub",
+    "/download/index/owned/id/123",
+    "/download/index/unverified/id/123",
+    "/downloads/book.epub?session=DO_NOT_SEND",
+    "/downloads/book.epub#DO_NOT_SEND",
+    "/downloads/%2e%2e/customer/account/login.epub",
+    "/downloads/../customer/account/login.epub",
+    "http://[bad-ipv6",
+    "https://elsewhere.example/book.epub",
+])
+def test_login_signed_and_malformed_html_offers_are_not_public(href, tmp_path):
+    # One HTML label cannot authorize a different/account-bound HTTP route.
+    obj, transport = session(f'<a href="{href}">Download EPUB</a>')
+    try:
+        observed = obj.holdings(book())
+        assert observed.availability_status == "unknown"
+        assert "Aucun lien EPUB public" in observed.availability_label
+        with pytest.raises(ProviderError, match="aucun lien EPUB public"):
+            obj.download_direct(book(), tmp_path)
+        assert obj.client.calls == [DETAIL, DETAIL]
+        assert transport.calls == []
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        obj.close()
+
+
+def test_explicit_unsigned_public_epub_wins_over_private_links():
+    page = (
+        '<a href="/customer/account/login.epub">Download EPUB</a>'
+        '<a href="/downloads/book.epub?token=PRIVATE">Download EPUB</a>'
+        '<a href="/downloads/public-book.epub">Download EPUB</a>'
+    )
+    obj, transport = session(page)
+    try:
+        result = obj.holdings(book())
+        assert result.availability_status == "available"
+        assert "Lien EPUB public affiché" in result.availability_label
+        assert obj.client.calls == [DETAIL]
+        assert transport.calls == []
+    finally:
+        obj.close()
+
+
+def test_unsigned_public_generic_download_stays_format_unknown():
+    obj, transport = session('<a href="/downloads/book">Download</a>')
+    try:
+        result = obj.holdings(book())
+        assert result.availability_status == "unknown"
+        assert "format EPUB inconnu" in result.availability_label
+        assert obj.client.calls == [DETAIL]
+        assert transport.calls == []
+    finally:
+        obj.close()
