@@ -22,7 +22,8 @@ def _publish_new_adept_without_clobber(
     import stat
     from .library_inventory import _open_root
     from .loan_direct_publication import (
-        _create_directory, _current_directory, _info, _owned, _remove_own, _stamp,
+        _create_directory, _current_directory, _info, _owned, _remove_own,
+        _source_current, _source_stamp,
     )
 
     if (not all(path.is_absolute() and ".." not in path.parts and path.name
@@ -36,12 +37,15 @@ def _publish_new_adept_without_clobber(
     try:
         stage_fd = _open_root(produced_path.parent)
         before = _info(stage_fd, produced_path.name)
-        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+        # ADEPT output is a private stage, not an alias of another artifact.
+        # Preserve the direct-loan no-clobber ownership contract (#5225).
+        if (not stat.S_ISREG(before.st_mode) or before.st_size <= 0
+                or before.st_nlink != 1):
             raise ProviderConfigurationError("Artefact final invalide")
 
         def stage_current():
             return (_current_directory(produced_path.parent, stage_fd)
-                    and _owned(stage_fd, produced_path.name, before))
+                    and _source_current(stage_fd, produced_path.name, before))
 
         if produced_path == destination:
             if not stage_current():
@@ -55,7 +59,8 @@ def _publish_new_adept_without_clobber(
                             | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=stage_fd)
         with os.fdopen(source_fd, "rb") as source:
             now = os.fstat(source.fileno())
-            if not stat.S_ISREG(now.st_mode) or _stamp(now) != _stamp(before):
+            if (not stat.S_ISREG(now.st_mode) or now.st_nlink != 1
+                    or _source_stamp(now) != _source_stamp(before)):
                 raise ProviderConfigurationError("Artefact final modifié")
             temporary = ".adept-publish-" + secrets.token_hex(16)
             out_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -72,7 +77,7 @@ def _publish_new_adept_without_clobber(
                     os.fsync(out.fileno())
                 finally:
                     made = os.fstat(out.fileno())
-            if (_stamp(os.fstat(source.fileno())) != _stamp(before)
+            if (_source_stamp(os.fstat(source.fileno())) != _source_stamp(before)
                     or made.st_size != before.st_size or not stage_current()):
                 raise ProviderConfigurationError("Artefact final modifié")
 
