@@ -45,6 +45,12 @@ def _native_c_source_ref(document):
                  or len(document.account_id) > 512
                  or not document.account_id.isprintable())):
         return False
+    try:
+        # Reapply the dataclass's original scope constraints after mutation:
+        # public C remains anonymous; private catalogue stays owner-scoped.
+        document.__post_init__()
+    except (ValueError, TypeError):
+        return False
     return is_notice_cover_document(document)
 
 
