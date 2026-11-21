@@ -115,7 +115,7 @@ def known_public_notice_candidates(
             # Other independently admitted documents remain usable.
             continue
         row._core_known_public_c_projection = (
-            _TOKEN, id(row), hit.document, hit.epoch, snapshot, alternative_hits,
+            _TOKEN, id(row), hit.document, hit.epoch, snapshot, alternative_hits, hit,
         )
         rows.append(row)
     return rows
@@ -125,7 +125,7 @@ def known_public_c_binding_facts(item: object):
     if type(item) is not SearchResult:
         return None
     proof = getattr(item, "_core_known_public_c_projection", None)
-    if (type(proof) is not tuple or len(proof) != 6
+    if (type(proof) is not tuple or len(proof) != 7
             or proof[0] is not _TOKEN or proof[1] != id(item)
             or not is_canonical_cover_document(proof[2])
             or type(proof[3]) is not int or not 1 <= proof[3] < 2**63
@@ -161,3 +161,25 @@ def known_public_c_alternative_hits(item: object):
             or [_source_alternative(hit) for hit in hits] != alternatives):
         return None
     return hits
+
+
+def known_public_c_primary_hit(item: object):
+    """Exact immutable primary C source, only on the original bounded DTO.
+
+    Never infer an age from user-supplied metadata, title, ISBN or ranking.
+    This private Core fact cannot be replayed by a copied provider result.
+    """
+    binding = known_public_c_binding_facts(item)
+    if binding is None:
+        return None
+    hit = item._core_known_public_c_projection[6]
+    if (type(hit) is not PublicNoticeCHit
+            or (hit.document, hit.epoch) != binding
+            or (hit.provider_id, hit.record_id, hit.docbase, hit.medium,
+                hit.source_revision, hit.title, hit.author, hit.publisher,
+                hit.published_at, hit.media_format, hit.description) != (
+                    item.source_provider, item.record_id, item.docbase, item.medium,
+                    item.revision_id, item.title, item.author, item.publisher,
+                    item.published_at, item.format, item.description)):
+        return None
+    return hit

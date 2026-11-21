@@ -448,3 +448,58 @@ def test_closed_session_with_stale_connected_marker_is_unavailable(op):
     assert outcome.reason_code == "session_unavailable"
     assert not outcome.usable and not outcome.session_ready
     # The safety check is local; no method, account getter or network call.
+
+
+
+def test_exact_primary_and_linked_borrower_roles_remain_separate():
+    d = descriptor()
+    linked = replace(account(borrower="reader-2"), is_primary=False)
+    session = OnlyList(d, linked)
+    assert fact("loan.list", d, session, linked).usable
+    # The same ID with a different upstream borrower role cannot be
+    # promoted by a static capability or a previously connected session.
+    primary = replace(linked, is_primary=True)
+    result = fact("loan.list", d, session, primary)
+    assert result.availability == "unavailable"
+    assert not result.usable
+    session._accounts = [primary]
+    result = fact("loan.list", d, session, linked)
+    assert result.availability == "unavailable"
+    assert not result.usable
+
+
+@pytest.mark.parametrize("requested_primary,registered_primary,borrower_id", [
+    (False, False, ""),     # no linked borrower identity
+    (False, True, "linked"),
+    (True, False, "linked"),
+    (True, None, ""),
+    (1, True, ""),
+    (True, 1, ""),
+])
+def test_invalid_or_mismatched_borrower_role_never_claims_session_ready(
+    requested_primary, registered_primary, borrower_id,
+):
+    d = descriptor()
+    requested = replace(account(borrower=borrower_id),
+                        is_primary=requested_primary)
+    registered = replace(account(borrower=borrower_id),
+                         is_primary=registered_primary)
+    session = OnlyList(d, registered)
+    found = fact("loan.list", d, session, requested)
+    assert found.availability == "unavailable"
+    assert found.reason_code == "session_unavailable"
+    assert found.session_ready is False
+    assert found.usable is False
+
+
+def test_duplicate_borrower_id_with_conflicting_roles_is_ambiguous():
+    d = descriptor(borrow=True)
+    linked = replace(account(borrower="reader-2"), is_primary=False)
+    primary_same_id = replace(linked, is_primary=True)
+    session = ParisActions(d, linked)
+    session._accounts = [linked, primary_same_id]
+    for requested in (linked, primary_same_id):
+        result = fact("loan.borrow", d, session, requested)
+        assert result.availability == "unavailable"
+        assert not result.usable
+        assert not result.session_ready

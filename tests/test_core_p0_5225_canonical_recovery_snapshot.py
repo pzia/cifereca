@@ -217,3 +217,41 @@ def test_journal_terminal_requires_exact_provider_and_adept_origins(rig, monkeyp
         )
     assert journal(db)[0][:2] == ("complete", "sha256:" + SHA)
     assert rows(db) == (1, 1, 1, 2)
+
+
+@pytest.mark.parametrize("drift", [
+    "checkpoint_receipt_mismatch", "placement_missing", "reference_unattested",
+])
+def test_terminal_journal_cannot_mask_lost_B_provenance(rig, monkeypatch, drift):
+    service, account, source, snapshot, root, lock_path = rig
+    offer = _staged(rig, monkeypatch)
+    storage = service.storage
+    assert run(service, account, snapshot, root, lock_path, {source},
+               lambda *_: pytest.fail("complete receipt never redownloads"))[0].status == "recovered"
+    committed = journal(storage)
+    assert committed[0][:2] == ("complete", "sha256:" + SHA)
+    with storage._lock, storage._connect() as sql:
+        if drift == "checkpoint_receipt_mismatch":
+            # OriginLink coordinates are immutable by design: corrupt the
+            # journal's claimed proof, not the protected canonical origin.
+            document = json.loads(committed[0][2])
+            document["receipt"] = "unmatched-proof"
+            sql.execute("UPDATE acquisition_ledger SET metadata_json=? "
+                        "WHERE acquisition_id LIKE 'canonical-intake:%'",
+                        (json.dumps(document),))
+        elif drift == "placement_missing":
+            sql.execute("UPDATE placements SET state='missing' WHERE identity_id=?",
+                        (source.scope.identity_id,))
+        else:
+            sql.execute("UPDATE source_references SET evidence_kind='unverified' "
+                        "WHERE identity_id=?", (source.scope.identity_id,))
+    # Reverification must be observational: no further journal mutation.
+    drifted = journal(storage)
+    with InterProcessLock(lock_path) as lock:
+        with pytest.raises(ValueError, match="canonical_intake_published_origin_unverified"):
+            recovery.mark_completed_delivery_published(
+                storage, source=source, offer_id=offer,
+                artifact_id="sha256:" + SHA, shared_lock=lock,
+            )
+    assert journal(storage) == drifted
+    assert service.calls == 1 and (root / "A" / "book.pdf").read_bytes() == BYTES

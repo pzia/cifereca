@@ -3072,6 +3072,22 @@ class UxRecommendationsView:
             sections.append(DetailSection(
                 "public-bibliography", "Détail", public_details, 25,
             ))
+        # A known C may carry an exact primary-source age. Only CoreUI can
+        # exchange the original opaque C receipt for the source's typed facts;
+        # never reconstruct authority from mutable provider metadata here.
+        project_primary_age = getattr(self.host, "public_notice_primary_age_fields", None)
+        if (row_cover_ref is not None and _known_public_c_candidate(item)
+                and callable(project_primary_age)):
+            primary_age_fields = project_primary_age(
+                item, identity_id=exact_identity, document=row_cover_ref,
+                receipt=state["cover_document_receipt"],
+                catalogue_sources=catalogue_sources,
+            )
+            if primary_age_fields:
+                sections.append(DetailSection(
+                    "known-public-primary-age", "Détail",
+                    tuple(primary_age_fields), 26,
+                ))
         if description:
             sections.append(
                 DetailSection(

@@ -14,6 +14,7 @@ from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .adept_historical_diagnostic import review_historical_loan_diagnostic
 from .canonical_recovery import _unique_checkpoint_fields
 from .local_origin_suggestion_operator import _root, _navigation_epoch
+from .library_sqlite_freshness import sqlite_source_stamp
 from .source_context import source_context_epoch
 from .source_convergence import SourceKey
 
@@ -185,13 +186,20 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
     try:
         if not request.bound():
             return None
+        # A ledger page can remain byte-for-byte identical while its
+        # independent source references/branch proof changes during hashing.
+        # The same source-image fence already protects the v1 hold view.
+        stamp = sqlite_source_stamp(request.database)
+        if stamp is None:
+            return None
         observed = _page(request.storage, request.identity, cursor)
         reports = []
         for row in observed[:_PAGE]:
             if not request.bound():
                 return None
             reports.append(_row(request, row, verify_local_bytes))
-        if (not request.bound() or _page(request.storage, request.identity, cursor) != observed
+        if (not request.bound() or sqlite_source_stamp(request.database) != stamp
+                or _page(request.storage, request.identity, cursor) != observed
                 or any(report["acquisition_id"] is None for report in reports)):
             return None
         next_cursor = observed[_PAGE - 1][0] if len(observed) > _PAGE else None
@@ -203,7 +211,8 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
         return None
 
 
-def run_historical_hold_review(service, request, *, offset=0):
+def run_historical_hold_review(service, request, *, offset=0,
+                               verify_local_bytes=False):
     """Project the existing retry queue, not a second marker inventory.
 
     A v1 marker can exist before any acquisition ledger receipt. This
@@ -214,10 +223,16 @@ def run_historical_hold_review(service, request, *, offset=0):
     from .loan_download_retry_review import review_loan_download_retries
 
     if (type(request) is not HistoricalReviewRequest or request.service is not service
-            or type(offset) is not int or not 0 <= offset <= 2048):
+            or type(offset) is not int or not 0 <= offset <= 2048
+            or type(verify_local_bytes) is not bool):
         return None
     try:
         if not request.bound():
+            return None
+        # Hashing a selected historical copy can outlive the local marker
+        # snapshot. A changed WAL invalidates the displayed hold evidence.
+        stamp = sqlite_source_stamp(request.database)
+        if stamp is None:
             return None
         blocked = tuple(row for row in review_loan_download_retries(
             service, identity_id=request.identity,
@@ -225,7 +240,27 @@ def run_historical_hold_review(service, request, *, offset=0):
         reports = []
         for row in blocked[offset:offset + _PAGE]:
             source = row.source
+            copy_state = "not_requested"
+            if verify_local_bytes:
+                # Existing bounded no-follow verifier; a present SHA is not
+                # replay proof, and an unavailable file is not a negative A.
+                diagnostic = review_historical_loan_diagnostic(
+                    request.storage, source=source, library_root=request.root,
+                    inventory_profile_id="", inventory_complete=False,
+                    inventory_loans=(), verify_local_bytes=True,
+                )
+                local = diagnostic.get("local_bytes")
+                witness = local.get("evidence") if type(local) is dict else None
+                copy_state = (
+                    "verified_local_copy_observed"
+                    if (type(local) is dict
+                        and local.get("selection") == "unique_recorded_candidate"
+                        and type(witness) is dict
+                        and witness.get("placement_evidence") == "verified_artifact_bytes")
+                    else "not_proven"
+                )
             reports.append({
+                "local_copy_evidence": copy_state,
                 "provider_id": source.scope.provider_id,
                 "credential_id": source.scope.credential_id,
                 "account_id": source.scope.account_id,
@@ -242,7 +277,7 @@ def run_historical_hold_review(service, request, *, offset=0):
                 "replay_proof": "not_established",
                 "unlock_authorized": False,
             })
-        if not request.bound():
+        if not request.bound() or sqlite_source_stamp(request.database) != stamp:
             return None
         return {
             "rows": tuple(reports),

@@ -261,3 +261,46 @@ def test_invalid_optional_cover_preserves_bibliographic_entry():
         assert not rows[0].downloadable
     finally:
         current.close()
+
+
+
+@pytest.mark.parametrize("page,total,count", [
+    (1, 20, 20),  # second page contradicts a 20-row total
+    (1, 21, 20),  # at most one item can remain on page two
+    (4, 82, 20),  # fifth page can contain at most two items
+    (99, 82, 1),  # an arbitrary far page cannot invent a record
+])
+def test_category_page_cannot_contain_more_than_declared_total(
+    page, total, count,
+):
+    data = payload(count=count)
+    data["totalBooks"] = total
+    client = session(lambda _r: httpx.Response(200, json=data))
+    try:
+        with pytest.raises(ProviderError, match="catalogue_schema_unverified"):
+            client.search("", page=page)
+    finally:
+        client.close()
+
+
+def test_last_category_page_with_two_rows_is_descriptive_not_exhaustive():
+    data = payload(count=2)
+    client = session(lambda _r: httpx.Response(200, json=data))
+    try:
+        rows = client.search("", page=4)
+        assert len(rows) == 2
+        assert client.last_search_warnings == [UNVERIFIED_SEARCH_WARNING]
+        assert all(not row.downloadable and not row.owned for row in rows)
+        assert all(row.source_collection == "public" for row in rows)
+    finally:
+        client.close()
+
+
+def test_out_of_range_empty_page_never_becomes_global_zero():
+    data = payload(count=0)
+    client = session(lambda _r: httpx.Response(200, json=data))
+    try:
+        assert client.search("", page=50) == []
+        assert client.last_search_warnings == [UNVERIFIED_SEARCH_WARNING]
+    finally:
+        client.close()

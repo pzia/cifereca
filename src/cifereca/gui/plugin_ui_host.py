@@ -199,6 +199,62 @@ class _UiHost:
         )
         return section.fields if section is not None else ()
 
+    def public_notice_primary_age_fields(
+        self, item: object, *, identity_id: str, document: object,
+        receipt: object, catalogue_sources: tuple[str, ...] = (),
+    ):
+        """Source-attested age on an original known-C Recommendations receipt.
+
+        No provider callbacks, metadata inference, SQL or GTK creation here.
+        The immutable source packet must still match the exact published row.
+        """
+        if (not self._window_alive()
+                or type(catalogue_sources) is not tuple
+                or len(catalogue_sources) > 128
+                or any(type(source) is not str for source in catalogue_sources)):
+            return ()
+        from .plugin_public_c_binding import _PublicCBinding, public_c_binding_revision
+        if (type(receipt) is not _PublicCBinding or receipt.source is not item
+                or type(identity_id) is not str or receipt.identity_id != identity_id
+                or public_c_binding_revision(self.window, document, receipt) is None):
+            return ()
+        from ..core.notice_c_recommendation_known import known_public_c_primary_hit
+        hit = known_public_c_primary_hit(item)
+        if (hit is None or hit.age_observation is None
+                or catalogue_sources and hit.provider_id not in catalogue_sources):
+            return ()
+        age = hit.age_observation
+        ranges = age.filter_ranges()
+        meta = item.metadata
+        evidence = meta.get("bibliography_evidence")
+        if (not 1 <= len(ranges) <= 16
+                or type(evidence) is not dict
+                or evidence.get("youth_age") != age.wire()
+                or type(meta.get("youth_age_ranges")) is not list
+                or meta["youth_age_ranges"] != ranges):
+            return ()
+        from datetime import datetime, timezone
+        from dataclasses import replace
+        from ..plugin_api import Provenance, YouthAgeRange
+        from ..book_detail_metadata import detail_metadata_fields
+
+        try:
+            observed = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError, TypeError):
+            return ()
+        provenance = Provenance(
+            source=age.source_field, provider_id=hit.provider_id,
+            source_id=hit.record_id, observed_at=observed,
+        )
+        typed = tuple(YouthAgeRange(
+            age_min=part["age_min"], age_max=part["age_max"],
+            age_kind=part["age_kind"], source_label=part["source_label"],
+            provenance=provenance,
+        ) for part in ranges)
+        fields = detail_metadata_fields({"youth_age_ranges": typed})
+        return tuple(replace(field, id=f"known-public-primary-age-{index}")
+                     for index, field in enumerate(fields, 1))
+
     def can_open_loaded_search_notice(
         self, *, provider: str, credential: str, record_id: str,
         docbase: str, source_collection: str, identity_id: str,

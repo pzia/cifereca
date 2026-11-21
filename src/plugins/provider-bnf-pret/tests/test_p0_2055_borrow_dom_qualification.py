@@ -96,6 +96,59 @@ class QualificationProbeTests(unittest.TestCase):
                 self.assert_no_authority(result)
                 self.assertNotIn(phrase, json.dumps(result, ensure_ascii=False))
 
+    def test_inline_formatted_quota_and_pass_are_single_non_authoritative_labels(self):
+        html = (
+            '<html><body><main>'
+            '<p>Vous avez encore droit à <strong>0</strong> prêt</p>'
+            '<p>Pass BnF <em>lecture/culture</em> valide</p>'
+            '</main></body></html>'
+        )
+        result = qualify_bnf_borrow_dom(html, page="profile")
+        self.assertEqual(result["quota_label"],
+                         {"count": 1, "tag_paths": ["html/body/main/p"]})
+        self.assertEqual(result["pass_label"],
+                         {"count": 1, "tag_paths": ["html/body/main/p"]})
+        self.assert_no_authority(result)
+        self.assert_private_not_exposed(result)
+        self.assertNotIn("0 prêt", json.dumps(result, ensure_ascii=False))
+
+    def test_inline_formatting_never_joins_distinct_block_labels_or_hidden_content(self):
+        html = (
+            '<html><body><main>'
+            '<p>Vous avez encore droit à</p><p>0 prêt</p>'
+            '<p>Pass BnF</p><p>lecture/culture valide</p>'
+            '<p>Vous avez encore droit à <span aria-hidden="true">0</span> prêt</p>'
+            '<script>Vous avez encore droit à 12 prêts</script>'
+            '<p hidden>Pass BnF lecture/culture valide</p>'
+            '</main></body></html>'
+        )
+        result = qualify_bnf_borrow_dom(html, page="profile")
+        self.assertEqual(result["quota_label"]["count"], 0)
+        self.assertEqual(result["pass_label"]["count"], 0)
+        self.assert_no_authority(result)
+
+    def test_inline_formatted_copies_do_not_grant_an_edition_offer(self):
+        detail = DETAIL.replace(
+            '<p>Plusieurs exemplaires disponibles</p>',
+            '<p>Plusieurs <span>exemplaires</span> disponibles</p>',
+        )
+        result = qualify_bnf_borrow_dom(detail, page="detail")
+        self.assertEqual(result["copies_label"]["count"], 1)
+        self.assertEqual(result["copies_label"]["tag_paths"], ["article/p"])
+        self.assertEqual(result["offer_verified"], False)
+        self.assert_no_authority(result)
+        self.assert_private_not_exposed(result)
+
+    def test_inline_formatted_confirmation_stays_unverified(self):
+        html = CONFIRM.replace(
+            "Confirmer l'emprunt",
+            "Confirmer l'<em>emprunt</em>",
+        )
+        result = qualify_bnf_borrow_dom(html, page="confirmation")
+        self.assertEqual(result["confirmation_label"]["count"], 1)
+        self.assert_no_authority(result)
+        self.assert_private_not_exposed(result)
+
     def test_unrelated_droit_or_false_quota_does_not_qualify(self):
         for phrase in (
             "Vous avez encore droit à un prêt", "Droit à 0 prêt",

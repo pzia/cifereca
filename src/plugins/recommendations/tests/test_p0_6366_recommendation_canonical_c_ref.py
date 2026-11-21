@@ -350,6 +350,32 @@ def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, m
         view._selected_row(row)
         assert not any(part.id == "known-public-alternatives"
                        for part in details[-1].sections)
+        # The primary age is another optional, strictly source-bound CoreUI
+        # port. The plugin forwards the same C packet; it must never parse
+        # youth_age_ranges or invent a fallback when Core refuses it.
+        age = DetailField(
+            "known-public-primary-age-1", "Âge éditeur", "À partir de 12 ans",
+            kind="copy", provenance=Provenance(
+                "fixture.age", provider_id="bnf", source_id="source-record-1",
+            ),
+        )
+        age_calls = []
+        def project_age(candidate, **kwargs):
+            age_calls.append((candidate, kwargs))
+            return (age,)
+        view.host.public_notice_primary_age_fields = project_age
+        view._selected_row(row)
+        assert age_calls == [(ranked.item, {
+            "identity_id": view.selected_identity_id(), "document": ref,
+            "receipt": opaque, "catalogue_sources": view._selected_catalogue_sources(),
+        })]
+        primary, = [part for part in details[-1].sections
+                    if part.id == "known-public-primary-age"]
+        assert primary.fields == (age,)
+        view.host.public_notice_primary_age_fields = lambda *a, **kw: ()
+        view._selected_row(row)
+        assert not any(part.id == "known-public-primary-age"
+                       for part in details[-1].sections)
         ranked.item.published_at = "2024"
         assert known_public_c_binding_facts(ranked.item) is None
         assert restored.entitlements() == []

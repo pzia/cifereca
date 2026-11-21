@@ -1153,14 +1153,76 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     assert current_n3["n3_epub_hit"] >= base_n3["n3_epub_hit"] + 2
                     capture("00-notice-c-epub-priority-warm")
                     report["checks"]["P0_4980_epub_priority_warm_real_gtk"] = True
+                    verify_qualified_fallback(snapshot, physical)
+
+                bind()
+                later(40, guard(lambda: wait_embedded(
+                    monotonic() + 8, False, before_n2, before_n3)))
+
+            def verify_qualified_fallback(snapshot, physical):
+                # The original EPUB is unchanged and has a verified SHA. A
+                # stale N2 member coordinate deliberately names a non-entry:
+                # only the existing bounded worker may qualify this as a
+                # *definitive* failure and switch N2 via its exact CAS.
+                report["local_c_stage"] = "epub_qualified_fallback"
+                assert snapshot.embedded is not None and physical.is_file()
+                physical.unlink()
+                embedded = replace(
+                    snapshot.embedded, resource=replace(
+                        snapshot.embedded.resource,
+                        member="OPS/fixture-cover-missing.png", source_revision=2,
+                    ),
+                )
+                broken = replace(snapshot, revision=2, embedded=embedded)
+                before_n2, before_n3 = n2.stats(), loader.stats()
+                before_reads, before_gets = tuple(reads), tuple(gets)
+                assert loader._path(url).read_bytes() == replacement_body
+                n2.register(broken)
+                for variant, cover in (("list", list_cover), ("detail", detail_cover)):
+                    cover.bind_document(n2, broken.scope, variant=variant)
+
+                def fallback_painted(deadline):
+                    decision = n2.decisions.peek(broken.scope, revision=2)
+                    covers = (list_cover, detail_cover)
+                    ready = (
+                        decision is not None and decision.status == "selected"
+                        and decision.tier == "catalog" and decision.uri == url
+                        and all(
+                            cover.get_mapped() and cover._request is not None
+                            and cover._request.still_current
+                            and cover._request.source_uri == url
+                            and isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                            and not cover.placeholder.get_visible()
+                            and not cover.spinner.get_visible()
+                            for cover in covers
+                        )
+                    )
+                    if not ready:
+                        assert monotonic() < deadline, "qualified EPUB fallback GTK timeout"
+                        later(40, guard(lambda: fallback_painted(deadline)))
+                        return
+                    for cover in covers:
+                        texture = cover.picture.get_paintable()
+                        with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                            assert image.convert("RGB").getpixel((0, 0)) == replacement_pixels
+                    after_n2, after_n3 = n2.stats(), loader.stats()
+                    assert not physical.exists()  # No false EPUB restoration.
+                    assert tuple(reads) == before_reads and tuple(gets) == before_gets
+                    assert after_n2["n1_selected_count"] >= before_n2["n1_selected_count"] + 2
+                    assert after_n3["n3_epub_miss"] >= before_n3["n3_epub_miss"] + 1
+                    assert after_n3["n3_epub_failed"] >= before_n3["n3_epub_failed"] + 1
+                    assert after_n3["download_ok"] == before_n3["download_ok"]
+                    assert after_n3["ui_applied"] >= before_n3["ui_applied"] + 2
+                    assert window.service._account_context_epoch == account_epoch
+                    assert window.service._source_context_epoch == source_epoch
+                    capture("00-notice-c-epub-qualified-fallback")
+                    report["checks"]["P0_4980_epub_qualified_fallback_real_gtk"] = True
                     report["local_c_stage"] = "complete"
                     cleanup()
                     window.present()
                     complete()
 
-                bind()
-                later(40, guard(lambda: wait_embedded(
-                    monotonic() + 8, False, before_n2, before_n3)))
+                later(40, guard(lambda: fallback_painted(monotonic() + 12)))
 
             pending = pool.submit(prepare)
             await_job(pending, show_embedded, monotonic() + 8)

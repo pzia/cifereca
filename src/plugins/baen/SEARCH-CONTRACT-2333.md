@@ -11,7 +11,7 @@ de la recette finale de #1917 P1.
 | `field=all` | GET public `/allbooks/category/index/id/2012`, `q` texte général, `hideBundles/hideEarcs` | URL Free Library visible publiquement ; **sémantique serveur exacte de `q` non vérifiée sur HTTP live** |
 | `author/title/isbn/subject` | `unsupported_field` avant HTTP | Pas de recherche spécialisée revendiquée. Repli vers `all` seulement **si Core le propose et l'annonce comme global** |
 | `scope=all/digital` | Même catalogue public numérique ; autres scopes `unsupported_scope` | Aucun droit de bibliothèque personnelle inféré |
-| `page=0..100` | HTTP `page=1..101`, `pageSize=50` ; page invalide `invalid_page` | Paramètres transmis ; application serveur non qualifiée, pas de crawl de pages voisines |
+| `page=0..100` | HTTP `page=1..101` ; catégorie JSON observée `pageSize=20` si `query=""`, ancien chemin GET `pageSize=50` demandé si requête non vide ; page invalide `invalid_page` | Taille `page_size` de la déclaration générique `None` car non uniforme. Paramètres transmis, application serveur non qualifiée, aucun crawl |
 | Panne réseau / HTTP 5xx | `service_unavailable` | Aucun faux résultat vide |
 | HTTP 401 / 403 / 429 | `auth_required` / `access_denied` / `rate_limited` | Pas de contournement ni redirection |
 | HTTP 200, au moins une carte publique | Notice sans achat, `owned=false`, `downloadable=false`, **`partial_results`** : requête/pagination non qualifiées | HTML des cartes uniquement ; pas d'acquisition pendant search |

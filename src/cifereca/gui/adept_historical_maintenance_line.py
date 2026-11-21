@@ -67,6 +67,16 @@ def _display_holds(result):
             f"Édition : {row['edition_id']} · Prêt : {row['provider_loan_id']}",
             f"Branche : {row['canonical_branch']}",
             reason,
+            {
+                "not_requested": "Copie finale non vérifiée ; sélectionnez « Vérifier les fichiers ».",
+                "verified_local_copy_observed": (
+                    "Copie locale SHA vérifiée ; n'établit ni droit courant "
+                    "ni preuve de non-soumission ADEPT."
+                ),
+                "not_proven": (
+                    "Copie finale non prouvée ; ne pas conclure à son absence."
+                ),
+            }.get(row.get("local_copy_evidence"), "Preuve locale indisponible."),
             "Prêt inactif enregistré." if row["recorded_inactive"] else
             "État fournisseur actuel non vérifié.",
             "Retéléchargement non autorisé : preuve de reprise non établie.",
@@ -210,13 +220,14 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
             selection.set_sensitive(bool(selected_rows))
             start.set_sensitive(True)
             holds.set_sensitive(True)
-            verify.set_sensitive(valid and not examining_holds and bool(value["rows"]))
+            verify.set_sensitive(valid and bool(value["rows"]))
             next_page.set_sensitive(following is not None)
 
         try:
             window.runner.submit(
                 "Revue des provenances historiques…",
-                (lambda: run_historical_hold_review(service, request, offset=proposed))
+                (lambda: run_historical_hold_review(
+                    service, request, offset=proposed, verify_local_bytes=hash_files))
                 if examining_holds else
                 (lambda: run_historical_review(service, request, cursor=proposed,
                                                verify_local_bytes=hash_files)),

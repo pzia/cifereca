@@ -11,14 +11,17 @@ from typing import Any
 from cifereca.plugin_api import CapabilityMatrix
 
 
-_FAMILIES: tuple[tuple[str, str], ...] = (
-    ("Catalogue", "catalog."),
-    ("Métadonnées", "metadata."),
-    ("Droits", "personal_inventory."),
-    ("Prêt", "loan."),
-    ("Acquisition", "acquisition."),
-    ("DRM", "drm."),
-    ("Transversal", "sync."),
+_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Catalogue", ("catalog.",)),
+    ("Métadonnées", ("metadata.",)),
+    ("Droits", ("personal_inventory.",)),
+    ("Prêt", ("loan.",)),
+    ("Acquisition", ("acquisition.",)),
+    ("DRM", ("drm.",)),
+    # Core's installed capability ABI also declares artifact.backup.
+    # The UI must classify that existing cross-cutting declaration rather
+    # than silently present the entire family as missing evidence.
+    ("Transversal", ("sync.", "artifact.")),
 )
 
 
@@ -45,9 +48,9 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
         except (ValueError, TypeError, AttributeError):
             raise ValueError("capability_invalid_matrix") from None
         statuses: list[str] = []
-        for label, prefix in _FAMILIES:
+        for label, prefixes in _FAMILIES:
             rows = tuple(row for row in matrix.observations
-                         if row.operation.startswith(prefix))
+                         if row.operation.startswith(prefixes))
             observed = tuple(row for row in rows
                              if row.source_kind in (
                                  "provider_observation", "account_observation",

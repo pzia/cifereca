@@ -351,11 +351,8 @@ def mark_completed_delivery_published(
                 or data.get("offer_id") != offer_id
                 or data.get("sha256") != artifact_id[7:]):
             raise ValueError("canonical_intake_checkpoint_conflict")
-        if row[5] == "complete":
-            if row[6] != artifact_id:
-                raise ValueError("canonical_intake_checkpoint_conflict")
-            return
-        if row[6] is not None:
+        if ((row[5] == "complete" and row[6] != artifact_id)
+                or (row[5] == _STAGED and row[6] is not None)):
             raise ValueError("canonical_intake_checkpoint_conflict")
         # A matching SHA/receipt in the operation journal is not B. The
         # terminal status follows the publisher's independently committed
@@ -385,7 +382,8 @@ def mark_completed_delivery_published(
                 "WHERE s.source_reference_id=? AND s.identity_id=? "
                 "AND s.provider_id=? AND s.credential_id=? AND s.account_id=? "
                 "AND s.branch_id=? AND s.edition_id=? AND s.right_id=? "
-                "AND s.reference_kind=? AND o.origin_link_id=? "
+                "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
+                "AND s.evidence_ref<>'' AND o.origin_link_id=? "
                 "AND o.origin_kind=? AND o.identity_id=? "
                 "AND o.artifact_id=? AND o.evidence_ref=? LIMIT 1",
                 (source_id, scope.identity_id, scope.provider_id,
@@ -401,6 +399,10 @@ def mark_completed_delivery_published(
                     (scope.identity_id, artifact_id),
                 ).fetchone() is None):
             raise ValueError("canonical_intake_published_origin_unverified")
+        # Idempotence requires the same already-committed B, not only a
+        # terminal operation flag left behind after provenance drift.
+        if row[5] == "complete":
+            return
         db.execute(
             "UPDATE acquisition_ledger SET status='complete',artifact_id=?,"
             "updated_at=? WHERE acquisition_id=? AND status=?",

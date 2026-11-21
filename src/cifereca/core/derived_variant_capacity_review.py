@@ -6,6 +6,7 @@ Unknown records and detached coordinates are not candidates for deletion.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from . import derived_variant_journal as journal
@@ -15,6 +16,21 @@ from .derived_variant_recovery_operator import _capture
 from .derived_variant_stock_review import review_derived_staging_stock
 from .derived_variant_region_review import review_derived_private_region
 from .library_sqlite_freshness import sqlite_source_stamp
+
+
+def _receipt_witness(raw):
+    """Snapshot invalid native SQLite values without treating them as receipts.
+
+    The journal decoder must still reject non-TEXT records. Their typed
+    digest only allows a stable, redacted partial capacity observation.
+    """
+    if type(raw) is str:
+        return ("text", journal._receipt_digest(raw))
+    if type(raw) is bytes:
+        return ("blob", hashlib.sha256(raw).hexdigest())
+    if type(raw) in (int, float):
+        return (type(raw).__name__, hashlib.sha256(str(raw).encode("ascii")).hexdigest())
+    raise journal.DerivedJournalConflict("derived_capacity_receipt_unverified")
 
 
 def _compact_snapshot(db):
@@ -79,7 +95,7 @@ def _snapshot(scope):
                 raw = db.execute(
                     "SELECT value FROM metadata WHERE key=?", (key,),
                 ).fetchone()[0]
-                witnesses.append((key, journal._receipt_digest(raw)))
+                witnesses.append((key, _receipt_witness(raw)))
                 phase = "pending" if key.startswith(journal._PREFIX) else "committed"
                 counts[phase] += 1
                 try:

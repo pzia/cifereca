@@ -289,23 +289,13 @@ class GutenbergSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
+        """Public OPDS connection, not a registered upstream reader.
+
+        Explicit legacy connection keys may be kept by Core for options or
+        identity isolation, but no Gutenberg session can attest a borrower.
+        """
         self.connected = True
-        if (self.credential_id == "__public__"
-                and type(self.credentials) is dict and not self.credentials):
-            # A singleton catalogue has no borrower or private account.
-            self._accounts = []
-            return []
-        self._accounts = [
-            Account(
-                display_name="Catalogue public",
-                barcode="",
-                unique_id="",
-                is_primary=True,
-                provider_id=self.provider_id,
-                credential_id=self.credential_id,
-                provider_label=self.descriptor.display_name,
-            )
-        ]
+        self._accounts = []
         return self.accounts
 
     def close(self) -> None:

@@ -210,6 +210,13 @@ def _observed_free_library_json(response, credential_id, page, *, documentary=Fa
             # on this same response is internally contradictory. Do not
             # turn it into a valid-looking partial list or a false zero.
             or payload['numOfBooks'] > payload['totalBooks']
+            # The observed route uses one-based pages of exactly 20 rows.
+            # A page beyond the remaining declared category total cannot
+            # contain positive rows. Do not project impossible cards as
+            # public notices merely because their individual URL is valid.
+            or (payload['numOfBooks'] > 0
+                and (page * FREE_JSON_PAGE_SIZE + payload['numOfBooks']
+                     > payload['totalBooks']))
             or type(payload.get('productData')) is not list
             or len(payload['productData']) != payload['numOfBooks']):
         raise ValueError('unverified_public_json')
@@ -393,19 +400,16 @@ def _baen_download_failure(error):
     return ProviderError('Baen : téléchargement inaccessible ou EPUB invalide')
 
 
-DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Numéros de page transmis sans preuve de pagination effective ; réponses partielles, y compris une page vide.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
+DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=None,max_pages=MAX_REQUESTED_PAGES,notes=('Seul le champ général est exposé ; le filtrage serveur de la requête reste non qualifié. Aucun champ spécialisé attesté.','Taille non uniforme : 20 produits par page JSON de catégorie observée, 50 demandé par la recherche texte historique non qualifiée. Pagination serveur non attestée ; résultats toujours partiels.',)),homepage=BASE,notes=('Couverture de recherche publique non qualifiée ; achats et bibliothèque privée hors périmètre.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=HTTPX_TRANSPORT.client(producer="provider.baen",timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
+        # Baen Free Library has no authenticated reader inventory. Retain
+        # any installed explicit connection coordinates for configuration
+        # compatibility, but never invent a primary account/borrower for it.
         self.connected = True
-        # The installation singleton is anonymous, not a fabricated borrower.
-        # Preserve the legacy standalone test/client account convention.
-        self._accounts = [] if self.credential_id == "__public__" and not self.credentials else [
-            Account(display_name='Baen Free Library', unique_id='baen-public',
-                    provider_id='baen', credential_id=self.credential_id,
-                    provider_label=self.descriptor.display_name, is_primary=True)
-        ]
+        self._accounts = []
         return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
     @staticmethod

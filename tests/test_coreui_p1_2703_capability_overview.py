@@ -240,3 +240,39 @@ def test_settings_does_not_leak_bad_capability_after_snapshot_mutation():
     assert "Aucune source qualifiée" in label
     assert "PRIVATE_TOKEN" not in label
     assert "SECRET" not in label
+
+
+def test_installed_backup_flag_is_visible_only_as_transversal_declaration():
+    """Installed artifact.backup does not establish a completed real backup."""
+    from cifereca.plugin_api import (
+        ProviderCapabilities, ProviderDescriptor, declared_provider_matrix,
+    )
+
+    descriptor = ProviderDescriptor(
+        id="synthetic", display_name="Synthetic", description="offline",
+        state="ready", capabilities=ProviderCapabilities(backup=True),
+    )
+    matrix = declared_provider_matrix(descriptor)
+    text, = source_capability_labels((matrix,))
+    assert "Transversal : déclaré, non vérifié" in text
+    assert "Acquisition : non pris en charge (périmètres déclarés)" in text
+    assert "Transversal : observation" not in text
+    assert "sauvegarde autorisée" not in text
+
+
+def test_sync_and_backup_evidence_share_one_read_only_transversal_family():
+    matrix = CapabilityMatrix("synthetic", (
+        CapabilityEvidence(
+            "synthetic", "artifact.backup", "unknown",
+            status="unverified", source_kind="code",
+        ),
+        CapabilityEvidence(
+            "synthetic", "sync.inventory", "account", status="partial",
+            source_kind="account_observation", implementation_state="implemented",
+            evidence_ref="synthetic.local.inventory/1", reason="partial_only",
+        ),
+    ))
+    text, = source_capability_labels((matrix,))
+    assert text.count("Transversal : ") == 1
+    assert "Transversal : observation, action non autorisée (partielle ou mixte)" in text
+    assert "synthetic.local.inventory/1" not in text

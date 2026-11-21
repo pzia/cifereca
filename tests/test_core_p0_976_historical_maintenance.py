@@ -243,3 +243,115 @@ def test_hold_review_classifies_exact_marker_without_exporting_witness(store, tm
         observed, = sql.execute("SELECT value FROM metadata WHERE key=?", (_key(pending),)).fetchone()
     assert observed == (bytes(raw) if kind == "blob" else raw)
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("with_publication", [False, True])
+def test_historical_hold_explicit_physical_review_never_unlocks(store, tmp_path, with_publication):
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.adept_historical_maintenance_line import _display_holds
+
+    service, published, path, _ = _setup(store, tmp_path)
+    if with_publication:
+        held = published
+    else:
+        held, observed = new_source(kind="loan", branch="loans", right="pending-only")
+        persist_attested_source_references(store, observed)
+    marker = _value("synthetic-same-offer", "a" * 32)
+    store.metadata_set(_key(held), marker)
+    request = review.admit_historical_review(service)
+    prior = review.run_historical_hold_review(service, request)
+    assert prior["rows"][0]["local_copy_evidence"] == "not_requested"
+    page = review.run_historical_hold_review(
+        service, request, verify_local_bytes=True,
+    )
+    row, = page["rows"]
+    assert row["provider_loan_id"] == held.right_id
+    assert row["local_copy_evidence"] == (
+        "verified_local_copy_observed" if with_publication else "not_proven"
+    )
+    assert not row["unlock_authorized"] and not page["mutation_authorized"]
+    assert row["activation_attested"] is False
+    assert "non autorisé" in _display_holds(page)
+    assert marker not in repr(page)
+    assert store.metadata_get(_key(held)) == marker
+    assert path.read_bytes() == BYTES
+
+
+def test_hold_review_rejects_non_boolean_file_review_without_read(store, tmp_path, monkeypatch):
+    service, _source, _path, _ = _setup(store, tmp_path)
+    request = review.admit_historical_review(service)
+    monkeypatch.setattr(
+        review, "review_historical_loan_diagnostic",
+        Mock(side_effect=AssertionError("bad flag must not read files")),
+    )
+    assert review.run_historical_hold_review(
+        service, request, verify_local_bytes=1,
+    ) is None
+
+
+def test_historical_hold_preview_aborts_if_marker_changes_during_physical_review(
+    store, tmp_path, monkeypatch,
+):
+    from cifereca.core.canonical_adept_attempt import _key, _value
+
+    service, held, path, _ = _setup(store, tmp_path)
+    before = _value("original-offer", "a" * 32)
+    after = _value("changed-offer", "b" * 32)
+    store.metadata_set(_key(held), before)
+    request = review.admit_historical_review(service)
+    assert request is not None
+    original = review.review_historical_loan_diagnostic
+
+    def marker_changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        # A concurrent Sync changes the exact v1 marker while the operator
+        # hashes a local candidate. A stale page must not be presented.
+        store.metadata_set(_key(held), after)
+        return result
+
+    monkeypatch.setattr(review, "review_historical_loan_diagnostic", marker_changed)
+    assert review.run_historical_hold_review(
+        service, request, verify_local_bytes=True,
+    ) is None
+    assert store.metadata_get(_key(held)) == after
+    assert path.read_bytes() == BYTES
+
+
+
+def test_historical_ledger_review_rejects_changed_branch_snapshot(
+    store, tmp_path, monkeypatch,
+):
+    """Other SQL evidence may change while the displayed ledger stays intact."""
+    service, _source, path, _publication = _setup(store, tmp_path)
+    request = review.admit_historical_review(service)
+    assert request is not None
+    assert review.run_historical_review(service, request)["rows"][0][
+        "canonical_status"
+    ] == "unique_source_record"
+    original = review._row
+    modified = []
+
+    def competing_branch(req, row, verify):
+        result = original(req, row, verify)
+        if not modified:
+            modified.append(True)
+            with store._lock, store._connect() as sql:
+                sql.execute(
+                    "INSERT INTO source_references (source_reference_id,identity_id,"
+                    "provider_id,credential_id,account_id,branch_id,edition_id,"
+                    "right_id,reference_kind,created_at,updated_at) VALUES "
+                    "('concurrent-branch','A','seller','card-A','buyer-A',"
+                    "'another-branch','edition','loan-1','loan',1,1)"
+                )
+        return result
+
+    monkeypatch.setattr(review, "_row", competing_branch)
+    # The repeated ledger page itself is unchanged: the independent
+    # source-reference evidence would be stale without a WAL stamp.
+    assert review.run_historical_review(service, request) is None
+    assert modified == [True]
+    assert path.read_bytes() == BYTES
+    monkeypatch.setattr(review, "_row", original)
+    row, = review.run_historical_review(service, request)["rows"]
+    assert row["canonical_status"] == "ambiguous_branch"

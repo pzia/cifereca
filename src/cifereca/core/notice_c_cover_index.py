@@ -111,12 +111,23 @@ def canonical_cover_document_ref(canonical_edition_id: str) -> CoverDocumentScop
 
 
 def is_canonical_cover_document(document: CoverDocumentScope) -> bool:
-    return (type(document) is CoverDocumentScope
-            and document.kind == "public_catalogue"
+    # A frozen CoverDocumentScope is NOT a trust boundary: a view/plugin can
+    # change its dataclass fields with object.__setattr__. Never invoke a
+    # foreign __eq__, .startswith or a hash while checking C authority.
+    if type(document) is not CoverDocumentScope:
+        return False
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return False
+    return (document.kind == "public_catalogue"
             and document.identity_id is None
             and document.provider_id == "cifereca.c"
             and document.credential_id == "__public__"
             and document.account_id is None
+            and not document.loan_id and not document.artifact_id
+            and not document.placement_id
             and document.source_key.startswith(_REF_PREFIX)
             and _HASH.fullmatch(document.source_key[len(_REF_PREFIX):]) is not None)
 

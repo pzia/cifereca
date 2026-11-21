@@ -213,6 +213,61 @@ def test_overlapping_exact_public_get_parses_once_and_receipts_are_independent(m
     assert not public_client._PUBLIC_SEARCH_FLIGHTS
 
 
+def test_exact_anonymous_get_joins_across_distinct_caller_timeouts(monkeypatch):
+    # A different caller deadline must not multiply the supplier's GET.
+    original_parse = public_client.parse_public_search
+    parsed = []
+
+    def parse(text, url):
+        parsed.append(url)
+        return original_parse(text, url)
+
+    monkeypatch.setattr(public_client, "parse_public_search", parse)
+    fake, first, second = _overlapping_readers(
+        monkeypatch, FakeResponse(),
+        lambda: public_client.fetch_public_search(
+            "jefferson", timeout=15.0, _retain_input=True),
+        lambda: public_client.fetch_public_search(
+            "jefferson", timeout=2.0, _retain_input=True),
+    )
+    left, right = first.result(), second.result()
+    assert fake.requests == [("GET", public_client.public_search_url("jefferson"))]
+    assert len(parsed) == 1
+    assert len(left.page.items) == len(right.page.items) == 20
+    assert left.page.items[0] is not right.page.items[0]
+    assert left.raw_input.token != right.raw_input.token
+    assert left.raw_input.transport_digest == right.raw_input.transport_digest
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+
+
+def test_short_wait_budget_never_starts_second_get_or_cancels_leader(monkeypatch):
+    fake, parameters = setup_public_client(monkeypatch)
+    started, release = Event(), Event()
+
+    @contextmanager
+    def stream(method, url):
+        fake.requests.append((method, url))
+        started.set()
+        assert release.wait(5)
+        yield fake.response
+
+    monkeypatch.setattr(fake, "stream", stream)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        leader = workers.submit(
+            public_client.fetch_public_search, "jefferson", timeout=15.0)
+        try:
+            assert started.wait(5)
+            with pytest.raises(ProviderError, match="public_catalog_request_in_progress"):
+                public_client.fetch_public_search("jefferson", timeout=0.02)
+            assert len(fake.requests) == 1
+            assert len(parameters) == 1 and parameters[0]["timeout"] == 15.0
+            assert not leader.done()
+        finally:
+            release.set()
+        assert len(leader.result().items) == 20
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+
+
 def test_overlapping_public_error_is_shared_without_retry_or_false_zero(monkeypatch):
     response = FakeResponse(status=429)
     response.headers["retry-after"] = "120"
@@ -357,11 +412,11 @@ def test_full_public_flight_budget_still_joins_existing_exact_get(monkeypatch):
     url = public_client.public_search_url("jefferson")
     matching = Future()
     matching.set_result((public_client._parse_search_body(HTML, url), HTML))
-    flights = {(public_client._transport_digest(url), 15.0): matching}
+    flights = {public_client._transport_digest(url): matching}
     flights.update({("occupied", i): Future()
                     for i in range(public_client._MAX_PUBLIC_SEARCH_FLIGHTS - 1)})
     monkeypatch.setattr(public_client, "_PUBLIC_SEARCH_FLIGHTS", flights)
-    result = public_client.fetch_public_search("jefferson")
+    result = public_client.fetch_public_search("jefferson", timeout=2.0)
     assert len(result.items) == 20
     assert len(flights) == public_client._MAX_PUBLIC_SEARCH_FLIGHTS
     assert fake.requests == []
