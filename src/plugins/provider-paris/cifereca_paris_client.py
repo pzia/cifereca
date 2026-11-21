@@ -818,6 +818,24 @@ class ParisClient:
                             metadata["bibliography_evidence"] = remaining
                         else:
                             metadata.pop("bibliography_evidence", None)
+                # Resource.Subj is independent of the page's Subj facet.
+                # Do not let route order select conflicting headings or
+                # restore evidence already refused on a previous duplicate.
+                from cifereca_paris_bibliography import public_search_subject_metadata
+                first_subjects = public_search_subject_metadata(previous.metadata, previous.scenario)
+                next_subjects = public_search_subject_metadata(item.metadata, item.scenario)
+                if (not same_classification or not first_subjects or not next_subjects
+                        or set(first_subjects["subjects"]) != set(next_subjects["subjects"])):
+                    claims = metadata.get("bibliography_evidence")
+                    if type(claims) is dict and "subjects" in claims:
+                        remaining = {key: value for key, value in claims.items()
+                                     if key != "subjects"}
+                        if remaining:
+                            metadata["bibliography_evidence"] = remaining
+                        else:
+                            metadata.pop("bibliography_evidence", None)
+                    # Legacy result-owned display may still show the first
+                    # route's headings, but cannot declare them in public C.
                 if same_classification:
                     out[pos] = replace(previous, metadata=metadata)
                 else:
