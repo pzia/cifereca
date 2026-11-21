@@ -398,14 +398,11 @@ class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=HTTPX_TRANSPORT.client(producer="provider.baen",timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
+        # Baen Free Library has no authenticated reader inventory. Retain
+        # any installed explicit connection coordinates for configuration
+        # compatibility, but never invent a primary account/borrower for it.
         self.connected = True
-        # The installation singleton is anonymous, not a fabricated borrower.
-        # Preserve the legacy standalone test/client account convention.
-        self._accounts = [] if self.credential_id == "__public__" and not self.credentials else [
-            Account(display_name='Baen Free Library', unique_id='baen-public',
-                    provider_id='baen', credential_id=self.credential_id,
-                    provider_label=self.descriptor.display_name, is_primary=True)
-        ]
+        self._accounts = []
         return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
     @staticmethod
