@@ -92,7 +92,12 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors):
             matches = []
             truncated = len(rows) > _MAX_REFERENCES
             for branch, edition, right, _, _ in rows[:_MAX_REFERENCES]:
-                source = SourceReference(scope, branch, edition, right, kind)
+                try:
+                    source = SourceReference(scope, branch, edition, right, kind)
+                except ValueError:
+                    # A malformed row is not a documentary match; preserve
+                    # valid neighbours in this explicitly partial window.
+                    continue
                 observed_at = None
                 if kind == "purchase":
                     notice = _read_descriptive_txn(db, source)
@@ -198,7 +203,12 @@ def available_known_private_catalogues(service, request, *, evidence=None):
         for account in accounts:
             if type(account) is not Account or account.identity_id != request.identity_id:
                 continue
-            scope = ProviderRightsScope(*_coords(account))
+            try:
+                scope = ProviderRightsScope(*_coords(account))
+            except (ValueError, TypeError, AttributeError):
+                # A malformed sibling must not erase the other connected
+                # surfaces. This is a partial choice list, not coverage.
+                continue
             # Do not project arbitrary account metadata or control characters.
             if not all(type(x) is str and len(x) <= 256
                        and all(ord(ch) >= 32 and ord(ch) != 127 for ch in x)

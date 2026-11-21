@@ -1,4 +1,6 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
+from datetime import datetime, timezone
+
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
 )
@@ -62,11 +64,22 @@ def private_rows(report):
         ("Couverture", "Fenêtre partielle en cache. Ni recherche réseau ni origine ou droit attestés."),
     ]
     for hit in report.matches:
+        observed = "Date de description inconnue"
+        if type(hit.observed_at) is int and 0 < hit.observed_at <= 253402300799:
+            try:
+                observed = "Description observée le " + datetime.fromtimestamp(
+                    hit.observed_at, tz=timezone.utc,
+                ).strftime("%Y-%m-%d %H:%M UTC")
+            except (OverflowError, ValueError, OSError):
+                pass
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.edition_id,
+            hit.author, "Édition : " + hit.edition_id,
+            "Branche : " + hit.branch if hit.branch else "Branche non renseignée",
+            "Occurrence : " + hit.resource_id if hit.resource_id else "Occurrence non renseignée",
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
             "Description d’achat en cache" if hit.evidence == "cached_public_purchase_description"
-            else "Description de prêt en cache ; date inconnue",
+            else "Description de prêt en cache",
+            observed,
         ) if x)))
     if report.window_truncated:
         lines.append(("Limite", "Fenêtre limitée ; d’autres correspondances peuvent exister."))
