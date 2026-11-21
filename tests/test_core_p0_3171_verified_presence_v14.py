@@ -360,3 +360,70 @@ def test_corrupt_artifact_evidence_does_not_suppress_real_delivery(
             "SELECT COUNT(*) FROM origin_links WHERE artifact_id=?",
             (published.artifact_id,),
         ).fetchone() == (1,)
+
+
+def test_presence_plan_never_settles_caller_transaction(store, tmp_path):
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    db = store._connect()
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", ("synthetic.presence", "pending"))
+        for admitted in (snapshot, replace(snapshot, rights=())):
+            with pytest.raises(ValueError, match="canonical_presence_nested_transaction"):
+                plan(store, admitted, tmp_path)
+            assert db.in_transaction
+            assert db.execute("SELECT value FROM metadata WHERE key='synthetic.presence'").fetchone() == ("pending",)
+        db.rollback()
+        assert store.metadata_get("synthetic.presence") is None
+        assert plan(store, snapshot, tmp_path)[0].provider_satisfied
+        assert path.read_bytes() == BYTES
+    finally:
+        if db.in_transaction:
+            db.rollback()
+
+
+@pytest.mark.parametrize("writer", ["same_connection", "other_connection", "open_transaction"])
+def test_presence_plan_rejects_sqlite_change_during_physical_proof(store, tmp_path, monkeypatch, writer):
+    import sqlite3
+    from cifereca.core import convergence_verified_presence as module
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    original = module._verified_copy
+    db = store._connect()
+
+    def physical(*args, **kwargs):
+        assert original(*args, **kwargs)
+        query = "UPDATE source_references SET evidence_ref='' WHERE right_id=?"
+        if writer == "same_connection":
+            with db:
+                db.execute(query, (source.right_id,))
+        elif writer == "other_connection":
+            other = sqlite3.connect(store.path)
+            try:
+                with other:
+                    other.execute(query, (source.right_id,))
+            finally:
+                other.close()
+        else:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(query, (source.right_id,))
+        return True
+
+    monkeypatch.setattr(module, "_verified_copy", physical)
+    try:
+        with pytest.raises(ValueError, match="canonical_presence_snapshot_changed"):
+            plan(store, snapshot, tmp_path)
+        assert db.in_transaction is (writer == "open_transaction")
+        if db.in_transaction:
+            db.rollback()
+        monkeypatch.setattr(module, "_verified_copy", original)
+        assert plan(store, snapshot, tmp_path)[0].provider_satisfied is (writer == "open_transaction")
+        assert path.read_bytes() == BYTES
+    finally:
+        if db.in_transaction:
+            db.rollback()
