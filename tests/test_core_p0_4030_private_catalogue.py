@@ -235,3 +235,65 @@ def test_cached_purchase_date_is_source_date_not_refresh_time(private_rig, monke
     assert "1970-01-01 00:01 UTC" in visible
     assert "Occurrence : " + key.right_id in visible
     assert "fraîcheur réseau" not in visible and not calls
+
+
+
+def _populate_windows(fixture):
+    service, request, account, session, calls, path, *_ = fixture
+    for index in range(2, 7):
+        key, snap = new_source(kind="loan", right=f"loan-{index}", branch="loans")
+        persist_attested_source_references(service.storage, snap)
+        service.last_loans.append(replace(service.last_loans[0], id=key.right_id))
+
+
+@pytest.mark.parametrize("reference_budget,match_budget", [(3, 50), (128, 2), (3, 2)])
+def test_private_reference_windows_do_not_drop_matches(private_rig, monkeypatch,
+                                                       reference_budget, match_budget):
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    before, data = rows(service.storage), path.read_bytes()
+    monkeypatch.setattr(private, "_MAX_REFERENCES", reference_budget)
+    monkeypatch.setattr(private, "_MAX_MATCHES", match_budget)
+    result = _run(private_rig)
+    seen = []
+    for _ in range(10):
+        assert result["status"] == "partial"
+        assert not result["coverage_complete"]
+        seen.extend(row.source.resource_id for row in result["candidates"])
+        cursor = result["next_cursor"]
+        if cursor is None:
+            break
+        assert result["window_truncated"]
+        assert _run(private_rig, confirmed=False, continuation=cursor)["candidates"] == ()
+        result = _run(private_rig, continuation=cursor)
+    assert seen == [f"loan-{index}" for index in range(1, 7)]
+    assert not result["window_truncated"] and result["next_cursor"] is None
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("change", ["database", "loan_projection", "inode", "account", "kind"])
+def test_private_reference_continuation_is_bound_to_previous_review(private_rig, monkeypatch, change):
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    cursor = _run(private_rig)["next_cursor"]
+    assert cursor is not None
+    options = {}
+    if change == "database":
+        service.storage.metadata_set("test-private-review-drift", "changed")
+    elif change == "loan_projection":
+        service.last_loans[0] = replace(service.last_loans[0], title="changed")
+    elif change == "inode":
+        content = path.read_bytes()
+        path.rename(path.with_suffix(".old"))
+        path.write_bytes(content)
+    elif change == "account":
+        other = replace(account)
+        service.accounts[:] = [other]
+        session.accounts[:] = [other]
+        options["account"] = other
+    else:
+        options["kind"] = "purchase"
+    result = _run(private_rig, continuation=cursor, **options)
+    assert result["status"] != "partial"
+    assert not result["candidates"] and result["next_cursor"] is None and not calls
