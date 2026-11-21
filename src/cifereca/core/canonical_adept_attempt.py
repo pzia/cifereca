@@ -127,9 +127,10 @@ def release_unsubmitted_attempt(storage, *, source: SourceKey, offer_id: str,
                                 operation_id: str, shared_lock) -> None:
     """Release only the claim created by this still-live Core dispatch.
 
-    Caller must know it has NOT entered execute_acquisition_request. This
-    cannot qualify or release a historical marker after a crash, runtime call
-    or unknown result. The exact operation ID is held only by its creator.
+    The caller either refused locally before dispatch or received the
+    installed runtime's synchronous proof of non-submission. A crash or
+    ambiguous result never permits this. The exact operation ID is held
+    only by its creator.
     """
     from .canonical_recovery import _lock_ok
     if not _lock_ok(shared_lock):

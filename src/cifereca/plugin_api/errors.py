@@ -19,6 +19,15 @@ class AttentionRequired(UserFacingError):
     """A remediable condition that should not be presented as an opaque failure."""
 
 
+class AdeptFulfillmentNotSubmitted(AttentionRequired):
+    """The installed ADEPT runtime refused this call before entering fulfillment.
+
+    This exception is reserved for synchronous validation and read-only
+    capability checks before the mutating command. It cannot represent a
+    subprocess timeout, an unexpected reply or any error after dispatch.
+    """
+
+
 class UnsupportedOperation(PluginApiError):
     pass
 
@@ -58,7 +67,7 @@ class BorrowRequestNotSubmitted(PluginApiError):
 
 
 __all__ = [
-    "PluginApiError", "UserFacingError", "AttentionRequired", "UnsupportedOperation",
+    "PluginApiError", "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "UnsupportedOperation",
     "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable",
     "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted",
 ]

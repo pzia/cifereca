@@ -1,3 +1,12 @@
+## Refus local du fulfillment ACSM (#7161)
+
+`download_request` émet `AdeptFulfillmentNotSubmitted` pour un refus typé
+de validation ou de capacité en lecture seule avant le lancement de
+`download request`. Le Core peut alors libérer par comparaison exacte le
+claim créé par cet appel pour la prochaine synchronisation. Les résultats
+du sous-processus, ses timeouts et les marqueurs laissés par un ancien
+processus suivent les gardes de reprise applicables aux résultats ambigus.
+
 ## 1.2.37 — garde ultime sur la commande CLI générique (#4048 P1)
 
 L'ancienne extension pouvait appeler directement `KoboAdeptRuntime.run_json`
