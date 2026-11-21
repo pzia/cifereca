@@ -24,5 +24,11 @@ class GuidedBookReviewHost(Protocol):
 
 
 @runtime_checkable
+class GuidedBookReviewPagedHost(GuidedBookReviewHost, Protocol):
+    """Optional action retirement on the UI delivery boundary; no new authority."""
+    def retire_action(self, action_id: str) -> bool: ...
+
+
+@runtime_checkable
 class GuidedBookReviewTool(Protocol):
     def contribute_book_review(self, host: GuidedBookReviewHost) -> Callable[[], None]: ...

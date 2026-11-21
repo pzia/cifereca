@@ -915,6 +915,22 @@ class DetailPanel(Gtk.Box):
 
         return remove
 
+    def remove_review_action(self, button) -> None:
+        """Physically retire only the exact contextual action, preserving peers."""
+        current = getattr(self, "_action_buttons", ())
+        if (getattr(button, "_cifereca_review_action_retired", False) is not True
+                or not any(item is button for item in current)):
+            return
+        # Remove the old widget and ID, not merely hide it. A later action
+        # bar rebuild or cached contribution refresh must not revive it.
+        kept = [item for item in current if item is not button]
+        self.action_scroll.clear()
+        self._action_ids = set()
+        self._action_buttons = []
+        self._rendered_action_count = 0
+        self.action_scroll.set_visible(False)
+        self._actions(kept)
+
     def add_actions(self, buttons: list[Gtk.Button]) -> None:
         self._actions(buttons)
 
