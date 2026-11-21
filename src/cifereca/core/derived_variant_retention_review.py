@@ -69,11 +69,29 @@ def _canonical(storage, db, intent):
                              origin_id=origin_id, recipe_id=recipe_id)
 
 
+def _index_receipt_references(paths, inodes, key, intent):
+    """Record only immutable receipt coordinates, not live FS evidence."""
+    for path in (intent.parent_path, intent.staged_path, intent.candidate_path):
+        paths.setdefault(path, set()).add(key)
+    for stamp in (intent.parent_stamp, intent.output_stamp):
+        inodes.setdefault(stamp[:2], set()).add(key)
+
+
+def _other_receipt_dependency(paths, inodes, key, intent):
+    # An exact recorded output inode used by a different receipt as either
+    # input or output is a conservative veto, even if its path is distinct.
+    # Sharing only an ordinary input parent remains permitted.
+    return (any(paths[path] != {key} for path in (
+                intent.staged_path, intent.candidate_path))
+            or inodes[intent.output_stamp[:2]] != {key})
+
+
 def review_derived_receipt_retention(storage, *, identity_id, explicitly_requested=False):
     """Classify committed receipts in a single bounded SQLite read snapshot.
 
     Shared paths with any other receipt (pending or committed, any identity)
-    are conservative blockers; sharing only the ordinary parent is allowed.
+    or an output inode recorded by another receipt are conservative blockers;
+    sharing only the ordinary parent is allowed.
     This is NOT the full dependency inventory or a physical verification.
     Only aggregate counts for the requested exact profile are returned.
     """
@@ -91,15 +109,14 @@ def review_derived_receipt_retention(storage, *, identity_id, explicitly_request
                 _directory(db, identity_id)
                 rows, _total = _measure(db)
                 records = {}
-                path_refs = {}
+                path_refs, inode_refs = {}, {}
                 for key, _size in rows:
                     raw = db.execute(
                         "SELECT value FROM metadata WHERE key=?", (key,),
                     ).fetchone()[0]
                     intent = _decode(key, raw)
                     records[key] = intent
-                    for path in (intent.parent_path, intent.staged_path, intent.candidate_path):
-                        path_refs.setdefault(path, set()).add(key)
+                    _index_receipt_references(path_refs, inode_refs, key, intent)
                 counts = dict.fromkeys((
                     "canonical_sql_witness", "dependent_receipt_or_staging_placement",
                     "canonical_unverified",
@@ -112,8 +129,7 @@ def review_derived_receipt_retention(storage, *, identity_id, explicitly_request
                     except DerivedJournalConflict:
                         counts["canonical_unverified"] += 1
                         continue
-                    if (any(path_refs[path] != {key} for path in (
-                            intent.staged_path, intent.candidate_path))
+                    if (_other_receipt_dependency(path_refs, inode_refs, key, intent)
                             or db.execute(
                                 "SELECT 1 FROM placements WHERE path=? LIMIT 1",
                                 (intent.staged_path,),
