@@ -233,3 +233,47 @@ def test_idle_organizer_cancel_revokes_preselected_keeper_advice(store, tmp_path
     _finish(tasks)
     assert c.page.page == 1 and c.page.selected == 0
     assert rows(store) == before
+
+
+
+@pytest.mark.parametrize("change", ["none", "sqlite", "bytes", "cancel"])
+def test_guided_dry_run_has_two_explicit_steps_and_never_mutates(store, tmp_path, change):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, pid = _put_epub(store, root, "Acquisitions/old.epub")
+    mod, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    c = plugin.controller(host, lambda *args: renders.append(args))
+    original_bytes = path.read_bytes()
+    assert not c.request("prepare") and not c.request("confirm")
+    assert c.request("preview")
+    _finish(tasks)
+    first = c.page
+    assert not c.request("confirm") and c.request("prepare")
+    _finish(tasks)
+    prepared = c.page
+    assert prepared.dry_run_state == "prepared" and not prepared.mutation_authorized
+    assert prepared.token != first.token
+    assert not hasattr(prepared.dry_run_entries[0], "placement_id")
+    assert "Plan à blanc" in mod.display(prepared)
+    assert plugin.broker.confirm_dry_run(token=first.token, confirmed=True) is None
+    if change == "sqlite":
+        store.metadata_set("guided-dry-run-drift", "changed")
+    elif change == "bytes":
+        path.write_bytes(b"changed")
+    elif change == "cancel":
+        assert c.cancel() and not c.request("confirm")
+    before = rows(store)
+    if change != "cancel":
+        assert c.request("confirm")
+        _finish(tasks)
+    if change == "none":
+        assert c.page.dry_run_state == "confirmed" and not c.page.mutation_authorized
+        assert "Simulation confirmée" in mod.display(c.page)
+        assert not c.request("confirm") and not c.request("prepare")
+        assert path.read_bytes() == original_bytes
+    else:
+        assert c.page is None
+    assert plugin.broker.confirm_dry_run(token=prepared.token, confirmed=True) is None
+    assert rows(store) == before
+    assert path.exists() and not (path.parent / "Autrice - Roman commun.epub").exists()

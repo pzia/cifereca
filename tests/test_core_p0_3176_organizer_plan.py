@@ -85,7 +85,7 @@ def test_two_independent_renames_to_one_vacant_target_are_held(store, tmp_path):
     # Distinct EPUB bytes but the same descriptive title and author.
     one, _ = _put_epub(store, root, "Acquisitions/one.epub")
     two, _ = _put_epub(store, root, "Acquisitions/two.epub",
-                      metadata=META + "<dc:language>fr</dc:language>")
+                      metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
     assert one.read_bytes() != two.read_bytes()
     scope, page = _run(_service(store, root))
     plan = prepare_organizer_dry_run(scope, page, confirmed=True)
