@@ -138,3 +138,26 @@ def test_copied_search_primary_receipt_never_hashes_foreign_age_bounds(tmp_path)
             assert primary_known_public_c_ages(modified) == ()
         assert len(primary_known_public_c_ages(item)) == 1
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_bounded_native_c_comparator_never_invokes_foreign_scalar_equality():
+    from cifereca.gui.search_known_public_c_age import _same_native
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign equality in native C comparator")
+
+    foreign = Hostile()
+    for actual, expected in (
+        (foreign, foreign),
+        ([foreign], [foreign]),
+        ({"age_min": foreign}, {"age_min": foreign}),
+        ({"ranges": [{"age_kind": foreign}]},
+         {"ranges": [{"age_kind": foreign}]}),
+    ):
+        assert not _same_native(actual, expected)
+    assert _same_native(
+        {"ranges": [{"age_kind": "publisher", "age_min": 12, "age_max": None}]},
+        {"ranges": [{"age_kind": "publisher", "age_min": 12, "age_max": None}]},
+    )
