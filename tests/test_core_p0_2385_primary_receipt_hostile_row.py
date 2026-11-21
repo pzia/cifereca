@@ -136,3 +136,65 @@ def test_mutable_public_c_page_rejected_before_foreign_len_hash_or_equality(tmp_
         )
         assert good_again["item_id"] == good["item_id"]
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_public_c_first_never_drops_a_mirror_with_foreign_boolean_or_equality(
+    tmp_path,
+):
+    from cifereca.core.notice_c_known_projection import _public_mirror_key
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign mirror equality")
+
+        def __bool__(self):
+            raise AssertionError("foreign mirror truthiness")
+
+        def __hash__(self):
+            return hash("source_credential")
+
+    metadata = {
+        "catalogue_scope_version": 3,
+        "source_credential": "__public__",
+        "source_collection": "public_catalog",
+        "source_account_id": None,
+        "source_revision": "revision-a",
+        "docbase": "BNF", "medium": "digital",
+    }
+    known = {
+        "source": "known_catalog", "identity_id": "alice",
+        "local": False, "state": "remote_catalog",
+        "provider_id": "bnf", "item_id": "edition-a",
+        "metadata": metadata,
+    }
+    assert _public_mirror_key(known, identity_id="alice") == (
+        "bnf", "edition-a", "BNF", "digital", "revision-a",
+    )
+
+    with closing(Storage(tmp_path / "hostile-mirror.sqlite")) as db:
+        source = persist(db, verified_public(
+            record_id="edition-a", title="Edition publique",
+        ))
+        page = search_public_notice_c(db, "Edition publique", now=100)
+        base, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        for field_name in ("source", "identity_id", "state", "placement_id",
+                           "artifact_id", "local_path", "provider_id"):
+            damaged = {**known, field_name: Hostile()}
+            assert _public_mirror_key(damaged, identity_id="alice") is None
+            assert len(merge_public_notice_c_known_rows(
+                [damaged], page, identity_id="alice",
+            )) == 2
+        for field_name in ("source_credential", "source_collection",
+                           "source_account_id", "source_revision", "docbase",
+                           "medium", "catalogue_scope_version"):
+            damaged = {**known, "metadata": {**metadata, field_name: Hostile()}}
+            assert _public_mirror_key(damaged, identity_id="alice") is None
+            assert len(merge_public_notice_c_known_rows(
+                [damaged], page, identity_id="alice",
+            )) == 2
+        poisoned_keys = {**metadata, Hostile(): "unexpected"}
+        damaged = {**known, "metadata": poisoned_keys}
+        assert _public_mirror_key(damaged, identity_id="alice") is None
+        assert base["source"] == "notice_c_public"
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
