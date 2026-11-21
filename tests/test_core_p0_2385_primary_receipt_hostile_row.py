@@ -83,3 +83,56 @@ def test_hostile_row_fields_cannot_invoke_equality_or_mint_primary_c_provenance(
             assert known_public_alternative_facts(candidate) == ()
             assert with_known_public_field_provenance(presentation, candidate) is presentation
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_mutable_public_c_page_rejected_before_foreign_len_hash_or_equality(tmp_path):
+    import pytest
+
+    class Hostile:
+        def __len__(self):
+            raise AssertionError("foreign C page length")
+
+        def __hash__(self):
+            raise AssertionError("foreign C page hash")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign C page equality")
+
+    with closing(Storage(tmp_path / "hostile-page.sqlite")) as db:
+        source = persist(db, verified_public(
+            record_id="primary-page", title="Page primaire",
+        ), at=100)
+        persist_exact_public_search_cover(db, source)
+        page = search_public_notice_c(
+            db, "Page primaire", group_by_document=True, now=100,
+        )
+        good, = merge_public_notice_c_known_rows(
+            [], page, identity_id="alice",
+        )
+        assert good["item_id"] == "primary-page"
+
+        altered_document = replace(page.hits[0].document)
+        object.__setattr__(altered_document, "source_key", Hostile())
+        altered_source = replace(page.hits[0], document=altered_document)
+        failures = (
+            replace(page, hits=Hostile()),
+            replace(page, hits=(Hostile(),)),
+            replace(page, matching_sources=Hostile()),
+            replace(page, matching_sources=(altered_source,)),
+            replace(page, hits=(altered_source,)),
+            replace(page, known_documents=Hostile()),
+            replace(page, known_matches=Hostile()),
+            replace(page, scanned_sources=Hostile()),
+            replace(page, unindexed_sources=Hostile()),
+            replace(page, status=Hostile()),
+            replace(page, has_more=Hostile()),
+        )
+        for candidate in failures:
+            with pytest.raises(ValueError, match="invalid_known_public_c_projection"):
+                merge_public_notice_c_known_rows([], candidate, identity_id="alice")
+        good_again, = merge_public_notice_c_known_rows(
+            [], page, identity_id="alice",
+        )
+        assert good_again["item_id"] == good["item_id"]
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
