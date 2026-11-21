@@ -27,6 +27,37 @@ class PinnedKnownPublicC:
     context: tuple[object, ...]
 
 
+def _native_public_document(doc: object) -> bool:
+    # A Core DocumentRef is a frozen dataclass, not an immutable view lease.
+    # Check all members before source-key regex or dataclass equality.
+    if type(doc) is not CoverDocumentScope:
+        return False
+    if any(type(getattr(doc, name)) is not str
+           or len(getattr(doc, name)) > 512
+           or not getattr(doc, name).isprintable()
+           for name in ("kind", "source_key", "provider_id", "credential_id",
+                        "loan_id", "artifact_id", "placement_id")):
+        return False
+    return (doc.kind == "public_catalogue" and doc.identity_id is None
+            and doc.account_id is None and doc.credential_id == "__public__"
+            and bool(doc.provider_id) and not doc.loan_id and not doc.artifact_id
+            and not doc.placement_id and is_notice_cover_document(doc))
+
+
+def _native_context(ctx: object) -> bool:
+    return (type(ctx) is tuple and len(ctx) == 5
+            and type(ctx[0]) is str and ctx[0] in ("local", "global")
+            and all(type(value) is int and value >= 0 for value in ctx[1:]))
+
+
+def _epoch(meta: object) -> int | None:
+    if (type(meta) is not dict or len(meta) > 128
+            or any(type(name) is not str for name in meta)):
+        return None
+    value = meta.get("notice_c_epoch")
+    return value if type(value) is int and 1 <= value < 2**63 else None
+
+
 def _context(window: Any, service: object) -> tuple[object, ...]:
     return (
         getattr(window, "_search_mode", None),
@@ -41,7 +72,8 @@ def pin_known_public_c(
     window: Any, row: Any, item: object,
 ) -> PinnedKnownPublicC | None:
     """Pin a *currently mapped* Search C known row, never a raw URL/ref."""
-    if type(item) is not dict or item.get("source") != "notice_c_public":
+    if (type(item) is not dict or type(item.get("source")) is not str
+            or item["source"] != "notice_c_public"):
         return None
     service = getattr(window, "service", None)
     identity_id = getattr(
@@ -50,23 +82,19 @@ def pin_known_public_c(
     key = item.get("key")
     document = item.get("_cover_document_ref")
     meta = item.get("metadata")
-    epoch = meta.get("notice_c_epoch") if type(meta) is dict else None
+    epoch = _epoch(meta)
     context = _context(window, service)
     source_rows = getattr(window, "_search_local_objects", None)
+    row_key = getattr(row, "key", None)
     if (getattr(window, "_closed", False) is True
             or type(identity_id) is not str or not identity_id
             or type(key) is not str or not key or len(key) > 1500
-            or type(row) is object or getattr(row, "key", None) != key
+            or type(row_key) is not str or row_key != key
             or type(source_rows) is not dict or source_rows.get(key) is not item
-            or item.get("identity_id") != identity_id
-            or type(document) is not CoverDocumentScope
-            or document.kind != "public_catalogue"
-            or document.identity_id is not None
-            or not is_notice_cover_document(document)
-            or type(epoch) is not int or epoch < 1
-            or len(context) != 5 or context[0] not in ("local", "global")
-            or any(type(generation) is not int or generation < 0
-                   for generation in context[1:])):
+            or type(item.get("identity_id")) is not str
+            or item["identity_id"] != identity_id
+            or not _native_public_document(document)
+            or epoch is None or not _native_context(context)):
         return None
     # A genuine BookListItem can carry a witness for a different same-key
     # source. Absence is permitted only for an unmaterialised detail adapter
@@ -75,10 +103,12 @@ def pin_known_public_c(
     if witnessed is not None and witnessed is not item:
         return None
     displayed = getattr(row, "_cover_document_ref", None)
-    if displayed is not None and displayed != document:
+    if displayed is not None and (
+            not _native_public_document(displayed) or displayed != document):
         return None
     displayed_epoch = getattr(row, "_cover_public_c_epoch", None)
-    if displayed_epoch is not None and displayed_epoch != epoch:
+    if displayed_epoch is not None and (
+            type(displayed_epoch) is not int or displayed_epoch != epoch):
         return None
     return PinnedKnownPublicC(
         source_item=item, service=service, row_key=key,
@@ -100,24 +130,32 @@ def attach_filtered_known_public_c(
     if type(projected) is not dict:
         return
     key = projected.get("key")
+    if type(key) is not str or not key or len(key) > 1500:
+        row._cover_known_public_c_source = projected
+        return
     current = getattr(window, "_search_local_objects", None)
     source = current.get(key) if type(current) is dict else None
     source_meta = source.get("metadata") if type(source) is dict else None
     projected_meta = projected.get("metadata")
+    original_doc = source.get("_cover_document_ref") if type(source) is dict else None
+    displayed_doc = projected.get("_cover_document_ref")
+    original_epoch = _epoch(source_meta)
+    displayed_epoch = _epoch(projected_meta)
     matching = (
-        projected.get("source") == "notice_c_public"
+        type(projected.get("source")) is str
+        and projected["source"] == "notice_c_public"
         and type(source) is dict
-        and source.get("source") == "notice_c_public"
-        and source.get("key") == key
-        and source.get("identity_id") == projected.get("identity_id")
-        and source.get("_cover_document_ref")
-            == projected.get("_cover_document_ref")
-        and type(source_meta) is dict
-        and type(projected_meta) is dict
-        and type(source_meta.get("notice_c_epoch")) is int
-        and source_meta["notice_c_epoch"] == projected_meta.get(
-            "notice_c_epoch",
-        )
+        and type(source.get("source")) is str
+        and source["source"] == "notice_c_public"
+        and type(source.get("key")) is str and source["key"] == key
+        and type(source.get("identity_id")) is str
+        and type(projected.get("identity_id")) is str
+        and source["identity_id"] == projected["identity_id"]
+        and _native_public_document(original_doc)
+        and _native_public_document(displayed_doc)
+        and original_doc == displayed_doc
+        and original_epoch is not None
+        and original_epoch == displayed_epoch
     )
     original = source if matching else projected
     # Retain a veto marker even on rejected projections. No generic
@@ -133,38 +171,54 @@ def known_public_c_current(window: Any, binding: object) -> bool:
     if type(binding) is not PinnedKnownPublicC:
         return False
     service = getattr(window, "service", None)
+    current_context = _context(window, service)
+    current_identity = getattr(
+        getattr(service, "current_identity", None), "identity_id", None,
+    )
     if (getattr(window, "_closed", False) is True
             or service is not binding.service
-            or _context(window, service) != binding.context
-            or getattr(getattr(service, "current_identity", None),
-                       "identity_id", None) != binding.identity_id):
+            or not _native_context(binding.context)
+            or not _native_context(current_context)
+            or current_context != binding.context
+            or type(binding.identity_id) is not str
+            or type(current_identity) is not str
+            or current_identity != binding.identity_id
+            or type(binding.row_key) is not str or not binding.row_key
+            or not _native_public_document(binding.document)
+            or type(binding.epoch) is not int
+            or not 1 <= binding.epoch < 2**63):
         return False
     item = binding.source_item
     rows = getattr(window, "_search_local_objects", None)
     meta = item.get("metadata") if type(item) is dict else None
+    document = item.get("_cover_document_ref") if type(item) is dict else None
     return (
         type(rows) is dict
         and rows.get(binding.row_key) is item
-        and item.get("key") == binding.row_key
-        and item.get("source") == "notice_c_public"
-        and item.get("identity_id") == binding.identity_id
-        and item.get("_cover_document_ref") == binding.document
-        and type(meta) is dict
-        and type(meta.get("notice_c_epoch")) is int
-        and meta["notice_c_epoch"] == binding.epoch
-        and is_notice_cover_document(binding.document)
+        and type(item) is dict
+        and type(item.get("key")) is str and item["key"] == binding.row_key
+        and type(item.get("source")) is str and item["source"] == "notice_c_public"
+        and type(item.get("identity_id")) is str
+        and item["identity_id"] == binding.identity_id
+        and _native_public_document(document)
+        and document == binding.document
+        and _epoch(meta) == binding.epoch
     )
 
 
 def known_public_c_cell_current(window: Any, row: Any, binding: object) -> bool:
     """A recycled list cell may paint only its original C-first source."""
+    displayed = getattr(row, "_cover_document_ref", None)
+    key = getattr(row, "key", None)
+    epoch = getattr(row, "_cover_public_c_epoch", None)
     return (
         known_public_c_current(window, binding)
-        and getattr(row, "key", None) == binding.row_key
+        and type(key) is str and key == binding.row_key
         and getattr(row, "_cover_known_public_c_source", None)
             is binding.source_item
-        and getattr(row, "_cover_document_ref", None) == binding.document
-        and getattr(row, "_cover_public_c_epoch", None) == binding.epoch
+        and _native_public_document(displayed)
+        and displayed == binding.document
+        and type(epoch) is int and epoch == binding.epoch
     )
 
 
