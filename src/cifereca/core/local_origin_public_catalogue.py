@@ -10,7 +10,7 @@ import re
 
 from ..plugin_api import ProviderSearchResponse, PublicSearchNotice, ProviderSearchWithFacets
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
-from .local_origin_suggestion_preview import _verified_candidate
+from .local_origin_suggestion_preview import _PublicComparisonEvidence, _verified_candidate
 from .local_origin_epub_evidence import read_verified_epub_bibliography, _isbn13
 from .local_origin_documentary_suggestions import _fold
 from .public_search_projection import project_public_search_results
@@ -59,13 +59,16 @@ class PublicCatalogueChoice:
     session: object
     field: str
     scope: str
+    evidence: _PublicComparisonEvidence
 
 
-def available_local_public_catalogues(service, request):
+def available_local_public_catalogues(service, request, *, evidence=None):
     """Bounded inert discovery after explicit known-C review; no provider call."""
     try:
         if (type(request) is not LocalOriginSuggestionRequest
                 or request.service is not service or request.page != 0
+                or type(evidence) is not _PublicComparisonEvidence
+                or not evidence.matches_scope(request)
                 or not request.current()):
             return ()
         sessions = tuple(service._sessions.values())
@@ -81,7 +84,7 @@ def available_local_public_catalogues(service, request):
         for provider in sorted(ids):
             selected = _source(service, request, provider)
             if selected is not None:
-                choices.append(PublicCatalogueChoice(request, provider, *selected))
+                choices.append(PublicCatalogueChoice(request, provider, *selected, evidence))
             if len(choices) >= 8:
                 break
         return tuple(choices) if request.current() else ()
@@ -148,6 +151,8 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 type(choice) is not PublicCatalogueChoice
                 or choice.request is not request or choice.provider_id != provider_id
                 or choice.session is not session
+                or type(choice.evidence) is not _PublicComparisonEvidence
+                or not choice.evidence.matches_scope(request)
                 or (choice.field, choice.scope) != (field, scope)):
             return report("scope_changed")
 
@@ -160,6 +165,11 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                                  identity_id=request.identity_id,
                                  placement_id=request.placement_id,
                                  catalogue=True) as (local, path, signature):
+            # The user's consent is for the exact file previously reviewed,
+            # not another valid EPUB now occupying the same placement.
+            if choice is not None and (choice.evidence.evidence != local
+                                       or choice.evidence.signature != signature):
+                return report("scope_changed")
             if local[6] not in ("epub", "kepub"):
                 return report("excluded")
             details = read_verified_epub_bibliography(path, signature)

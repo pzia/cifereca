@@ -70,7 +70,9 @@ class LocalOriginDetailReadBrokerImpl:
             if (request.page == 0 and self._activation_current is not None
                     and result["metadata_evidence"] == "verified_epub_opf_description"):
                 choices = tuple((token_hex(32), choice)
-                                for choice in available_local_public_catalogues(self._service, request))
+                                for choice in available_local_public_catalogues(
+                                    self._service, request,
+                                    evidence=result.get("public_comparison_evidence")))
             page = LocalOriginDetailPage(
                 token_hex(32), known.page + 1,
                 tuple(LocalOriginDetailMatch(
