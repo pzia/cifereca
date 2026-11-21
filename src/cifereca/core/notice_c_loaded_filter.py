@@ -16,6 +16,30 @@ _MARKER = object()
 _FIELD = "_core_notice_c_filter_sources"
 
 
+def _native_group_document(document):
+    # Core's frozen scope can be mutated after issuance. Revalidate scalar
+    # members before dataclass equality, then re-run the constructor's
+    # public/private invariants before repository source eligibility.
+    if type(document) is not CoverDocumentScope:
+        return False
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return False
+    for name in ("identity_id", "account_id"):
+        value = getattr(document, name)
+        if (value is not None and (type(value) is not str
+                                   or len(value) > 512
+                                   or not value.isprintable())):
+            return False
+    try:
+        document.__post_init__()
+    except (TypeError, ValueError):
+        return False
+    return is_notice_cover_document(document)
+
+
 def attach_filter_sources(row, hits):
     first = hits[0]
     if (2 <= len(hits) <= _MAX_SOURCES
@@ -38,10 +62,9 @@ def _sources(row):
     if (type(packet) is not tuple or len(packet) != 5 or packet[0] is not _TOKEN
             or type(identity) is not str or type(packet[1]) is not str
             or packet[1] != identity
-            or type(document) is not CoverDocumentScope
-            or type(packet[2]) is not CoverDocumentScope
+            or not _native_group_document(packet[2])
+            or not _native_group_document(document)
             or packet[2] != document
-            or not is_notice_cover_document(packet[2])
             or type(meta) is not dict
             or type(packet[3]) is not int
             or type(meta.get("notice_c_epoch")) is not int
@@ -50,7 +73,7 @@ def _sources(row):
         return ()
     hits = packet[4]
     if (any(type(hit) is not PublicNoticeCHit
-            or type(hit.document) is not CoverDocumentScope
+            or not _native_group_document(hit.document)
             or type(hit.epoch) is not int
             or type(hit.provider_id) is not str
             or type(hit.record_id) is not str
