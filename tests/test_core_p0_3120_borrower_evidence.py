@@ -178,3 +178,23 @@ def test_malformed_branch_never_produces_borrower_permission(invalid_branch):
         branch=invalid_branch,
     )
     assert result.state != "eligible_observed"
+
+
+@pytest.mark.parametrize("is_primary,borrower,expected", [
+    (True, "", "eligible_observed"),
+    (False, "", "unverified"),
+    (False, "linked-reader", "eligible_observed"),
+    ("yes", "linked-reader", "unverified"),
+    (None, "linked-reader", "unverified"),
+])
+def test_account_level_eligibility_rejects_unidentified_linked_reader(
+    is_primary, borrower, expected,
+):
+    row = replace(account(borrower=borrower), is_primary=is_primary)
+    status = assess(row, evidence(row))
+    assert status.state == expected
+    if expected == "unverified":
+        assert status.reason_code == "borrower_scope_unverified"
+        assert not status.account_id
+    else:
+        assert status.account_id == borrower
