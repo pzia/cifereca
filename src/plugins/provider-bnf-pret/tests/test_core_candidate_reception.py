@@ -119,7 +119,7 @@ def test_real_bnf_offer_and_token_are_accepted_by_core_consumer(adapter):
     a = adapter
     completed = a.complete()
     assert len(a.token_gets) == len(a.runtime_calls) == 1
-    assert a.preflight_calls == ['borrower-adobe']
+    assert a.preflight_calls == ['borrower-adobe', 'borrower-adobe']
     request, = a.runtime_calls
     assert request["source"]["type"] == "acsm"
     assert request["source"]["provider"] == "bnf-pret"
@@ -171,7 +171,7 @@ def test_bnf_fresh_capability_refusal_leaves_attempt_unmarked(adapter):
     a.fresh_runtime.preflight_acsm_profile = lambda _name: False
     with pytest.raises(ValueError, match="^canonical_adept_preflight_unavailable$"):
         a.complete()
-    assert len(a.token_gets) == 1  # ACSM type only known after candidate GET.
+    assert a.token_gets == []
     assert a.runtime_calls == []
     assert not pending_loan_adept_attempt(a.db, a.source)
     assert a.db.placements() == []
@@ -193,7 +193,7 @@ def test_bnf_profile_changed_during_preflight_can_resume_after_correction(adapte
     a.fresh_runtime.preflight_acsm_profile = lambda name: name == "borrower-adobe"
     completed = a.complete()
     assert completed.path.read_bytes() == PDF
-    assert len(a.token_gets) == 2 and len(a.runtime_calls) == 1
+    assert len(a.token_gets) == 1 and len(a.runtime_calls) == 1
 
 
 def test_bnf_local_refusal_after_claim_releases_only_unsubmitted_claim(adapter, monkeypatch):
@@ -266,3 +266,27 @@ def test_only_proven_runtime_refusal_releases_live_adept_claim(adapter, proven):
         with pytest.raises(ValueError, match="canonical_adept_attempt_pending"):
             a.complete()
         assert len(a.token_gets) == len(a.runtime_calls) == 1
+
+
+def test_bnf_adept_binding_changed_during_token_get_requires_a_fresh_cycle(adapter):
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+
+    a = adapter
+    session = next(iter(a.service._sessions.values()))
+    retrieve_token = session.client.loan_token
+
+    def rebind_after_get(*args, **kwargs):
+        token = retrieve_token(*args, **kwargs)
+        a.service.resolve_adept_profile_for_identity = lambda _i: ("another-profile", "configured")
+        a.service._originating_adept_profile_id = lambda _i, _p: "another-stable-id"
+        a.service.adept_profiles_for_identity = lambda _i, *, profile_name: [
+            {"name": profile_name, "profile_id": "another-stable-id", "fetch_capable": True},
+        ]
+        return token
+
+    session.client.loan_token = rebind_after_get
+    with pytest.raises(ValueError, match="adept_borrower_profile_changed"):
+        a.complete()
+    assert len(a.token_gets) == 1
+    assert a.runtime_calls == []
+    assert not pending_loan_adept_attempt(a.db, a.source)

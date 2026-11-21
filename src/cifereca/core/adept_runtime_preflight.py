@@ -10,6 +10,10 @@ from inspect import getattr_static
 from typing import Callable
 
 
+class AdeptProfileUnavailable(ValueError):
+    """Local profile validation refused before ACSM fulfillment."""
+
+
 def require_fresh_acsm_capability(
     service: object, profile_name: str, *, scope_current: Callable[[], bool],
 ) -> None:
@@ -24,7 +28,7 @@ def require_fresh_acsm_capability(
             or len(profile_name) > 128
             or any(ord(ch) < 32 or ord(ch) == 127 for ch in profile_name)
             or not callable(scope_current)):
-        raise ValueError("canonical_adept_preflight_invalid")
+        raise AdeptProfileUnavailable("canonical_adept_preflight_invalid")
     try:
         if scope_current() is not True:
             raise ValueError("scope_not_current")
@@ -44,4 +48,4 @@ def require_fresh_acsm_capability(
                 or service._required_plugin_service("runtime.kobo-adept") is not runtime):
             raise ValueError("runtime_replaced")
     except Exception:
-        raise ValueError("canonical_adept_preflight_unavailable") from None
+        raise AdeptProfileUnavailable("canonical_adept_preflight_unavailable") from None

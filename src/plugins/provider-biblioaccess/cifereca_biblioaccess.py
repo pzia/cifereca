@@ -16,13 +16,14 @@ import logging
 from threading import RLock
 from urllib.parse import urlsplit
 
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderPlugin, ProviderSession, CredentialField,
     AccountOptionField, Account, Loan,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, SourceReference, DownloadCapability,
-    ResourceObservation, ResourceSnapshot, DeliveryCandidate, RetryableContentDownload,
+    ResourceObservation, ResourceSnapshot, DeliveryCandidate,
 )
 
 PROVIDER_ID = "biblioaccess.la-rochelle"
@@ -721,6 +722,16 @@ class LaRochelleSession(ProviderSession):
                 observed_at=snapshot.observed_at,
             )
 
+    def downloadable_selected_candidate_is_acsm(
+        self, account, *, edition_id, resource_id, kind, branch, selected_offer_id,
+    ):
+        """Classify the exact signed ACSM action without a provider request."""
+        scope = self._resource_scope(account)
+        source = self._source_reference(scope, edition_id, resource_id, kind, branch)
+        if selected_offer_id != self._offer_id(source):
+            raise ProviderCapabilityError("biblioaccess_selected_offer_mismatch")
+        return True
+
     def downloadable_selected_delivery_candidate_guarded(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
@@ -904,11 +915,13 @@ class LaRochelleSession(ProviderSession):
                     loan_ref=loan_ref, delivery_kind=kind,
                     session_revoked=False,
                 )
-                if (callable(admission_current) and admission_current() is True
+                retryable = getattr(plugin_api, "RetryableContentDownload", None)
+                if (retryable is not None and callable(admission_current)
+                        and admission_current() is True
                         and code in {"biblioaccess_acsm_rate_limited",
                                      "biblioaccess_acsm_remote_error",
                                      "biblioaccess_acsm_transport_unavailable"}):
-                    raise RetryableContentDownload(code) from None
+                    raise retryable(code) from None
                 # Preserve the historical Numilog compatibility error;
                 # publish precise *allowlisted* failures for PNB /do, so the
                 # Core can distinguish expired/denied/redirect/invalid XML.

@@ -30,7 +30,8 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         elif not rows:
             body = "Aucun échec de téléchargement enregistré pour cette identité."
         else:
-            paused = sum(row.retry.paused for row in rows)
+            paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at)
+                         for row in rows)
             body = f"{len(rows)} téléchargement(s) à vérifier, dont {paused} en pause."
         dialog = Adw.MessageDialog.new(window, "Téléchargements à reprendre", body)
         dialog.add_response("close", "Fermer")
@@ -53,15 +54,22 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         title.add_css_class("heading")
         panel.append(title)
         state = ("Ressource inactive" if row.inactive else
-                 "Intervention ADEPT requise" if row.adept_hold else
+                 "Intervention ADEPT requise" if row.adept_hold or row.profile_refused_at else
                  "En pause" if row.retry.paused else "À retenter")
-        reason = {
-            "canonical_delivery_failed": "Échec de livraison",
-            "drm_unresolved": "DRM non résolu",
-        }.get(row.retry.last_reason, "Tentative ADEPT incertaine")
+        failed_at = row.retry.last_failed_at
+        if row.adept_hold:
+            reason = "Résultat du fulfillment ADEPT incertain. Vérifiez les diagnostics."
+        elif row.profile_refused_at:
+            reason = "Vérifiez le profil ADEPT dans les paramètres de l’identité."
+            failed_at = row.profile_refused_at
+        else:
+            reason = {
+                "canonical_delivery_failed": "Échec de livraison",
+                "drm_unresolved": "DRM non résolu",
+            }[row.retry.last_reason]
         source = row.source.scope
-        when = (datetime.fromtimestamp(row.retry.last_failed_at).strftime("%d/%m/%Y %H:%M")
-                if row.retry.last_failed_at else "Date inconnue")
+        when = (datetime.fromtimestamp(failed_at).strftime("%d/%m/%Y %H:%M")
+                if failed_at else "Date inconnue")
         label = Gtk.Label(
             label=(f"{source.provider_id} · compte {source.account_id or 'principal'} "
                    f"· connexion {source.credential_id}\n"
@@ -123,8 +131,9 @@ def refresh_loan_download_retry_summary(window, scope, label):
             label.set_visible(True)
             return
         active = [row for row in rows if not row.inactive]
-        holds = sum(row.adept_hold for row in active)
-        paused = sum(row.retry.paused and not row.adept_hold for row in active)
+        holds = sum(bool(row.adept_hold or row.profile_refused_at) for row in active)
+        paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at)
+                     for row in active)
         retrying = len(active) - holds - paused
         label.set_label(
             f"Téléchargements : {paused} en pause · {retrying} à retenter · "

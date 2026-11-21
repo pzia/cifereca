@@ -11,7 +11,8 @@ from uuid import uuid4
 import time
 from urllib.parse import urljoin, urlsplit
 import httpx
-from cifereca.plugin_api import ContentTransferUnavailable, HTTPX_TRANSPORT
+import cifereca.plugin_api as plugin_api
+from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
 from cifereca_bnf_pret_paging import _params
 from cifereca_bnf_pret_signed_action import signed_loan_url
@@ -434,7 +435,7 @@ class ReaderHTTPClient:
                             if not admitted() or time.monotonic() >= deadline:
                                 raise ReaderHTTPError('download_redirect_refused')
                             return receipt.path.read_bytes()
-                    except ContentTransferUnavailable:
+                    except getattr(plugin_api, "ContentTransferUnavailable", ()):
                         raise TemporaryLoanTokenError('download_redirect_refused') from None
                     except (ValueError, OSError, httpx.HTTPError):
                         # Never expose signed URL, host, tokens or staging path.

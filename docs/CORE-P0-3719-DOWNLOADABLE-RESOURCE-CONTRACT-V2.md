@@ -130,6 +130,14 @@ rejouer un emprunt, un achat ou un fulfillment ne peut jamais provenir de
 cette exception. Le fournisseur conserve les gardes de ses opérations
 potentiellement mutatrices, y compris lorsqu’elles empruntent un HTTP GET.
 
+Lorsqu’une offre de prêt atteste précisément un candidat ACSM, l’adaptateur
+peut exposer `downloadable_selected_candidate_is_acsm(account, *, edition_id,
+resource_id, kind, branch, selected_offer_id)`. Ce lecteur local retourne un
+booléen pour l’offre exacte, sans accès au fournisseur. Le Core vérifie alors
+le profil et la capacité ADEPT avant le transfert du jeton, puis contrôle
+de nouveau ce même profil avant le fulfillment. Un refus local du profil
+apparaît dans la file de reprise avec une action de vérification.
+
 ## Required execution sequence
 
 1. Sync observes and confirms the exact offered resource under global source

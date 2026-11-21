@@ -269,3 +269,33 @@ def test_pause_does_not_gate_a_separately_confirmed_owned_download(rig):
     assert attempted == [source]
     assert result.reason == "canonical_delivery_failed"
     assert read_loan_download_retry(service.storage, source).paused
+
+
+@pytest.mark.parametrize("kind", ["loan", "purchase"])
+def test_local_adept_profile_refusal_is_visible_before_any_pause(rig, kind):
+    from types import SimpleNamespace
+    from cifereca.core.adept_runtime_preflight import AdeptProfileUnavailable
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import review_loan_download_retries
+
+    service, account, source, snapshot, root, lock_path = (
+        loan_snapshot(rig) if kind == "loan" else rig
+    )
+    service.current_identity = SimpleNamespace(identity_id=source.scope.identity_id)
+    persist_attested_source_references(service.storage, snapshot)
+
+    def refuse_profile(*_):
+        raise AdeptProfileUnavailable("canonical_adept_preflight_unavailable")
+
+    outcome, = run(service, account, snapshot, root, lock_path, {source}, refuse_profile)
+    assert outcome.reason == "canonical_adept_profile_attention"
+    row, = review_loan_download_retries(service, identity_id=source.scope.identity_id)
+    assert row.source == source
+    assert row.profile_refused_at > 0
+    assert row.retry.failures == 0
+    assert not row.adept_hold and not row.can_reset
+
+    outcome, = run(service, account, snapshot, root, lock_path, {source},
+                   fake_delivery(service, root))
+    assert outcome.status == "downloaded"
+    assert review_loan_download_retries(service, identity_id=source.scope.identity_id) == ()

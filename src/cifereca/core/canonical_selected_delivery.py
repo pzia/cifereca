@@ -36,7 +36,7 @@ from .canonical_adept_attempt import (
     begin_loan_adept_attempt, pending_loan_adept_attempt, release_unsubmitted_attempt,
 )
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
-from .adept_runtime_preflight import require_fresh_acsm_capability
+from .adept_runtime_preflight import AdeptProfileUnavailable, require_fresh_acsm_capability
 from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
 from .source_convergence import SourceKey
 
@@ -227,7 +227,7 @@ def complete_selected_delivery(
         require_borrower()
         profile, _ = service.resolve_adept_profile_for_identity(borrower_identity)
         if type(profile) is not str or not profile:
-            raise ValueError("canonical_delivery_adept_profile_missing")
+            raise AdeptProfileUnavailable("canonical_delivery_adept_profile_missing")
         require_borrower()
         profile_id = service._originating_adept_profile_id(borrower_identity, profile)
         # Older runtime contracts may omit readiness, but a published
@@ -244,17 +244,17 @@ def complete_selected_delivery(
                 )
                 profile_row = service._adept_profile_row(profile, rows)
             except Exception as exc:
-                raise ValueError("canonical_delivery_adept_profile_inventory_unavailable") from exc
+                raise AdeptProfileUnavailable("canonical_delivery_adept_profile_inventory_unavailable") from exc
             if (type(profile_row) is not dict
                     or (profile_row.get("name") or profile_row.get("profile")) != profile):
-                raise ValueError("canonical_delivery_adept_profile_unverified")
+                raise AdeptProfileUnavailable("canonical_delivery_adept_profile_unverified")
             # A present stable reference must identify the same borrower.
             # Older rows with name-only evidence remain compatible.
             row_id = profile_row.get("profile_id")
             if row_id is not None and profile_id is not None and row_id != profile_id:
-                raise ValueError("canonical_delivery_adept_profile_binding_changed")
+                raise AdeptProfileUnavailable("canonical_delivery_adept_profile_binding_changed")
             if profile_is_explicitly_acsm_unready(profile_row):
-                raise ValueError("adept_profile_acsm_not_ready")
+                raise AdeptProfileUnavailable("adept_profile_acsm_not_ready")
         require_borrower()
         return profile, profile_id
 
@@ -322,10 +322,7 @@ def complete_selected_delivery(
     runtime_used = [False]
     adept_attempt_id = [""]
 
-    def mark_adept_attempt(profile_name: str, profile_id):
-        if source.kind != "loan":
-            require_adept_profile(profile_name, profile_id)
-            return
+    def refresh_adept_profile(profile_name, profile_id):
         require_borrower()
         # No cached UI readiness or durable marker before this exact,
         # scoped read-only installed-runtime capability veto.
@@ -337,8 +334,14 @@ def complete_selected_delivery(
         # CLI runs. Check its *name and stable reference* again before claim.
         current_name, _ = service.resolve_adept_profile_for_identity(borrower_identity)
         if current_name != profile_name:
-            raise ValueError("adept_borrower_profile_changed")
+            raise AdeptProfileUnavailable("adept_borrower_profile_changed")
         require_adept_profile(profile_name, profile_id)
+
+    def mark_adept_attempt(profile_name: str, profile_id):
+        if source.kind != "loan":
+            require_adept_profile(profile_name, profile_id)
+            return
+        refresh_adept_profile(profile_name, profile_id)
         operation = begin_loan_adept_attempt(
             storage, source=source, offer_id=offer.delivery_offer_id,
             shared_lock=shared_lock,
@@ -496,6 +499,24 @@ def complete_selected_delivery(
             admission_current=current,
         )
         require_borrower()
+        early_adept = None
+        if first_acsm is None and source.kind == "loan" and not runtime_guarded:
+            probe_name = "downloadable_selected_candidate_is_acsm"
+            probe = getattr_static(session, probe_name, None)
+            if probe is not None:
+                if not callable(probe):
+                    raise ValueError("canonical_delivery_acsm_route_invalid")
+                is_acsm = getattr(session, probe_name)(
+                    account, edition_id=source.edition_id, resource_id=source.right_id,
+                    kind=source.kind, branch=source.branch,
+                    selected_offer_id=offer.delivery_offer_id,
+                )
+                if type(is_acsm) is not bool:
+                    raise ValueError("canonical_delivery_acsm_route_invalid")
+                require_borrower()
+                if is_acsm:
+                    early_adept = acsm_profile()
+                    refresh_adept_profile(*early_adept)
         candidate = (
             (first_acsm, "") if first_acsm is not None
             else getattr(session, reader_name)(
@@ -569,6 +590,8 @@ def complete_selected_delivery(
             if fmt not in ("epub", "pdf"):
                 raise ValueError("canonical_delivery_adept_format_unconfirmed")
             profile, profile_id = acsm_profile()
+            if early_adept is not None and early_adept != (profile, profile_id):
+                raise AdeptProfileUnavailable("adept_borrower_profile_changed")
             destination = attempt / ("fulfilled." + fmt)
             if destination.exists() or destination.is_symlink():
                 raise ValueError("canonical_delivery_adept_target_occupied")
