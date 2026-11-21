@@ -15,6 +15,7 @@ from .library_organizer_review import (
     admit_organizer_review, run_organizer_review, select_organizer_keeper_advice,
 )
 from .library_sqlite_freshness import sqlite_source_stamp
+from .canonical_keeper_review import review_canonical_keeper
 
 
 class LibraryOrganizerReadBrokerImpl:
@@ -101,9 +102,24 @@ class LibraryOrganizerReadBrokerImpl:
                 scope, result, stamp, page = active
                 if not page.eligible or page.selected:
                     return None
+                # SQLite's stamp cannot detect a replaced or missing file.
+                # Refresh each previously eligible group's physical/dependency
+                # evidence on this worker, without widening the reviewed page.
+                eligible = {choice.artifact_id for choice in result["keeper_advice"].eligible}
+                for review in result["keeper_reviews"]:
+                    if review.artifact_id not in eligible:
+                        continue
+                    if (self._current(token) is None
+                            or review_canonical_keeper(
+                                scope.storage, library_root=scope.root,
+                                identity_id=scope.identity, artifact_id=review.artifact_id,
+                            ) != review):
+                        self._active = None
+                        return None
                 selected = select_organizer_keeper_advice(scope, result, confirmed=True)
                 if (selected is None or selected.executable is not False
                         or self._current(token) is None):
+                    self._active = None
                     return None
                 updated = replace(page, selected=len(selected.preselected))
                 self._active = (scope, result, stamp, updated)

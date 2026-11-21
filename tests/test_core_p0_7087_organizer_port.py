@@ -72,3 +72,32 @@ def test_select_all_remains_advice_and_cannot_be_replayed(store, tmp_path):
     assert page.selected == 0
     assert broker.select_all_advice(token=page.token, confirmed=True) is None
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("change", ["candidate_missing", "candidate_modified", "keeper_modified", "candidate_alias"])
+def test_select_all_rechecks_physical_evidence_even_when_sql_is_unchanged(store, tmp_path, change):
+    from pathlib import Path
+
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    broker = LibraryOrganizerReadBrokerImpl(_service(store, root))
+    page = broker.preview(identity_id="A", confirmed=True)
+    assert page.eligible == 1
+    candidate = Path(store.placement_get(pair[0].placement_id)["path"])
+    keeper = Path(store.placement_get(pair[1].placement_id)["path"])
+    before = rows(store)
+    if change == "candidate_missing":
+        candidate.unlink()
+    elif change == "candidate_modified":
+        candidate.write_bytes(b"modified")
+    elif change == "keeper_modified":
+        keeper.write_bytes(b"modified")
+    else:
+        candidate.unlink()
+        candidate.symlink_to(keeper)
+    assert rows(store) == before
+    assert broker.select_all_advice(token=page.token, confirmed=True) is None
+    assert broker.select_all_advice(token=page.token, confirmed=True) is None
+    assert rows(store) == before
+    assert keeper.is_file()
