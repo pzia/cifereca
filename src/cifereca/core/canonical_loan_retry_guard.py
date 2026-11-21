@@ -29,7 +29,10 @@ def historical_adept_retry_blocked(storage, account, session, source: SourceKey)
                 source.scope.identity_id, source.scope.provider_id,
                 source.scope.credential_id, source.scope.account_id):
             return True
-        with storage._lock, storage._connect() as db:
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
+                return True
             return historical_adept_ledger_hold(db, scope, source)
     except Exception:
         # Unreadable evidence cannot license another potentially one-use GET.
@@ -48,7 +51,8 @@ def historical_adept_ledger_hold(db, scope: LoanInventoryScope, source: SourceKe
     ))
     placeholders = ",".join("?" for _ in borrowers)
     rows = db.execute(
-        "SELECT entitlement_id,metadata_json FROM acquisition_ledger "
+        "SELECT entitlement_id,CASE WHEN length(CAST(metadata_json AS BLOB))<=65536 "
+        "THEN metadata_json ELSE NULL END FROM acquisition_ledger "
         "WHERE identity_id=? AND provider_id=? AND credential_id=? "
         "AND (account_id IN (" + placeholders + ") "
         "OR (account_id IS NULL AND ?='')) AND item_id=? "
@@ -60,8 +64,12 @@ def historical_adept_ledger_hold(db, scope: LoanInventoryScope, source: SourceKe
     if len(rows) > 256:
         return True
     for entitlement_id, raw in rows:
+        # An oversized/non-text or missing ledger payload is unknown,
+        # not proof that this historical attempt belongs to another loan.
+        if type(raw) is not str:
+            return True
         try:
-            metadata = json.loads(raw) if raw is not None else None
+            metadata = json.loads(raw)
         except (ValueError, TypeError, RecursionError):
             return True
         if blocked_automatic_adept_retry(
