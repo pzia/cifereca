@@ -39,7 +39,9 @@ def capacity_text(value):
         compact = (f"Traces compactes : {cc['count']}/{limits['records']} témoins, "
                    f"{cc['payload_bytes']:,}/{limits['payload_bytes']:,} octets ; "
                    f"{cc['matched']} rattachés, {cc['unpaired']} non rattachés. "
-                   "Capacité distincte, aucune retraite attestée.")
+                   "Capacité distincte. "
+                   + (f"{cc['retired']} reçus en représentation compacte seule."
+                      if cc.get("retired", 0) else "Aucune retraite attestée."))
         if value.compact_saturation == "at_limit":
             compact += " Plafond atteint."
         if cc["unpaired"]:
@@ -47,7 +49,7 @@ def capacity_text(value):
     prefix = "" if value.output_bytes_complete else "Au moins "
     return (f"Installation : {value.record_count}/{cap['records']} reçus "
             f"({c['pending']} actifs, {c['committed']} terminés) ; "
-            f"{value.payload_bytes:,}/{cap['payload_bytes']:,} octets de journal.\n"
+            f"{value.payload_bytes:,}/{cap['payload_bytes']:,} octets de charge logique du journal.\n"
             f"{prefix}{value.known_output_bytes:,}/{cap['output_bytes']:,} octets déclarés réservés. "
             f"{saturation[value.saturation]}\n"
             f"Profil actif : {c['active_pending']} actifs, {c['active_committed']} terminés, "

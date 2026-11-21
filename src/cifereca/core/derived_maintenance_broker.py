@@ -58,8 +58,11 @@ def _capacity(value):
             "ambiguous_entries", "unverified_regions", "unobserved_receipts"))
     compact_counts = ()
     if compact["status"] in ("observed", "partial"):
-        compact_counts = _counts({k: compact[k] for k in ("count", "payload_bytes", "matched", "unpaired")},
-                                 ("count", "payload_bytes", "matched", "unpaired"))
+        compact_counts = _counts({k: compact[k] for k in (
+            "count", "payload_bytes", "matched", "unpaired", "retired")},
+            ("count", "payload_bytes", "matched", "unpaired", "retired"))
+        if not 0 <= compact["retired"] <= compact["matched"] <= compact["count"]:
+            return None
     return DerivedCapacityObservation(
         value["status"], counts, *numeric[:3], value["output_bytes_complete"],
         *numeric[3:], cap, value["saturation"],
