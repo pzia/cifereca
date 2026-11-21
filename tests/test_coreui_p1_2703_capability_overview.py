@@ -177,3 +177,66 @@ def test_missing_identity_never_invokes_navigation_fallback():
         Gtk=Gtk, Adw=Adw, identity_id=None,
     )
     assert not calls
+
+
+def test_manual_supported_claim_does_not_masquerade_as_provider_observation():
+    manual = CapabilityEvidence(
+        "synthetic", "loan.borrow", "account", status="supported",
+        implementation_state="implemented", source_kind="manual",
+        evidence_ref="user.manual.note/1",
+    )
+    render, = source_capability_labels((CapabilityMatrix("synthetic", (manual,)),))
+    assert "Prêt : signalement manuel, non vérifié par le fournisseur" in render
+    assert "Prêt : observation, action non autorisée" not in render
+    # An independently typed account observation takes precedence but still
+    # never claims borrow consent or action authority.
+    observed = replace(
+        manual, operation="loan.renew", source_kind="account_observation",
+        evidence_ref="provider.readonly.observation/1",
+    )
+    render, = source_capability_labels((
+        CapabilityMatrix("synthetic", (manual, observed)),
+    ))
+    assert "Prêt : observation, action non autorisée" in render
+
+
+@pytest.mark.parametrize("mutation", [
+    ("matrix", "provider_id", "PRIVATE_CREDENTIAL:token"),
+    ("matrix", "observations", [1, 2]),
+    ("evidence", "status", "supported"),
+    ("evidence", "source_kind", "account_observation"),
+    ("evidence", "operation", "loan.borrow\nPRIVATE_TOKEN"),
+    ("evidence", "identity_id", "SECRET\nOTHER"),
+    ("evidence", "schema_version", True),
+])
+def test_mutated_frozen_capabilities_fail_closed_before_display(mutation):
+    source = CapabilityEvidence(
+        "synthetic", "loan.borrow", "unknown",
+        status="unverified", implementation_state="implemented",
+        source_kind="code", reason="code_declaration_only",
+    )
+    matrix = CapabilityMatrix("synthetic", (source,))
+    target, attr, value = mutation
+    object.__setattr__(matrix if target == "matrix" else source, attr, value)
+    with pytest.raises(ValueError, match="capability_invalid_matrix"):
+        source_capability_labels((matrix,))
+
+
+def test_settings_does_not_leak_bad_capability_after_snapshot_mutation():
+    observed = CapabilityEvidence(
+        "synthetic", "loan.borrow", "account", status="supported",
+        implementation_state="implemented",
+        source_kind="account_observation", evidence_ref="proof/1",
+    )
+    matrix = CapabilityMatrix("synthetic", (observed,))
+    object.__setattr__(matrix, "provider_id", "PRIVATE_TOKEN:SECRET")
+    Gtk, Adw = _widgets()
+    section = Widget()
+    assert append_settings_capability_overview(
+        section=section, service=NS(capability_matrices=lambda _id: (matrix,)),
+        Gtk=Gtk, Adw=Adw, identity_id="alice",
+    )
+    label = section.children[0].children[1].children[0].children[0].label
+    assert "Aucune source qualifiée" in label
+    assert "PRIVATE_TOKEN" not in label
+    assert "SECRET" not in label
