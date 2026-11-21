@@ -14,6 +14,7 @@ from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .adept_historical_diagnostic import review_historical_loan_diagnostic
 from .canonical_recovery import _unique_checkpoint_fields
 from .local_origin_suggestion_operator import _root, _navigation_epoch
+from .library_sqlite_freshness import sqlite_source_stamp
 from .source_context import source_context_epoch
 from .source_convergence import SourceKey
 
@@ -221,6 +222,11 @@ def run_historical_hold_review(service, request, *, offset=0,
     try:
         if not request.bound():
             return None
+        # Hashing a selected historical copy can outlive the local marker
+        # snapshot. A changed WAL invalidates the displayed hold evidence.
+        stamp = sqlite_source_stamp(request.database)
+        if stamp is None:
+            return None
         blocked = tuple(row for row in review_loan_download_retries(
             service, identity_id=request.identity,
         ) if row.source.kind == "loan" and row.adept_hold)
@@ -264,7 +270,7 @@ def run_historical_hold_review(service, request, *, offset=0,
                 "replay_proof": "not_established",
                 "unlock_authorized": False,
             })
-        if not request.bound():
+        if not request.bound() or sqlite_source_stamp(request.database) != stamp:
             return None
         return {
             "rows": tuple(reports),
