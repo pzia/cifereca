@@ -140,8 +140,14 @@ class CatalogueLinks:
 
 
 class _Links(HTMLParser):
-    def __init__(self, page_url: str):
+    def __init__(self, page_url: str, *, summary_query: str | None = None):
         super().__init__(convert_charrefs=True)
+        self.summary_query = summary_query
+        self.summary_zero = False
+        self.summary_refused = False
+        self._summary_stack = []
+        self._summary_text = None
+        self._summary_depth = 0
         self.page_url = page_url
         current, self.current_page = _search_coordinates(page_url) or ({}, None)
         self.current_scope = {key: value for key, value in current.items() if key != "pageindex"}
@@ -171,7 +177,65 @@ class _Links(HTMLParser):
             self.next_page_url = link
             self._next_scope = scope
 
+    def _summary_start(self, tag, attrs):
+        values = dict(attrs)
+        if len(values) != len(attrs):
+            self.summary_refused = True
+        # A login form, book or linked result page contradicts a terminal zero.
+        if (tag == "input" and str(values.get("type", "")).casefold() == "password"
+                or tag == "form" and re.search(
+                    r"login|logon|signin|connexion|authent", str(values.get("action", "")), re.I)
+                or tag == "a" and re.search(
+                    r"/catalog/(?:book|search)(?:[/?#]|$)", str(values.get("href", "")), re.I)):
+            self.summary_refused = True
+        hidden = (tag in {"head", "script", "style", "template", "noscript", "textarea",
+                          "select", "button", "svg", "iframe"}
+                  or "hidden" in values
+                  or str(values.get("aria-hidden", "")).casefold() == "true"
+                  or bool(re.search(r"display\s*:\s*none|visibility\s*:\s*hidden",
+                                    str(values.get("style", "")), re.I))
+                  or bool(set(str(values.get("class", "")).casefold().split())
+                          & {"hidden", "d-none", "sr-only", "visually-hidden"})
+                  or (self._summary_stack and self._summary_stack[-1][1]))
+        if tag in {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                   "link", "meta", "param", "source", "track", "wbr"}:
+            if self._summary_text is not None:
+                self._summary_text.append(" ")
+            return
+        self._summary_stack.append((tag, bool(hidden)))
+        if len(self._summary_stack) > 128:
+            self.summary_refused = True
+            return
+        if hidden and self._summary_text is not None:
+            self._summary_text = None
+        if not hidden and tag in {"p", "div", "span", "h1", "h2", "h3", "h4", "li", "td"}:
+            # Keep the innermost explicit message block, not arbitrary page text.
+            self._summary_text = []
+            self._summary_depth = len(self._summary_stack)
+
+    def _summary_end(self, tag):
+        if tag in {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                   "link", "meta", "param", "source", "track", "wbr"}:
+            return
+        if not self._summary_stack or self._summary_stack[-1][0] != tag:
+            self.summary_refused = True
+            return
+        if (self._summary_text is not None
+                and self._summary_depth == len(self._summary_stack)):
+            message = " ".join("".join(self._summary_text).split())
+            prefix = "Aucun résultat pour la recherche "
+            if message.startswith(prefix):
+                if message == prefix + self.summary_query:
+                    self.summary_zero = True
+                else:
+                    self.summary_refused = True
+            self._summary_text = None
+        self._summary_stack.pop()
+
     def handle_starttag(self, tag, attrs):
+        if self.summary_query is not None:
+            self._summary_start(tag, attrs)
+            return
         if tag != "a":
             return
         self._book_anchor = None
@@ -213,12 +277,19 @@ class _Links(HTMLParser):
                     self._observe_next(link)
 
     def handle_data(self, data):
+        if self.summary_query is not None:
+            if self._summary_text is not None:
+                self._summary_text.append(data)
+            return
         if self._book_anchor is not None:
             self._book_anchor_text.append(data[:200])
         if self._candidate is not None:
             self._anchor_text.append(data[:100])
 
     def handle_endtag(self, tag):
+        if self.summary_query is not None:
+            self._summary_end(tag)
+            return
         if tag == "a" and self._book_anchor is not None:
             title = " ".join("".join(self._book_anchor_text).split())
             ident, link = self._book_anchor
@@ -259,6 +330,32 @@ def extract_catalogue_links(page_url: str, html: str) -> CatalogueLinks:
     return CatalogueLinks(tuple(parser.book_ids), parser.next_page_url,
                           book_urls=tuple(parser.book_urls.items()),
                           book_titles=tuple(parser.book_titles.items()))
+
+
+def summary_attests_zero(request_url: str, html: str) -> bool:
+    """Exact tenant/query and explicit standalone visible summary message.
+
+    The phrase is attested by #7162; the original markup is not distributed.
+    Any other layout, conflicting navigation or login is still unqualified.
+    """
+    parts = _parts(request_url)
+    if not parts or parts.path != _SUMMARY_PATH:
+        return False
+    try:
+        params = parse_qs(parts.query, keep_blank_values=True, max_num_fields=2)
+    except ValueError:
+        return False
+    if set(params) != {"query"} or len(params["query"]) != 1:
+        return False
+    query = params["query"][0]
+    if not query or len(query) > 512 or " ".join(query.split()) != query:
+        return False
+    if type(html) is not str or len(html.encode("utf-8")) > MAX_HTML_BYTES:
+        return False
+    parser = _Links(request_url, summary_query=query)
+    parser.feed(html)
+    parser.close()
+    return parser.summary_zero and not parser.summary_refused and not parser._summary_stack
 
 
 @dataclass(frozen=True)
