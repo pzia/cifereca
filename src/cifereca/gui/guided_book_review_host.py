@@ -19,7 +19,7 @@ def _text(value, maximum):
 class GuidedBookReviewLease:
     __slots__ = ("_lease", "_placement", "_ui_current", "_thread", "_action",
                  "_group", "_toast", "_buttons", "_ids", "_dispose",
-                 "_phase", "_pending")
+                 "_phase", "_pending", "_group_disposers")
 
     def __init__(self, lease, placement, ui_current, add_action, add_group, toast):
         self._lease, self._placement = lease, placement
@@ -29,6 +29,7 @@ class GuidedBookReviewLease:
         self._dispose = None
         self._phase = None
         self._pending = []
+        self._group_disposers = []
 
     @property
     def identity_id(self):
@@ -73,7 +74,12 @@ class GuidedBookReviewLease:
                 and 0 < len(rows) <= 64
                 and all(type(row) is tuple and len(row) == 2
                         and _text(row[0], 2048) and _text(row[1], 4096) for row in rows)):
-            self._group(title, list(rows))
+            remove = self._group(title, list(rows))
+            if callable(remove):
+                if self._ui_live():
+                    self._group_disposers.append(remove)
+                else:
+                    remove()
 
     def add_action(self, action_id, title, tooltip, invoke):
         if (self._phase not in ("mount", "delivery") or not self._ui_live()
@@ -148,9 +154,19 @@ class GuidedBookReviewLease:
     def dispose(self):
         self._lease.dispose()
         self._pending.clear()
-        for button in self._buttons:
+        buttons, self._buttons = self._buttons, []
+        groups, self._group_disposers = self._group_disposers, []
+        for button in buttons:
             button._cifereca_action_context_revoked = True
-        self._buttons.clear()
+        for button in buttons:
+            hide = getattr(button, "set_visible", None)
+            if callable(hide):
+                hide(False)
+        for remove in groups:
+            try:
+                remove()
+            except Exception:
+                pass
         dispose, self._dispose = self._dispose, None
         if callable(dispose):
             try:
@@ -225,7 +241,7 @@ def admit_guided_book_review(window, detail, row, item, *, token, resolved):
 
         lease = GuidedBookReviewLease(
             GuidedMaintenanceHostLease(identity, valid, enqueue), placement,
-            ui_current, add_action, detail.add_group, window.toast)
+            ui_current, add_action, detail.add_review_group, window.toast)
         return lease if lease._ui_live() else None
     except Exception:
         return None
@@ -248,3 +264,11 @@ def mount_guided_book_reviews(window, detail, row, item, *, token):
         if lease._mount(resolved.service.contribute_book_review):
             mounted.append(lease)
     return tuple(mounted)
+
+
+def dispose_guided_book_reviews(window):
+    """Retire exact former mounts before any reentrant GTK disposal signal."""
+    mounts = getattr(window, "_guided_book_review_mounts", ())
+    window._guided_book_review_mounts = ()
+    for lease in mounts:
+        lease.dispose()

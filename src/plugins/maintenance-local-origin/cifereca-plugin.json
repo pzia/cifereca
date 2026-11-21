@@ -18,15 +18,17 @@
       "priority": 43,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
-      "help_text": "Revue paginée, partielle et annulable. Aucun accès fournisseur ni attribution d’origine.",
+      "help_text": "Revue par lots sur cache public ; comparaison contextuelle et recherche de catalogue anonyme sur consentement explicite. Aucune attribution d’origine.",
       "capabilities": [
-        "maintenance.local-origin"
+        "maintenance.local-origin",
+        "book.detail.review"
       ],
       "requires": [],
       "recommends": [],
       "system_requires": [],
       "requires_brokers": [
-        "library.origin.read"
+        "library.origin.read",
+        "library.origin.detail.read"
       ],
       "requires_contracts": []
     }

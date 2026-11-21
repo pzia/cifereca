@@ -32,7 +32,10 @@ def rig():
     manager.services = lambda category: (resolved,) if manager.live is plugin else ()
     row, token = NS(key="book"), object()
     item = {"identity_id": "A", "placement_id": "placement", "local": True}
-    panel = NS(add_actions=buttons.extend, add_group=lambda *args: groups.append(args))
+    def add_review_group(*args):
+        groups.append(args)
+        return lambda: groups.remove(args) if args in groups else None
+    panel = NS(add_actions=buttons.extend, add_review_group=add_review_group)
     service = NS(current_identity=NS(identity_id="A"), storage=object(),
                  _source_context_epoch=4, _account_context_epoch=1)
     window = NS(service=service, plugin_manager=manager,
@@ -65,7 +68,7 @@ def test_generic_contribution_mount_is_inert_and_worker_delivers_once():
     host.dispose()
     host.dispose()
     button.click()
-    assert len(tasks) == 1 and disposed == [True]
+    assert len(tasks) == 1 and disposed == [True] and not groups
 
 
 @pytest.mark.parametrize("change", ["disable", "registry", "selection", "route", "row",

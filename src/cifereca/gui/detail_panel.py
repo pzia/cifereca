@@ -898,6 +898,23 @@ class DetailPanel(Gtk.Box):
     def add_group(self, title: str, rows: list[tuple[str, str]]) -> None:
         self._group(title, rows)
 
+    def add_review_group(self, title: str, rows: list[tuple[str, str]]):
+        """Own one detachable plugin result, without metadata action buttons."""
+        # These native section names have dedicated presentation branches.
+        # They are not an extension point for a contextual review producer.
+        if title in ("Détail", "Bibliothèques et accès"):
+            return None
+        owner = self.content
+        slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._group(title, rows, parent=slot, field_actions=False)
+        owner.append(slot)
+
+        def remove():
+            if slot.get_parent() is owner:
+                owner.remove(slot)
+
+        return remove
+
     def add_actions(self, buttons: list[Gtk.Button]) -> None:
         self._actions(buttons)
 
