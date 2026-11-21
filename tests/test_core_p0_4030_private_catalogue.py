@@ -46,7 +46,7 @@ def test_private_loan_comparison_is_partial_read_only_and_exact(private_rig):
     assert result["status"] == "partial"
     candidate, = result["candidates"]
     assert candidate.source.scope == key.scope and candidate.source.branch == key.branch
-    assert candidate.source.edition_id == key.edition_id and candidate.source.right_id == key.right_id
+    assert candidate.source.edition_id == key.edition_id and candidate.source.resource_id == key.right_id
     assert candidate.comparison == "title_author_concordant"
     assert candidate.evidence == "cached_loan_description" and candidate.title_observed_at is None
     assert not any(result[k] for k in ("coverage_complete", "fresh_network_verified",
