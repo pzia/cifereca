@@ -38,7 +38,7 @@ class _Binding:
     session: object
     descriptor: ProviderDescriptor
     connection_epoch: int
-    session_epoch: int | None
+    session_epoch: int | str | None
 
     def current(self, service, scope):
         try:
@@ -62,6 +62,7 @@ class _Binding:
                 and state.get("credential_id") == doc.credential_id
                 and state.get("descriptor") is self.descriptor
                 and state.get("connected") is True and state.get("_closed") is not True
+                and type(state.get("_epoch")) is type(self.session_epoch)
                 and state.get("_epoch") == self.session_epoch
                 and exact(self.account)
                 and sum(exact(a) for a in accounts) == 1
@@ -109,8 +110,16 @@ def _capture(service, scope, doc):
             doc.provider_id, doc.credential_id, scope.identity_id,
         )
         session_epoch = state.get("_epoch")
-        if not _epoch(connection) or (session_epoch is not None and (
-                type(session_epoch) is not int or not 0 <= session_epoch < _EPOCH_LIMIT)):
+        # Installed providers use either counters or opaque reconnect
+        # generations (e.g. a UUID hex). Never display or serialize this
+        # transient value and never coerce bool/numeric/string aliases.
+        valid_generation = (
+            session_epoch is None
+            or (type(session_epoch) is int and 0 <= session_epoch < _EPOCH_LIMIT)
+            or (type(session_epoch) is str and 0 < len(session_epoch) <= 128
+                and session_epoch.isprintable())
+        )
+        if not _epoch(connection) or not valid_generation:
             return None
         binding = _Binding(doc, candidates[0], session, descriptor, connection, session_epoch)
         return binding if binding.current(service, scope) else None
