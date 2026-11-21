@@ -196,3 +196,105 @@ def test_private_recovery_failures_preserve_pending_and_files(rig, monkeypatch, 
         assert not target.exists()
     else:
         assert target.read_bytes() == before
+
+
+def test_private_link_then_recover_real_admitted_receipt(rig):
+    from cifereca.core.derived_variant_private_recovery import (
+        link_private_reserved_variant, recover_private_linked_derived_publication,
+    )
+    db, intent, stage, args = rig
+    receipt = reserve_private_derived_publication(db, **args)
+    options = _recover_args(args, receipt)
+    original = db.metadata_get(receipt.key)
+    target = Path(intent.candidate_path)
+    assert link_private_reserved_variant(db, **options) == {
+        "status": "linked_pending", "destructive_cleanup_allowed": False}
+    assert stage.samefile(target) and stage.stat().st_nlink == 2
+    assert db.metadata_get(receipt.key) == original
+    assert len(db.placements()) == 1 and not db.artifact_variants()
+    with pytest.raises(journal.DerivedJournalConflict):
+        link_private_reserved_variant(db, **options)
+    other = Storage(db.path)
+    try:
+        assert recover_private_linked_derived_publication(other, **options)["status"] == "committed"
+        assert other.metadata_get(journal._COMMITTED + receipt.receipt_sha256) == original
+        assert journal.summarize_derived_journal(other)["reserved_output_bytes"] == 9
+        assert len(other.placements()) == 2 and stage.samefile(target)
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("case", ["occupied", "alias", "bytes", "binding", "scope", "unconfirmed",
+                                  "nested", "marker", "sql_claim"])
+def test_private_link_refusals_never_touch_names_or_pending(rig, case):
+    from cifereca.core.derived_variant_private_recovery import link_private_reserved_variant
+    db, intent, stage, args = rig
+    receipt = reserve_private_derived_publication(db, **args)
+    original = db.metadata_get(receipt.key)
+    options = _recover_args(args, receipt)
+    target = Path(intent.candidate_path)
+    sql = db._connect()
+    if case == "occupied":
+        target.write_bytes(b"unrelated")
+    elif case == "alias":
+        os.link(stage, stage.with_name("another.epub"))
+    elif case == "bytes":
+        stage.write_bytes(b"bad bytes")
+    elif case == "binding":
+        options["approved_binding_sha256"] = "0" * 64
+    elif case == "scope":
+        options["scope_current"] = lambda _sql: False
+    elif case == "unconfirmed":
+        options["explicitly_requested"] = False
+    elif case == "nested":
+        sql.execute("BEGIN IMMEDIATE")
+        sql.execute("INSERT INTO metadata(key,value) VALUES('test.link.caller','pending')")
+    elif case == "marker":
+        (stage.parent / region._MARKER).write_bytes(b"0" * 32)
+    else:
+        # A registered placement, even missing, owns its destination.
+        db.placement_put({"artifact_id": "sha256:" + intent.parent_sha256,
+                          "identity_id": intent.identity_id, "state": "missing",
+                          "path": str(target)})
+    before = stage.read_bytes()
+    try:
+        with pytest.raises(journal.DerivedJournalConflict):
+            link_private_reserved_variant(db, **options)
+        if case == "nested":
+            assert sql.in_transaction
+            assert sql.execute("SELECT value FROM metadata WHERE key='test.link.caller'").fetchone() == ("pending",)
+            sql.rollback()
+        assert db.metadata_get(receipt.key) == original
+        assert stage.read_bytes() == before and not db.artifact_variants()
+        if case == "occupied":
+            assert target.read_bytes() == b"unrelated"
+        else:
+            assert not target.exists()
+    finally:
+        if sql.in_transaction:
+            sql.rollback()
+
+
+def test_private_interruption_after_link_retains_recoverable_pending(rig, monkeypatch):
+    from cifereca.core.derived_variant_private_recovery import (
+        link_private_reserved_variant, recover_private_linked_derived_publication,
+    )
+    db, intent, stage, args = rig
+    receipt = reserve_private_derived_publication(db, **args)
+    original = db.metadata_get(receipt.key)
+    target = Path(intent.candidate_path)
+    options = _recover_args(args, receipt)
+    link = os.link
+
+    def interrupted(*a, **kw):
+        link(*a, **kw)
+        raise OSError("synthetic crash after exclusive link")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "link", interrupted)
+        with pytest.raises(journal.DerivedJournalConflict):
+            link_private_reserved_variant(db, **options)
+    assert db.metadata_get(receipt.key) == original
+    assert stage.samefile(target) and not db.artifact_variants()
+    assert recover_private_linked_derived_publication(db, **options)["status"] == "committed"
+    assert stage.samefile(target)
