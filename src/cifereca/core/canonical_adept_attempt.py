@@ -121,3 +121,25 @@ def release_completed_attempt_in_transaction(db, *, source: SourceKey,
     )
     if cursor.rowcount != 1:
         raise ValueError("canonical_adept_attempt_changed")
+
+
+def release_unsubmitted_attempt(storage, *, source: SourceKey, offer_id: str,
+                                operation_id: str, shared_lock) -> None:
+    """Release only the claim created by this still-live Core dispatch.
+
+    Caller must know it has NOT entered execute_acquisition_request. This
+    cannot qualify or release a historical marker after a crash, runtime call
+    or unknown result. The exact operation ID is held only by its creator.
+    """
+    from .canonical_recovery import _lock_ok
+    if not _lock_ok(shared_lock):
+        raise ValueError("canonical_adept_attempt_core_lock_required")
+    expected = _value(offer_id, operation_id)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        cursor = db.execute(
+            "DELETE FROM metadata WHERE key=? AND value=?",
+            (_key(source), expected),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("canonical_adept_attempt_changed")
