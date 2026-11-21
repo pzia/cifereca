@@ -113,3 +113,86 @@ def test_age_from_alternative_does_not_become_primary_recommendation_age(tmp_pat
             item, identity_id="alice", document=document, receipt=receipt,
         ) == ()
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_recommendation_opaque_packet_rejects_hostile_nested_values_after_restart(tmp_path):
+    from cifereca.core.notice_c_recommendation_known import (
+        known_public_c_alternative_hits,
+    )
+
+    filename = tmp_path / "recommendation-hostile-packet.sqlite"
+    with closing(Storage(filename)) as db:
+        first = original(source_provider="aaa-fixture")
+        first.record_id = "age-first"
+        first.metadata["bibliography_evidence"]["youth_age"]["record_id"] = first.record_id
+        second = public_row(
+            source_provider="zzz-fixture", record_id="alternative",
+            metadata={"subjects": ["Astronomie"]},
+        )
+        sources = (persist(db, project(first)), persist(db, project(second)))
+        canonical = persist_attested_public_cover_group(
+            db, canonical_edition_id="strong:hostile-recommendation",
+            sources=sources, relation_proof_id="strong:synthetic",
+        )
+        for source in sources:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign equality in recommendation C")
+
+        def __hash__(self):
+            raise AssertionError("foreign hash in recommendation C")
+
+    with closing(Storage(filename)) as db:
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("Même titre")
+        assert known_public_c_binding_facts(item) == (
+            canonical.document, canonical.epoch,
+        )
+        assert known_public_c_primary_hit(item) is not None
+        alternative, = known_public_c_alternative_hits(item)
+        packet = item._core_known_public_c_projection
+
+        def try_packet(index, value):
+            candidate = list(packet)
+            candidate[index] = value
+            item._core_known_public_c_projection = tuple(candidate)
+
+        try:
+            try_packet(4, (Hostile(), *packet[4][1:]))
+            assert known_public_c_binding_facts(item) is None
+            assert known_public_c_primary_hit(item) is None
+
+            wrong_doc = replace(packet[2])
+            object.__setattr__(wrong_doc, "kind", Hostile())
+            try_packet(2, wrong_doc)
+            assert known_public_c_binding_facts(item) is None
+
+            for forged in (
+                replace(packet[6], record_id=Hostile()),
+                replace(packet[6], age_observation=Hostile()),
+                replace(packet[6], age_observation=replace(
+                    packet[6].age_observation,
+                    ranges=(replace(packet[6].age_observation.ranges[0],
+                                    age_min=Hostile()),),
+                )),
+            ):
+                try_packet(6, forged)
+                assert known_public_c_primary_hit(item) is None
+
+            for forged in (
+                replace(alternative, provider_id=Hostile()),
+                replace(alternative, classification=Hostile()),
+            ):
+                try_packet(5, (forged,))
+                assert known_public_c_alternative_hits(item) is None
+        finally:
+            item._core_known_public_c_projection = packet
+
+        assert known_public_c_binding_facts(item) == (
+            canonical.document, canonical.epoch,
+        )
+        assert known_public_c_primary_hit(item) is not None
+        assert known_public_c_alternative_hits(item) == (alternative,)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
