@@ -727,3 +727,68 @@ def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
         assert len(calls) == 1
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("subject,expected", [
+    (["Astronomie", "Sciences"], ["Astronomie", "Sciences"]),
+    ([], None),
+    (["https://private.example/?token=fixture"], None),
+    (["file:/home/private"], None),
+])
+def test_exact_anonymous_subject_reaches_durable_c(tmp_path, subject, expected):
+    from types import SimpleNamespace
+    from contextlib import closing
+    from cifereca.core.search_orchestration import (
+        _public_rows_from_response, _mirror_remote_results,
+    )
+    from cifereca.core.notice_cover_repository import read_notice_cover, evict_notice_cover
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.storage import Storage
+
+    payload = _response("EBOOKS", _facet(values=[
+        {"Label": "Page seulement", "Count": 9, "IsSelected": False},
+    ]))
+    resource = payload["d"]["Results"][0]["Resource"]
+    resource.update(Subj=subject, Tags=["Jeunesse"], BlogPostCategories=["Blog"])
+    calls = []
+
+    def respond(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payload)
+
+    session = ParisProviderSession(
+        credential_id="__public__", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = _client(respond)
+    path = tmp_path / "paris-subject.sqlite"
+    try:
+        response = session.search_with_response_facets("Synthetic book", "digital")
+        raw, = response.results
+        assert response.public_notices[0].result is raw
+        assert raw.metadata.get("subjects") == expected
+        assert not {"tags", "paris_blog_categories", "recommended_age"} & raw.metadata.keys()
+        assert raw.owned is raw.downloadable is False and raw.download_url is None
+        with closing(Storage(path)) as db:
+            row, = _public_rows_from_response(response, session)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            exact = row._core_notice_cover_document_ref
+            canonical = row._core_notice_canonical_cover_document_ref
+            classification = read_consolidated_notice_cover(db, canonical).sources[0].public_bibliography.classification
+            assert (classification.wire() if classification else None) == (
+                {"subjects": expected} if expected else None)
+            assert evict_notice_cover(db, exact, expected_epoch=read_notice_cover(db, exact).epoch)
+        with closing(Storage(path)) as db:
+            hits = search_public_notice_c(db, "astronomie", field="subject").hits
+            assert len(hits) == int(expected is not None)
+            if hits:
+                assert hits[0].document == canonical
+            for needle in ("Jeunesse", "Blog", "Page seulement"):
+                assert not search_public_notice_c(db, needle, field="subject").hits
+            assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert len(calls) == 1
+    finally:
+        session.close()

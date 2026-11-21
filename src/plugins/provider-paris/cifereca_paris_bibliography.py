@@ -370,6 +370,31 @@ def public_search_series_metadata(
     }
 
 
+def public_search_subject_metadata(metadata: object, scenario: str) -> dict[str, object]:
+    """Retain only the literal subject headings attested on this record."""
+    if type(metadata) is not dict or scenario not in {"CATALOGUE", "EBOOKS"}:
+        return {}
+    values = metadata.get("subjects")
+    claims = metadata.get("bibliography_evidence")
+    if (type(values) is not list or not 1 <= len(values) <= _MAX_VALUES
+            or type(claims) is not dict or type(claims.get("subjects")) is not dict):
+        return {}
+    expected = {
+        "source": "paris.syracuse.search", "source_field": "Resource.Subj",
+        "scope": scenario, "confidence": "upstream_field_present",
+        "freshness": "search_response",
+    }
+    if (claims["subjects"] != expected
+            or any(type(value) is not str or not value
+                   or _safe_facet_choice_text(value) != value
+                   or not value.isprintable()
+                   or re.match(r"(?i)^(?:file:|~/|[a-z]:/)", value)
+                   or re.search(r"(?i)(?:auth|cookie|password|secret)\s*=|(?:bearer|basic)\s+\S+", value)
+                   for value in values)):
+        return {}
+    return {"subjects": list(values)}
+
+
 def project_observed_resource_facets(
     resource: Mapping[str, object], scenario: str
 ) -> dict[str, object]:
