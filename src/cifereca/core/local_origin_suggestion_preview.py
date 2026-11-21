@@ -198,7 +198,12 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         signature = recheck()
         checked_status, checked = snapshot(signature[:2])
         if checked is None:
-            raise _CandidateRejected(checked_status)
+            # An origin/receipt appearing after the first snapshot, or any
+            # other lost SQL admission, is a change of evidence. A previously
+            # unseen inode alias is the only expected additional declaration veto.
+            raise _CandidateRejected(checked_status if checked_status in (
+                "declared_origin_requires_review", "declaration_scope_unverified",
+            ) else "evidence_changed")
         # An alias can be discovered only after opening the verified inode.
         # Every other pinned SQL coordinate must still match the initial read.
         if checked[:7] != row[:7] or checked[8:] != row[8:]:

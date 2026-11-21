@@ -91,9 +91,9 @@ def test_new_provider_origin_during_review_revokes_candidate(store, tmp_path, mo
     original = preview._snapshot
     seen = False
 
-    def changed(*args):
+    def changed(*args, **kwargs):
         nonlocal seen
-        value = original(*args)
+        value = original(*args, **kwargs)
         if not seen:
             seen = True
             publish(store, root, path, key, snap)

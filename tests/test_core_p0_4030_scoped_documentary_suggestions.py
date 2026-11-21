@@ -149,7 +149,7 @@ def test_non_native_epub_catalogue_text_is_not_silently_ignored(
 
 def _record_declaration(store, path, *, identity="A", state="active", relation="a" * 32):
     """Exact #2797 wire fixture; no new supplier relation or OriginLink."""
-    from cifereca.core.library_declared_links import _PREFIX
+    from cifereca.core.library_declared_links import _PREFIX, _json
     from cifereca.core.library_inventory import _fingerprint
     import hashlib
     record = {
@@ -164,7 +164,7 @@ def _record_declaration(store, path, *, identity="A", state="active", relation="
         "right_state": {"entitlement_id": "right", "entitlement_type": "owned",
                         "state": "active", "loan_id": None, "expires_at": None},
     }
-    store.metadata_set(_PREFIX + relation, record)
+    store.metadata_set(_PREFIX + relation, _json(record))
     return record
 
 
