@@ -1091,9 +1091,9 @@ class DocumentCoverService:
                             or live != lease.token):
                         self._qualified_fallback.pop(document, None)
                     elif self._clock() >= lease.expires_at:
-                        # Reconsider the original EPUB N1 priority after a
-                        # bounded lease. Repair of N3 can restore the image;
-                        # no public URL may permanently displace it.
+                        # Reconsider the original N1 priority after a bounded
+                        # lease. Repair of N3 can restore the image; no
+                        # temporary alternate may permanently displace it.
                         self._qualified_fallback.pop(document, None)
                         self.decisions.invalidate(
                             document, cause="materialization_requalified",
