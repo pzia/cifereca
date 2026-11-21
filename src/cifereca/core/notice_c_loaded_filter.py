@@ -7,6 +7,7 @@ collapsed back to the original primary presentation after ranking.
 from __future__ import annotations
 
 from .notice_c_public_search import PublicNoticeCHit
+from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _MAX_SOURCES
 from .notice_cover_repository import is_notice_cover_document
 
@@ -15,26 +16,71 @@ _MARKER = object()
 _FIELD = "_core_notice_c_filter_sources"
 
 
+def _native_group_document(document):
+    # Core's frozen scope can be mutated after issuance. Revalidate scalar
+    # members before dataclass equality, then re-run the constructor's
+    # public/private invariants before repository source eligibility.
+    if type(document) is not CoverDocumentScope:
+        return False
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return False
+    for name in ("identity_id", "account_id"):
+        value = getattr(document, name)
+        if (value is not None and (type(value) is not str
+                                   or len(value) > 512
+                                   or not value.isprintable())):
+            return False
+    try:
+        document.__post_init__()
+    except (TypeError, ValueError):
+        return False
+    return is_notice_cover_document(document)
+
+
 def attach_filter_sources(row, hits):
+    # Construct the opaque packet only from an exact, internally consistent
+    # Core group. Avoid indexing an empty tuple or invoking foreign equality
+    # on a hit whose frozen fields have been replaced after the source read.
+    if (type(row) is not dict or type(hits) is not tuple
+            or not 2 <= len(hits) <= _MAX_SOURCES
+            or type(row.get("identity_id")) is not str):
+        return
     first = hits[0]
-    if (2 <= len(hits) <= _MAX_SOURCES
-            and all(type(hit) is PublicNoticeCHit
-                    and hit.document == first.document and hit.epoch == first.epoch
-                    for hit in hits)):
+    if (type(first) is not PublicNoticeCHit
+            or not _native_group_document(first.document)
+            or type(first.epoch) is not int
+            or type(first.provider_id) is not str
+            or type(first.record_id) is not str):
+        return
+    if all(type(hit) is PublicNoticeCHit
+           and _native_group_document(hit.document)
+           and type(hit.epoch) is int
+           and type(hit.provider_id) is str
+           and type(hit.record_id) is str
+           and hit.document == first.document and hit.epoch == first.epoch
+           for hit in hits):
         row[_FIELD] = (_TOKEN, row["identity_id"], first.document, first.epoch, hits)
 
 
 def _sources(row):
-    if type(row) is not dict or row.get("source") != "notice_c_public":
+    if (type(row) is not dict or type(row.get("source")) is not str
+            or row["source"] != "notice_c_public"):
         return None
     if _FIELD not in row:
         return None
     packet = row[_FIELD]
     meta = row.get("metadata")
+    identity = row.get("identity_id")
+    document = row.get("_cover_document_ref")
     if (type(packet) is not tuple or len(packet) != 5 or packet[0] is not _TOKEN
-            or packet[1] != row.get("identity_id")
-            or packet[2] != row.get("_cover_document_ref")
-            or not is_notice_cover_document(packet[2])
+            or type(identity) is not str or type(packet[1]) is not str
+            or packet[1] != identity
+            or not _native_group_document(packet[2])
+            or not _native_group_document(document)
+            or packet[2] != document
             or type(meta) is not dict
             or type(packet[3]) is not int
             or type(meta.get("notice_c_epoch")) is not int
@@ -42,10 +88,17 @@ def _sources(row):
             or type(packet[4]) is not tuple or not 2 <= len(packet[4]) <= _MAX_SOURCES):
         return ()
     hits = packet[4]
-    if (any(type(hit) is not PublicNoticeCHit or hit.document != packet[2]
-            or hit.epoch != packet[3] for hit in hits)
-            or hits[0].provider_id != row.get("provider_id")
-            or hits[0].record_id != row.get("item_id")):
+    if (any(type(hit) is not PublicNoticeCHit
+            or not _native_group_document(hit.document)
+            or type(hit.epoch) is not int
+            or type(hit.provider_id) is not str
+            or type(hit.record_id) is not str
+            or hit.document != packet[2] or hit.epoch != packet[3]
+            for hit in hits)
+            or type(row.get("provider_id")) is not str
+            or type(row.get("item_id")) is not str
+            or hits[0].provider_id != row["provider_id"]
+            or hits[0].record_id != row["item_id"]):
         return ()
     return hits
 
@@ -58,7 +111,12 @@ def expand_filter_sources(rows, *, scope):
     wanted = str(scope or "all").casefold()
     for row in rows:
         hits = _sources(row)
-        if hits is None:
+        if not hits:
+            # An invalidated multi-source packet is NOT evidence that the
+            # primary C row vanished. Keep ordinary primary filtering, but
+            # never expand untrusted alternatives or grant their matches.
+            # _sources returns () for a stale/mutated group and None for an
+            # ungrouped row.
             expanded.append(row)
             continue
         marker = object()
@@ -80,7 +138,7 @@ def expand_filter_sources(rows, *, scope):
 
 
 def is_expanded_source(row):
-    return _MARKER in row
+    return type(row) is dict and type(row.get(_MARKER)) is object
 
 
 def collapse_filter_sources(rows, originals):
@@ -88,7 +146,9 @@ def collapse_filter_sources(rows, originals):
     out, groups = [], {}
     for row in rows:
         marker = row.get(_MARKER)
-        if marker not in originals:
+        # Only our object() sentinel can be a group key. A plugin-facing
+        # row must never execute an arbitrary __hash__/__eq__ in this dict.
+        if type(marker) is not object or marker not in originals:
             out.append(row)
             continue
         primary = groups.get(marker)
@@ -97,18 +157,20 @@ def collapse_filter_sources(rows, originals):
             primary["_notice_c_matched_providers"] = ()
             groups[marker] = primary
             out.append(primary)
-        provider = row["provider_id"]
-        if provider not in primary["_notice_c_matched_providers"]:
+        provider = row.get("provider_id")
+        if (type(provider) is str and 0 < len(provider) <= 64
+                and provider not in primary["_notice_c_matched_providers"]):
             primary["_notice_c_matched_providers"] += (provider,)
     return out
 
 def matching_source_label(row):
     # This metadata is produced by collapse only; labels are descriptive.
     providers = row.get("_notice_c_matched_providers")
+    primary = row.get("provider_id")
     if (type(providers) is not tuple or not providers
-            or providers == (row.get("provider_id"),)):
-        return ""
-    if any(type(provider) is not str or not 1 <= len(provider) <= 64 for provider in providers):
+            or any(type(provider) is not str or not 1 <= len(provider) <= 64
+                   for provider in providers)
+            or type(primary) is not str or providers == (primary,)):
         return ""
     suffix = f" (+{len(providers) - 3})" if len(providers) > 3 else ""
     return " · Correspondance : " + ", ".join(providers[:3]) + suffix

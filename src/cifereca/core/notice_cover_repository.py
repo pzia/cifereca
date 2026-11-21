@@ -98,6 +98,8 @@ def _opaque_key(document: CoverDocumentScope) -> str | None:
 
 def is_notice_cover_document(document: CoverDocumentScope) -> bool:
     """Pure eligibility for exact-source or explicit canonical C read-through."""
+    if type(document) is not CoverDocumentScope:
+        return False
     if _opaque_key(document) is not None:
         return True
     # The canonical index depends on this repository for source revalidation.

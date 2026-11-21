@@ -122,3 +122,22 @@ def test_budget_exclusion_is_not_a_negative_match(store, tmp_path, monkeypatch):
     assert row["reason"] == "review_budget" and row["known_matches"] is None
     assert row["status"] == "not_assessed"
     assert "Non évalué" in _display(page)
+
+
+@pytest.mark.parametrize("failure", [OSError("connection gone"), RuntimeError("profile rebound")])
+def test_batch_binding_failure_closes_direct_scope_and_public_page(
+    store, tmp_path, monkeypatch, failure,
+):
+    service, root, pid = _service(store, tmp_path)
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    assert scope is not None and scope.bound()
+
+    def unreachable_binding(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(batch, "_binding_current", unreachable_binding)
+    monkeypatch.setattr(batch, "suggest_local_placement_documents",
+                        lambda *_args, **_kwargs: pytest.fail("no C query on invalid scope"))
+    assert scope.bound() is False
+    assert batch.run_origin_batch(service, scope) is None
+    assert Path(store.placement_get(pid)["path"]).is_file()

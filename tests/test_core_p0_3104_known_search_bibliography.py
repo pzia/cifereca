@@ -182,6 +182,30 @@ def test_primary_field_provenance_survives_eviction_and_restart(tmp_path):
                        {**item, "identity_id": "bob"},
                        {**item, "metadata": {**meta, "series": ["Other"], "languages": ["fr"]}}):
             assert not any(f.provenance for sec in present(forged).sections for f in sec.fields)
+        # A view row can be modified after its Core receipt was attached.
+        # Never call an injected object's equality or decorate that field
+        # with trusted provenance; the independent other field still qualifies.
+        class HostileEquals:
+            def __eq__(self, other):
+                raise AssertionError("provider-defined equality executed")
+
+        from cifereca.gui.search_known_public_c_bibliography import (
+            with_known_public_field_provenance,
+        )
+        authentic = book_detail_presentation(
+            title=item["title"], metadata=known_public_detail_metadata(meta),
+        )
+        for field_name, untrusted_value, lost_label, surviving_label in (
+            ("series", HostileEquals(), "Série", "Langue"),
+            ("languages", [HostileEquals()], "Langue", "Série"),
+            ("series", ("Cycle Orion",), "Série", "Langue"),
+            ("languages", ("ja",), "Langue", "Série"),
+        ):
+            modified = {**item, "metadata": {**meta, field_name: untrusted_value}}
+            safe = with_known_public_field_provenance(authentic, modified)
+            by_label = {f.label: f for sec in safe.sections for f in sec.fields}
+            assert by_label[lost_label].provenance is None
+            assert by_label[surviving_label].provenance is not None
         assert db.entitlements() == [] and db.acquisitions() == []
 
 
@@ -328,3 +352,68 @@ def test_plain_primary_catalogue_fields_keep_exact_source_provenance(tmp_path):
         assert all(f.provenance is None for f in present({**item, "identity_id": "bob"}).sections[0].fields)
         assert not p.actions and not p.links
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+
+def test_primary_c_classification_provenance_does_not_attach_to_local_sections(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    from cifereca.gui.detail_model import book_detail_presentation
+    from cifereca.gui.search_known_public_c_bibliography import (
+        with_known_public_field_provenance,
+    )
+
+    path = tmp_path / "source-classification.sqlite"
+    with closing(Storage(path)) as db:
+        source = persist(db, verified_public(
+            record_id="classified", title="Notice classée",
+            metadata={"subjects": ["Astronomie"], "genre": "Roman",
+                      "keywords": ["Espace"], "tags": ["Cosmos"],
+                      "themes": ["Galaxies"]},
+        ), at=100)
+        persist_exact_public_search_cover(db, source)
+        assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+
+    with closing(Storage(path)) as db:
+        item, = merge_public_notice_c_known_rows(
+            [], search_public_notice_c(db, "Notice classée", now=100),
+            identity_id="alice",
+        )
+        metadata = item["metadata"]
+        presentation = book_detail_presentation(
+            title=item["title"],
+            metadata=known_public_detail_metadata(metadata),
+            section_rows=(("Bibliothèque", (
+                ("Sujet", "Astronomie"), ("Genre", "Roman"),
+            )),),
+        )
+        visible = with_known_public_field_provenance(presentation, item)
+        by_section = {
+            section.title: {f.label: f for f in section.fields}
+            for section in visible.sections
+        }
+        for label in ("Sujet", "Genre", "Thème"):
+            field = by_section["Détail"][label]
+            assert field.provenance.source == "Notice C · observation de source"
+            assert field.provenance.provider_id == item["provider_id"]
+            assert field.provenance.source_id == "classified"
+            assert field.provenance.observed_at == "1970-01-01T00:01:40+00:00"
+        for label in ("Sujet", "Genre"):
+            assert by_section["Bibliothèque"][label].provenance is None
+        keywords = [f for sec in visible.sections if sec.title == "Détail"
+                    for f in sec.fields if f.label == "Mot-clé"]
+        assert {field.value for field in keywords} == {"Espace", "Cosmos"}
+        assert all(field.provenance.source == "Notice C · observation de source"
+                   for field in keywords)
+
+        class Hostile:
+            def __eq__(self, other):
+                raise AssertionError("foreign classification equality executed")
+
+        for supplied in (["Histoire"], ("Astronomie",), [Hostile()]):
+            changed = {**item, "metadata": {**metadata, "subjects": supplied}}
+            altered = with_known_public_field_provenance(presentation, changed)
+            fields = {f.label: f for sec in altered.sections if sec.title == "Détail"
+                      for f in sec.fields}
+            assert fields["Sujet"].provenance is None
+            assert fields["Genre"].provenance == by_section["Détail"]["Genre"].provenance
+        assert db.entitlements() == db.acquisitions() == db.placements() == []

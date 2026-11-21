@@ -169,3 +169,62 @@ def test_next_page_conflict_never_selects_last_candidate():
     second = first.replace("pageindex=1", "pageindex=01")
     links = mod.extract_catalogue_links(page, first + second + first)
     assert links.next_page_url is None and links.completeness == "partial"
+
+
+@pytest.mark.parametrize("wrapper", [
+    "<template>{body}</template>",
+    "<noscript>{body}</noscript>",
+    "<div hidden>{body}</div>",
+    "<div aria-hidden='true'>{body}</div>",
+    "<div class='visually-hidden'>{body}</div>",
+    "<div class='d-none'>{body}</div>",
+    "<div style='display: none !important'>{body}</div>",
+    "<div style='visibility: hidden'>{body}</div>",
+    "<div hidden hidden='false'>{body}</div>",
+    "<div class='hidden' class='shown'>{body}</div>",
+    "<head>{body}</head>",
+])
+def test_hidden_catalogue_markup_never_promotes_book_or_pager(wrapper):
+    # A template/hidden supplier card is not a public bibliographic fact.
+    source = ("https://www.biblioaccess.com/1409/Catalog/Search"
+              "?query=test&pageindex=0")
+    hidden = (
+        '<a href="/1409/Catalog/Book/999/preview">Faux livre</a>'
+        '<a href="/1409/Catalog/Search?query=test&pageindex=001">Suivant</a>'
+    )
+    visible = (
+        '<a href="/1409/Catalog/Book/123/valid">Livre confirmé</a>'
+        '<a href="/1409/Catalog/Search?query=test&pageindex=1">Suivant</a>'
+    )
+    result = mod.extract_catalogue_links(source, wrapper.format(body=hidden) + visible)
+    assert result.book_ids == ("123",)
+    assert result.book_titles == (("123", "Livre confirmé"),)
+    assert result.next_page_url == (
+        "https://www.biblioaccess.com/1409/Catalog/Search"
+        "?query=test&pageindex=1"
+    )
+
+
+def test_hidden_child_text_does_not_contaminate_a_visible_book_title():
+    source = "https://www.biblioaccess.com/1409/Catalog/Search?query=test"
+    html = (
+        '<a href="/1409/Catalog/Book/123/valid">Livre '
+        '<span hidden>Jeton privé</span>confirmé</a>'
+    )
+    result = mod.extract_catalogue_links(source, html)
+    assert result.book_ids == ("123",)
+    assert result.book_titles == (("123", "Livre confirmé"),)
+
+
+def test_overdeep_catalogue_markup_refuses_all_documentary_evidence():
+    source = "https://www.biblioaccess.com/1409/Catalog/Search?query=test"
+    html = (
+        '<a href="/1409/Catalog/Book/111/first">Avant</a>'
+        + "<div>" * 129
+        + '<a href="/1409/Catalog/Book/222/nested">Non attesté</a>'
+        + "</div>" * 129
+    )
+    result = mod.extract_catalogue_links(source, html)
+    assert result.book_ids == ()
+    assert result.next_page_url is None
+    assert result.completeness == "partial"
