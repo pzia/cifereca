@@ -345,7 +345,20 @@ class MasterDetailPage(Gtk.Box):
         if not matches:
             return False
         index = matches[0]
+        row = self.store.get_item(index)
         self.selection.set_selected(index)
+        # Selection notifications run synchronously and may replace the model,
+        # switch context or introduce a duplicate stable key. Do not report
+        # success or focus an index that now belongs to a different row.
+        if (self.selection.get_selected_item() is not row
+                or index >= self.store.get_n_items()
+                or self.store.get_item(index) is not row):
+            return False
+        for position in range(self.store.get_n_items()):
+            if position != index:
+                other = self.store.get_item(position)
+                if isinstance(other, BookListItem) and other.key == target:
+                    return False
         try:
             self.listview.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
         except (AttributeError, TypeError):
