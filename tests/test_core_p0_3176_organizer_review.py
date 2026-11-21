@@ -277,3 +277,26 @@ def test_keeper_confirmation_refuses_unavailable_storage_boundary(
     assert scope.bound() is False
     assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
     assert review.run_organizer_review(service, scope) is None
+
+
+def test_keeper_advice_rejects_unavailable_physical_recheck_without_exception(
+    store, tmp_path, monkeypatch,
+):
+    import sqlite3
+
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, page = _run(service)
+    before = rows(store)
+
+    def unavailable(*_args, **_kwargs):
+        raise sqlite3.OperationalError("synthetic unavailable keeper witness")
+
+    monkeypatch.setattr(review, "review_canonical_keeper", unavailable)
+    # The initial advice was valid. A later failed Core recheck is a veto,
+    # never an unhandled exception or authority to retire a copy.
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
+    assert rows(store) == before
+    assert all(Path(store.placement_get(p.placement_id)["path"]).exists() for p in pair)
