@@ -109,6 +109,21 @@ def test_unadmitted_public_lookup_never_dispatches(rig, change):
     assert not result["provider_access_performed"] and calls == []
 
 
+@pytest.mark.parametrize("registry", ["over_budget", "untyped"])
+def test_confirmed_public_search_refuses_unbounded_or_untrusted_registry(rig, registry):
+    service, session, request, calls, path = rig
+    before, contents = rows(service.storage), path.read_bytes()
+    if registry == "over_budget":
+        service._sessions.update({f"extra-{i}": object() for i in range(256)})
+    else:
+        service._sessions = [session]
+    result = _run(service, request)
+    assert result["status"] == "excluded"
+    assert result["provider_access_performed"] is False
+    assert calls == []
+    assert rows(service.storage) == before and path.read_bytes() == contents
+
+
 @pytest.mark.parametrize("change", ["navigation", "source", "bytes", "failure", "overflow"])
 def test_changed_or_invalid_response_is_not_a_candidate(rig, change):
     service, session, request, calls, path = rig
