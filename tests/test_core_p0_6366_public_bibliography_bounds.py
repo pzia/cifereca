@@ -156,11 +156,8 @@ def test_public_bibliography_rejects_foreign_hash_collisions_without_lookup():
     ) is None
 
 
-@pytest.mark.parametrize("field,decoder", (
-    ("classification", "classification"), ("series", "series"),
-    ("language", "language"),
-))
-def test_structured_public_proof_rejects_foreign_keys_before_set_or_get(field, decoder):
+@pytest.mark.parametrize("field", ("classification", "series", "language"))
+def test_structured_public_proof_rejects_foreign_keys_before_set_or_get(field):
     from cifereca.core.public_search_projection import (
         decode_public_classification, decode_public_series_relation,
         decode_public_language_observation,
