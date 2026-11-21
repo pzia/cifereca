@@ -459,6 +459,8 @@ def _mirror_live_search_results(
     if not c_already_ingested:
         from .notice_c_private_search_web import persist_authenticated_search_rows
         persist_authenticated_search_rows(service, rows, identity_id=identity_id)
+        from .notice_c_private_series import persist_series_rows
+        persist_series_rows(service, rows, identity_id=identity_id)
     token = _CORE_LIVE_PUBLIC_C_WRITER.set(True)
     ingested = _CORE_PROGRESSIVE_C_WRITTEN.set(c_already_ingested)
     try:
@@ -1002,6 +1004,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 private_call = (None if foreign_owner else capture_authenticated_search_call(
                     self, session, getattr(identity, "identity_id", None),
                 ))
+                from .notice_c_private_series import capture_series_call, stamp_series_rows
+                series_call = (None if foreign_owner else capture_series_call(
+                    self, session, getattr(identity, "identity_id", None),
+                ))
                 response_partial = False
                 terminal_empty = False
                 if foreign_owner:
@@ -1033,6 +1039,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                             raise
                         session_rows = session.search(variant, effective_search_scope)
                 stamp_authenticated_search_rows(self, private_call, session_rows)
+                stamp_series_rows(self, series_call, session_rows)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
                     key = _search_result_scope_key(row)
@@ -1395,6 +1402,10 @@ def _search_provider_session(
             private_call = (None if public_only else capture_authenticated_search_call(
                 self, session, getattr(identity, "identity_id", None),
             ))
+            from .notice_c_private_series import capture_series_call, stamp_series_rows
+            series_call = (None if public_only else capture_series_call(
+                self, session, getattr(identity, "identity_id", None),
+            ))
             terminal_empty = False
             if public_only:
                 if not isinstance(session, ProviderSearchWithFacets):
@@ -1442,6 +1453,7 @@ def _search_provider_session(
                     for source in (session, concrete)
                 )
             stamp_authenticated_search_rows(self, private_call, session_rows)
+            stamp_series_rows(self, series_call, session_rows)
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
                 key = _search_result_scope_key(row)
@@ -1960,6 +1972,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     persist_authenticated_search_rows(
                         self, live_rows, identity_id=identity.identity_id,
                     )
+                    from .notice_c_private_series import persist_series_rows
+                    persist_series_rows(self, live_rows, identity_id=identity.identity_id)
                     _clear_public_c_stamps(live_rows)
                     progressive_c_pairs.extend(_ingest_public_search_c(
                         self, live_rows, identity_id=identity.identity_id,
