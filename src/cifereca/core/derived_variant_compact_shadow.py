@@ -101,7 +101,7 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                     _require(intent.parent_stamp[2] + intent.output_size <= _MAX_BYTES,
                              "derived_shadow_budget_exceeded")
                     proof_key, proof = compact.encode_committed_witness(key, raw)
-                    count, total = compact._measure_compact_in_transaction(db)
+                    count, total = compact._measure_compact_in_transaction(db, require_paired=True)
                     existing = db.execute("SELECT value FROM metadata WHERE key=?",
                                           (proof_key,)).fetchone()
                     if existing is not None:
@@ -140,7 +140,7 @@ def write_compact_shadow(storage, *, library_root, identity_id, receipt_sha256,
                         _require(db.execute("SELECT value FROM metadata WHERE key=?",
                                             (proof_key,)).fetchone() == (proof,))
                         recheck()
-                        compact._measure_compact_in_transaction(db)
+                        compact._measure_compact_in_transaction(db, require_paired=True)
                 # FULL commit is completed here before returning any result.
             finally:
                 db.execute(f"PRAGMA synchronous={int(sync)}")
