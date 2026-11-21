@@ -412,9 +412,10 @@ def search_public_notice_c(
     admitted public C. Private observations are discarded before projection.
     """
     if (type(query) is not str or not 2 <= len(query.strip()) <= 160
-            or field not in _FIELDS or scope not in _SCOPES
+            or type(field) is not str or field not in _FIELDS
+            or type(scope) is not str or scope not in _SCOPES
             or type(provider_ids) is not tuple or len(provider_ids) > 128
-            or any(type(provider) is not str or not provider
+            or any(type(provider) is not str or not 0 < len(provider) <= 160
                    for provider in provider_ids)
             or type(content_types) is not tuple or len(content_types) > 32
             or any(type(value) is not str or not 0 < len(value) <= 64
