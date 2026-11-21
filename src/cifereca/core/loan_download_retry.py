@@ -6,6 +6,7 @@ Never clear an ADEPT attempt, a historical ledger row or any physical file.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import time
@@ -57,10 +58,21 @@ def read_adept_intervention(db, source: SourceKey) -> int:
     raise ValueError("download_intervention_state_invalid")
 
 
+@contextmanager
+def _retry_connection(storage):
+    """Own only a fresh worker transaction, never settle caller-owned work."""
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("loan_download_retry_nested_transaction")
+        with db:
+            yield db
+
+
 def record_adept_intervention(storage, source: SourceKey, *, shared_lock) -> None:
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("loan_download_retry_source_rebound")
@@ -107,7 +119,9 @@ def _decode(raw) -> LoanDownloadRetry:
 
 def read_loan_download_retry(storage, source: SourceKey) -> LoanDownloadRetry:
     """Read one exact row; a corrupt row never licenses another delivery."""
-    return _decode(storage.metadata_get(_key(source)))
+    with _retry_connection(storage) as db:
+        row = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
+        return _decode(row[0] if row is not None else None)
 
 
 def record_loan_download_failure(storage, source: SourceKey, *, reason: str,
@@ -118,7 +132,7 @@ def record_loan_download_failure(storage, source: SourceKey, *, reason: str,
     if type(reason) is not str or reason not in _REASONS:
         raise ValueError("loan_download_retry_invalid_reason")
     key = _key(source)
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("loan_download_retry_source_rebound")
@@ -147,7 +161,7 @@ def clear_loan_download_retry(storage, source: SourceKey, *, shared_lock) -> Non
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
     keys = (_key(source), _intervention_key(source))
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         # Verified B is common on opening Sync. Avoid writes for resources
         # without a recorded download failure.
         if db.execute("SELECT 1 FROM metadata WHERE key IN (?, ?) LIMIT 1", keys).fetchone() is None:

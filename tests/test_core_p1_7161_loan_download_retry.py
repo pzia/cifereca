@@ -299,3 +299,51 @@ def test_local_adept_profile_refusal_is_visible_before_any_pause(rig, kind):
                    fake_delivery(service, root))
     assert outcome.status == "downloaded"
     assert review_loan_download_retries(service, identity_id=source.scope.identity_id) == ()
+
+
+@pytest.mark.parametrize("operation", ["read", "record", "clear", "intervention", "review", "reset"])
+def test_retry_operations_never_settle_caller_transaction(rig, monkeypatch, operation):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry import record_adept_intervention
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    storage = service.storage
+    service.current_identity = SimpleNamespace(identity_id=source.scope.identity_id)
+    persist_attested_source_references(storage, snapshot)
+    monkeypatch.setattr("cifereca.core.loan_download_retry_review.acquisition_lock_file",
+                        lambda: lock_path)
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(storage, source, reason="canonical_delivery_failed",
+                                         shared_lock=lease)
+    row, = review_loan_download_retries(service, identity_id=source.scope.identity_id)
+    assert row.can_reset
+    with InterProcessLock(lock_path) as lease:
+        actions = {
+            "read": lambda: read_loan_download_retry(storage, source),
+            "record": lambda: record_loan_download_failure(
+                storage, source, reason="canonical_delivery_failed", shared_lock=lease),
+            "clear": lambda: clear_loan_download_retry(storage, source, shared_lock=lease),
+            "intervention": lambda: record_adept_intervention(storage, source, shared_lock=lease),
+            "review": lambda: review_loan_download_retries(service, identity_id=source.scope.identity_id),
+            "reset": lambda: reset_reviewed_loan_download_retry(
+                service, identity_id=source.scope.identity_id, row=row),
+        }
+        db = storage._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("INSERT INTO metadata(key,value) VALUES('synthetic.retry.pending','yes')")
+            with pytest.raises(ValueError, match="nested_transaction"):
+                actions[operation]()
+            assert db.in_transaction
+            assert db.execute("SELECT value FROM metadata WHERE key='synthetic.retry.pending'").fetchone() == ("yes",)
+        finally:
+            if db.in_transaction:
+                db.rollback()
+    assert storage.metadata_get("synthetic.retry.pending") is None
+    assert read_loan_download_retry(storage, source) == row.retry
+    assert review_loan_download_retries(service, identity_id=source.scope.identity_id) == (row,)
