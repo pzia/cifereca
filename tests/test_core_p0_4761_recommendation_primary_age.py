@@ -224,10 +224,8 @@ def test_recommendation_source_proof_decoder_accepts_native_series_language_clas
         first.record_id = "typed-proof"
         first.metadata["bibliography_evidence"]["youth_age"]["record_id"] = first.record_id
         source = persist(db, project(first))
-        canonical = persist_attested_public_cover_group(
-            db, canonical_edition_id="strong:typed-recommendation",
-            sources=(source,), relation_proof_id="strong:synthetic",
-        )
+        from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+        canonical = persist_exact_public_search_cover(db, source)
         item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("Même titre")
         hit = known_public_c_primary_hit(item)
         assert hit is not None
