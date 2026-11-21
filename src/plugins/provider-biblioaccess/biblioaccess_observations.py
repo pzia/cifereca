@@ -196,7 +196,7 @@ class _Links(HTMLParser):
                                     str(values.get("style", "")), re.I))
                   or bool(set(str(values.get("class", "")).casefold().split())
                           & {"hidden", "d-none", "sr-only", "visually-hidden"})
-                  or (self._summary_stack and self._summary_stack[-1][1]))
+                  or bool(self._summary_stack and self._summary_stack[-1][1]))
         if tag in {"area", "base", "br", "col", "embed", "hr", "img", "input",
                    "link", "meta", "param", "source", "track", "wbr"}:
             if self._summary_text is not None:
