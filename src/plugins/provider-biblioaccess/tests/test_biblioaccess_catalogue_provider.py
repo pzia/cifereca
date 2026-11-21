@@ -387,3 +387,81 @@ def test_changed_filter_is_not_next_page(target):
         assert len(calls) == 2
     finally:
         session.close()
+
+
+# Synthetic markup: only the wording is reported by the #7162 field receipt.
+# Do not treat these cases as a copy of the original remote HTML.
+@pytest.mark.parametrize("body", [
+    "<p>Aucun résultat pour la recherche roman</p>",
+    "<div>Aucun résultat pour la recherche <strong>roman</strong></div>",
+    "<html><head><title>Recherche</title></head><body>"
+    "<p>Aucun r&eacute;sultat pour la recherche roman</p></body></html>",
+])
+def test_explicit_summary_zero_same_call_no_retry(body):
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        assert request.method == "GET"
+        assert request.url.path == "/1409/Catalog/SearchResultSummary"
+        assert request.url.params["query"] == "roman"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        assert response.results == []
+        assert response.public_notices == ()
+        assert response.partial is False
+        assert response.catalogue_complete is True
+        assert not session.last_search_warnings
+        assert len(calls) == 1
+        assert session.search("roman", page=2) == []
+        assert not session.last_search_warnings
+        assert len(calls) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("body", [
+    "<p>Aucun résultat pour la recherche autre</p>",
+    "<p>Aucun résultat pour la recherche roman policier</p>",
+    "<script>var message='<p>Aucun résultat pour la recherche roman</p>';</script>",
+    "<div hidden><p>Aucun résultat pour la recherche roman</p></div>",
+    "<template><p>Aucun résultat pour la recherche roman</p></template>",
+    "<p>Aucun résultat pour la recherche roman</p><input type='password'>",
+    "<p>Aucun résultat pour la recherche roman</p><form action='/Account/Login'></form>",
+    "<p>Aucun résultat pour la recherche roman</p><a href='Book/123'>Livre</a>",
+    "<p>Aucun résultat pour la recherche roman</p><a href='Search?pageindex=1'>Suite</a>",
+    "<p>Aucun résultat pour la recherche roman</p><p>Aucun résultat pour la recherche autre</p>",
+    "<p>Aucun résultat pour la recherche roman",
+])
+def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        with pytest.raises(provider.ProviderError, match="search_unavailable"):
+            session.search_with_response_facets("roman")
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("path", [
+    "https://www.biblioaccess.com/1717/Catalog/SearchResultSummary?query=roman",
+    "https://evil.example/1409/Catalog/SearchResultSummary?query=roman",
+    "https://www.biblioaccess.com/1409/Catalog/SearchResultSummary?query=autre",
+    "https://www.biblioaccess.com/1409/Catalog/SearchResultSummary?query=roman&query=roman",
+    "https://www.biblioaccess.com/1409/Catalog/SearchResultSummary?query=roman&pageindex=1",
+    "https://www.biblioaccess.com/1409/Catalog/Search?query=roman",
+])
+def test_summary_zero_requires_exact_tenant_query_and_route(path):
+    assert not http_adapter.summary_attests_zero(
+        path, "<p>Aucun résultat pour la recherche roman</p>")
