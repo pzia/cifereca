@@ -245,9 +245,14 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
                     ).fetchone()[0]
                     prior = _decode(existing_key, existing)
                     reserved_output_bytes += prior.output_size
-                    if (existing_key.startswith(_PREFIX) and (
-                            existing_key == key or prior.candidate_path == intent.candidate_path
-                            or prior.staged_path == intent.staged_path)):
+                    # Even if the canonical Placement disappeared, an old
+                    # committed receipt retains its target coordinate. It
+                    # cannot be reused for a fresh output before supervised
+                    # retirement; otherwise the new publication could claim
+                    # historical bytes or overwrite an unindexed orphan.
+                    if (prior.candidate_path == intent.candidate_path
+                            or (existing_key.startswith(_PREFIX) and (
+                                existing_key == key or prior.staged_path == intent.staged_path))):
                         raise DerivedJournalConflict("derived_journal_slot_occupied")
                 if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
                     raise DerivedJournalConflict("derived_journal_output_capacity_exceeded")
