@@ -83,6 +83,31 @@ class QualificationProbeTests(unittest.TestCase):
         self.assert_no_authority(result)
         self.assert_private_not_exposed(result)
 
+    def test_observed_zero_quota_wording_is_only_a_structural_hint(self):
+        # Observed BnF wording from #4480, entirely synthetic DOM.
+        # 0 available is NOT 0 active loans, permission, or exhaustion proof.
+        for phrase in ("Vous avez encore droit à 0 prêt",
+                       "Vous avez encore droit à 4 prêts"):
+            with self.subTest(phrase=phrase):
+                html = "<html><body><p>" + phrase + "</p></body></html>"
+                result = qualify_bnf_borrow_dom(html, page="profile")
+                self.assertEqual(result["quota_label"]["count"], 1)
+                self.assertEqual(result["quota_label"]["tag_paths"], ["html/body/p"])
+                self.assert_no_authority(result)
+                self.assertNotIn(phrase, json.dumps(result, ensure_ascii=False))
+
+    def test_unrelated_droit_or_false_quota_does_not_qualify(self):
+        for phrase in (
+            "Vous avez encore droit à un prêt", "Droit à 0 prêt",
+            "Vous avez encore droit à 0 téléchargements",
+        ):
+            with self.subTest(phrase=phrase):
+                result = qualify_bnf_borrow_dom(
+                    "<html><p>" + phrase + "</p></html>", page="profile",
+                )
+                self.assertEqual(result["quota_label"]["count"], 0)
+                self.assert_no_authority(result)
+
     def test_book_scope_available_text_is_not_published_as_offer(self):
         result = qualify_bnf_borrow_dom(DETAIL, page="detail")
         self.assertEqual(result["book_scopes"], 1)
