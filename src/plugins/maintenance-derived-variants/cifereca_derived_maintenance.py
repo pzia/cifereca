@@ -1,4 +1,6 @@
 """#7093 presentation only: public observations and supervised dry-run."""
+from threading import Event
+
 from cifereca.plugin_api import MaintenanceToolInfo, MaintenancePlan, MaintenanceResult
 from cifereca.plugin_api.derived_maintenance import (
     DerivedPendingOverview, DerivedCapacityObservation, DerivedReceiptPage,
@@ -60,6 +62,7 @@ class DerivedController:
         self.broker, self.host, self.active, self.render = broker, host, active, render
         self.identity = host.identity_id
         self.page = self.reviewed = self.choice = None
+        self.stop = None
         self.busy = self.disposed = False
 
     def current(self):
@@ -92,15 +95,36 @@ class DerivedController:
             self.choice = choice if action == "verify" else None
         if action in ("list", "next"):
             self.page = None
+        event = self.stop = Event()
         self.busy = True
         self.render(self, action, "busy", None)
         delivered = False
 
+        def cancelled():
+            return event.is_set() or not self.current()
+
+        def discard(value):
+            # Revoke only exact opaque tokens. A late result must not
+            # invalidate a newer page owned by another mounted view.
+            if type(value) is DerivedReceiptPage:
+                self._cancel_token(value.token)
+            elif action == "verify" and type(value) is str and len(value) == 64:
+                self._cancel_token(value)
+            if page is not None:
+                self._cancel_token(page.token)
+
         def work():
-            if not self.current():
+            if cancelled():
+                discard(None)
                 return None
-            value = operation()
-            return value if self.current() else None
+            try:
+                value = operation()
+            except Exception:
+                value = None
+            if cancelled():
+                discard(value)
+                return None
+            return value
 
         def done(value):
             nonlocal delivered
@@ -108,8 +132,12 @@ class DerivedController:
                 return
             delivered = True
             self.busy = False
-            if not self.current():
+            self.stop = None
+            if cancelled():
+                discard(value)
                 self.page = self.reviewed = self.choice = None
+                if self.current():
+                    self.render(self, action, "cancelled", None)
                 return
             if action in ("list", "next"):
                 self.page = value if type(value) is DerivedReceiptPage else None
@@ -125,9 +153,43 @@ class DerivedController:
             done(None)
         return admitted is True
 
+    def _cancel_token(self, token):
+        # Core's cancel is a bounded in-memory token invalidation, not I/O.
+        try:
+            self.broker.cancel(token=token)
+        except Exception:
+            pass
+
+    def _clear_selection(self):
+        if self.page is not None:
+            self._cancel_token(self.page.token)
+        if self.reviewed is not None:
+            self._cancel_token(self.reviewed)
+        self.page = self.reviewed = self.choice = None
+
+    def cancel(self):
+        if not self.current():
+            return False
+        if self.stop is not None:
+            if self.stop.is_set():
+                return False
+            self.stop.set()
+            self._clear_selection()
+            # Keep the host's single-worker lease until completion. No
+            # subsequent click can overlap this cancelled observation.
+            self.render(self, "cancel", "cancelling", None)
+            return True
+        if self.page is None and self.reviewed is None:
+            return False
+        self._clear_selection()
+        self.render(self, "cancel", "cancelled", None)
+        return True
+
     def dispose(self):
         self.disposed = True
-        self.page = self.reviewed = self.choice = None
+        if self.stop is not None:
+            self.stop.set()
+        self._clear_selection()
 
 
 class DerivedPlugin:
@@ -188,14 +250,19 @@ class DerivedPlugin:
         choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         outer.append(choices)
         following = Gtk.Button(label="Page suivante")
+        cancel = Gtk.Button(label="Annuler")
         simulation = Gtk.Button(label="Confirmer la simulation sans écriture")
         following.set_sensitive(False)
+        cancel.set_sensitive(False)
         simulation.set_sensitive(False)
         outer.append(following)
+        outer.append(cancel)
         outer.append(simulation)
 
         def render(controller, action, state, value):
-            ready = state == "ready"
+            ready = state in ("ready", "cancelled")
+            cancel.set_sensitive(state == "busy" or (
+                ready and (controller.page is not None or controller.reviewed is not None)))
             for button in controls:
                 button.set_sensitive(ready)
             following.set_sensitive(ready and controller.page is not None and controller.page.has_more)
@@ -216,7 +283,11 @@ class DerivedPlugin:
                         verify.connect("clicked", lambda _b, item=choice:
                                        controller.request("verify", choice=item))
                         choices.append(verify)
-            if not ready:
+            if state == "cancelling":
+                detail.set_text("Annulation demandée…")
+            elif state == "cancelled":
+                detail.set_text("Revue annulée. Nouvelle sélection nécessaire ; aucune écriture.")
+            elif not ready:
                 detail.set_text("Revue en cours…")
             elif action == "overview":
                 detail.set_text(overview_text(value))
@@ -237,6 +308,7 @@ class DerivedPlugin:
 
         controller = self.controller(host, render)
         following.connect("clicked", lambda _b: controller.request("next"))
+        cancel.connect("clicked", lambda _b: controller.cancel())
         simulation.connect("clicked", lambda _b: controller.request("simulate", confirmed=True))
         return GuidedMaintenanceView(outer, controller.dispose)
 
