@@ -145,3 +145,44 @@ def test_malformed_new_parse_is_never_classified_as_a_regression(change):
 def test_invalid_or_unbounded_stable_value_is_not_hashed(value):
     with pytest.raises(ValueError, match="invalid_parser_witness_field"):
         field_digest(value)
+
+
+class _CollidingKey:
+    def __hash__(self):
+        return hash("title")
+
+    def __eq__(self, other):
+        raise AssertionError("foreign key equality must not run")
+
+
+class _ForeignList(list):
+    def __iter__(self):
+        raise AssertionError("foreign iterator must not run")
+
+
+@pytest.mark.parametrize("raw", [
+    {_CollidingKey(): "title"},
+    {"metadata": _ForeignList(["EPUB"])},
+    {"metadata": {"edition": object()}},
+    {"title": "x" * 8193},
+    {f"k{i}": "x" * 800 for i in range(180)},
+])
+def test_matching_input_requires_bounded_native_parser_tree(raw):
+    with pytest.raises(ValueError, match="invalid_parser_witness_review"):
+        review(raw=raw)
+
+
+def test_cyclic_parse_is_not_classified():
+    raw = {}
+    raw["metadata"] = raw
+    with pytest.raises(ValueError, match="invalid_parser_witness_review"):
+        review(raw=raw)
+
+
+@pytest.mark.parametrize("value", [
+    {"a": _ForeignList([1])}, {_CollidingKey(): "title"},
+    [object()], {"nested": float("inf")},
+])
+def test_stable_field_digest_refuses_nonadmissible_nested_values(value):
+    with pytest.raises(ValueError, match="invalid_parser_witness_field"):
+        field_digest(value)
