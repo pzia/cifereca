@@ -184,6 +184,10 @@ def test_recommendation_opaque_packet_rejects_hostile_nested_values_after_restar
                 replace(packet[6], stale=Hostile()),
                 replace(packet[6], cover_state=Hostile()),
                 replace(packet[6], edition_id=Hostile()),
+                replace(packet[6], edition_id="x" * 513),
+                replace(packet[6], title="x" * 8193),
+                replace(packet[6], last_seen_at=-1),
+                replace(packet[6], last_seen_at=packet[6].observed_at - 1),
                 replace(packet[6], age_observation=Hostile()),
                 replace(packet[6], age_observation=replace(
                     packet[6].age_observation,
