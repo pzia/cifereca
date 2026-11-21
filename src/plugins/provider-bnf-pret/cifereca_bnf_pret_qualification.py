@@ -26,7 +26,10 @@ _SAFE_TAGS = frozenset((
 _HIDDEN = frozenset(("script", "style", "noscript", "template"))
 _QUOTA = re.compile(
     r"\bpr[eê]ts?\s+(?:num[eé]riques?\s+)?restants?\b|"
-    r"\b(?:il\s+vous\s+reste|vous\s+reste)\s+.{0,35}\bpr[eê]ts?\b",
+    r"\b(?:il\s+vous\s+reste|vous\s+reste)\s+.{0,35}\bpr[eê]ts?\b|"
+    # Actual BnF activity wording reported in #4480: a *label* only, not
+    # proof of quota, completeness, or authorization for another borrower.
+    r"\bvous\s+avez\s+encore\s+droit\s+[àa]\s+[0-9]{1,3}\s+pr[eê]ts?\b",
     re.IGNORECASE,
 )
 _PASS = re.compile(
