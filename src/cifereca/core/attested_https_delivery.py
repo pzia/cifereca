@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from ..http_trace import HTTPX_TRANSPORT
+from ..http_trace import ContentTransferUnavailable, HTTPX_TRANSPORT
 
 _MAX_REDIRECTS = 8
 _MAX_BYTES = 512 * 1024 * 1024
@@ -185,6 +185,8 @@ def _redact_transport_error(fn):
             # (for example javascript:opaque) may fail before our validation.
             # This is a refused redirect, never an authorized second GET.
             raise ValueError("delivery_redirect_invalid") from None
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+            raise ContentTransferUnavailable("delivery_transport_unavailable") from None
         except httpx.RequestError:
             # HTTPX's exception messages may embed signed URLs and headers.
             raise ValueError("delivery_transport_unavailable") from None
@@ -295,6 +297,8 @@ def download_attested_https(
                     current = next_url
                     redirects += 1
                     continue
+                if response.status_code in {408, 429, 500, 502, 503, 504}:
+                    raise ContentTransferUnavailable("delivery_http_status")
                 if response.status_code != 200:
                     raise ValueError("delivery_http_status")
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()

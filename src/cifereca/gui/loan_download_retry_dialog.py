@@ -1,4 +1,4 @@
-"""Identity-scoped read-only loan retry report and explicit local budget reset."""
+"""Identity-scoped read-only download retry report and explicit local budget reset."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -28,7 +28,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         if rows is None:
             body = "Lecture indisponible. Actualisez l’affichage pour réessayer."
         elif not rows:
-            body = "Aucun échec de téléchargement de prêt enregistré pour cette identité."
+            body = "Aucun échec de téléchargement enregistré pour cette identité."
         else:
             paused = sum(row.retry.paused for row in rows)
             body = f"{len(rows)} téléchargement(s) à vérifier, dont {paused} en pause."
@@ -52,7 +52,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         title.set_wrap(True)
         title.add_css_class("heading")
         panel.append(title)
-        state = ("Prêt inactif" if row.inactive else
+        state = ("Ressource inactive" if row.inactive else
                  "Intervention ADEPT requise" if row.adept_hold else
                  "En pause" if row.retry.paused else "À retenter")
         reason = {

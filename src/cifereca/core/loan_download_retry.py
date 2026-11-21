@@ -1,4 +1,4 @@
-"""#7161: negative-only budget for automatic delivery failures of an exact loan.
+"""#7161: negative-only budget for automatic content transfer failures of an exact resource.
 
 A budget is not rights evidence, consent, a DRM replay permit or a receipt.
 The existing canonical acquisition lock serializes writes across processes.
@@ -17,7 +17,8 @@ from .canonical_recovery import (
 from .source_convergence import SourceKey
 
 FAILURE_LIMIT = 3
-_PREFIX = "canonical.loan_download_retry.v1"
+_LOAN_PREFIX = "canonical.loan_download_retry.v1"
+_OWNED_KEY_PREFIX = "canonical.download_retry.v1:"
 _REASONS = frozenset({"canonical_delivery_failed", "drm_unresolved"})
 
 
@@ -33,12 +34,16 @@ class LoanDownloadRetry:
 
 
 def _key(source: SourceKey) -> str:
-    if type(source) is not SourceKey or source.kind != "loan":
-        raise ValueError("loan_download_retry_invalid_source")
+    if type(source) is not SourceKey:
+        raise ValueError("download_retry_invalid_source")
     scope = source.scope
-    return _stable(_PREFIX, scope.identity_id, scope.provider_id,
-                   scope.credential_id, scope.account_id, source.branch,
-                   source.edition_id, source.right_id)
+    coordinates = (scope.identity_id, scope.provider_id, scope.credential_id,
+                   scope.account_id, source.branch, source.edition_id, source.right_id)
+    if source.kind == "loan":
+        return _stable(_LOAN_PREFIX, *coordinates)
+    # Match the durable source reference key so the queue can select failed
+    # purchases without loading a complete owned library into Python.
+    return _OWNED_KEY_PREFIX + _stable("source", *coordinates, source.kind)
 
 
 def _decode(raw) -> LoanDownloadRetry:
@@ -108,7 +113,7 @@ def clear_loan_download_retry(storage, source: SourceKey, *, shared_lock) -> Non
         raise ValueError("loan_download_retry_lock_required")
     key = _key(source)
     # Verified existing B is frequent on opening Sync. Avoid a write
-    # transaction for each of the already-satisfied loans with no budget.
+    # transaction for each of the already-satisfied resources with no budget.
     if storage.metadata_get(key) is None:
         return
     with storage._lock, storage._connect() as db:

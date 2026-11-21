@@ -109,8 +109,10 @@ def stage_loan_acsm(
                     break
             else:
                 raise ACSMDeliveryError("biblioaccess_acsm_redirect_limit")
-        except httpx.HTTPError:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
             raise ACSMDeliveryError("biblioaccess_acsm_transport_unavailable") from None
+        except httpx.HTTPError:
+            raise ACSMDeliveryError("biblioaccess_acsm_unavailable") from None
         require_admission()
         data = b"".join(chunks)
         try:

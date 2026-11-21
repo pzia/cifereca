@@ -22,7 +22,7 @@ from cifereca.plugin_api import (
     AccountOptionField, Account, Loan,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, SourceReference, DownloadCapability,
-    ResourceObservation, ResourceSnapshot, DeliveryCandidate,
+    ResourceObservation, ResourceSnapshot, DeliveryCandidate, RetryableContentDownload,
 )
 
 PROVIDER_ID = "biblioaccess.la-rochelle"
@@ -904,6 +904,11 @@ class LaRochelleSession(ProviderSession):
                     loan_ref=loan_ref, delivery_kind=kind,
                     session_revoked=False,
                 )
+                if (callable(admission_current) and admission_current() is True
+                        and code in {"biblioaccess_acsm_rate_limited",
+                                     "biblioaccess_acsm_remote_error",
+                                     "biblioaccess_acsm_transport_unavailable"}):
+                    raise RetryableContentDownload(code) from None
                 # Preserve the historical Numilog compatibility error;
                 # publish precise *allowlisted* failures for PNB /do, so the
                 # Core can distinguish expired/denied/redirect/invalid XML.

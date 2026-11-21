@@ -4,7 +4,7 @@ External plugins should import from this package only.  Internal modules such as
 ``cifereca.services`` and ``cifereca.storage`` are not part of the plugin contract.
 """
 
-from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
+from cifereca.http_trace import ContentTransferUnavailable, HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
 from .catalogue_json import (
     CatalogueJSONError, parse_bounded_catalogue_json, validate_catalogue_json,
@@ -31,7 +31,7 @@ from .provider_rights_observation import (RIGHTS_OBSERVATION_CONTRACT, ProviderR
 from .downloadable_resources import (
     DOWNLOADABLE_RESOURCE_CONTRACT, SourceReference, DownloadCapability,
     OptionalRightMetadata, ResourceObservation, ResourceSnapshot,
-    DeliveryCandidate, from_legacy_rights_snapshot, as_legacy_rights_snapshot,
+    DeliveryCandidate, RetryableContentDownload, from_legacy_rights_snapshot, as_legacy_rights_snapshot,
 )
 from .provider_purchase_enrichment import (
     PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT,
@@ -143,7 +143,7 @@ __all__ = [
     "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
-    "DeliveryCandidate", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
+    "DeliveryCandidate", "RetryableContentDownload", "ContentTransferUnavailable", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
     "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",

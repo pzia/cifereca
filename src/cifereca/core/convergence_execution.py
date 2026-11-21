@@ -19,6 +19,7 @@ from typing import Callable, Literal
 from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
+from ..plugin_api.downloadable_resources import RetryableContentDownload
 from ..plugin_api.errors import Cancelled
 from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsSnapshot,
@@ -473,7 +474,7 @@ def execute_admitted_convergence(
                     initial_storage, library_root=library_root,
                     placement_id=decision.placement_ids[0],
                 )
-            if key.kind == "loan" and current():
+            if current():
                 try:
                     clear_loan_download_retry(initial_storage, key, shared_lock=shared_lock)
                 except Exception:
@@ -547,11 +548,10 @@ def execute_admitted_convergence(
                     continue
                 # Budget is only a negative gate. Recovery, exact B and the
                 # historical one-use ADEPT fence always take precedence.
-                if key.kind == "loan":
-                    retry = read_loan_download_retry(initial_storage, key)
-                    if retry.paused:
-                        results.append(ConvergenceOutcome(key, "blocked", "loan_download_paused"))
-                        continue
+                if not explicitly_confirmed_once and read_loan_download_retry(initial_storage, key).paused:
+                    reason = "loan_download_paused" if key.kind == "loan" else "download_paused"
+                    results.append(ConvergenceOutcome(key, "blocked", reason))
+                    continue
                 phase = "delivery"
                 trace.emit(key, "delivery", "start")
                 completed = deliver(key, row)
@@ -678,7 +678,7 @@ def execute_admitted_convergence(
                 initial_storage, library_root=library_root,
                 placement_id=published.placement_id,
             )
-            if key.kind == "loan" and current():
+            if current():
                 try:
                     clear_loan_download_retry(initial_storage, key, shared_lock=shared_lock)
                 except Exception:
@@ -718,14 +718,16 @@ def execute_admitted_convergence(
                     "publication": "canonical_publication_failed",
                 }[phase]
             )
-            if (phase == "delivery" and key.kind == "loan" and not cancelled()
-                    and current() and live_consent(key)):
+            if (phase == "delivery" and type(error) is RetryableContentDownload
+                    and not explicitly_confirmed_once and not cancelled()
+                    and current() and live_consent(key)
+                    and not historical_adept_retry_blocked(initial_storage, account, session, key)):
                 try:
                     retry = record_loan_download_failure(
                         initial_storage, key, reason=reason, shared_lock=shared_lock,
                     )
                     if retry.paused:
-                        reason = "loan_download_paused"
+                        reason = "loan_download_paused" if key.kind == "loan" else "download_paused"
                 except Exception:
                     _LOG.warning("TRACE convergence code=loan_download_retry_record_failed")
             results.append(ConvergenceOutcome(key, "failed", reason))
