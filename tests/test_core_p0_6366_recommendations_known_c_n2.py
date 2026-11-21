@@ -347,3 +347,22 @@ def test_second_exact_click_same_selection_revokes_first_c_n3(
         assert not second_check()
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("version", [2.0, True, "2", None, 3])
+def test_both_known_mirror_gates_require_exact_integer_v2(tmp_path, version):
+    db = Storage(tmp_path / "mirror-version.sqlite")
+    try:
+        source = persist(db, verified_public(
+            source_provider="bnf", record_id="known-77",
+        ))
+        canonical = persist_exact_public_search_cover(db, source)
+        row = known_row(source)
+        assert known_catalog_search_result(row, identity_id="alice") is not None
+        assert lookup(db, row) == canonical.document
+        row["metadata"]["catalogue_scope_version"] = version
+        assert known_catalog_search_result(row, identity_id="alice") is None
+        assert lookup(db, row) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

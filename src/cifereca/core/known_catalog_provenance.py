@@ -35,7 +35,9 @@ def known_catalog_search_result(
     if row.get("source") != "known_catalog" or row.get("identity_id") != identity_id:
         return None
     meta = row.get("metadata")
-    if type(meta) is not dict or meta.get("catalogue_scope_version") != 2:
+    if (type(meta) is not dict
+            or type(meta.get("catalogue_scope_version")) is not int
+            or meta["catalogue_scope_version"] != 2):
         return None
     if meta.get("search_provenance") == "known_catalog_stale":
         return None
