@@ -52,6 +52,12 @@ def _native_hit(hit, binding):
     if (type(hit) is not PublicNoticeCHit
             or not _native_canonical(hit.document)
             or type(hit.epoch) is not int
+            or type(hit.observed_at) is not int
+            or type(hit.last_seen_at) is not int
+            or type(hit.stale) is not bool
+            or type(hit.cover_state) is not str
+            or hit.cover_state not in ("available", "missing", "pending")
+            or type(hit.edition_id) is not str
             or (hit.document, hit.epoch) != binding
             or any(value is not None and type(value) is not str
                    for value in (
