@@ -8,7 +8,7 @@ from cifereca.core.canonical_adept_attempt import (
 )
 from cifereca.core.loan_download_retry import (
     FAILURE_LIMIT, clear_loan_download_retry, read_loan_download_retry,
-    record_loan_download_failure,
+    record_loan_download_failure, record_adept_intervention,
 )
 from cifereca.locking import InterProcessLock
 from cifereca.plugin_api import RetryableContentDownload
@@ -446,3 +446,118 @@ def test_corrupt_incident_does_not_hide_or_unlock_another_title(rig, monkeypatch
     if bad in ("budget", "oversize"):
         with pytest.raises(ValueError, match="state_invalid"):
             read_loan_download_retry(storage, source)
+
+
+def test_retry_and_intervention_writes_are_full_durable_and_restore_mode(rig):
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    db = service.storage._connect()
+    db.execute("PRAGMA synchronous=NORMAL")
+    trace = []
+    db.set_trace_callback(trace.append)
+    try:
+        with InterProcessLock(lock_path) as lease:
+            record_loan_download_failure(
+                service.storage, source, reason="canonical_delivery_failed",
+                shared_lock=lease,
+            )
+            record_adept_intervention(service.storage, source, shared_lock=lease)
+            clear_loan_download_retry(service.storage, source, shared_lock=lease)
+        assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+        assert read_loan_download_retry(service.storage, source).failures == 0
+    finally:
+        db.set_trace_callback(None)
+    positions = [
+        i for i, sql in enumerate(trace)
+        if sql.startswith("INSERT INTO metadata(")
+        or sql.startswith("DELETE FROM metadata WHERE key IN (")
+    ]
+    assert len(positions) == 3, trace
+    for pos in positions:
+        earlier = trace[:pos]
+        full = max(i for i, sql in enumerate(earlier) if sql == "PRAGMA synchronous=FULL")
+        begin = max(i for i, sql in enumerate(earlier) if sql == "BEGIN IMMEDIATE")
+        commit = next(i for i in range(pos, len(trace)) if trace[i] == "COMMIT")
+        restore = next(i for i in range(pos, len(trace))
+                       if trace[i] == "PRAGMA synchronous=1")
+        assert full < begin < pos < commit < restore
+    reopened = Storage(service.storage.path)
+    try:
+        assert read_loan_download_retry(reopened, source).failures == 0
+    finally:
+        reopened.close()
+
+
+def test_retry_write_refuses_nested_caller_without_modifying_transaction(rig):
+    import sqlite3
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    db = service.storage._connect()
+    observer = sqlite3.connect(service.storage.path)
+    try:
+        with InterProcessLock(lock_path) as lease:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("INSERT INTO metadata(key,value) VALUES('synthetic.caller', 'uncommitted')")
+            with pytest.raises(ValueError, match="loan_download_retry_nested_transaction"):
+                record_loan_download_failure(
+                    service.storage, source, reason="canonical_delivery_failed",
+                    shared_lock=lease,
+                )
+            assert db.in_transaction
+            assert observer.execute("SELECT value FROM metadata WHERE key='synthetic.caller'").fetchone() is None
+            assert db.execute("SELECT value FROM metadata WHERE key='synthetic.caller'").fetchone() == ("uncommitted",)
+    finally:
+        if db.in_transaction:
+            db.rollback()
+        observer.close()
+    assert read_loan_download_retry(service.storage, source).failures == 0
+
+
+def test_manual_pause_reset_is_full_durable_and_clean_b_read_is_non_writing(rig, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    service.current_identity = SimpleNamespace(identity_id="A")
+    persist_attested_source_references(service.storage, snapshot)
+    monkeypatch.setattr(
+        "cifereca.core.loan_download_retry_review.acquisition_lock_file",
+        lambda: lock_path,
+    )
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(
+                service.storage, source, reason="canonical_delivery_failed",
+                shared_lock=lease,
+            )
+    row, = review_loan_download_retries(service, identity_id="A")
+    assert row.can_reset
+    db = service.storage._connect()
+    db.execute("PRAGMA synchronous=NORMAL")
+    trace = []
+    db.set_trace_callback(trace.append)
+    try:
+        reset_reviewed_loan_download_retry(service, identity_id="A", row=row)
+        assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+        cutoff = len(trace)
+        with InterProcessLock(lock_path) as lease:
+            clear_loan_download_retry(service.storage, source, shared_lock=lease)
+        assert not any(entry == "BEGIN IMMEDIATE" for entry in trace[cutoff:])
+    finally:
+        db.set_trace_callback(None)
+    deletion = next(i for i, sql in enumerate(trace)
+                    if sql.startswith("DELETE FROM metadata WHERE key="))
+    full = max(i for i, sql in enumerate(trace[:deletion])
+               if sql == "PRAGMA synchronous=FULL")
+    begin = max(i for i, sql in enumerate(trace[:deletion])
+                if sql == "BEGIN IMMEDIATE")
+    commit = next(i for i in range(deletion, len(trace)) if trace[i] == "COMMIT")
+    restore = next(i for i in range(deletion, len(trace))
+                   if trace[i] == "PRAGMA synchronous=1")
+    assert full < begin < deletion < commit < restore
+    other = Storage(service.storage.path)
+    try:
+        assert read_loan_download_retry(other, source).failures == 0
+    finally:
+        other.close()
