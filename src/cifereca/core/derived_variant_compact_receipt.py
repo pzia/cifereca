@@ -10,7 +10,7 @@ import json
 from .derived_variant_journal import (
     DerivedIntent, DerivedJournalConflict, _COMMITTED, _decode, _digest,
     _encode, _receipt_digest, _unique_pairs,
-    _MAX_RECORDS, _MAX_RECORD_BYTES, _MAX_TOTAL_BYTES,
+    _MAX_RECORDS, _MAX_RECORD_BYTES, _MAX_TOTAL_BYTES, _LEGACY_SCHEMA, _PRIVATE_SCHEMA,
 )
 
 _PREFIX = "derived.publication.compact.v1:"
@@ -31,6 +31,7 @@ _FIELDS = (
     "media_format",
 )
 _SCHEMA = "derived.compact.v1"
+_PRIVATE_COMPACT_SCHEMA = "derived.compact.v2"
 
 
 def _require(condition, code="derived_compact_unverified"):
@@ -51,7 +52,7 @@ def _raw_size(raw):
 def encode_committed_witness(key, raw):
     """Return private (compact key, compact JSON), without changing either store.
 
-    Only canonical, bounded v2 committed bytes are representable. A legacy
+    Canonical, bounded v2 and v3 committed bytes are representable. A legacy
     encoding with a different byte digest must remain untouched.
     """
     original_size = _raw_size(raw)
@@ -61,8 +62,10 @@ def encode_committed_witness(key, raw):
              "derived_compact_schema_changed")
     record = json.loads(raw, object_pairs_hook=_unique_pairs)
     _require(_encode(record) == raw)
-    compact = _encode([_SCHEMA, record["nonce"],
-                       [getattr(intent, name) for name in _FIELDS]])
+    values = [getattr(intent, name) for name in _FIELDS]
+    body = ([_PRIVATE_COMPACT_SCHEMA, record["nonce"], values, record["region_binding_sha256"]]
+            if record["schema"] == _PRIVATE_SCHEMA else [_SCHEMA, record["nonce"], values])
+    compact = _encode(body)
     _require(_raw_size(compact) <= original_size)
     proof_key = _PREFIX + _receipt_digest(raw)
     _require(decode_committed_witness(proof_key, compact) == (key, raw))
@@ -76,12 +79,18 @@ def decode_committed_witness(key, raw):
              and _digest(key[len(_PREFIX):]))
     try:
         body = json.loads(raw, object_pairs_hook=_unique_pairs)
-        _require(type(body) is list and len(body) == 3
-                 and body[0] == _SCHEMA and type(body[2]) is list
-                 and len(body[2]) == len(_FIELDS))
+        _require(type(body) is list and len(body) in (3, 4)
+                 and type(body[2]) is list and len(body[2]) == len(_FIELDS))
         _require(_encode(body) == raw)
-        original = _encode({"schema": "derived.intent.v2", "nonce": body[1],
-                            "intent": dict(zip(_FIELDS, body[2]))})
+        record = {"schema": _LEGACY_SCHEMA, "nonce": body[1],
+                  "intent": dict(zip(_FIELDS, body[2]))}
+        if len(body) == 4:
+            _require(body[0] == _PRIVATE_COMPACT_SCHEMA and _digest(body[3]))
+            record["schema"] = _PRIVATE_SCHEMA
+            record["region_binding_sha256"] = body[3]
+        else:
+            _require(body[0] == _SCHEMA)
+        original = _encode(record)
         _require(_raw_size(original) >= _raw_size(raw))
         committed_key = _COMMITTED + key[len(_PREFIX):]
         _require(_receipt_digest(original) == key[len(_PREFIX):])

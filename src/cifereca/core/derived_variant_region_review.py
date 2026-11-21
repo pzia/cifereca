@@ -13,6 +13,7 @@ import stat
 from time import monotonic
 
 from . import derived_variant_journal as journal
+from .derived_variant_region_paths import PRIVATE_DERIVED_REGION
 from .derived_variant_retention_review import _directory
 from .derived_variant_stage_symlinks import _Incomplete, _walk, _stamp
 from .library_inventory import _open_root
@@ -75,7 +76,8 @@ def _classify(profile, records, entries, identity_id):
         path = Path(name)
         if path.name == ".cifereca-staging" and not stat.S_ISDIR(info[2]):
             counts["unverified_regions"] += 1
-        if path.name == "variants" and path.parent.name == ".cifereca-staging":
+        if ((path.name == "variants" and path.parent.name == ".cifereca-staging")
+                or path == profile / PRIVATE_DERIVED_REGION):
             if stat.S_ISDIR(info[2]):
                 regions.add(path)
             else:
@@ -94,6 +96,10 @@ def _classify(profile, records, entries, identity_id):
     for name, (info, _link) in entries.items():
         path = Path(name)
         if path.parent not in regions:
+            continue
+        # Registration marker is not a stage. This observation does not
+        # validate the marker nor claim the region is exclusive.
+        if path.parent == profile / PRIVATE_DERIVED_REGION and path.name == ".core-owner-v1":
             continue
         refs = stage_refs.get(name, ())
         matched.update(key for key, intent in refs if intent.identity_id == identity_id)
