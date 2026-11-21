@@ -7,6 +7,7 @@ here. The service retains both ownership/locking and the execution boundary.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import stat
 from typing import Any, Callable, Mapping
 
@@ -89,9 +90,15 @@ def plan_adept_destination(
         destination = destination.with_name(
             destination.stem + ".reacquired-" + unique_suffix() + destination.suffix
         )
+    # Never ask an ADEPT executor to write its unverified result directly
+    # under the final canonical name. A deterministic, hidden stage is an
+    # exclusive private slot: an interrupted attempt is retained and the
+    # next preflight must refuse it rather than overwrite its bytes.
+    # The stable digest keeps even long destination names within NAME_MAX.
+    stage_slot = hashlib.sha256(str(destination).encode("utf-8", "surrogatepass")).hexdigest()[:32]
     adept_destination = (
         destination.with_name(destination.stem + ".repairing" + destination.suffix)
-        if repair_mode else destination
+        if repair_mode else destination.with_name(".adept-stage-" + stage_slot + destination.suffix)
     )
     return destination, adept_destination, repair_mode
 
