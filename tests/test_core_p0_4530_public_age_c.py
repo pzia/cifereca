@@ -194,3 +194,43 @@ def test_invalid_age_cursor_parameters(tmp_path, kw):
     with closing(Storage(tmp_path / "invalid-age.sqlite")) as db:
         with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
             search_public_notice_c(db, "Même titre", **kw)
+
+
+def test_known_search_age_filter_reuses_exact_c_across_readers_and_restart(tmp_path):
+    from cifereca.core.search_orchestration import search_known_catalog
+    filename = tmp_path / "known-age.sqlite"
+
+    def known(db, reader, **kw):
+        return search_known_catalog(
+            NS(storage=db, catalog_entries=db.catalog_entries,
+               library_entries=lambda **opts: []),
+            "Même titre", identity_id=reader, logger=NS(info=lambda *a: None),
+            **kw,
+        )
+
+    def check(db):
+        for reader in ("alice", "bob"):
+            rows = known(db, reader, age=12, age_kind="publisher")
+            assert len(rows) == 1
+            row, = rows
+            assert row["source"] == "notice_c_public"
+            assert row["identity_id"] == reader
+            assert row["_cover_document_ref"] == canonical.document
+            assert row["metadata"]["notice_c_query_status"] == "partial"
+            assert attested_age_status(row, 12) == "match"
+            assert known(db, reader, age=11) == []
+            assert known(db, reader, age=12, age_kind="reading") == []
+            assert known(db, reader, age=12, provider_ids=("other",)) == []
+            assert len(known(db, reader)) == 2
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+    with closing(Storage(filename)) as db:
+        source = persist(db, project(original()))
+        canonical = persist_exact_public_search_cover(db, source)
+        unknown = persist(db, project(public_row(record_id="unknown-age")))
+        persist_exact_public_search_cover(db, unknown)
+        check(db)
+        for entry in (source, unknown):
+            assert evict_notice_cover(db, entry.document, expected_epoch=entry.epoch)
+    with closing(Storage(filename)) as db:
+        check(db)
