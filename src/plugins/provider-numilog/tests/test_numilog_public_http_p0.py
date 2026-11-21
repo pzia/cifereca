@@ -296,3 +296,34 @@ def test_live_and_replay_layout_reason_is_closed_and_identical(monkeypatch):
     with pytest.raises(ProviderError) as error:
         public_client._parse_retained_search_input(raw)
     assert str(error.value) == "Numilog : public_catalog_layout_unverified:unknown"
+
+
+def test_two_real_provider_entrypoints_share_only_anonymous_get(monkeypatch):
+    from cifereca_numilog_public_provider import NumilogPublicSession
+    private = NumilogSession(
+        credential_id="fictional-account", label="", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    public = NumilogPublicSession(
+        credential_id="__public__", label="", credentials={}, options={},
+    )
+    private._rows = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("private library read during public search"))
+    public.connect()
+    try:
+        fake, first, second = _overlapping_readers(
+            monkeypatch, FakeResponse(),
+            lambda: private.search("jefferson", scope="catalog"),
+            lambda: public.search("jefferson"),
+        )
+        left, right = first.result(), second.result()
+        assert len(left) == len(right) == 20
+        assert len(fake.requests) == 1
+        assert all(not row.owned and not row.downloadable
+                   and row.source_account_id is None for row in left + right)
+        assert left[0].source_provider == "numilog"
+        assert right[0].source_provider == "numilog-catalog"
+        assert left[0] is not right[0]
+    finally:
+        public.close()
+        private.close()
