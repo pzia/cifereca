@@ -105,6 +105,46 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                           "THEN metadata_json END FROM acquisition_ledger "
                           "WHERE strategy='loan_auto'"):
         historical[row[:5]].append(row[5:])
+    # Reverse coverage: legacy-only evidence remains visible, but never
+    # supplies a new account or an attested canonical SourceReference.
+    rights_by_scope = defaultdict(list)
+    for key, values in rights.items():
+        rights_by_scope[key[:4]].append((key[4:], len(values)))
+    historical_by_scope = defaultdict(list)
+    for key, values in historical.items():
+        historical_by_scope[key[:4]].append((key[4], values))
+
+    def reverse_coverage(scope, refs):
+        pairs = {(edition, right) for _, _, edition, right in refs
+                 if _coordinate(edition) and _coordinate(right)}
+        counts = {
+            "legacy_loan_right_rows_without_reference": 0,
+            "legacy_loan_right_rows_unverified_coordinates": 0,
+            "historical_adept_rows_without_reference": 0,
+            "historical_adept_rows_unverified_coordinates": 0,
+        }
+        for (edition, right), count in rights_by_scope.get(scope, ()):
+            if not _coordinate(edition) or not _coordinate(right):
+                counts["legacy_loan_right_rows_unverified_coordinates"] += count
+            elif (edition, right) not in pairs:
+                counts["legacy_loan_right_rows_without_reference"] += count
+        for edition, values in historical_by_scope.get(scope, ()):
+            adept_rows = [raw for _, executor, raw in values if executor == "kobo-adept"]
+            if not _coordinate(edition) or len(values) > 256:
+                counts["historical_adept_rows_unverified_coordinates"] += len(adept_rows)
+                continue
+            for raw in adept_rows:
+                try:
+                    metadata = json.loads(raw, object_pairs_hook=_unique_checkpoint_fields)
+                except (ValueError, TypeError, RecursionError):
+                    metadata = None
+                right = metadata.get("provider_loan_id") if type(metadata) is dict else None
+                if not _coordinate(right):
+                    counts["historical_adept_rows_unverified_coordinates"] += 1
+                elif (edition, right) not in pairs:
+                    counts["historical_adept_rows_without_reference"] += 1
+        return counts
+
     origins = defaultdict(list)
     for ref, owner, receipt in _rows(db,
             "SELECT source_reference_id,identity_id,"
@@ -205,7 +245,9 @@ def _snapshot(db, *, identity, provider, credential, account_id):
     records = []
     counts = {"accounts": len(selected_accounts), "connections_without_account": 0,
               "loan_references_without_account": 0, "orphan_identity_bindings": 0,
-              "identities_without_binding": 0, "grant_rows_without_account": 0}
+              "identities_without_binding": 0, "grant_rows_without_account": 0,
+              "legacy_loan_right_rows_without_account": 0,
+              "historical_adept_rows_without_account": 0}
     for index, scope in enumerate(selected_accounts, 1):
         owner, source, cred, account = scope
         conn = connections[scope[:3]]
@@ -249,6 +291,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                 for label in ("active", "inactive", "unknown")
             },
             **historical_states(scope, refs, grant),
+            **reverse_coverage(scope, refs),
             "provisioning": "unknown", "current_right": "unknown",
         })
     if account_id is None:
@@ -261,6 +304,13 @@ def _snapshot(db, *, identity, provider, credential, account_id):
         counts["grant_rows_without_account"] = sum(
             selected((g[0], *key)) and (g[0], *key) not in accounts
             for key, values in grants.items() for g in values)
+        counts["legacy_loan_right_rows_without_account"] = sum(
+            count for s, entries in rights_by_scope.items()
+            if selected(s) and s not in accounts for _, count in entries)
+        counts["historical_adept_rows_without_account"] = sum(
+            executor == "kobo-adept" for s, entries in historical_by_scope.items()
+            if selected(s) and s not in accounts
+            for _, values in entries for _, executor, _ in values)
     profile_records = None
     if provider is None and credential is None and account_id is None:
         selected_owners = {owner for owner in set(bindings) | identities
