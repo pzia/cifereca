@@ -193,7 +193,9 @@ def main(argv: list[str] | None = None) -> int:
                     for state, count in sorted(states.items()):
                         print(f"{key}.{state}: {count}")
                 for key in ("origin_owner_mismatch", "origin_receipt_missing",
-                            "origin_multiple_records",
+                            "origin_multiple_records", "origin_artifact_unverified",
+                            "origin_without_same_identity_placement",
+                            "origin_without_same_identity_present_record",
                             "legacy_loan_right_rows_without_reference",
                             "legacy_loan_right_rows_unverified_coordinates",
                             "historical_adept_rows_without_reference",
