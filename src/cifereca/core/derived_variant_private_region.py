@@ -19,7 +19,7 @@ from .derived_variant_retention_review import _directory
 from .derived_variant_supervised_recovery import _lock_current
 from .library_inventory import _open_root
 
-_REGION = ".cifereca-derived-v1"
+from .derived_variant_region_paths import PRIVATE_DERIVED_REGION as _REGION
 _MARKER = ".core-owner-v1"
 _PREFIX = "derived.publication.region.v1:"
 _FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
