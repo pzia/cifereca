@@ -126,6 +126,33 @@ def test_no_private_write_from_forged_or_stale_occurrence(harness, changed):
     assert len(client.calls) == 1
 
 
+@pytest.mark.parametrize("batch", ["oversized_first", "oversized_last", "tuple"])
+def test_invalid_new_batch_revokes_stale_private_web_receipt(harness, batch):
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    assert call is not None
+    row, = session.search("fiction")
+    stamp_authenticated_search_rows(service, call, [row])
+    assert "_core_private_web_search_receipt" in row.__dict__
+
+    if batch == "tuple":
+        invalid = (row,)
+    else:
+        invalid = [None] * 10001
+        invalid[0 if batch == "oversized_first" else -1] = row
+    # A fresh call was refused as malformed/over-budget. The old row
+    # must not remain publishable if the caller mistakenly reuses it.
+    stamp_authenticated_search_rows(service, call, invalid)
+    assert "_core_private_web_search_receipt" not in row.__dict__
+    assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 0
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'"
+        ).fetchone()[0] == 0
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
 def test_private_call_cannot_be_captured_as_foreign_reader(harness):
     service, session, _, client = harness
     assert capture_authenticated_search_call(service, session, "bob") is None
