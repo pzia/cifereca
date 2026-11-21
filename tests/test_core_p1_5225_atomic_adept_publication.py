@@ -502,3 +502,26 @@ def test_adept_stage_link_added_during_final_commit_refuses(tmp_path, monkeypatc
     assert produced.read_bytes() == outside.read_bytes() == b"UNCHANGED CONTENT"
     assert not destination.exists()
     assert not list(tmp_path.glob(".adept-publish-*"))
+
+
+@pytest.mark.parametrize("artifact", [["not", "a", "mapping"], "malformed", 42, b"bad"])
+def test_adept_runtime_nonmapping_artifact_refused_before_inspection(tmp_path, artifact):
+    produced = tmp_path / "adept-stage.epub"
+    produced.write_bytes(b"STAGED DOCUMENT")
+    destination = tmp_path / "published.epub"
+    destination.write_bytes(b"EXISTING DOCUMENT")
+
+    with pytest.raises(ProviderConfigurationError, match="Résultat ADEPT invalide"):
+        adept_artifact_publication.publish(
+            result={"artifact": artifact},
+            adept_destination=produced, acsm_format="epub",
+            loan=NS(id="synthetic-loan", identity_id="identity-A", source_provider="test"),
+            repair_mode=False, destination=destination, previous_path=None,
+            Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+            inspect_artifact=lambda *_args, **_kwargs: pytest.fail("no inspection"),
+            adept_acsm_plan=adept_acsm_plan, uuid=uuid,
+            _TRACE_LOG=logging.getLogger("synthetic"),
+        )
+    assert produced.read_bytes() == b"STAGED DOCUMENT"
+    assert destination.read_bytes() == b"EXISTING DOCUMENT"
+    assert not list(tmp_path.glob(".adept-publish-*"))
