@@ -282,7 +282,7 @@ def test_guided_dry_run_has_two_explicit_steps_and_never_mutates(store, tmp_path
 def test_guided_simulation_selects_one_group_and_preserves_scope(store, tmp_path):
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
-    for name, suffix in (("one", ""), ("two", '<dc:language>fr</dc:language>')):
+    for name, suffix in (("one", ""), ("two", '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')):
         _put_epub(store, root, f"Acquisitions/{name}.epub", metadata=META + suffix)
     module, plugin = _plugin(_service(store, root))
     host, tasks, renders = _host()
