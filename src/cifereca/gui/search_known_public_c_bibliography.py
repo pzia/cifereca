@@ -89,6 +89,32 @@ def _alternative_proven_fields(alternative, hit, index, provider):
                 observed_at=observed,
             ),
         ) for number, value in enumerate(values, 1))
+    age = hit.age_observation
+    if age is not None:
+        raw_evidence = alternative.get("bibliography_evidence")
+        supplied = alternative.get("youth_age_ranges")
+        verified = age.filter_ranges()
+        # The source's original bounded parser observation and its admitted
+        # filter ranges must BOTH match. Never show an age inferred from a
+        # different provider, conflicting alternatives or edited metadata.
+        if (verified and type(raw_evidence) is dict
+                and raw_evidence.get("youth_age") == age.wire()
+                and type(supplied) is list and supplied == verified
+                and len(verified) <= 16):
+            labels = {
+                "interest": "intérêt", "reading": "lecture",
+                "publisher": "éditeur", "recommended": "recommandé",
+            }
+            fields["youth_age_ranges"] = tuple(DetailField(
+                id=f"known-public-alternative-{index}-age-{number}",
+                label=f"Source {index} · {provider} · Âge ({labels[part['age_kind']]})",
+                value=part["source_label"],
+                provenance=Provenance(
+                    source=age.source_field,
+                    provider_id=hit.provider_id, source_id=hit.record_id,
+                    observed_at=observed,
+                ),
+            ) for number, part in enumerate(verified, 1))
     return fields
 
 
@@ -184,7 +210,7 @@ def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=(
                     alternative, hits[index - 2] if hits else None, displayed_names,
                 ),
             ))
-        for name in ("series", "languages"):
+        for name in ("series", "languages", "youth_age_ranges"):
             fields.extend(proven.get(name, ()))
     if not fields:
         return None
