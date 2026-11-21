@@ -6,7 +6,7 @@ Only freshly admitted rows of the current owner's actual response are accepted.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import re
 import time
 
@@ -68,6 +68,20 @@ class _Call:
     observed_at: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Receipt:
+    token: object
+    row_id: int
+    call: _Call
+    key: NoticeSourceKey
+    proof: tuple
+
+    def __deepcopy__(self, memo):
+        # Copying a DTO cannot copy Core/service locks or give the new row
+        # a receipt for an observed response object it never belonged to.
+        return self
+
+
 def capture_authenticated_search_call(service, session, identity_id):
     """Capture once before an existing own-session provider call, never log in."""
     try:
@@ -127,8 +141,12 @@ def _evidence(row, key, homepage):
 
 def stamp_authenticated_search_rows(service, call, rows):
     """Only the exact returned objects get the transient Core observation receipt."""
-    if (type(call) is not _Call or type(rows) is not list or len(rows) > 10000
-            or not call.binding.current(service, call.scope)):
+    if type(rows) is not list or len(rows) > 10000:
+        return
+    for row in rows:
+        if type(row) is SearchResult:
+            row.__dict__.pop(_MARKER, None)
+    if type(call) is not _Call or not call.binding.current(service, call.scope):
         return
     seen = {}
     for row in rows:
@@ -146,18 +164,17 @@ def stamp_authenticated_search_rows(service, call, rows):
             continue
         proof = _evidence(row, key, call.binding.descriptor.homepage)
         if proof is not None:
-            row.__dict__[_MARKER] = (_WITNESS, row, call, key, proof)
+            row.__dict__[_MARKER] = _Receipt(_WITNESS, id(row), call, key, proof)
 
 
 def _prepare(service, row, identity):
     if type(row) is not SearchResult:
         return None
     receipt = row.__dict__.get(_MARKER)
-    if (type(receipt) is not tuple or len(receipt) != 5
-            or receipt[0] is not _WITNESS or receipt[1] is not row
-            or type(receipt[2]) is not _Call):
+    if (type(receipt) is not _Receipt or receipt.token is not _WITNESS
+            or receipt.row_id != id(row) or type(receipt.call) is not _Call):
         return None
-    _, _, call, key, proof = receipt
+    call, key, proof = receipt.call, receipt.key, receipt.proof
     if (identity != call.scope.identity_id or _source_key(row, identity) != key
             or _evidence(row, key, call.binding.descriptor.homepage) != proof):
         return None
