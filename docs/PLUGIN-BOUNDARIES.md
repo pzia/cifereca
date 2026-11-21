@@ -183,3 +183,7 @@ un broker peut fournir sa propre façade scoped via for_plugin, sinon le
 contrat partagé est retourné. Les services optionnels ne doivent pas être
 bloqués uniquement parce qu'ils sont omis du manifeste. Ne pas installer
 de code tiers non fiable ; le cloisonnement OS/process est un autre chantier.
+
+## Surfaces documentaire et provenance locale (#4030)
+
+Les familles public / achats / prêts sont **multi-étiquettes par opération**, non une enum de provider. Le plugin rapporte capacités, limites et preuves de réponse ; Core décide admission et association; CoreUI présente les suggestions sans écrire de provenance. Aucun GET/borrow implicite ni conversion d'une Notice C en OriginLink : [contrat normatif #4030](CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md).

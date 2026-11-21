@@ -577,3 +577,7 @@ facette ne provoque jamais de requête distante supplémentaire.
 ### Python de l'installation active
 
 Après une installation ou mise à jour Core, `cifereca-python` utilise le Python du venv de la release active, y compris après un rollback. Par exemple : `cifereca-python --version`, `cifereca-python -c 'import sys; print(sys.executable)'` ou `cifereca-python -m cifereca.core.missing_placements_cli --help`. Cette commande n'installe pas de modules et échoue si la release active est introuvable. Les modules invoqués peuvent modifier des données : seul `missing_placements_cli` est en lecture seule. Ne pas publier de chemins personnels ni d'identifiants dans les tickets.
+
+### Suggestions de provenance des livres locaux
+
+Les recherches d'origine sont des **propositions documentaires**, non des preuves d'acquisition ou des autorisations de téléchargement. Contrat : [surfaces de catalogue et niveaux de preuve](docs/CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md) (#4030).
