@@ -41,7 +41,11 @@ def test_retained_metadata_reaches_real_recommendation_broker_after_restart(tmp_
     db = Storage(path)
     try:
         item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("sciences")
-        assert item.metadata == {"notice_c_known": True, "notice_c_stale": True, **expected}
+        assert item.metadata == {
+            "notice_c_known": True, "notice_c_stale": True,
+            "notice_c_query_status": "partial", "notice_c_cover_state": "available",
+            "notice_c_epoch": c.epoch, **expected,
+        }
         assert known_public_c_binding_facts(item) == (c.document, c.epoch)
         assert known_public_c_binding_facts(replace(item)) is None
         assert item.source_credential == "" and item.source_account_id is None
@@ -137,7 +141,11 @@ def test_classification_only_query_reissues_exact_c_without_other_source_facts(t
         catalog = CatalogBrokerImpl(NS(storage=db))
         for term in ("astronomie", "nébuleuses", "documentaire", "cosmos", "illustré"):
             item, = catalog.known_public_notices(term)
-            assert item.metadata == {"notice_c_known": True, "notice_c_stale": True, **labels}
+            assert item.metadata == {
+                "notice_c_known": True, "notice_c_stale": True,
+                "notice_c_query_status": "partial", "notice_c_cover_state": "available",
+                "notice_c_epoch": c.epoch, **labels,
+            }
             assert known_public_c_binding_facts(item) == (c.document, c.epoch)
             assert item.source_account_id is None and item.source_credential == ""
             assert item.owned is item.downloadable is item.download_url is None

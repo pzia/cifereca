@@ -12,7 +12,7 @@ from typing import Any
 
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.notice_c_known_projection import matching_live_public_canonical_ref
-from ..core.notice_c_live_revision import persisted_live_c_revision
+from ..core.notice_c_live_revision import persisted_live_c_revision, _native_canonical_ref
 from ..core.notice_c_recommendation_known import known_public_c_binding_facts
 from ..core.notice_c_cached_revision import matching_cached_public_canonical_ref
 
@@ -84,6 +84,11 @@ def public_c_binding_revision(
             or receipt.window is not window
             or getattr(window, "_closed", False)
             or receipt.service is not getattr(window, "service", None)
+            # The DocumentRef argument crosses a plugin presentation
+            # boundary. Validate its native type before dataclass equality:
+            # a foreign __eq__ must never be invoked on GTK.
+            or not _native_canonical_ref(document)
+            or not _native_canonical_ref(receipt.document)
             or receipt.document != document):
         return None
     # The original live SearchResult is mutable. A new Core stamp, provider

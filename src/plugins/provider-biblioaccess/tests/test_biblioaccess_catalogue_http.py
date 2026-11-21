@@ -333,3 +333,30 @@ def test_detail_uses_first_observed_slug_with_duplicate_links():
         assert len(calls) == 3
     finally:
         c.close()
+
+
+def test_duplicate_catalogue_anchor_attributes_do_not_create_book_or_pager_proof():
+    # Synthetic layout regression (#6397): an HTML parser must not choose
+    # the last of two conflicting href/rel attributes as Core provenance.
+    source = (
+        "https://www.biblioaccess.com/1409/Catalog/Search"
+        "?query=roman&pageindex=0"
+    )
+    html = (
+        '<a href="/1409/Catalog/Book/111/a" '
+        'href="/1409/Catalog/Book/222/b">Titre ambigu</a>'
+        '<a href="/1409/Catalog/Book/333/ok">Titre qualifié</a>'
+        '<a href="/1409/Catalog/Search?query=roman&pageindex=1" '
+        'href="/1409/Catalog/Search?query=roman&pageindex=1">Suivant</a>'
+        '<a href="/1409/Catalog/Search?query=roman&pageindex=1" '
+        'rel="next" rel="alternate">Suivant</a>'
+    )
+    links = sys.modules["biblioaccess_observations"].extract_catalogue_links(
+        source, html,
+    )
+    assert links.book_ids == ("333",)
+    assert links.book_urls == (
+        ("333", "https://www.biblioaccess.com/1409/Catalog/Book/333/ok"),
+    )
+    assert links.book_titles == (("333", "Titre qualifié"),)
+    assert links.next_page_url is None

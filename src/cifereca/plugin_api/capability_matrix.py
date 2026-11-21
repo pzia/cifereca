@@ -130,6 +130,10 @@ class CapabilityMatrix:
 # No promises about browser UI, provider availability or acquisition receipts.
 _PROVIDER_FLAGS = (
     ("catalog.search", ("search",)),
+    # Manifest catalog.detail corresponds to the provider-level holdings()
+    # declaration. This is code inventory only, not an attested accessible
+    # detail, availability, or the right to acquire the edition.
+    ("catalog.detail", ("holdings",)),
     ("personal_inventory.list", ("personal_library",)),
     ("loan.inventory", ("loans",)),
     ("loan.borrow", ("borrow",)),
