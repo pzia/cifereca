@@ -525,3 +525,17 @@ def test_adept_runtime_nonmapping_artifact_refused_before_inspection(tmp_path, a
     assert produced.read_bytes() == b"STAGED DOCUMENT"
     assert destination.read_bytes() == b"EXISTING DOCUMENT"
     assert not list(tmp_path.glob(".adept-publish-*"))
+
+
+def test_adept_stage_cannot_be_adopted_as_its_final_library_destination(tmp_path):
+    """The final name requires its own exclusive durable publication step."""
+    produced = tmp_path / "unpublished-stage.epub"
+    produced.write_bytes(b"PRIVATE STAGING BYTES")
+    with pytest.raises(ProviderConfigurationError, match="inattendu"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, produced, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert produced.read_bytes() == b"PRIVATE STAGING BYTES"
+    assert produced.stat().st_nlink == 1
+    assert list(tmp_path.iterdir()) == [produced]
