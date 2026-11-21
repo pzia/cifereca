@@ -408,3 +408,162 @@ def test_private_menu_and_click_contain_local_read_failure(tmp_path, monkeypatch
             host, menu, choice_id=choice.choice_id,
         ) == URL
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+@pytest.mark.parametrize("damage", [
+    "choices_list", "choices_foreign", "choices_oversized", "choice_id",
+    "choice_label", "choice_access_mode", "bindings_list",
+    "bindings_foreign", "scope_foreign", "document_foreign",
+])
+def test_modified_private_click_receipt_never_runs_hostile_equality_or_scope(
+    tmp_path, damage,
+):
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign equality in private click")
+
+        def __ne__(self, other):
+            raise AssertionError("foreign inequality in private click")
+
+        def current(self, *_args):
+            raise AssertionError("foreign scope callback in private click")
+
+    with closing(Storage(tmp_path / "hostile-click.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        menu = host.menu(canonical, source.document)
+        original, = menu.choices
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=original.choice_id,
+        ) == URL
+        if damage == "choices_list":
+            changed = replace(menu, choices=[original])
+        elif damage == "choices_foreign":
+            changed = replace(menu, choices=(Hostile(),))
+        elif damage == "choices_oversized":
+            changed = replace(menu, choices=(original,) * 257)
+        elif damage == "choice_id":
+            changed = replace(menu, choices=(replace(original, choice_id=Hostile()),))
+        elif damage == "choice_label":
+            changed = replace(menu, choices=(replace(original, label=Hostile()),))
+        elif damage == "choice_access_mode":
+            changed = replace(menu, choices=(replace(original, access_mode=Hostile()),))
+        elif damage == "bindings_list":
+            changed = replace(menu, _bindings=list(menu._bindings))
+        elif damage == "bindings_foreign":
+            changed = replace(menu, _bindings=(Hostile(),))
+        elif damage == "scope_foreign":
+            changed = replace(menu, _scope=Hostile())
+        else:
+            changed = replace(menu, document=Hostile())
+        assert resolve_authenticated_web_choice(
+            host, changed, choice_id=original.choice_id,
+        ) is None
+        # Rejecting a manipulated copy must not consume or revoke the
+        # original live choice for the same exact private source.
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=original.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+@pytest.mark.parametrize("field", ["source_key", "provider_id", "kind", "artifact_id"])
+def test_private_source_documents_reject_mutated_scalar_before_hash_or_click(
+    tmp_path, field,
+):
+    class Hostile:
+        def __hash__(self):
+            raise AssertionError("foreign DocumentRef hash executed")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign DocumentRef equality executed")
+
+    with closing(Storage(tmp_path / "scope-hash.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        menu = host.menu(canonical, source.document)
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        mutated = replace(source.document)
+        object.__setattr__(mutated, field, Hostile())
+        assert read_authenticated_web_choices(
+            host, canonical.document,
+            reader_scope=capture_search_read_scope(host, "alice"),
+            source_documents=(mutated,),
+        ) is None
+        changed = replace(menu, _bindings=(
+            replace(menu._bindings[0], document=mutated),
+        ))
+        assert resolve_authenticated_web_choice(
+            host, changed, choice_id=choice.choice_id,
+        ) is None
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+@pytest.mark.parametrize("change", [
+    "canonical_kind", "canonical_source_key", "canonical_provider_id",
+    "lease_identity", "lease_epoch", "lease_service", "lease_control",
+])
+def test_private_menu_and_click_reject_tampered_canonical_or_reader_scope(
+    tmp_path, change,
+):
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("untrusted equality in private C lease")
+
+        def __hash__(self):
+            raise AssertionError("untrusted hash in private C lease")
+
+    with closing(Storage(tmp_path / "altered-lease.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        scope = capture_search_read_scope(host, "alice")
+        menu = read_authenticated_web_choices(
+            host, canonical.document, reader_scope=scope,
+            source_documents=(source.document,),
+        )
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        if change.startswith("canonical_"):
+            changed_document = replace(canonical.document)
+            field_name = change.removeprefix("canonical_")
+            object.__setattr__(changed_document, field_name, Hostile())
+            assert read_authenticated_web_choices(
+                host, changed_document, reader_scope=scope,
+                source_documents=(source.document,),
+            ) is None
+            changed = replace(menu, document=changed_document)
+        else:
+            if change == "lease_identity":
+                altered_scope = replace(scope, identity_id=Hostile())
+            elif change == "lease_epoch":
+                altered_scope = replace(scope, source_epoch=Hostile())
+            elif change == "lease_service":
+                altered_scope = replace(scope, service=Hostile())
+            else:
+                altered_scope = replace(scope, identity_id="alice\x00alternate")
+            assert read_authenticated_web_choices(
+                host, canonical.document, reader_scope=altered_scope,
+                source_documents=(source.document,),
+            ) is None
+            changed = replace(menu, _scope=altered_scope)
+        assert resolve_authenticated_web_choice(
+            host, changed, choice_id=choice.choice_id,
+        ) is None
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []

@@ -15,7 +15,7 @@ from datetime import datetime
 
 from ..plugin_api.loan_inventory import (
     INVENTORY_CONTRACT, LoanBranchCoverage, LoanInventoryScope,
-    LoanInventorySnapshot, _loan_matches_scope,
+    LoanInventorySnapshot, _loan_matches_scope, _REASON_CODES,
 )
 from .digital_loan_remaining_policy import (
     DigitalCapacityScope, DigitalInventoryReceipt,
@@ -23,13 +23,16 @@ from .digital_loan_remaining_policy import (
 
 
 def _stamp(observed_at: object) -> datetime | None:
-    if type(observed_at) is not str:
+    # Reapply the original LoanInventorySnapshot timestamp contract even
+    # when a frozen upstream envelope was replaced in memory after __init__.
+    if type(observed_at) is not str or not 20 <= len(observed_at) <= 40:
         return None
     try:
         value = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
     except (ValueError, OverflowError):
         return None
-    if value.tzinfo is None or value.utcoffset() is None:
+    if (value.tzinfo is None or value.utcoffset() is None
+            or not 2000 <= value.year <= 2100):
         return None
     return value
 
@@ -77,6 +80,9 @@ def stage_uncommitted_digital_inventory(
             or len(snapshot.branches) > 32
             or type(snapshot.status) is not str
             or snapshot.status not in ("success", "partial", "failed", "cancelled")
+            or (snapshot.reason_code is not None
+                and (type(snapshot.reason_code) is not str
+                     or snapshot.reason_code not in _REASON_CODES))
             or any(type(row) is not LoanBranchCoverage
                    for row in snapshot.branches)):
         return None
@@ -184,6 +190,9 @@ def stage_uncommitted_digital_inventory(
     )
     complete = (
         snapshot.status == "success"
+        # A success envelope carrying a negative/unknown reason is
+        # contradictory, even if its branch fields still say "complete".
+        and snapshot.reason_code is None
         and trustworthy_states and not uncertain_medium
         and observed == expected
         and all(
