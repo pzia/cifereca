@@ -244,6 +244,14 @@ class _Links(HTMLParser):
             return
         self._book_anchor = None
         self._book_anchor_text = []
+        # A repeated evidence-bearing attribute has no unambiguous value.
+        # HTMLParser preserves duplicates, while dict(attrs) keeps only the
+        # last one. Never promote such an anchor to a book or next-page link.
+        if any(sum(name == key for name, _ in attrs) > 1
+               for key in ("href", "rel")):
+            self._candidate = None
+            self._anchor_text = []
+            return
         values = dict(attrs)
         href = values.get("href")
         if (not isinstance(href, str) or not href
