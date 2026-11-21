@@ -36,7 +36,8 @@ def _sources(row):
     identity = row.get("identity_id")
     document = row.get("_cover_document_ref")
     if (type(packet) is not tuple or len(packet) != 5 or packet[0] is not _TOKEN
-            or type(identity) is not str or packet[1] != identity
+            or type(identity) is not str or type(packet[1]) is not str
+            or packet[1] != identity
             or type(document) is not CoverDocumentScope
             or type(packet[2]) is not CoverDocumentScope
             or packet[2] != document
@@ -48,8 +49,13 @@ def _sources(row):
             or type(packet[4]) is not tuple or not 2 <= len(packet[4]) <= _MAX_SOURCES):
         return ()
     hits = packet[4]
-    if (any(type(hit) is not PublicNoticeCHit or hit.document != packet[2]
-            or hit.epoch != packet[3] for hit in hits)
+    if (any(type(hit) is not PublicNoticeCHit
+            or type(hit.document) is not CoverDocumentScope
+            or type(hit.epoch) is not int
+            or type(hit.provider_id) is not str
+            or type(hit.record_id) is not str
+            or hit.document != packet[2] or hit.epoch != packet[3]
+            for hit in hits)
             or type(row.get("provider_id")) is not str
             or type(row.get("item_id")) is not str
             or hits[0].provider_id != row["provider_id"]
