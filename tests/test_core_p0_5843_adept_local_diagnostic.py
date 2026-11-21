@@ -1,6 +1,9 @@
 """Local ADEPT diagnostic never starts Core or creates a database."""
 import json
 import sqlite3
+import sys
+
+import pytest
 
 from cifereca import cli
 from cifereca.core import adept_local_diagnostic as diagnostic
@@ -40,6 +43,7 @@ def test_all_filters_revoke_and_aba(tmp_path):
     path = tmp_path / "evidence.sqlite"
     store = seed(path)
     try:
+        store.close()
         before = diagnostic.diagnose_local_adept(database_path=path)
         assert before["status"] == "complete"
         assert before["counts"]["accounts"] == 3
@@ -54,6 +58,7 @@ def test_all_filters_revoke_and_aba(tmp_path):
         assert diagnostic.diagnose_local_adept(**exact)["counts"]["accounts"] == 1
         store.adept_profile_binding_set("identity", "PRIVATE_B", "PRIVATE_NEW")
         store.adept_profile_binding_set("identity", "PRIVATE_B", "PRIVATE_B_profile")
+        store.close()
         revoked = diagnostic.diagnose_local_adept(**exact)
         assert revoked["accounts"][0]["borrower_grant"] == "grant_absent_generation_recorded"
         assert diagnostic.diagnose_local_adept(
@@ -124,6 +129,7 @@ def test_exact_loan_origin_join_and_redacted_divergences(tmp_path):
                     "artifact_id,source_reference_id,evidence_ref,created_at,updated_at)"
                     " VALUES(?,'adept',?,?,?,?,1,1)",
                     ("PRIVATE_ORIGIN_" + str(index), owner, artifact, ref, receipt))
+        store.close()
         report = diagnostic.diagnose_local_adept(
             database_path=path, identity="PRIVATE_A", provider="library1",
             credential="PRIVATE_C", account_id="PRIVATE_ACCOUNT")
@@ -144,5 +150,53 @@ def test_exact_loan_origin_join_and_redacted_divergences(tmp_path):
         assert other["adept_origin_records"] == 1
         assert other["origin_owner_mismatch"] == 0
         assert other["loan_reference_states"]["unknown"] == 1
+    finally:
+        store.close()
+
+
+def test_never_open_source_sqlite_even_when_image_is_unavailable(tmp_path, monkeypatch):
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    store.close()
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    main_before = path.read_bytes()
+    real_connect = sqlite3.connect
+    opened = []
+
+    def memory_only(name, *args, **kwargs):
+        opened.append(name)
+        assert name == ":memory:"
+        return real_connect(name, *args, **kwargs)
+
+    monkeypatch.setattr(diagnostic.sqlite3, "connect", memory_only)
+    assert diagnostic.diagnose_local_adept(database_path=path)["status"] == "complete"
+    assert opened == [":memory:"]
+    # A WAL without a coherent SHM must not be opened or ignored.
+    wal.write_bytes(b"incomplete private WAL")
+    report = diagnostic.diagnose_local_adept(database_path=path)
+    assert report["code"] == "snapshot_live_unavailable"
+    assert not shm.exists()
+    assert opened == [":memory:"]
+    assert wal.read_bytes() == b"incomplete private WAL"
+    assert path.read_bytes() == main_before
+    assert "private WAL" not in json.dumps(report)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="isolated source-WAL reader is Linux-only")
+def test_live_wal_is_read_without_writing_source_sidecars(tmp_path):
+    pytest.importorskip("apsw")
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    try:
+        paths = [path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")]
+        assert all(p.exists() for p in paths)
+        before = [p.read_bytes() for p in paths]
+        report = diagnostic.diagnose_local_adept(database_path=path)
+        assert report["status"] == "complete"
+        assert report["counts"]["accounts"] == 3
+        assert report["accounts"][0]["borrower_grant"] == "explicit_grant_recorded"
+        assert [p.read_bytes() for p in paths] == before
+        assert "PRIVATE" not in json.dumps(report)
     finally:
         store.close()
