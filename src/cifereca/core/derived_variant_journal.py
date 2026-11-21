@@ -12,10 +12,14 @@ import json
 from pathlib import Path
 from secrets import token_hex
 
+from .derived_variant_region_paths import PRIVATE_DERIVED_REGION
+
 _PREFIX = "derived.publication.pending.v2:"
 _END = _PREFIX[:-1] + ";"
 _COMMITTED = "derived.publication.committed.v2:"
 _COMMITTED_END = _COMMITTED[:-1] + ";"
+_LEGACY_SCHEMA = "derived.intent.v2"
+_PRIVATE_SCHEMA = "derived.intent.v3"
 _MAX_RECORDS = 1024
 _MAX_RECORD_BYTES = 8192
 _MAX_TOTAL_BYTES = 8 * 1024 * 1024
@@ -76,7 +80,7 @@ def _stamp(value, length):
             and value[2] > 0)
 
 
-def _validate(intent):
+def _validate(intent, *, schema=_LEGACY_SCHEMA):
     if type(intent) is not DerivedIntent:
         raise DerivedJournalConflict("derived_journal_invalid_intent")
     if (not all(_text(field) for field in (
@@ -99,8 +103,22 @@ def _validate(intent):
     parent, stage, candidate = map(Path, paths)
     if (not all(path.is_absolute() and path.name and ".." not in path.parts
                 and str(path) == raw for path, raw in zip((parent, stage, candidate), paths))
-            or len(set(paths)) != 3 or candidate.parent != parent.parent
-            or stage.parent != parent.parent / ".cifereca-staging" / "variants"):
+            or len(set(paths)) != 3 or candidate.parent != parent.parent):
+        raise DerivedJournalConflict("derived_journal_invalid_intent")
+    if schema == _LEGACY_SCHEMA:
+        valid_path = stage.parent == parent.parent / ".cifereca-staging" / "variants"
+    elif schema == _PRIVATE_SCHEMA:
+        profile = stage.parent.parent
+        valid_path = (
+            stage.parent.name == PRIVATE_DERIVED_REGION
+            and profile != Path("/") and parent.is_relative_to(profile)
+            and parent != profile and not stage.name.startswith(".")
+            and not any(p.startswith(".") for p in parent.relative_to(profile).parts)
+            and not candidate.name.startswith(".")
+        )
+    else:
+        valid_path = False
+    if not valid_path:
         raise DerivedJournalConflict("derived_journal_invalid_intent")
 
 
@@ -168,8 +186,15 @@ def _decode(key, raw):
                 or not 0 < len(raw.encode("utf-8")) <= _MAX_RECORD_BYTES):
             raise ValueError()
         record = json.loads(raw, object_pairs_hook=_unique_pairs)
-        if (type(record) is not dict or set(record) != {"schema", "nonce", "intent"}
-                or record["schema"] != "derived.intent.v2"
+        if type(record) is not dict:
+            raise ValueError()
+        schema = record.get("schema")
+        expected = {"schema", "nonce", "intent"}
+        if schema == _PRIVATE_SCHEMA:
+            expected.add("region_binding_sha256")
+            if not _digest(record.get("region_binding_sha256")) or _encode(record) != raw:
+                raise ValueError()
+        if (set(record) != expected or schema not in (_LEGACY_SCHEMA, _PRIVATE_SCHEMA)
                 or type(record["nonce"]) is not str or len(record["nonce"]) != 32
                 or any(ch not in "0123456789abcdef" for ch in record["nonce"])
                 or type(record["intent"]) is not dict):
@@ -178,7 +203,7 @@ def _decode(key, raw):
         data["parent_stamp"] = tuple(data["parent_stamp"])
         data["output_stamp"] = tuple(data["output_stamp"])
         intent = DerivedIntent(**data)
-        _validate(intent)
+        _validate(intent, schema=schema)
         if key not in (_slot(intent), _COMMITTED + _receipt_digest(raw)):
             raise ValueError()
         return intent
@@ -203,6 +228,63 @@ def _measure(db):
     if total > _MAX_TOTAL_BYTES:
         raise DerivedJournalConflict("derived_journal_capacity_exceeded")
     return rows, total
+
+
+def _reserve_in_transaction(db, intent, raw, *, private=False):
+    """Shared quota and slot transaction; private admission verifies FS first."""
+    key = _slot(intent)
+    if (not db.in_transaction or type(private) is not bool
+            or _decode(key, raw) != intent
+            or (json.loads(raw, object_pairs_hook=_unique_pairs)["schema"] == _PRIVATE_SCHEMA) != private):
+        raise DerivedJournalConflict("derived_journal_invalid_intent")
+    size = len(raw.encode("ascii"))
+    # A missing original with a surviving shadow is not an
+    # approved quota refund. Validate the separate namespace
+    # in the same serialized admission transaction.
+    from .derived_variant_compact_receipt import _measure_compact_in_transaction
+    _measure_compact_in_transaction(db, require_paired=True)
+    rows, total = _measure(db)
+    if len(rows) >= _MAX_RECORDS or total + size > _MAX_TOTAL_BYTES:
+        raise DerivedJournalConflict("derived_journal_capacity_exceeded")
+    reserved_output_bytes = 0
+    occupied = False
+    for existing_key, _ in rows:
+        existing = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (existing_key,),
+        ).fetchone()[0]
+        prior = _decode(existing_key, existing)
+        reserved_output_bytes += prior.output_size
+        # Committed receipt targets remain reserved until a
+        # supervised retirement, even if the Placement is lost.
+        if (prior.candidate_path == intent.candidate_path
+                or (existing_key.startswith(_PREFIX) and (
+                    existing_key == key or prior.staged_path == intent.staged_path))
+                or (private and (prior.staged_path == intent.staged_path
+                                 or prior.output_stamp[:2] == intent.output_stamp[:2]))):
+            occupied = True
+    # Validate all bounded receipts before reporting a collision.
+    # Corrupt later rows must still yield a corruption veto.
+    if occupied:
+        raise DerivedJournalConflict("derived_journal_slot_occupied")
+    if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
+        raise DerivedJournalConflict("derived_journal_output_capacity_exceeded")
+    parent = db.execute(
+        "SELECT artifact_id,identity_id,path,state FROM placements "
+        "WHERE placement_id=?", (intent.parent_placement_id,),
+    ).fetchone()
+    artifact = db.execute(
+        "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
+        ("sha256:" + intent.parent_sha256,),
+    ).fetchone()
+    if (parent != ("sha256:" + intent.parent_sha256, intent.identity_id,
+                   intent.parent_path, "present")
+            or artifact != (intent.parent_sha256, intent.parent_stamp[2])):
+        raise DerivedJournalConflict("derived_journal_parent_changed")
+    if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
+                  (intent.candidate_path,)).fetchone():
+        raise DerivedJournalConflict("derived_journal_slot_occupied")
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, raw))
+    return DerivedReservation(key, _receipt_digest(raw))
 
 
 def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReservation:
@@ -230,50 +312,7 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
             db.execute("PRAGMA synchronous=FULL")
             with db:
                 db.execute("BEGIN IMMEDIATE")
-                # A missing original with a surviving shadow is not an
-                # approved quota refund. Validate the separate namespace
-                # in the same serialized admission transaction.
-                from .derived_variant_compact_receipt import _measure_compact_in_transaction
-                _measure_compact_in_transaction(db, require_paired=True)
-                rows, total = _measure(db)
-                if len(rows) >= _MAX_RECORDS or total + size > _MAX_TOTAL_BYTES:
-                    raise DerivedJournalConflict("derived_journal_capacity_exceeded")
-                reserved_output_bytes = 0
-                occupied = False
-                for existing_key, _ in rows:
-                    existing = db.execute(
-                        "SELECT value FROM metadata WHERE key=?", (existing_key,),
-                    ).fetchone()[0]
-                    prior = _decode(existing_key, existing)
-                    reserved_output_bytes += prior.output_size
-                    # Committed receipt targets remain reserved until a
-                    # supervised retirement, even if the Placement is lost.
-                    if (prior.candidate_path == intent.candidate_path
-                            or (existing_key.startswith(_PREFIX) and (
-                                existing_key == key or prior.staged_path == intent.staged_path))):
-                        occupied = True
-                # Validate all bounded receipts before reporting a collision.
-                # Corrupt later rows must still yield a corruption veto.
-                if occupied:
-                    raise DerivedJournalConflict("derived_journal_slot_occupied")
-                if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
-                    raise DerivedJournalConflict("derived_journal_output_capacity_exceeded")
-                parent = db.execute(
-                    "SELECT artifact_id,identity_id,path,state FROM placements "
-                    "WHERE placement_id=?", (intent.parent_placement_id,),
-                ).fetchone()
-                artifact = db.execute(
-                    "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
-                    ("sha256:" + intent.parent_sha256,),
-                ).fetchone()
-                if (parent != ("sha256:" + intent.parent_sha256, intent.identity_id,
-                               intent.parent_path, "present")
-                        or artifact != (intent.parent_sha256, intent.parent_stamp[2])):
-                    raise DerivedJournalConflict("derived_journal_parent_changed")
-                if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
-                              (intent.candidate_path,)).fetchone():
-                    raise DerivedJournalConflict("derived_journal_slot_occupied")
-                db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, raw))
+                _reserve_in_transaction(db, intent, raw)
         finally:
             db.execute(f"PRAGMA synchronous={int(synchronous)}")
     return DerivedReservation(key, _receipt_digest(raw))
@@ -302,7 +341,13 @@ def _read_pending_reservation(db, reservation):
     if (row is None or type(row[0]) is not str
             or _receipt_digest(row[0]) != reservation.receipt_sha256):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
-    return row[0], _decode(reservation.key, row[0])
+    intent = _decode(reservation.key, row[0])
+    # The existing link/publication/recovery writers have no pinned region
+    # binding guard. A v3 row is visible and quota-accounted, but these
+    # legacy writers may not publish or recover it.
+    if json.loads(row[0], object_pairs_hook=_unique_pairs)["schema"] != _LEGACY_SCHEMA:
+        raise DerivedJournalConflict("derived_journal_private_region_review_required")
+    return row[0], intent
 
 
 def require_derived_reservation_in_transaction(db, reservation, *, expected):
