@@ -853,6 +853,8 @@ class DetailPanel(Gtk.Box):
                             fields=section.fields, field_actions=False)
                 self._cached_section_widgets.append(self.content.get_last_child())
             for action in cached.actions:
+                if type(action.uri) is not str:
+                    continue
                 if action.uri:
                     # Already validated by collect_cached_book_details; keep the
                     # final GTK action sink explicit as defence in depth.
