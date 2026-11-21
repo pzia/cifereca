@@ -16,7 +16,7 @@ from ..core.notice_c_authenticated_web_choices import (
     AuthenticatedWebChoices, resolve_authenticated_web_choice,
 )
 from ..core.notice_c_private_search_web import read_authenticated_web_for_search
-from ..core.search_orchestration import SearchReadScope
+from ..core.search_orchestration import SearchReadScope, capture_search_read_scope
 from ..models import SearchResult
 
 
@@ -40,25 +40,76 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
 
 
 def request_authenticated_search_web_actions(host, panel, row, *, reader_scope, current,
-                                             Gtk=None, Gio=None):
+                                             source_current=lambda: True, Gtk=None, Gio=None):
     """Same menu lifecycle, exact private self-C read and explicit click only."""
     core = getattr(host, "service", None)
     if (type(row) is not SearchResult or type(reader_scope) is not SearchReadScope
             or not reader_scope.current(core) or not current()):
         return False
+    def scoped_current():
+        return reader_scope.current(core) and source_current()
+
+    def resolve(core, storage, menu, choice):
+        # The selected row may have changed its coordinates while the menu
+        # was displayed. Match the fresh exact self-C, never the row URL.
+        fresh = read_authenticated_web_for_search(core, row, reader_scope=reader_scope)
+        if (type(fresh) is not AuthenticatedWebChoices or fresh.document != menu.document
+                or fresh.epoch != menu.epoch or fresh.choices != menu.choices):
+            return None
+        return resolve_authenticated_web_choice(core, menu, choice_id=choice.choice_id)
+
     return _request_web_actions(
         host, panel, current=current, Gtk=Gtk, Gio=Gio, authenticated=True,
+        worker_guard=scoped_current,
         load=lambda core, storage: read_authenticated_web_for_search(
             core, row, reader_scope=reader_scope),
         accept=lambda menu: (type(menu) is AuthenticatedWebChoices
                              and menu._scope is reader_scope),
-        resolve=lambda core, storage, menu, choice: resolve_authenticated_web_choice(
-            core, menu, choice_id=choice.choice_id),
+        resolve=resolve,
+    )
+
+
+def request_selected_authenticated_web_actions(host, row, *, selected_id, context):
+    """Capture the exact selected GTK row and publication lease, not its ID alone."""
+    if (type(row) is not SearchResult or context is None
+            or not row.source_credential or row.source_credential == "__public__"
+            or not row.source_account_id):
+        return False
+    core = host.service
+    panel = host.search_page.detail
+    selection = getattr(host.search_page, "selection", None)
+    get_selected = getattr(selection, "get_selected_item", None)
+    if not callable(get_selected):
+        return False
+    cell = get_selected()
+    key = getattr(cell, "key", None)
+    if type(key) is not str:
+        return False
+    try:
+        scope = capture_search_read_scope(core, context[3])
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return False
+    token = object()
+    panel._authenticated_web_request_token = token
+
+    def source_current():
+        objects = getattr(host, "search_objects", None)
+        return (type(objects) is dict and objects.get(key) is row
+                and getattr(panel, "_authenticated_web_request_token", None) is token)
+
+    def current():
+        return (source_current() and host.search_page.detail is panel
+                and get_selected() is cell
+                and host._search_detail_context_current(selected_id, context))
+
+    return request_authenticated_search_web_actions(
+        host, panel, row, reader_scope=scope, current=current,
+        source_current=source_current,
     )
 
 
 def _request_web_actions(host, panel, *, current, load, accept, resolve,
-                         authenticated=False, Gtk=None, Gio=None):
+                         authenticated=False, worker_guard=lambda: True, Gtk=None, Gio=None):
     core = getattr(host, "service", None)
     storage = getattr(core, "storage", None)
     runner = getattr(host, "runner", None)
@@ -86,7 +137,7 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
                 and getattr(core, "storage", None) is storage
                 and getattr(core, "_account_context_epoch", None) == account_epoch
                 and getattr(core, "_source_context_epoch", None) == source_epoch
-                and route_token() is route)
+                and route_token() is route and worker_guard())
 
     mapped = getattr(panel, "get_mapped", None)
 
