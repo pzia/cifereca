@@ -11,19 +11,31 @@ def _fold(value: object) -> str:
 
 
 def _values(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, Mapping):
-        # A nested provider object is not an attested bibliographic string.
-        # Its incidental values (including credentials/paths) must not become
-        # title, subject, series or search-relevance matches.
-        return []
-    if isinstance(value, (list, tuple, set, frozenset)):
-        out = []
-        for child in value:
-            out.extend(_values(child))
-        return out
-    return [str(value)]
+    # Only native scalar/container values belong to the loaded index.
+    # Never traverse mappings or run an arbitrary provider object's str(),
+    # __iter__ or repr(). Bound traversal even for malformed in-memory rows.
+    out: list[str] = []
+    stack = [(value, 0)]
+    visited = 0
+    while stack:
+        item, depth = stack.pop()
+        visited += 1
+        if visited > 4096:
+            return []
+        if depth > 8:
+            continue
+        kind = type(item)
+        if kind is str:
+            out.append(item)
+        elif kind is int and -2**63 <= item <= 2**63 - 1:
+            out.append(str(item))
+        elif kind is float or kind is bool:
+            out.append(str(item))
+        elif kind in (list, tuple, set, frozenset):
+            if len(item) > 4096 or len(stack) + len(item) > 4096:
+                return []
+            stack.extend((child, depth + 1) for child in reversed(tuple(item)))
+    return out
 
 
 def _attested_author_names(value: object) -> list[str]:
