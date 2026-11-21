@@ -49,10 +49,17 @@ def _public_baen_product_url(value):
         parts = urlsplit(value)
         if parts.query or '%' in parts.path or chr(92) in parts.path:
             return False
-        return bool(
-            re.fullmatch(r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path)
-            or re.fullmatch(r'/allbooks/[A-Za-z0-9][A-Za-z0-9._-]*', parts.path)
+        legacy = re.fullmatch(
+            r'/allbooks/([A-Za-z0-9][A-Za-z0-9._-]*)', parts.path,
         )
+        if legacy is not None:
+            return legacy.group(1).casefold() not in {
+                'category', 'catalog', 'search', 'account', 'login',
+                'checkout', 'cart', 'index', 'page', 'filter',
+            }
+        return bool(re.fullmatch(
+            r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path,
+        ))
     except ValueError:
         return False
 
