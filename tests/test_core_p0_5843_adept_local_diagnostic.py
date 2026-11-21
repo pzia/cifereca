@@ -91,3 +91,58 @@ def test_missing_or_old_db_never_initialized(tmp_path):
     report = diagnostic.diagnose_local_adept(database_path=missing)
     assert report["code"] == "schema_unsupported"
     assert missing.read_bytes() == before
+
+
+def test_exact_loan_origin_join_and_redacted_divergences(tmp_path):
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    try:
+        with store._lock, store._connect() as db:
+            for ref, credential, state in (
+                ("PRIVATE_REF_1", "PRIVATE_C", "active"),
+                ("PRIVATE_REF_2", "PRIVATE_C", "inactive"),
+                ("PRIVATE_REF_3", "PRIVATE_D", "unknown"),
+            ):
+                db.execute(
+                    "INSERT INTO source_references(source_reference_id,identity_id,provider_id,"
+                    "credential_id,account_id,branch_id,edition_id,right_id,reference_kind,"
+                    "state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,1)",
+                    (ref, "PRIVATE_A", "library1", credential, "PRIVATE_ACCOUNT",
+                     "branch", ref, ref, "loan", state))
+            for index, ref, owner, receipt in (
+                (1, "PRIVATE_REF_1", "PRIVATE_A", "PRIVATE_RECEIPT"),
+                (2, "PRIVATE_REF_1", "PRIVATE_B", ""),
+                (3, "PRIVATE_REF_3", "PRIVATE_A", "PRIVATE_OTHER_RECEIPT"),
+            ):
+                artifact = "PRIVATE_ARTIFACT_" + str(index)
+                db.execute(
+                    "INSERT INTO artifacts(artifact_id,sha256,size,media_format,"
+                    "created_at,updated_at) VALUES(?,?,1,'epub',1,1)",
+                    (artifact, format(index, "064x")))
+                db.execute(
+                    "INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
+                    "artifact_id,source_reference_id,evidence_ref,created_at,updated_at)"
+                    " VALUES(?,'adept',?,?,?,?,1,1)",
+                    ("PRIVATE_ORIGIN_" + str(index), owner, artifact, ref, receipt))
+        report = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", provider="library1",
+            credential="PRIVATE_C", account_id="PRIVATE_ACCOUNT")
+        assert report["status"] == "complete"
+        record, = report["accounts"]
+        assert record["loan_references"] == 2
+        assert record["adept_origin_records"] == 2
+        assert record["origin_owner_mismatch"] == 1
+        assert record["origin_receipt_missing"] == 1
+        assert record["origin_multiple_records"] == 1
+        assert record["loan_references_without_adept_origin"] == 1
+        assert record["loan_reference_states"] == {"active": 1, "inactive": 1, "unknown": 0}
+        assert record["current_right"] == "unknown"
+        assert report["authorization_attested"] is False
+        assert "PRIVATE" not in json.dumps(report)
+        other, = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", credential="PRIVATE_D")["accounts"]
+        assert other["adept_origin_records"] == 1
+        assert other["origin_owner_mismatch"] == 0
+        assert other["loan_reference_states"]["unknown"] == 1
+    finally:
+        store.close()
