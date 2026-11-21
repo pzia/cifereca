@@ -35,6 +35,59 @@ def _trusted_baen_url(value):
         return False
 
 
+
+def _public_baen_product_url(value):
+    """Only an exact catalogue product page may be fetched as item detail.
+
+    A Baen host alone is insufficient: login, owned downloads, cart and
+    arbitrary query routes must not be opened through a public item facade.
+    Legacy /allbooks/<slug> is retained for existing public search cards.
+    """
+    if not _trusted_baen_url(value):
+        return False
+    try:
+        parts = urlsplit(value)
+        if parts.query or '%' in parts.path or chr(92) in parts.path:
+            return False
+        legacy = re.fullmatch(
+            r'/allbooks/([A-Za-z0-9][A-Za-z0-9._-]*)', parts.path,
+        )
+        if legacy is not None:
+            return legacy.group(1).casefold() not in {
+                'category', 'catalog', 'search', 'account', 'login',
+                'checkout', 'cart', 'index', 'page', 'filter',
+            }
+        # Historical standalone Baen catalogue fixtures use a narrow
+        # /allbooks/free/<slug> product namespace. Preserve this exact
+        # path shape without admitting arbitrary /allbooks/<section>/...
+        # account, category or download endpoints.
+        if re.fullmatch(
+            r'/allbooks/free/[A-Za-z0-9][A-Za-z0-9._-]*', parts.path,
+        ):
+            return True
+        return bool(re.fullmatch(
+            r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path,
+        ))
+    except ValueError:
+        return False
+
+
+def _public_baen_item_scope(item, session):
+    """Reject known cross-credential and private collection item provenance.
+
+    Historical standalone callers omit source_credential/collection, whereas
+    actual SearchResult rows carry them. An explicitly foreign value always
+    fails closed, before any HTTP request.
+    """
+    credential = getattr(item, 'source_credential', None)
+    collection = getattr(item, 'source_collection', None)
+    return (
+        getattr(item, 'source_provider', None) == session.provider_id
+        and (credential is None or credential == session.credential_id)
+        and (collection is None or collection in ('public', 'public_catalog'))
+    )
+
+
 def _public_free_library_image_url(value):
     """Only a public, unsigned Baen catalogue image from the observed JSON.
 
@@ -528,8 +581,10 @@ class BaenSession(ProviderSession):
     def holdings(self,item,search_terms=''):
         availability = 'unknown'
         label = 'Baen : disponibilité EPUB non vérifiée'
-        if item.source_provider==self.provider_id and item.friendly_url:
-            if not _trusted_baen_url(item.friendly_url):
+        if getattr(item, 'source_provider', None) == self.provider_id and item.friendly_url:
+            if not _public_baen_item_scope(item, self):
+                raise ProviderCapabilityError('Baen : untrusted_item_scope')
+            if not _public_baen_product_url(item.friendly_url):
                 raise ProviderCapabilityError('Baen : untrusted_url')
             try:
                 response=self.client.get(item.friendly_url)
@@ -551,8 +606,9 @@ class BaenSession(ProviderSession):
         return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=item.published_at,thumbnail_url=item.thumbnail_url,availability_status=availability,availability_label=label,holdings=[],source_provider='baen',source_credential=self.credential_id)
 
     def download_direct(self,item,target_dir):
-        if item.source_provider!=self.provider_id or not item.friendly_url: raise ProviderError('Baen : fiche inconnue')
-        if not _trusted_baen_url(item.friendly_url):
+        if not _public_baen_item_scope(item, self) or not item.friendly_url:
+            raise ProviderCapabilityError('Baen : untrusted_item_scope')
+        if not _public_baen_product_url(item.friendly_url):
             raise ProviderCapabilityError('Baen : untrusted_url')
         try:
             r=self.client.get(item.friendly_url)

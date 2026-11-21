@@ -136,3 +136,66 @@ def test_download_keeps_same_origin_epub_link(tmp_path):
         assert s.transport.calls[0]["url"]==BASE + "/downloads/book.epub"
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("bad", (
+    BASE + "/customer/account/login",
+    BASE + "/download/index/owned/id/123",
+    BASE + "/allbooks/category",
+    BASE + "/allbooks/login",
+    BASE + "/allbooks/catalog",
+    BASE + "/synthetic.html?private=TOKEN",
+    BASE + "/synthetic.html#private",
+    BASE + "/allbooks/%2e%2e/login",
+    BASE + "/cart",
+))
+def test_public_detail_requires_canonical_product_path_before_http(bad, tmp_path):
+    s = rig()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="untrusted_url"):
+            s.holdings(item(bad))
+        with pytest.raises(ProviderCapabilityError, match="untrusted_url"):
+            s.download_direct(item(bad), tmp_path / "download")
+        assert s.client.calls == [] and s.transport.calls == []
+        assert not (tmp_path / "download").exists()
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("field,value", (
+    ("source_credential", "other-session"),
+    ("source_collection", "personal"),
+    ("source_collection", "account"),
+    ("source_provider", "foreign-provider"),
+))
+def test_known_foreign_scope_never_fetches_a_public_baen_item(field, value, tmp_path):
+    s = rig()
+    selected = item(BASE + "/synthetic.html")
+    selected.source_credential = s.credential_id
+    selected.source_collection = "public_catalog"
+    setattr(selected, field, value)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="untrusted_item_scope"):
+            s.download_direct(selected, tmp_path / "download")
+        if field != "source_provider":
+            with pytest.raises(ProviderCapabilityError, match="untrusted_item_scope"):
+                s.holdings(selected)
+        assert s.client.calls == [] and s.transport.calls == []
+        assert not (tmp_path / "download").exists()
+    finally:
+        s.close()
+
+
+def test_exact_public_collection_and_credential_keep_readonly_detail():
+    s = rig("<p>No public EPUB offer.</p>")
+    row = item(BASE + "/synthetic.html")
+    row.source_credential = s.credential_id
+    row.source_collection = "public_catalog"
+    try:
+        detail = s.holdings(row)
+        assert detail.availability_status == "unknown"
+        assert len(s.client.calls) == 1
+        assert s.client.calls[0][0] == BASE + "/synthetic.html"
+        assert s.transport.calls == []
+    finally:
+        s.close()
