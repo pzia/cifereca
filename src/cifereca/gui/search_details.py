@@ -232,10 +232,15 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
         self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
-        from cifereca.gui.notice_c_web_action_controller import request_selected_authenticated_web_actions
-        request_selected_authenticated_web_actions(
-            self, item, selected_id=item.id, context=self._search_detail_request_context(),
-        )
+        # A stale public row must remain purely descriptive. Do not even
+        # capture a private selection lease for an anonymous row.
+        if (getattr(item, "source_credential", None)
+                and item.source_credential != "__public__"
+                and getattr(item, "source_account_id", None)):
+            from cifereca.gui.notice_c_web_action_controller import request_selected_authenticated_web_actions
+            request_selected_authenticated_web_actions(
+                self, item, selected_id=item.id, context=self._search_detail_request_context(),
+            )
         return
     from cifereca.gui.search_detail_cover_reuse import visual_search_item
     # Re-selection must not drop a previously attested exact-source image

@@ -63,6 +63,8 @@ class LocalOriginPrivateMatch:
     comparison: str
     evidence: str
     observed_at: int | None
+    branch: str = ""
+    resource_id: str = ""
 
 
 @dataclass(frozen=True, slots=True, repr=False)

@@ -165,6 +165,7 @@ class LaRochelleCatalogueSession(ProviderSession):
         return ProviderSearchResponse(
             results=rows, public_notices=tuple(declarations),
             partial=partial, catalogue_complete=zero if query.strip() else None,
+            terminal_empty=zero and anonymous,
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:

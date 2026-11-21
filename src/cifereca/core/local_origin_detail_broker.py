@@ -242,6 +242,7 @@ class LocalOriginDetailReadBrokerImpl:
                 tuple(LocalOriginPrivateMatch(
                     row.source.edition_id, row.title, row.author, row.comparison,
                     row.evidence, row.title_observed_at,
+                    row.source.branch, row.source.resource_id,
                 ) for row in result["candidates"]), result["window_truncated"],
             )
             return report if live() else None

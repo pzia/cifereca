@@ -161,9 +161,77 @@ def test_private_choice_is_one_shot_exact_and_read_only(private_rig, change):
         assert report.status == "partial"
         match, = report.matches
         assert match.title == "Roman commun" and match.comparison == "title_author_concordant"
+        assert (match.branch, match.resource_id) == (key.branch, key.right_id)
+        assert match.observed_at is None
         assert not any((report.coverage_complete, report.fresh_network_verified,
                         report.provider_access_performed, report.association_authorized))
     else:
         assert report is None or (report.status != "partial" and not report.matches)
     assert broker.compare_private(token=choice.token, confirmed=True) is None
     assert calls == [] and rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_invalid_sibling_account_does_not_hide_exact_private_choice(private_rig):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    service, request, account, session, calls, path, key, snap = private_rig
+    service.accounts.insert(0, replace(account, provider_id=""))
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: True, confirmed=True)
+    choice, = page.private_choices
+    assert choice.provider_id == "seller" and not calls
+
+
+@pytest.mark.parametrize("change", ["none", "view", "activation", "before_worker"])
+def test_installed_detail_controller_private_action_explicit_exact_and_revocable(private_rig, change):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, request, account, session, calls, path, key, snap = private_rig
+    before, data = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    assert set(actions) == {"preview"} and not tasks and not calls
+    assert actions["preview"][2]()
+    deliver(tasks)
+    private_action = actions["private-0"][2]
+    assert not calls and len(tasks) == 1
+    assert private_action() and not private_action()
+    work, done = tasks[-1]
+    if change == "before_worker":
+        host.live = False
+    result = work()
+    if change == "view":
+        host.live = False
+    elif change == "activation":
+        active[0] = False
+    count = len(groups)
+    done(result)
+    done(result)
+    if change == "none":
+        assert len(groups) == count + 1
+        visible = repr(groups[-1])
+        assert "Occurrence : loan-1" in visible and "Branche : loans" in visible
+        assert "Date de description inconnue" in visible
+    else:
+        assert len(groups) == count
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_cached_purchase_date_is_source_date_not_refresh_time(private_rig, monkeypatch):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, request, account, session, calls, path, _, _ = private_rig
+    key, snap = new_source()
+    persist_attested_source_references(service.storage, snap)
+    monkeypatch.setattr(private, "_read_descriptive_txn", lambda db, source: NS(
+        facts=(NS(field="title", value="Roman commun", observed_at=100),
+               NS(field="author", value="Autrice", observed_at=100)), alternatives=()))
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    actions["preview"][2]()
+    deliver(tasks)
+    assert "achats" in actions["private-0"][0]
+    assert actions["private-0"][2]()
+    deliver(tasks)
+    visible = repr(groups[-1])
+    assert "1970-01-01 00:01 UTC" in visible
+    assert "Occurrence : " + key.right_id in visible
+    assert "fraîcheur réseau" not in visible and not calls

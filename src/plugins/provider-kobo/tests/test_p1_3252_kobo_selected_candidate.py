@@ -419,3 +419,59 @@ def test_kobo_native_content_get_only_counts_transient_failures(
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("failure,live,retryable", [
+    ("read_timeout", "current", True),
+    ("read_error", "current", True),
+    ("protocol_error", "current", True),
+    ("read_timeout", "consent_revoked", False),
+    ("read_error", "owner_changed", False),
+])
+def test_kobo_native_partial_stream_counts_only_current_attested_attempt(
+    tmp_path, monkeypatch, failure, live, retryable,
+):
+    from cifereca.plugin_api import RetryableContentDownload
+
+    session, vault, broker, account, posts = setup()
+    requests, chunks = [], []
+    permitted = True
+    errors = {
+        "read_timeout": httpx.ReadTimeout,
+        "read_error": httpx.ReadError,
+        "protocol_error": httpx.RemoteProtocolError,
+    }
+
+    class BrokenStream(httpx.SyncByteStream):
+        def __iter__(self):
+            nonlocal permitted
+            # Force a full transport chunk to be staged before the failure.
+            chunks.append("partial")
+            yield b"PK" + b"x" * (1024 * 1024 - 2)
+            if live == "consent_revoked":
+                permitted = False
+            elif live == "owner_changed":
+                broker.identities = ("identity-B",)
+            raise errors[failure]("SYNTHETIC_PRIVATE_FAILURE")
+
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, stream=BrokenStream(), headers={
+            "content-type": "application/epub+zip",
+        })
+
+    fake_public_client(monkeypatch, handler, [])
+    try:
+        offer = admitted(session, account)
+        with pytest.raises(ProviderCapabilityError) as error:
+            execute(session, account, offer, tmp_path,
+                    admission_current=lambda: permitted)
+        assert (type(error.value) is RetryableContentDownload) is retryable
+        assert "SYNTHETIC_PRIVATE_FAILURE" not in str(error.value)
+        assert "SYNTHETIC_PRIVATE_SIGNATURE" not in str(error.value)
+        assert chunks == ["partial"]
+        assert requests == [("GET", SIGNED)]
+        assert len(posts) == 2  # initial descriptor and exact fresh validation
+        assert not list(tmp_path.iterdir())  # no candidate or abandoned .part
+    finally:
+        session.close()

@@ -35,6 +35,7 @@ class LoanDownloadRetryRow:
     runtime_started_at: int = 0
     runtime_phase: str = ""
     local_state_invalid: bool = False
+    adept_hold_origin: str = ""
 
     @property
     def can_reset(self) -> bool:
@@ -110,9 +111,14 @@ def _ledger_hold(db, source, scopes):
     return historical_adept_ledger_hold(db, observed, source)
 
 
+def _adept_hold_origin(db, source, scopes):
+    if db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone() is not None:
+        return "marker_recorded"
+    return "historical_ledger" if _ledger_hold(db, source, scopes) else ""
+
+
 def _has_adept_hold(db, source, scopes):
-    return (db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone() is not None
-            or _ledger_hold(db, source, scopes))
+    return bool(_adept_hold_origin(db, source, scopes))
 
 
 def review_loan_download_retries(service, *, identity_id: str):
@@ -160,7 +166,8 @@ def review_loan_download_retries(service, *, identity_id: str):
             except ValueError:
                 retry = LoanDownloadRetry()
                 invalid = True
-            hold = kind == "loan" and _has_adept_hold(db, source, scopes)
+            hold_origin = _adept_hold_origin(db, source, scopes) if kind == "loan" else ""
+            hold = bool(hold_origin)
             try:
                 refused_at = read_adept_intervention(db, source)
             except ValueError:
@@ -189,7 +196,7 @@ def review_loan_download_retries(service, *, identity_id: str):
                                       if fact.field == "title"), title)
             result.append(LoanDownloadRetryRow(
                 source, title, retry, hold, state == "inactive", refused_at,
-                runtime_hold, runtime_started_at, runtime_phase, invalid,
+                runtime_hold, runtime_started_at, runtime_phase, invalid, hold_origin,
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")
