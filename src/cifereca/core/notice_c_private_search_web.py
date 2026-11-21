@@ -114,21 +114,27 @@ def capture_authenticated_search_call(service, session, identity_id):
 
 
 def _evidence(row, key, homepage):
-    if (type(row.metadata) is not dict
-            or row.metadata.get("catalogue_access") == "shared_read_only"
-            or row.metadata.get("search_provenance") is not None
+    metadata = row.metadata
+    # Evidence is a fixed native parser declaration, not an extensible
+    # provider dictionary. Refuse non-string keys before any .get() that
+    # could invoke key equality on an untrusted mapping.
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)
+            or metadata.get("catalogue_access") == "shared_read_only"
+            or metadata.get("search_provenance") is not None
             or row.owned is not None and row.owned is not False
             or row.downloadable is not None and row.downloadable is not False
             or row.download_url is not None
             or not _stable_url(row.friendly_url, homepage)):
         return None
-    raw = row.metadata.get("authenticated_web_evidence")
+    raw = metadata.get("authenticated_web_evidence")
     expected = {
         "schema": 1, "provider_id": key.provider_id, "record_id": row.record_id,
         "docbase": row.docbase, "medium": row.medium, "source_revision": row.revision_id,
         "scenario": row.scenario, "access_mode": "authenticated",
     }
-    if (type(raw) is not dict
+    if (type(raw) is not dict or len(raw) != len(expected) + 2
+            or any(type(name) is not str for name in raw)
             or set(raw) != set(expected) | {"evidence", "source_field"}
             or any(type(raw[k]) is not type(v) or raw[k] != v for k, v in expected.items())
             or type(raw["evidence"]) is not str or raw["evidence"] not in (
