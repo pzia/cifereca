@@ -138,11 +138,9 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
 
 
 def test_group_packet_creation_and_collapse_refuse_non_native_members():
-    from dataclasses import replace
     from cifereca.core.notice_c_loaded_filter import (
         attach_filter_sources, collapse_filter_sources, _FIELD, _MARKER,
     )
-    from tests.test_core_p0_6366_public_c_sqlite_source_search import verified_public
 
     class Hostile:
         def __eq__(self, other):
