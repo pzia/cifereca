@@ -65,6 +65,8 @@ def _sanitize(detail: object, book: BookRef, identity_id: str, plugin_id: str) -
     for action in detail.actions[:4]:
         if not isinstance(action, UiBookDetailAction) or not action.id or not action.title:
             continue
+        if type(action.uri) is not str:
+            continue
         uri = safe_document_link_url(action.uri, relation="related") if action.uri else ""
         if action.uri and not uri:
             continue
