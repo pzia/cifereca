@@ -22,8 +22,15 @@ def display(page):
     for row in page.entries:
         lines.extend(("", row.file))
         if row.status != "compared":
-            lines.append("Non évalué : budget, chemin ou preuves insuffisantes.")
+            if row.reason == "declared_origin_requires_review":
+                lines.append("Non évalué : origine déclarée, non attestée. Activer le filtre pour la revoir.")
+            elif row.reason in ("declaration_scope_unverified", "declaration_evidence_unavailable"):
+                lines.append("Non évalué : preuve de déclaration indisponible ou ambiguë.")
+            else:
+                lines.append("Non évalué : budget, chemin ou preuves insuffisantes.")
             continue
+        if row.reason == "declared_unverified_comparison":
+            lines.append("Origine déclarée par l’utilisateur, non attestée ; déclaration conservée.")
         lines.append(f"{row.known_matches} correspondance(s) connue(s) ; absence non prouvée.")
         for m in row.suggestions:
             lines.append(" · ".join(part for part in (
@@ -32,7 +39,10 @@ def display(page):
                 "Notice ancienne" if m.stale else "Notice en cache",
             ) if part))
         if row.more_matches:
-            lines.append("Autres correspondances : poursuivre depuis la fiche Bibliothèque.")
+            if row.reason == "declared_unverified_comparison":
+                lines.append("Autres correspondances possibles ; comparaison limitée aux notices connues.")
+            else:
+                lines.append("Autres correspondances : poursuivre depuis la fiche Bibliothèque.")
     if not page.entries:
         lines.append("Aucun candidat enregistré sur cette page ; couverture physique non attestée.")
     if page.has_more and not page.can_continue:
@@ -51,8 +61,10 @@ class BatchController:
         return (not self.disposed and self.active() and self.host.is_current()
                 and self.host.identity_id == self.identity)
 
-    def request(self, *, restart):
-        if self.stop is not None or not self.current():
+    def request(self, *, restart, include_declared=False):
+        if (type(include_declared) is not bool or type(restart) is not bool
+                or (not restart and include_declared)
+                or self.stop is not None or not self.current()):
             return False
         old = self.page
         if not restart and (old is None or not old.can_continue):
@@ -75,7 +87,10 @@ class BatchController:
                 return None
             try:
                 if restart:
-                    result = self.broker.preview(identity_id=self.identity, confirmed=True, cancelled=cancelled)
+                    options = {"identity_id": self.identity, "confirmed": True, "cancelled": cancelled}
+                    if include_declared:
+                        options["include_declared"] = True
+                    result = self.broker.preview(**options)
                 else:
                     result = self.broker.next_page(token=old.token, confirmed=True, cancelled=cancelled)
             except Exception:
@@ -170,7 +185,7 @@ class OriginPlugin:
     def describe(self):
         return MaintenanceToolInfo(
             id="maintenance.library.local-origin", title="Suggestions de provenance — par lots",
-            description="Comparer les fichiers sans origine connue aux notices publiques en cache. Lecture seule.",
+            description="Comparer les fichiers sans provenance attestée aux notices publiques en cache. Lecture seule.",
             icon_name="system-search-symbolic", scope="identity", danger_level="read-only",
             supports_dry_run=True, cancellable=True,
         )
@@ -200,6 +215,10 @@ class OriginPlugin:
         row.add_suffix(start)
         group.add(row)
         outer.append(group)
+        include = Gtk.CheckButton(label="Inclure les origines déclarées non attestées")
+        include.set_active(False)
+        include.set_tooltip_text("Comparaison en cache uniquement. Aucune modification de la déclaration.")
+        outer.append(include)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         following, cancel = Gtk.Button(label="Page suivante"), Gtk.Button(label="Annuler")
         following.set_sensitive(False)
@@ -215,6 +234,7 @@ class OriginPlugin:
 
         def render(page, state):
             ready = state == "ready"
+            include.set_sensitive(ready)
             start.set_sensitive(ready)
             following.set_sensitive(ready and page is not None and page.can_continue)
             cancel.set_sensitive(state == "busy")
@@ -223,7 +243,19 @@ class OriginPlugin:
                              "cancelling": "Arrêt demandé…"}.get(state, display(page)))
 
         controller = self.controller(host, render)
-        start.connect("clicked", lambda _b: controller.request(restart=True))
+        # Capture the toggle on the UI thread at the explicit preview click.
+        # Continuation always uses the broker cursor, never the live widget.
+        start.connect("clicked", lambda _b: controller.request(
+            restart=True, include_declared=include.get_active()))
+        def filter_changed(_button):
+            if controller.stop is not None:
+                return
+            if controller.page is not None:
+                controller._cancel_token(controller.page.token)
+                controller.page = None
+            following.set_sensitive(False)
+            detail.set_visible(False)
+        include.connect("toggled", filter_changed)
         following.connect("clicked", lambda _b: controller.request(restart=False))
         cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)
