@@ -146,11 +146,37 @@ def _snapshot(db, *, identity, provider, credential, account_id):
         return counts
 
     origins = defaultdict(list)
-    for ref, owner, receipt in _rows(db,
-            "SELECT source_reference_id,identity_id,"
-            "CASE WHEN length(evidence_ref)>0 THEN 1 ELSE 0 END "
-            "FROM origin_links WHERE origin_kind='adept'"):
-        origins[ref].append((owner, receipt))
+    unscoped_origins = Counter()
+    for ref, owner, receipt, artifact, digest, size, reference_kind in _rows(db,
+            "SELECT o.source_reference_id,o.identity_id,"
+            "CASE WHEN length(CAST(o.evidence_ref AS BLOB)) BETWEEN 1 AND 1024 "
+            "THEN o.evidence_ref END,o.artifact_id,a.sha256,a.size,s.reference_kind "
+            "FROM origin_links o LEFT JOIN artifacts a ON a.artifact_id=o.artifact_id "
+            "LEFT JOIN source_references s ON s.source_reference_id=o.source_reference_id "
+            "WHERE o.origin_kind='adept'"):
+        if ref is None:
+            # Manual imports can legitimately have no supplier reference.
+            unscoped_origins[(owner, "adept_origins_without_source_reference")] += 1
+        elif reference_kind is None:
+            unscoped_origins[(owner, "adept_origins_dangling_source_reference")] += 1
+        elif reference_kind == "loan":
+            artifact_valid = (
+                type(digest) is str and len(digest) == 64
+                and all(c in "0123456789abcdef" for c in digest)
+                and artifact == "sha256:" + digest and type(size) is int and size > 0
+            )
+            origins[ref].append((owner, _coordinate(receipt), artifact, artifact_valid))
+
+    placements = defaultdict(set)
+    # No path, filesystem, title or content read: states are SQL records only.
+    for artifact, owner, state in _rows(db,
+            "SELECT DISTINCT p.artifact_id,p.identity_id,p.state FROM placements p "
+            "JOIN (SELECT DISTINCT artifact_id FROM origin_links WHERE origin_kind='adept') o "
+            "ON p.artifact_id=o.artifact_id"):
+        placements[(artifact, owner)].add(
+            state if state in {"present", "missing", "unverified", "dedup_cleanup_pending"}
+            else "other"
+        )
 
     def historical_states(scope, refs, grant):
         pairs = Counter((edition, right) for _, _, edition, right in refs)
@@ -282,8 +308,17 @@ def _snapshot(db, *, identity, provider, credential, account_id):
             "account": index, "connection": connection_state,
             "identity_binding": binding_state(owner), "borrower_grant": grant,
             "loan_references": len(refs), "adept_origin_records": len(linked),
-            "origin_owner_mismatch": sum(1 for o, _ in linked if o != owner),
-            "origin_receipt_missing": sum(1 for _, receipt in linked if not receipt),
+            "origin_owner_mismatch": sum(1 for o, _, _, _ in linked if o != owner),
+            "origin_receipt_missing": sum(1 for _, receipt, _, _ in linked if not receipt),
+            "origin_artifact_unverified": sum(not valid for _, _, _, valid in linked),
+            "origin_without_same_identity_placement": sum(
+                not placements.get((artifact, owner))
+                for origin_owner, receipt, artifact, valid in linked
+                if origin_owner == owner and receipt and valid),
+            "origin_without_same_identity_present_record": sum(
+                "present" not in placements.get((artifact, owner), ())
+                for origin_owner, receipt, artifact, valid in linked
+                if origin_owner == owner and receipt and valid),
             "origin_multiple_records": sum(len(origins[ref]) > 1 for ref, _state, _edition, _right in refs),
             "loan_references_without_adept_origin": sum(not origins[ref] for ref, _state, _edition, _right in refs),
             "loan_reference_states": {
@@ -317,6 +352,10 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                            if identity is None or owner == identity}
         profile_records = dict(sorted(Counter(binding_state(owner)
                                                for owner in selected_owners).items()))
+        for label in ("adept_origins_without_source_reference",
+                      "adept_origins_dangling_source_reference"):
+            counts[label] = sum(count for (owner, kind), count in unscoped_origins.items()
+                                if kind == label and (identity is None or owner == identity))
         counts["orphan_identity_bindings"] = sum(
             owner not in identities and (identity is None or owner == identity)
             for owner in bindings)
@@ -330,6 +369,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                 (identity, provider, credential, account_id)) else "filtered",
             "counts": counts, "accounts": records,
             "recorded_identity_profile_states": profile_records,
+            "physical_bytes_checked": False,
             "profile_inventory": "unknown", "provisioning": "unknown",
             "current_rights": "unknown"}
 
