@@ -1089,6 +1089,15 @@ class BnfProviderSession(ProviderSession):
                     or (content_types and 'ebook' not in content_types)):
                 raise ProviderCapabilityError('unsupported_content_type')
             epoch = self._epoch
+            # Capture only inert account coordinates before the existing
+            # catalogue read. Legacy unconnected catalogue use remains
+            # descriptive and cannot declare an authenticated reference.
+            account = self._accounts[0] if (
+                self.connected is True and len(self._accounts) == 1
+                and type(self._accounts[0]) is Account) else None
+            account_scope = ((account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+                     if account is not None else None)
             try:
                 records, warnings = read_search(
                     self.client, query, is_current=lambda: not self._closed and epoch == self._epoch,
@@ -1102,7 +1111,35 @@ class BnfProviderSession(ProviderSession):
             self.last_search_warnings = [
                 _public_code(ReaderHTTPError(code)) for code in warnings
             ]
-            return [self._search_result(record) for record in records]
+            # The proof means the native resource link was seen during
+            # this connected read. It neither proves that the site always
+            # requires login nor supplies any right or session credential.
+            qualified = (
+                account is not None and account_scope is not None
+                and all(type(value) is str and 0 < len(value) <= 160
+                        and value.isprintable() for value in account_scope)
+                and account_scope[1:] == (self.provider_id, self.credential_id, account.unique_id)
+                and self.connected is True and len(self._accounts) == 1
+                and self._accounts[0] is account
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id) == account_scope
+                and not any(code in warnings for code in ("partial_search", "ambiguous_search"))
+            )
+            rows = []
+            for record in records:
+                row = self._search_result(record)
+                if qualified and record.web_reference_evidence is True:
+                    row.source_account_id = account_scope[3]
+                    row.metadata["authenticated_web_evidence"] = {
+                        "schema": 1, "provider_id": row.source_provider,
+                        "record_id": row.record_id, "docbase": row.docbase,
+                        "medium": row.medium, "source_revision": row.revision_id,
+                        "scenario": row.scenario, "access_mode": "authenticated",
+                        "source_field": "results.Book.resource_link",
+                        "evidence": "bnf-pret.authenticated_search_record_identifier",
+                    }
+                rows.append(row)
+            return rows
 
     def _search_result(self, record):
         language = normalize_language_tag(record.language) if record.language else None
