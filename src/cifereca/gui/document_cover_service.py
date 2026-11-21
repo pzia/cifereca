@@ -613,6 +613,26 @@ class DocumentCoverService:
                 with self._lock:
                     waiters = self._qualify_waiters.pop(key, [])
                     self._qualify_active.discard(key)
+                    if changed:
+                        lease = self._qualified_fallback.get(document)
+                        if (self._closed or self._snapshots.get(document) is not snapshot
+                                or lease is None or lease.revision != snapshot.revision
+                                or self.decisions.selected_token(
+                                    document, revision=lease.revision, uri=lease.url,
+                                ) != lease.token):
+                            waiters = []
+                        else:
+                            # The other surface may still be waiting for N3.
+                            # Once CAS revokes its embedded token, its late
+                            # delivery is discarded and cannot join waiters.
+                            # Notify all exact old-source subscriptions once,
+                            # including those that have not failed N3 yet.
+                            listeners = self._source_subscriptions.get(document, {})
+                            by_handle = dict(waiters)
+                            for subscriber, callback in listeners.values():
+                                if subscriber.source_uri == snapshot.embedded.candidate.url:
+                                    by_handle.setdefault(subscriber, callback)
+                            waiters = list(by_handle.items())
                     if not changed and not self._closed:
                         self._qualify_cooldown[key] = self._clock() + 15.0
                         self._qualify_cooldown.move_to_end(key)
@@ -1047,6 +1067,11 @@ class DocumentCoverService:
                 if snapshot is not None and decision is not None
                 and decision.status == "selected" else None
             )
+            # Publish the captured URI under the same service lock as the
+            # token. A concurrent fallback CAS must see every subscribed
+            # old-source handle even before its N3 call has started.
+            if selected_token is not None:
+                handle._source_uri = decision.uri
             elapsed_ms = (perf_counter() - started) * 1000
             if math.isfinite(elapsed_ms) and elapsed_ms >= 0:
                 self._n2_recent[outcome].append(elapsed_ms)
@@ -1080,10 +1105,6 @@ class DocumentCoverService:
                 self.refresh_cached_source_if_newer(document, minimum_revision)
             callback(None)
             return handle
-        # The return handle exposes the N2 source before any synchronous
-        # N3 cache-hit callback can be painted on GTK's idle queue.
-        handle._source_uri = decision.uri
-
         def selected_now() -> bool:
             with self._lock:
                 return (
