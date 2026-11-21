@@ -6,9 +6,9 @@ activation, physical bytes or permission to repair. No network or FS probe.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import sqlite3
 
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 
 _MAX_ROWS = 256
@@ -18,18 +18,6 @@ _MAX_ID = 1024
 def _id(value):
     return (type(value) is str and 0 < len(value) <= _MAX_ID
             and all(ord(ch) >= 32 and ord(ch) != 127 for ch in value))
-
-
-@contextmanager
-def _historical_snapshot(storage):
-    """Borrow only an idle SQLite connection, never settle the caller's work."""
-    with storage._lock:
-        db = storage._connect()
-        if db.in_transaction:
-            raise RuntimeError("adept_historical_nested_transaction")
-        with db:
-            db.execute("BEGIN")
-            yield db
 
 
 def review_legacy_adept_publication(storage, *, source: SourceKey):
@@ -50,7 +38,7 @@ def review_legacy_adept_publication(storage, *, source: SourceKey):
         return result("scope_unverified")
     scope = source.scope
     try:
-        with _historical_snapshot(storage) as db:
+        with historical_read_snapshot(storage) as db:
             references = db.execute(
                 "SELECT source_reference_id FROM source_references "
                 "WHERE identity_id=? AND provider_id=? AND credential_id=? "
