@@ -54,7 +54,7 @@ def _native_reader_scope(scope, service):
             and scope.service is service
             and type(scope.identity_id) is str
             and 0 < len(scope.identity_id) <= 1024
-            and not any(char in scope.identity_id for char in "\\x00\\r\\n")
+            and not any(ord(char) in (0, 10, 13) for char in scope.identity_id)
             and type(scope.source_epoch) is int and scope.source_epoch >= 0)
 
 
