@@ -203,3 +203,28 @@ def test_nested_provenance_cannot_move_proof_to_another_edition(proof, typed):
 def test_nested_provenance_accepts_exact_edition_or_independent_authority(proof):
     row = book("edition", ages=[{**statement(8, 12), "provenance": proof}])
     assert attested_age_status(row, 9) == "match"
+
+@pytest.mark.parametrize("label", [
+    "x" * 121,
+    ["à partir de 8 ans"],
+    {"raw": "PRIVATE"},
+    None,
+])
+def test_typed_age_label_obeys_same_bounded_native_wire_contract(label):
+    # YouthAgeRange validates ages and confidence at construction, but does
+    # not enforce the declared type/length of its source_label field.
+    # A plugin-supplied typed object must not bypass the dict-wire fence.
+    typed = YouthAgeRange(8, 12, "publisher", source_label=label,
+                          provenance=Provenance("bnf", source_id="edition"))
+    assert attested_age_ranges(book("edition", ages=[typed])) == ()
+    assert attested_age_status(book("edition", ages=[typed]), 9) == "unknown"
+
+
+def test_typed_age_label_with_valid_exact_provenance_remains_attested():
+    valid = YouthAgeRange(8, 12, "publisher", source_label="x" * 120,
+                          provenance=Provenance("bnf", source_id="edition"))
+    assert attested_age_ranges(book("edition", ages=[valid])) == (valid,)
+    assert attested_age_status(book("edition", ages=[valid]), 9) == "match"
+    # An invalid typed sibling cannot replace independently valid evidence.
+    bad = YouthAgeRange(8, 12, "publisher", source_label="x" * 121)
+    assert attested_age_ranges(book("edition", ages=[bad, valid])) == (valid,)
