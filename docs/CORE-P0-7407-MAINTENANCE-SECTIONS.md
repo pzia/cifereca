@@ -20,4 +20,11 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue, capacité et simulation ; pas de reprise effective |
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
 
-Restent à livrer : dissociation capacité/reprise dans le package variantes, suggestions détaillées par livre (rapport agrégé livré, aucune correction), renvois des actions historiques et recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
+Restent à livrer : dissociation capacité/reprise dans le package variantes, suggestions détaillées par livre (rapport agrégé livré, aucune correction), recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
+
+## Migration des anciens accès
+
+- Les anciennes commandes de nommage, renormalisation et doublons restent identifiées comme suspendues dans Organisation ; le parcours guidé est l'entrée de revue. Aucune des anciennes commandes n'est réactivée.
+- Le renvoi déclaratif Organisation → Reprise ne lance pas un plan : il déplace seulement le focus sur le groupe des opérations interrompues, dont les tombstones existants. Le contrôle et la confirmation restent dans l'unique commande propriétaire.
+- Synchronisation et Reprise utilisent le même dialogue de téléchargements ; les verrous ADEPT ambiguës restent non réarmables.
+- Les états indisponibles distinguent garde de sécurité, port absent, contrat incompatible, configuration/dépendance absente et désactivation, sans exposer le diagnostic privé.
