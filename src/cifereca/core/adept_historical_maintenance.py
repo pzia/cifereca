@@ -203,7 +203,8 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
         return None
 
 
-def run_historical_hold_review(service, request, *, offset=0):
+def run_historical_hold_review(service, request, *, offset=0,
+                               verify_local_bytes=False):
     """Project the existing retry queue, not a second marker inventory.
 
     A v1 marker can exist before any acquisition ledger receipt. This
@@ -214,7 +215,8 @@ def run_historical_hold_review(service, request, *, offset=0):
     from .loan_download_retry_review import review_loan_download_retries
 
     if (type(request) is not HistoricalReviewRequest or request.service is not service
-            or type(offset) is not int or not 0 <= offset <= 2048):
+            or type(offset) is not int or not 0 <= offset <= 2048
+            or type(verify_local_bytes) is not bool):
         return None
     try:
         if not request.bound():
@@ -225,7 +227,27 @@ def run_historical_hold_review(service, request, *, offset=0):
         reports = []
         for row in blocked[offset:offset + _PAGE]:
             source = row.source
+            copy_state = "not_requested"
+            if verify_local_bytes:
+                # Existing bounded no-follow verifier; a present SHA is not
+                # replay proof, and an unavailable file is not a negative A.
+                diagnostic = review_historical_loan_diagnostic(
+                    request.storage, source=source, library_root=request.root,
+                    inventory_profile_id="", inventory_complete=False,
+                    inventory_loans=(), verify_local_bytes=True,
+                )
+                local = diagnostic.get("local_bytes")
+                witness = local.get("evidence") if type(local) is dict else None
+                copy_state = (
+                    "verified_local_copy_observed"
+                    if (type(local) is dict
+                        and local.get("selection") == "unique_recorded_candidate"
+                        and type(witness) is dict
+                        and witness.get("placement_evidence") == "verified_artifact_bytes")
+                    else "not_proven"
+                )
             reports.append({
+                "local_copy_evidence": copy_state,
                 "provider_id": source.scope.provider_id,
                 "credential_id": source.scope.credential_id,
                 "account_id": source.scope.account_id,
