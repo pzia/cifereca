@@ -20,7 +20,10 @@ from cifereca_numilog_public_client import (
     fetch_public_search, fetch_public_search_url, public_search_url,
     _RetainedSearchPage, _parse_retained_search_input, _transport_digest,
 )
-from cifereca_numilog_public import PublicSearchPage, PublicSearchParseError, _query
+from cifereca_numilog_public import (
+    PublicSearchPage, PublicSearchParseError, _query,
+    requested_public_formats, filter_public_formats,
+)
 
 # Navigation URLs are server-attested capability links: they are not arbitrary
 # user-provided endpoints or unchecked faceted query parameters.
@@ -624,27 +627,13 @@ class NumilogPublicSession(ProviderSession):
         # Federated Core requests a foreign/ownerless session with the
         # conservative "catalog" scope. This session has NO private content:
         # its only supported upstream operation is an anonymous catalogue.
-        if (type(content_types) not in (tuple, list, set, frozenset)
-                or len(content_types) > 32
-                or any(type(value) is not str or not 0 < len(value) <= 80
-                       for value in content_types)):
-            raise ProviderCapabilityError("Numilog public : unsupported_content_type")
-        requested = {value.casefold() for value in content_types} - {"all"}
+        requested = requested_public_formats(content_types)
         normalized_scope = "all" if scope == "catalog" else scope
         rows, complete = self._search_public_page(query, normalized_scope, field=field)
-        partial = bool(requested - {"ebook", "epub", "pdf"})
-        if requested and "ebook" not in requested:
-            # Only the independent singleton bibliographic format is
-            # attested here. Selected price/format is not a file receipt.
-            formats = requested & {"epub", "pdf"}
-            if formats and any(row.format is None for row in rows):
-                partial = True
-            rows = [row for row in rows if type(row.format) is str
-                    and row.format.casefold() in formats]
-            complete = False
+        rows, partial, complete = filter_public_formats(rows, requested, complete)
         return ProviderSearchResponse(
             results=list(rows), partial=partial,
-            catalogue_complete=None if partial else complete,
+            catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
         )
 
