@@ -625,8 +625,80 @@ def main():
         until(
             lambda: preview_button[0].get_mapped()
             and not w.view_stack.get_transition_running(),
-            begin_busy,
+            guided_actions if args.width == 1366 else begin_busy,
         )
+
+    def guided_actions():
+        # Actual installed plugins, actual Core ports, actual worker/GTK
+        # callbacks. The legacy XTEST campaign below remains unchanged.
+        # Emit the exact native action signals here (not a pointer-geometry
+        # proof); rows below the viewport need not be scrolled into view.
+        checks = (
+            ("Organiser la bibliothèque", "Prévisualiser…",
+             "Aperçu partiel du nommage", "organizer_preview"),
+            ("Suggestions de provenance — par lots", "Prévisualiser…",
+             "Aucune origine, association ou licence créée.", "origin_preview"),
+            ("Publications dérivées interrompues", "Examiner…",
+             "Aucune reprise ni suppression autorisée.", "derived_overview"),
+            ("Capacité du journal des variantes", "Mesurer…",
+             "Aucun quota libéré, aucun octet récupérable attesté.", "derived_capacity"),
+            ("Sélection des publications interrompues", "Lister…",
+             "coordonnées non vérifiées. Aucune reprise ni suppression.", "derived_list"),
+        )
+        storage = core.library.storage
+
+        def durable_counts():
+            with storage._lock:
+                db = storage._connect()
+                return tuple(db.execute("SELECT count(*) FROM " + table).fetchone()[0]
+                             for table in ("artifacts", "placements", "origin_links",
+                                           "acquisition_ledger", "entitlements"))
+
+        before = durable_counts()
+
+        def step(index=0):
+            if index == len(checks):
+                assert durable_counts() == before, "Read-only guided actions changed inventory"
+                assert tool.plan_calls == tool.run_calls == 0
+                report["checks"]["P0_7100_guided_actions_no_inventory_mutation"] = True
+                capture("00-guided-actions")
+                # Clear expanded text and restore the exact old XTEST layout.
+                refresh_tools()
+                preview_button[0] = next(b for b in walk(window[0]._tools_box)
+                    if isinstance(b, Gtk.Button)
+                    and getattr(b, "_cifereca_action_label", "") == "Prévisualiser…")
+                until(lambda: preview_button[0].get_mapped(), begin_busy)
+                return
+            title, action, expected, key = checks[index]
+            row, = (node for node in walk(window[0]._tools_box)
+                    if isinstance(node, Adw.ActionRow) and node.get_title() == title)
+            button, = (node for node in walk(row)
+                       if isinstance(node, Gtk.Button) and node.get_label() == action)
+            assert button.get_sensitive()
+            # Find the exact plugin contribution, never another label with
+            # coincidentally matching text from the host or another row.
+            outer = row
+            while outer.get_parent() is not window[0]._tools_box:
+                outer = outer.get_parent()
+                assert outer is not None
+            assert not any(expected in node.get_text() for node in walk(outer)
+                           if isinstance(node, Gtk.Label))
+            button.emit("clicked")
+            assert not button.get_sensitive(), "Guided worker not admitted"
+
+            def observed():
+                return button.get_sensitive() and any(
+                    expected in node.get_text() for node in walk(outer)
+                    if isinstance(node, Gtk.Label) and node.get_visible()
+                )
+
+            def received():
+                report["checks"]["P0_7100_real_guided_" + key] = True
+                step(index + 1)
+
+            until(observed, received)
+
+        step()
 
     def begin_busy():
         gtk_phase_2027("maint_busy_guard")
