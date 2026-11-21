@@ -57,6 +57,30 @@
       "requires_contracts": []
     },
     {
+      "id": "maintenance.audit.metadata",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:METADATA_AUDIT",
+      "display_name": "Vérifier les métadonnées",
+      "description": "Audit descriptif des titres, auteurs, éditeurs et dates sur preuves C retenues.",
+      "version": "0.2.11",
+      "priority": 49,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Rapport agrégé partiel : divergences littérales et champs à compléter ; aucun choix automatique, aucun accès réseau.",
+      "capabilities": [
+        "maintenance.audit",
+        "maintenance.audit.metadata",
+        "maintenance.group.quality"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "catalog"
+      ],
+      "requires_contracts": []
+    },
+    {
       "id": "maintenance.audit.integrity",
       "type": "maintenance.tool",
       "entrypoint": "cifereca_library_audits:INTEGRITY_AUDIT",
