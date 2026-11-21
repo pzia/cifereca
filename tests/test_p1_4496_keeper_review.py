@@ -195,3 +195,35 @@ def test_already_single_copy_yields_no_automatic_deletion(store, tmp_path):
         "blocked", "insufficient_ordinary_copies", False,
     )
     assert store.placement_get(pair[0].placement_id)["state"] == "present"
+
+
+@pytest.mark.parametrize("reader", ["keeper", "pair"])
+def test_advice_never_settles_caller_transaction(store, tmp_path, reader):
+    from cifereca.core.canonical_dedup_preview import preview_canonical_duplicate
+    root, pair = setup_copies(store, tmp_path, (
+        f"Acquisitions/{SHA}.pdf",
+        "Livres/Auteur/Autrice - Roman.pdf",
+    ))
+    def review():
+        if reader == "keeper":
+            return check(store, root)
+        return preview_canonical_duplicate(
+            store, library_root=root, candidate_placement_id=pair[0].placement_id,
+            keeper_placement_id=pair[1].placement_id,
+        )
+
+    db = store._connect()
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", ("synthetic.4496", "pending"))
+        result = review()
+        assert (result.status, result.reason) == ("blocked", "nested_transaction")
+        assert db.in_transaction
+        assert db.execute("SELECT value FROM metadata WHERE key='synthetic.4496'").fetchone() == ("pending",)
+        db.rollback()
+        assert store.metadata_get("synthetic.4496") is None
+        assert review().status == ("review_required" if reader == "keeper" else "unreferenced")
+        assert all(store.placement_get(x.placement_id)["state"] == "present" for x in pair)
+    finally:
+        if db.in_transaction:
+            db.rollback()
