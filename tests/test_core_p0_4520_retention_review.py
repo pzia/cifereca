@@ -109,3 +109,48 @@ def test_nested_snapshot_never_commits_caller_transaction(tmp_path):
         if sql.in_transaction:
             sql.rollback()
         db.close()
+
+
+@pytest.mark.parametrize("relation", ["output_alias", "input_alias", "different_inode"])
+def test_recorded_inode_dependency_agrees_in_both_retention_reviews(tmp_path, relation):
+    from cifereca.core import derived_variant_retention_convergence as combined
+
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        # Synthetic pending receipt with fully distinct paths. Recorded inode
+        # identity, not equal content or a shared parent path, is the veto.
+        output = intent.output_stamp
+        parent = intent.parent_stamp
+        distinct_inode = (output[0], output[1] + 1000000, *output[2:])
+        other = replace(
+            intent, options_fingerprint="inode-dependency",
+            parent_path=str(Path(intent.parent_path).with_name("other-parent.epub")),
+            staged_path=str(Path(intent.staged_path).with_name("other-stage.epub")),
+            candidate_path=str(Path(intent.candidate_path).with_name("other-output.epub")),
+            output_stamp=output if relation == "output_alias" else distinct_inode,
+            parent_stamp=(
+                (output[0], output[1], *parent[2:])
+                if relation == "input_alias" else parent
+            ),
+        )
+        pending = journal.reserve_derived_publication(db, other)
+        before = journal.summarize_derived_journal(db)
+        report = _review(db)
+        _, _, owned = combined._snapshot(db, intent.identity_id)
+        _, _, _, verdict = owned[0]
+        dependent = relation != "different_inode"
+        assert report["counts"]["dependent_receipt_or_staging_placement"] == int(dependent)
+        if dependent:
+            assert verdict == "known_dependency"
+        else:
+            assert report["counts"]["canonical_sql_witness"] == 1
+            # Broader dependency scanner may still be conservative.
+            assert verdict in ("canonical", "known_dependency", "external_dependency_unverified")
+        assert not report["retention_authorized"]
+        assert db.metadata_get(pending.key) is not None
+        assert journal.summarize_derived_journal(db) == before
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
