@@ -182,6 +182,30 @@ def test_primary_field_provenance_survives_eviction_and_restart(tmp_path):
                        {**item, "identity_id": "bob"},
                        {**item, "metadata": {**meta, "series": ["Other"], "languages": ["fr"]}}):
             assert not any(f.provenance for sec in present(forged).sections for f in sec.fields)
+        # A view row can be modified after its Core receipt was attached.
+        # Never call an injected object's equality or decorate that field
+        # with trusted provenance; the independent other field still qualifies.
+        class HostileEquals:
+            def __eq__(self, other):
+                raise AssertionError("provider-defined equality executed")
+
+        from cifereca.gui.search_known_public_c_bibliography import (
+            with_known_public_field_provenance,
+        )
+        authentic = book_detail_presentation(
+            title=item["title"], metadata=known_public_detail_metadata(meta),
+        )
+        for field_name, untrusted_value, lost_label, surviving_label in (
+            ("series", HostileEquals(), "Série", "Langue"),
+            ("languages", [HostileEquals()], "Langue", "Série"),
+            ("series", ("Cycle Orion",), "Série", "Langue"),
+            ("languages", ("ja",), "Langue", "Série"),
+        ):
+            modified = {**item, "metadata": {**meta, field_name: untrusted_value}}
+            safe = with_known_public_field_provenance(authentic, modified)
+            by_label = {f.label: f for sec in safe.sections for f in sec.fields}
+            assert by_label[lost_label].provenance is None
+            assert by_label[surviving_label].provenance is not None
         assert db.entitlements() == [] and db.acquisitions() == []
 
 
