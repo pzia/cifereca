@@ -6,14 +6,13 @@ selected entitlement and the same attested operational source occurrence.
 """
 from dataclasses import dataclass
 import os
-from pathlib import Path
 from threading import Lock
 
 from ..epub_metadata import inspect_epub
 from .canonical_publication import _stable
 from .derived_variant_publication import _file_signature
 from .library_declared_links import (
-    DeclarationRejected, declare_local_link, _admit_declaration_command,
+    declare_local_link, _admit_declaration_command,
 )
 from .library_inventory import FileObservation, _fingerprint, _open_root
 from .library_sqlite_freshness import sqlite_source_stamp
@@ -179,7 +178,8 @@ def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
                                    still_current=lambda: True):
     """Consume an exact refreshed preview through the existing single writer.
 
-    This admits a one-shot Core command, not a provider download. The existing
+    Worker-only admission: the repeated bounded SHA/structure reads must not
+    run on GTK. This admits a one-shot Core command, not a provider download. The existing
     authority owns the acquisition lock, FULL transaction, exact diff token,
     file SHA recheck and historical revocation. No new persistent namespace.
     """
@@ -200,6 +200,8 @@ def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
             options=_options(preview.candidate, preview.observation),
             confirmation=preview.token,
         )
+        if sqlite_source_stamp(request.database) != preview.stamp:
+            return None
     except Exception:
         return None
     lock, used = Lock(), False
@@ -211,12 +213,14 @@ def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
                 return None
             used = True
         try:
-            if still_current() is not True or not request.current():
+            binding = _binding(service, request, preview.choice.account, preview.choice.scope)
+            if (still_current() is not True or binding is None
+                    or not all(a is b for a, b in zip(preview.choice.binding, binding))):
                 return None
             if sqlite_source_stamp(request.database) != preview.stamp:
                 return None
             return command()
-        except DeclarationRejected:
+        except Exception:
             return None
 
     return work
