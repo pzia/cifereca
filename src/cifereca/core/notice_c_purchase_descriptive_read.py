@@ -96,8 +96,15 @@ def _read_descriptive_txn(db, source):
         for field, value in values:
             if value is None:
                 continue
-            if type(value) is not str or not value.strip():
+            if type(value) is not str:
                 return None
+            if not value.strip():
+                # Optional blank scalars are admitted by the source and
+                # canonical decoders. Like the field-delta comparator,
+                # treat them as absent rather than discarding valid facts.
+                if field == "title":
+                    return None
+                continue
             facts.append(PurchaseDescriptiveFact(
                 field, value, member.provider_id, member.source_ref,
                 member.source_revision, member.observed_at,
