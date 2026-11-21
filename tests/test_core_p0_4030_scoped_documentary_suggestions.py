@@ -144,3 +144,75 @@ def test_non_native_epub_catalogue_text_is_not_silently_ignored(
     assert report["status"] == "excluded"
     assert report["reason"] == "catalogue_evidence_unavailable"
     assert path.is_file()
+
+
+
+def _record_declaration(store, path, *, identity="A", state="active", relation="a" * 32):
+    """Exact #2797 wire fixture; no new supplier relation or OriginLink."""
+    from cifereca.core.library_declared_links import _PREFIX, _json
+    from cifereca.core.library_inventory import _fingerprint
+    import hashlib
+    record = {
+        "version": 1, "relation_id": relation, "state": state,
+        "origin": "user_declaration", "created_at": 1,
+        "revoked_at": None if state == "active" else 2,
+        "scope": {"identity_id": identity, "provider_id": "seller",
+                  "credential_id": "card-A", "account_id": "buyer-A", "item_id": "edition"},
+        "file": {"path": str(path), "size": path.stat().st_size,
+                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                 "fingerprint": list(_fingerprint(path.stat()))},
+        "right_state": {"entitlement_id": "right", "entitlement_type": "owned",
+                        "state": "active", "loan_id": None, "expires_at": None},
+    }
+    store.metadata_set(_PREFIX + relation, _json(record))
+    return record
+
+
+@pytest.mark.parametrize("kind", ["path", "hardlink", "foreign", "same_sha", "revoked", "corrupt"])
+def test_existing_declaration_is_distinct_from_attested_origin(store, tmp_path, kind):
+    from cifereca.core.library_declared_links import _PREFIX
+    import os
+    root, path, pid, _ = _setup(store, tmp_path)
+    other = path.with_name("another.pdf")
+    if kind == "hardlink":
+        os.link(path, other)
+    elif kind == "same_sha":
+        other.write_bytes(path.read_bytes())
+    else:
+        other = path
+    if kind == "corrupt":
+        store.metadata_set(_PREFIX + "a" * 32, "broken-json")
+    else:
+        _record_declaration(store, other, identity="B" if kind == "foreign" else "A",
+                            state="revoked" if kind == "revoked" else "active")
+    before = rows(store)
+    normal = _request(store, root, pid)
+    explicit = _request(store, root, pid, include_declared=True)
+    if kind in ("path", "hardlink"):
+        assert normal["reason"] == "declared_origin_requires_review"
+        assert normal["suggestions"] is None
+        assert explicit["reason"] == "declared_unverified_comparison"
+        assert explicit["status"] == "partial" and explicit["suggestions"] is not None
+        assert explicit["public_comparison_evidence"] is None
+    elif kind in ("foreign", "corrupt"):
+        assert normal["suggestions"] is None and explicit["suggestions"] is None
+    else:
+        assert normal["status"] == explicit["status"] == "partial"
+        assert explicit["reason"] == "documentary_comparison_only"
+    assert not explicit["association_authorized"] and not explicit["may_write_origin_or_right"]
+    assert "buyer-A" not in repr(explicit) and str(root) not in repr(explicit)
+    assert rows(store) == before and path.read_bytes() == BYTES
+
+
+def test_declaration_created_during_search_revokes_page(store, tmp_path, monkeypatch):
+    root, path, pid, _ = _setup(store, tmp_path)
+    real = documentary.suggest_known_public_documents
+
+    def changed(*args, **kwargs):
+        result = real(*args, **kwargs)
+        _record_declaration(store, path)
+        return result
+
+    monkeypatch.setattr(documentary, "suggest_known_public_documents", changed)
+    outcome = _request(store, root, pid, include_declared=True)
+    assert outcome["status"] == "excluded" and outcome["suggestions"] is None

@@ -48,7 +48,31 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
     return path
 
 
-def _snapshot(storage, identity, placement_id, *, catalogue=False):
+def _declared_witness(db, *, identity, path, inode, include_declared):
+    """Reuse #2797's bounded strict decoder; never infer a statement by SHA."""
+    from .library_declared_links import DeclarationRejected, _records, _json
+
+    try:
+        matched = [
+            row for row in _records(db)
+            if row["state"] == "active" and (
+                row["file"]["path"] == path
+                or (inode is not None and tuple(row["file"]["fingerprint"][:2]) == inode))
+        ]
+    except DeclarationRejected:
+        return "declaration_evidence_unavailable", None
+    if not matched:
+        return None, ()
+    if (len(matched) != 1 or matched[0]["scope"]["identity_id"] != identity):
+        return "declaration_scope_unverified", None
+    if not include_declared:
+        return "declared_origin_requires_review", None
+    # Private exact witness; the public projection only gets a coarse label.
+    return None, (_json(matched[0]),)
+
+
+def _snapshot(storage, identity, placement_id, *, catalogue=False,
+              include_declared=False, inode=None):
     with storage._lock:
         db = storage._connect()
         # A consultation may be called from a borrowed connection. Refuse
@@ -101,6 +125,13 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False):
                 (identity, artifact),
             ).fetchone():
                 return "other_origin_requires_review", None
+            reason, declaration = _declared_witness(
+                db, identity=identity, path=path, inode=inode,
+                include_declared=include_declared,
+            )
+            if declaration is None:
+                return reason, None
+            row = (*row, declaration)
             if catalogue:
                 entries = db.execute(
                     "SELECT catalog_entry_id,artifact_id,identity_id,local_state,"
@@ -142,16 +173,15 @@ class _CandidateRejected(ValueError):
 
 @contextmanager
 def _verified_candidate(storage, *, library_root, identity_id, placement_id,
-                        catalogue=False):
-    if (not _text(identity_id, 256) or not _text(placement_id, 256)
+                        catalogue=False, include_declared=False):
+    if (type(include_declared) is not bool or not _text(identity_id, 256) or not _text(placement_id, 256)
             or not isinstance(library_root, Path) or not library_root.is_absolute()
             or library_root == Path("/") or ".." in library_root.parts):
         raise _CandidateRejected("invalid_scope")
 
-    def snapshot():
-        if catalogue:
-            return _snapshot(storage, identity_id, placement_id, catalogue=True)
-        return _snapshot(storage, identity_id, placement_id)
+    def snapshot(inode=None):
+        return _snapshot(storage, identity_id, placement_id, catalogue=catalogue,
+                         include_declared=include_declared, inode=inode)
 
     status, row = snapshot()
     if row is None:
@@ -166,9 +196,24 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         raise _CandidateRejected("review_budget_exceeded")
     with _verified_variant_file(path, digest, expected_size=size) as recheck:
         signature = recheck()
+        checked_status, checked = snapshot(signature[:2])
+        if checked is None:
+            # An origin/receipt appearing after the first snapshot, or any
+            # other lost SQL admission, is a change of evidence. A previously
+            # unseen inode alias is the only expected additional declaration veto.
+            raise _CandidateRejected(checked_status if checked_status in (
+                "declared_origin_requires_review", "declaration_scope_unverified",
+            ) else "evidence_changed")
+        # An alias can be discovered only after opening the verified inode.
+        # Every other pinned SQL coordinate must still match the initial read.
+        if checked[:7] != row[:7] or checked[8:] != row[8:]:
+            raise _CandidateRejected("evidence_changed")
+        if row[7] and checked[7] != row[7]:
+            raise _CandidateRejected("evidence_changed")
+        status, row = checked_status, checked
 
         def current():
-            if snapshot() != (status, row) or recheck() != signature:
+            if snapshot(signature[:2]) != (status, row) or recheck() != signature:
                 raise _CandidateRejected("evidence_changed")
 
         current()
@@ -177,7 +222,8 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
 
 
 def preview_local_origin_suggestion(storage, *, library_root: Path,
-                                    identity_id: str, placement_id: str):
+                                    identity_id: str, placement_id: str,
+                                    include_declared=False):
     """Review one explicit private Placement, without any catalogue search."""
     def result(reason, verified=False):
         return {
@@ -192,9 +238,10 @@ def preview_local_origin_suggestion(storage, *, library_root: Path,
 
     try:
         with _verified_candidate(storage, library_root=library_root,
-                                 identity_id=identity_id, placement_id=placement_id):
-            pass
-        return result("no_same_scope_origin_observed", True)
+                                 identity_id=identity_id, placement_id=placement_id,
+                                 include_declared=include_declared) as (row, _path, _signature):
+            reason = "declared_unverified" if row[7] else "no_same_scope_origin_observed"
+        return result(reason, True)
     except _CandidateRejected as exc:
         return result(str(exc))
     except (DerivedPublicationConflict, sqlite3.Error, OSError, RuntimeError,
@@ -238,7 +285,7 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
                                      identity_id: str, placement_id: str,
                                      explicitly_requested: bool = False,
                                      page: int = 0, page_size: int = 20,
-                                     continuation=None):
+                                     continuation=None, include_declared=False):
     """Private one-shot controller for known C, not a live catalogue search.
 
     The controller must pass the admitted identity and configured root, never
@@ -264,7 +311,7 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             "provider_access_performed": False,
         }
 
-    if explicitly_requested is not True:
+    if explicitly_requested is not True or type(include_declared) is not bool:
         return result("explicit_request_required")
     if (type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
@@ -282,7 +329,7 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     try:
         with _verified_candidate(storage, library_root=library_root,
                                  identity_id=identity_id, placement_id=placement_id,
-                                 catalogue=True) as candidate:
+                                 catalogue=True, include_declared=include_declared) as candidate:
             local, path, signature = candidate
             title, author = local[-2:]
             metadata = "local_catalogue_only"
@@ -315,8 +362,8 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             ) if suggestions.has_more and page < 200 else None)
             public_evidence = (_PublicComparisonEvidence(
                 storage, library_root, identity_id, placement_id, local, signature,
-            ) if page == 0 and metadata == "verified_epub_opf_description" else None)
-        return result("documentary_comparison_only", suggestions,
+            ) if page == 0 and metadata == "verified_epub_opf_description" and not local[7] else None)
+        return result("declared_unverified_comparison" if local[7] else "documentary_comparison_only", suggestions,
                       metadata=metadata, next_page=following, local_isbns=local_isbns,
                       public_evidence=public_evidence)
     except _CandidateRejected as exc:

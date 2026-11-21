@@ -196,3 +196,42 @@ def test_failed_next_page_revokes_previous_token_and_recovers(store, tmp_path, m
     done(fresh)
     assert fresh.page == 1 and c.page is fresh and fresh.can_continue
     assert rows(store) == before
+
+
+
+def test_explicit_declaration_filter_is_read_only_and_restart_scoped(store, tmp_path):
+    from tests.test_core_p0_4030_scoped_documentary_suggestions import _record_declaration
+    service, root, pid = _service(store, tmp_path)
+    path = Path(store.placement_get(pid)["path"])
+    before_bytes = path.read_bytes()
+    _record_declaration(store, path)
+    for i in range(5):
+        _extra(store, root, f"for-filter-{i}.pdf")
+    mod, plugin, host, c, tasks, renders = rig(service)
+    before = rows(store)
+    assert not c.request(restart=True, include_declared=1)
+    assert c.request(restart=True)
+    work, done = tasks[-1]
+    done(work())
+    first = c.page
+    assert first.can_continue
+    default_text = mod.display(first)
+    assert not c.request(restart=False, include_declared=True)
+    assert c.request(restart=False)
+    work, done = tasks[-1]
+    done(work())
+    default_text += mod.display(c.page)
+    assert "origine déclarée, non attestée" in default_text
+    assert c.request(restart=True, include_declared=True)
+    work, done = tasks[-1]
+    done(work())
+    selected_text = mod.display(c.page)
+    assert c.page.can_continue
+    assert c.request(restart=False)
+    work, done = tasks[-1]
+    done(work())
+    selected_text += mod.display(c.page)
+    assert "déclaration conservée" in selected_text
+    assert "origine déclarée, non attestée" not in selected_text
+    assert c.broker.next_page(token=first.token, confirmed=True) is None
+    assert rows(store) == before and path.read_bytes() == before_bytes

@@ -56,8 +56,9 @@ class LocalOriginBatchReadBrokerImpl:
         except Exception:
             return None
 
-    def preview(self, *, identity_id, confirmed=False, cancelled=None):
+    def preview(self, *, identity_id, confirmed=False, cancelled=None, include_declared=False):
         if (confirmed is not True or type(identity_id) is not str
+                or type(include_declared) is not bool
                 or (cancelled is not None and not callable(cancelled))):
             return None
         with self._lock:
@@ -67,7 +68,8 @@ class LocalOriginBatchReadBrokerImpl:
             generation = self._generation
             self._active = None
         try:
-            scope = admit_origin_batch(self._service, confirmed=True)
+            scope = admit_origin_batch(self._service, confirmed=True,
+                                       include_declared=include_declared)
             if scope is None or scope.request.identity_id != identity_id:
                 return None
             stamp = sqlite_source_stamp(scope.database)

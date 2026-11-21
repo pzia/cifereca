@@ -28,6 +28,7 @@ class BatchScope:
     root: Path
     directory: str
     database: Path
+    include_declared: bool = False
 
     def current(self):
         try:
@@ -61,8 +62,8 @@ def _token(value, limit=4096):
             and not any(ord(c) < 32 or ord(c) == 127 for c in value))
 
 
-def admit_origin_batch(service, *, confirmed=False):
-    if confirmed is not True:
+def admit_origin_batch(service, *, confirmed=False, include_declared=False):
+    if confirmed is not True or type(include_declared) is not bool:
         return None
     try:
         request = admit_maintenance_review(service)
@@ -73,7 +74,7 @@ def admit_origin_batch(service, *, confirmed=False):
                 or "/" in directory or chr(92) in directory):
             return None
         scope = BatchScope(request, _root(request.config), directory,
-                           Path(request.storage.path))
+                           Path(request.storage.path), include_declared)
         return scope if scope.current() else None
     except Exception:
         return None
@@ -154,6 +155,7 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                         scope.request.storage, library_root=scope.root,
                         identity_id=owner, placement_id=pid,
                         explicitly_requested=True, page=0, page_size=5,
+                        include_declared=scope.include_declared,
                     )
                     reason = result["reason"]
             suggestions = result.get("suggestions") if result else None

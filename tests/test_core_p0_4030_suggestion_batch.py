@@ -141,3 +141,25 @@ def test_batch_binding_failure_closes_direct_scope_and_public_page(
     assert scope.bound() is False
     assert batch.run_origin_batch(service, scope) is None
     assert Path(store.placement_get(pid)["path"]).is_file()
+
+
+
+def test_batch_explicit_origin_filter_preserves_declared_statement(store, tmp_path):
+    from cifereca.core.local_origin_review_broker import LocalOriginBatchReadBrokerImpl
+    from tests.test_core_p0_4030_scoped_documentary_suggestions import _record_declaration
+    service, root, pid = _service(store, tmp_path)
+    path = Path(store.placement_get(pid)["path"])
+    _record_declaration(store, path)
+    before = rows(store)
+    broker = LocalOriginBatchReadBrokerImpl(service)
+    assert broker.preview(identity_id="A", confirmed=True, include_declared=1) is None
+    normal = broker.preview(identity_id="A", confirmed=True)
+    explicit = broker.preview(identity_id="A", confirmed=True, include_declared=True)
+    (excluded,) = normal.entries
+    (included,) = explicit.entries
+    assert excluded.status == "not_assessed"
+    assert excluded.reason == "declared_origin_requires_review"
+    assert included.status == "compared" and included.reason == "declared_unverified_comparison"
+    assert included.known_matches == 1
+    assert not explicit.association_authorized and not explicit.provider_access_performed
+    assert rows(store) == before and path.read_bytes() == BYTES
