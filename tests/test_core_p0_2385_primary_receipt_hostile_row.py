@@ -152,7 +152,8 @@ def test_public_c_first_never_drops_a_mirror_with_foreign_boolean_or_equality(
             raise AssertionError("foreign mirror truthiness")
 
         def __hash__(self):
-            return hash("source_credential")
+            # Do not collide while constructing the adversarial fixture.
+            return hash("foreign.unrelated.marker")
 
     metadata = {
         "catalogue_scope_version": 3,
