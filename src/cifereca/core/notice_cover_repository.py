@@ -62,8 +62,36 @@ class PersistedNoticeCover:
 def _opaque_key(document: CoverDocumentScope) -> str | None:
     if type(document) is not CoverDocumentScope:
         raise TypeError("expected exact Notice C DocumentRef")
+    # A dataclass frozen at construction can still be altered by a caller.
+    # The C-source key is a read/write trust boundary shared by N2, Search
+    # and exact web-link lookup. Reject non-native members *before* regex,
+    # comparison or database binding; never invoke a foreign __eq__.
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return None
+    if (document.identity_id is not None
+            and (type(document.identity_id) is not str
+                 or not 0 < len(document.identity_id) <= 512
+                 or not document.identity_id.isprintable())):
+        return None
+    if (document.account_id is not None
+            and (type(document.account_id) is not str
+                 or len(document.account_id) > 512
+                 or not document.account_id.isprintable())):
+        return None
     if (document.kind not in ("catalogue", "public_catalogue")
+            or not document.provider_id
+            or document.loan_id or document.artifact_id or document.placement_id
             or _EXACT_SOURCE.fullmatch(document.source_key) is None):
+        return None
+    if document.kind == "public_catalogue":
+        if (document.identity_id is not None or document.account_id is not None
+                or document.credential_id != "__public__"):
+            return None
+    elif (document.identity_id is None or not document.credential_id
+          or document.credential_id == "__public__"):
         return None
     return _PREFIX + document.source_key[len("notice-c:v1:"):]
 
