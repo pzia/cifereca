@@ -111,6 +111,8 @@ class Parser(HTMLParser):
         tag=tag.lower(); a=self._attrs(attrs)
         hidden = False
         if self.documentary:
+            if len(self._doc_stack) >= 128:
+                raise ProviderError("Ebooks libres et gratuits : catalogue_html_depth")
             hidden = (tag in {"script", "style", "template", "noscript"}
                       or "hidden" in a or a.get("aria-hidden", "").casefold() == "true"
                       or re.search(r"(?i)(?:display\s*:\s*none|visibility\s*:\s*hidden)", a.get("style", "")) is not None
@@ -537,6 +539,7 @@ class EbooksSession(ProviderSession):
         if _documentary and (self.base_url != BASE or self.credential_id != "__public__"
                 or self.credentials or self._accounts or r.history
                 or str(r.url) != BASE + "ebooks.php"
+                or len(r.content) > 2 * 1024 * 1024
                 or "cookie" in r.request.headers or "authorization" in r.request.headers):
             return []
         out=[]
