@@ -565,3 +565,36 @@ def test_terminal_empty_requires_valid_explicit_anonymous_response():
     ):
         assert not _terminal_anonymous_empty(changed, anonymous)
     assert not _terminal_anonymous_empty(response, SimpleNamespace(credential_id="private"))
+
+
+def test_hidden_book_cards_never_publish_public_notice_c_or_web_choice():
+    # Producer-to-Core contract: a hidden template is not a source of C.
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0",
+            })
+        assert request.url.path.endswith("/Catalog/Search")
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<template><a href="/1409/Catalog/Book/999/hidden">'
+            'Fausse notice</a></template>'
+            '<div aria-hidden="true"><a href="/1409/Catalog/Book/998/hidden">'
+            'Autre fausse notice</a></div>'
+            '<a href="/1409/Catalog/Book/123/public">Notice visible</a>'
+        ))
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        assert [row.record_id for row in response.results] == ["123"]
+        assert len(response.public_notices) == 1
+        assert response.public_notices[0].result.record_id == "123"
+        assert response.catalogue_complete is False
+        assert response.terminal_empty is False
+        assert len(calls) == 2
+    finally:
+        session.close()
