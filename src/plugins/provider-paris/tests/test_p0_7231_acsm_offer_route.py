@@ -23,7 +23,7 @@ def args(offer):
 
 
 @pytest.mark.parametrize("route,expected", [(0, True), (1, False), (2, False)])
-def test_offer_bound_route_is_local_and_does_not_infer_from_media_format(tmp_path, monkeypatch, route, expected):
+def test_offer_bound_route_does_not_infer_from_media_format(tmp_path, monkeypatch, route, expected):
     session, account, _, client, gets = prepare(tmp_path, monkeypatch)
     row = raw_loan(urls()[route])
     row["AdditionalProperties"]["MediaFormat"] = "ACSM"
@@ -33,7 +33,8 @@ def test_offer_bound_route_is_local_and_does_not_infer_from_media_format(tmp_pat
         assert offered.delivery_attested
         calls = list(client.calls)
         assert session.downloadable_selected_candidate_is_acsm(account, **args(offered.delivery_offer_id)) is expected
-        assert gets == [] and client.calls == calls
+        assert gets == [] and len(client.calls) == len(calls) + 2
+        calls = list(client.calls)
         for changes in (dict(resource_id="other"), dict(edition_id="other"),
                         dict(kind="purchase"), dict(branch="foreign")):
             with pytest.raises(ProviderCapabilityError):
@@ -58,6 +59,10 @@ def test_signed_query_rotation_preserves_route_id(tmp_path, monkeypatch):
         client.digital = [raw_loan(acsm + "&rotated=2")]
         second = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
         assert first == second and gets == []
+        from cifereca_paris import _paris_pnb_offer_id
+        assert first == _paris_pnb_offer_id(session._downloadable_scope(account), "edition-1", "loan-1")
+        client.digital = [raw_loan(urls()[1])]
+        assert session.rights_observation_snapshot(account).rights[0].delivery_offer_id == first
     finally:
         session.close()
 
@@ -68,6 +73,7 @@ def test_route_change_in_final_inventory_refuses_before_get(tmp_path, monkeypatc
     client.digital = [raw_loan(urls()[before])]
     try:
         offer = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
+        assert session.downloadable_selected_candidate_is_acsm(account, **args(offer)) is (before == 0)
         original = client.loans
         digital_reads = 0
         def changed(upstream, borrower):
@@ -84,5 +90,19 @@ def test_route_change_in_final_inventory_refuses_before_get(tmp_path, monkeypatc
                 admission_current=lambda: True,
             )
         assert digital_reads == 2 and gets == [] and not list(tmp_path.iterdir())
+    finally:
+        session.close()
+
+
+def test_complete_source_cycle_reuses_route_class_without_new_inventory(tmp_path, monkeypatch):
+    session, account, _, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan(urls()[0])]
+    try:
+        with session.source_sync_inventory(account):
+            offer = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
+            calls = list(client.calls)
+            assert session.downloadable_selected_candidate_is_acsm(account, **args(offer)) is True
+            assert client.calls == calls and gets == []
+        assert session._selected_acsm_route.get() is None
     finally:
         session.close()
