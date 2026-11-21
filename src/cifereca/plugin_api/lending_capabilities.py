@@ -139,6 +139,8 @@ def assess_lending_operation(
                         account.identity_id, account.unique_id,
                     ))
             and bool(account.identity_id)
+            and type(account.is_primary) is bool
+            and (account.is_primary is True or bool(account.unique_id))
         )
         exact_session = bool(
             type(provider) is str and type(credential) is str
@@ -166,6 +168,12 @@ def assess_lending_operation(
                 and row.provider_id == account.provider_id
                 and row.credential_id == account.credential_id
                 and row.unique_id == account.unique_id
+                # The same local upstream ID with a different borrower
+                # role is not the exact registered borrower. A linked
+                # reader must never inherit the primary account's claim.
+                and type(row.is_primary) is bool
+                and row.is_primary is account.is_primary
+                and (row.is_primary is True or bool(row.unique_id))
                 )
             ) == 1
         )
