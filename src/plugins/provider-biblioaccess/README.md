@@ -396,8 +396,12 @@ et du budget de pages (1 à 3 par appel). Les réponses HTML sont limitées
 La réponse présente uniquement les IDs de notices `/Catalog/Book/{id}`,
 le nombre de pages inspectées et un état de qualification.
 
-Un `SearchResultSummary` HTTP 200 **n'est jamais interprété comme zéro
-résultat établi** : l'état `summary_html_unverified` est explicite.
+Un `SearchResultSummary` HTTP 200 seul ne prouve jamais zéro résultat.
+Le signal explicite « Aucun résultat pour la recherche [terme] » (#7162),
+lié à la requête exacte du tenant 1409 et sans marqueur contradictoire,
+produit `summary_zero_attested` (aucun GET additionnel). Toute autre
+structure reste `summary_html_unverified`. Les tests reproduisent le
+libellé attesté dans du HTML synthétique, non la capture brute.
 Une page sans lien extrait reste `partial` et n'atteste jamais
 l'exhaustivité, la propriété ou le prêt. Le client ne fait aucun POST,
 n'importe aucune session navigateur, n'accède pas aux prêts, et ne
