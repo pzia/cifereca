@@ -76,6 +76,9 @@ def test_search_projection_includes_language_and_non_clickable_overflow():
 
 def test_book_cell_deduplicates_meta_and_only_guards_callable_facets():
     source = _method(WIDGETS, "BookListCell", "bind")
-    assert "if callable(callback)" in source
+    assert "if not callable(callback)" in source
+    assert "guard_link(callback)" in source
+    assert "self._bind_epoch == binding_epoch" in source
+    assert "self._bound_key == row_key" in source
     assert "compact_row_meta(item.meta, visible_facet_labels)" in source
     assert "badge_key not in visible_keys" in source

@@ -12,7 +12,7 @@ from time import monotonic
 from typing import Callable, Iterable
 
 from cifereca.catalogue_link import safe_document_link_url
-from .detail_action_descriptor import inactive_without_target
+from .detail_action_descriptor import inactive_without_target, public_action_reason
 
 from .models import (
     BookRef, CachedBookDetail, DetailField, DetailSection, Provenance,
@@ -75,7 +75,7 @@ def _sanitize(detail: object, book: BookRef, identity_id: str, plugin_id: str) -
         actions.append(replace(
             action, id=_small_text(action.id, 80),
             title=_small_text(action.title, 100), uri=uri or "",
-            unavailable_reason=_small_text(action.unavailable_reason, 280),
+            unavailable_reason=public_action_reason(action.unavailable_reason),
         ))
     if not sections and not actions:
         return None

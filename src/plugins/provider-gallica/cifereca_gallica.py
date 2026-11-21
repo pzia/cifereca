@@ -101,6 +101,29 @@ def _opds_language_evidence(entry: ET.Element) -> dict:
     }}}
 
 
+def _opds_explicit_subjects(entry: ET.Element) -> list[str]:
+    """Only literal, direct Dublin Core subject assertions of this entry."""
+    nodes = entry.findall(f"{{{DCTERMS}}}subject") + entry.findall(f"{{{DC}}}subject")
+    if not 1 <= len(nodes) <= 32:
+        return []
+    labels = []
+    for node in nodes:
+        value = (node.text or "").strip()
+        if (len(node) or node.attrib or not 0 < len(value) <= 240
+                or not value.isprintable()
+                or value.startswith(("/", "\\", "~/"))
+                or re.search(
+                    r"(?i)https?://|file:|[^\s@]+@[^\s@]+\.[^\s@]+|"
+                    r"(?:token|auth|cookie|signature|password|secret)\s*=|"
+                    r"(?:bearer|basic)\s+\S+", value,
+                )):
+            # Reject the unqualified field, not an independent title or ARK.
+            return []
+        if value not in labels:
+            labels.append(value)
+    return labels
+
+
 def _public_url(value: str) -> str:
     """Upgrade historical Gallica HTTP links without rewriting other hosts."""
     parsed = urlsplit(value)
@@ -442,7 +465,9 @@ class GallicaSession(ProviderSession):
                         "rights": self._first_text(entry, (f"{{{DCTERMS}}}rights", f"{{{DC}}}rights")),
                         "languages": self._normalize_languages([self._text(n) for n in entry.findall(f"{{{DCTERMS}}}language") + entry.findall(f"{{{DC}}}language") if self._text(n)]),
                         **_opds_language_evidence(entry),
-                        "subjects": [n.attrib.get("label") or n.attrib.get("term") for n in entry.findall(f"{{{ATOM}}}category")],
+                        "subjects": (_opds_explicit_subjects(entry) if documentary else
+                                     [n.attrib.get("label") or n.attrib.get("term")
+                                      for n in entry.findall(f"{{{ATOM}}}category")]),
                     },
                 )
             )
@@ -451,7 +476,7 @@ class GallicaSession(ProviderSession):
             for row in rows:
                 if occurrences[row.record_id] != 1:
                     continue
-                # Keep only the bounded explicit language declaration.
+                # Keep bounded explicit language and subject declarations.
                 # No inferred cover, delivery locator, rights or raw summary.
                 metadata = {
                     "public_url_evidence": "gallica.public_search_record_identifier",
@@ -459,6 +484,8 @@ class GallicaSession(ProviderSession):
                 if row.metadata.get("bibliography_evidence"):
                     metadata["bibliography_evidence"] = row.metadata["bibliography_evidence"]
                     metadata["languages"] = row.metadata["languages"]
+                if row.metadata.get("subjects"):
+                    metadata["subjects"] = list(row.metadata["subjects"])
                 output.append(replace(
                     row, source_collection="public_catalog", owned=False,
                     downloadable=False, download_url=None, thumbnail_url=None,
