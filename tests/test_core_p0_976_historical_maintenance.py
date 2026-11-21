@@ -288,3 +288,32 @@ def test_hold_review_rejects_non_boolean_file_review_without_read(store, tmp_pat
     assert review.run_historical_hold_review(
         service, request, verify_local_bytes=1,
     ) is None
+
+
+def test_historical_hold_preview_aborts_if_marker_changes_during_physical_review(
+    store, tmp_path, monkeypatch,
+):
+    from cifereca.core.canonical_adept_attempt import _key, _value
+
+    service, held, path, _ = _setup(store, tmp_path)
+    before = _value("original-offer", "a" * 32)
+    after = _value("changed-offer", "b" * 32)
+    store.metadata_set(_key(held), before)
+    request = review.admit_historical_review(service)
+    assert request is not None
+    original = review.review_historical_loan_diagnostic
+
+    def marker_changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        # A concurrent Sync changes the exact v1 marker while the operator
+        # hashes a local candidate. A stale page must not be presented.
+        store.metadata_set(_key(held), after)
+        return result
+
+    monkeypatch.setattr(review, "review_historical_loan_diagnostic", marker_changed)
+    assert review.run_historical_hold_review(
+        service, request, verify_local_bytes=True,
+    ) is None
+    assert store.metadata_get(_key(held)) == after
+    assert path.read_bytes() == BYTES
+
