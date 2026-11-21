@@ -63,6 +63,10 @@ class LaRochelleCatalogueSession(ProviderSession):
 
     def search(self, query: str, scope: str = "all", page: int = 0,
                field: str = "all") -> list[SearchResult]:
+        rows, _ = self._search_with_observation(query, scope, page, field)
+        return rows
+
+    def _search_with_observation(self, query, scope, page, field):
         self.last_search_warnings = []
         if not self.connected or self._catalogue is None:
             raise ProviderError("biblioaccess_catalogue_not_connected")
@@ -75,7 +79,7 @@ class LaRochelleCatalogueSession(ProviderSession):
         if type(query) is not str or len(query) > 512:
             raise ProviderCapabilityError("biblioaccess_catalogue_query_invalid")
         if not query.strip():
-            return []
+            return [], None
         try:
             observation = self._catalogue.search_page(query, page=page)
         except CatalogueHTTPError as exc:
@@ -84,6 +88,8 @@ class LaRochelleCatalogueSession(ProviderSession):
             raise ProviderError(str(exc)) from None
         if observation.status == "summary_html_unverified":
             raise ProviderError("biblioaccess_catalogue_search_unavailable")
+        if observation.status == "summary_zero_attested":
+            return [], observation
         self.last_search_warnings = [
             "Résultats publics partiels : le serveur ne garantit pas un catalogue exhaustif."
         ]
@@ -107,7 +113,7 @@ class LaRochelleCatalogueSession(ProviderSession):
                               "search_link_text" if book_id in names else "book_link")},
             )
             for book_id in observation.book_ids
-        ]
+        ], observation
 
     def search_with_response_facets(
         self, query: str, scope: str = "all", *, field: str = "all",
@@ -122,7 +128,7 @@ class LaRochelleCatalogueSession(ProviderSession):
         from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
         from biblioaccess_observations import book_id_from_url
 
-        rows = self.search(query, scope, field=field)
+        rows, observation = self._search_with_observation(query, scope, 0, field)
         anonymous = (
             self.credential_id == "__public__"
             and type(self.credentials) is dict and not self.credentials
@@ -143,7 +149,11 @@ class LaRochelleCatalogueSession(ProviderSession):
                 declarations.append(PublicSearchNotice(row))
         # No recognized record is not proof of an empty catalogue page.
         # Explicit clearing of the query is not a search attempt.
-        partial = len(declarations) != len(rows) or (bool(query.strip()) and not rows)
+        zero = (observation is not None
+                and observation.status == "summary_zero_attested"
+                and observation.completeness == "complete"
+                and not rows)
+        partial = len(declarations) != len(rows) or (bool(query.strip()) and not rows and not zero)
         # Keep the warning for list-only callers; the typed response expresses
         # a bounded page independently of a missing bibliographic observation.
         self.last_search_warnings = (
@@ -154,7 +164,7 @@ class LaRochelleCatalogueSession(ProviderSession):
         )
         return ProviderSearchResponse(
             results=rows, public_notices=tuple(declarations),
-            partial=partial, catalogue_complete=False if query.strip() else None,
+            partial=partial, catalogue_complete=zero if query.strip() else None,
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
