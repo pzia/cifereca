@@ -12,7 +12,9 @@ from .derived_variant_journal import (
 )
 from .derived_variant_publication import DerivedPublicationConflict, _verified_variant_file
 from .derived_variant_retention_physical import _pair
-from .derived_variant_retention_review import _canonical
+from .derived_variant_retention_review import (
+    _canonical, _index_receipt_references, _other_receipt_dependency,
+)
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
 
 _MAX_BYTES = 1024 ** 3
@@ -36,19 +38,17 @@ def _read_committed(db, key):
 
 
 def _journal_current(db, key, intent):
+    # Use the same recorded-coordinate veto as the retention read-model.
+    # Neither view infers absence of external FS consumers; only an
+    # independently admitted physical reviewer may supply that evidence.
     rows, _ = _measure(db)
+    paths, inodes = {}, {}
     for other, _size in rows:
-        if other == key:
-            continue
         raw = db.execute("SELECT value FROM metadata WHERE key=?", (other,)).fetchone()[0]
         prior = _decode(other, raw)
-        # A shared input parent alone is not an ambiguity. Any other receipt
-        # naming either output or stage, or sharing the output inode, is.
-        if ({intent.staged_path, intent.candidate_path}
-                & {prior.parent_path, prior.staged_path, prior.candidate_path}
-                or intent.output_stamp[:2] == prior.output_stamp[:2]
-                or intent.output_stamp[:2] == prior.parent_stamp[:2]):
-            raise DerivedJournalConflict("derived_shadow_ambiguous_receipt")
+        _index_receipt_references(paths, inodes, other, prior)
+    _require(not _other_receipt_dependency(paths, inodes, key, intent),
+             "derived_shadow_ambiguous_receipt")
     _require(db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
                         (intent.staged_path,)).fetchone() is None,
              "derived_shadow_ambiguous_receipt")
