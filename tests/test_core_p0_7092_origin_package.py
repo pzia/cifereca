@@ -112,3 +112,38 @@ def test_budget_skip_is_not_negative_match(store, tmp_path, monkeypatch):
     done(work())
     assert controller.page.entries[0].known_matches is None
     assert "Non évalué" in mod.display(controller.page)
+
+
+@pytest.mark.parametrize("phase", ["late_first", "queued_next", "idle_dispose"])
+def test_cancel_or_detach_revokes_exact_continuation_token(store, tmp_path, phase):
+    service, root, _ = _service(store, tmp_path)
+    for i in range(5):
+        _extra(store, root, f"cancel-token-{i}.pdf")
+    _, _, _, c, tasks, renders = rig(service)
+    before = rows(store)
+    assert c.request(restart=True)
+    work, done = tasks[-1]
+    page = work()
+    assert page.can_continue
+    if phase == "late_first":
+        assert c.cancel()
+        done(page)
+        assert c.page is None
+    else:
+        done(page)
+        if phase == "idle_dispose":
+            c.dispose()
+        else:
+            assert c.request(restart=False)
+            work, done = tasks[-1]
+            assert c.cancel()
+            assert work() is None
+            done(None)
+    assert c.broker.next_page(token=page.token, confirmed=True) is None
+    if phase != "idle_dispose":
+        assert c.request(restart=True)
+        work, done = tasks[-1]
+        fresh = work()
+        done(fresh)
+        assert c.page is fresh and fresh.page == 1 and fresh.can_continue
+    assert rows(store) == before
