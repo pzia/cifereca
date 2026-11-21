@@ -1285,7 +1285,11 @@ class NumilogSession(ProviderSession):
             # Same-owner historical search retains its exact private scope.
             # A private inventory item is never reclassified as public.
             return ProviderSearchResponse(self.search(query, scope, field=field))
+        from cifereca_numilog_public import requested_public_formats, filter_public_formats
+
+        requested = requested_public_formats(content_types)
         rows = self.search(query, 'catalog', field=field)
+        rows, partial, complete = filter_public_formats(rows, requested, None)
         # The parsed public search card is our producer attestation; publish
         # only an independent inert bibliographic projection. Core v1
         # independently checks the exact row and all source coordinates.
@@ -1303,7 +1307,8 @@ class NumilogSession(ProviderSession):
                 and row.source_collection == 'public_catalog'
                 and row.scenario == 'NUMILOG_PUBLIC')
         )
-        return ProviderSearchResponse(rows, public_notices=notices)
+        return ProviderSearchResponse(rows, public_notices=notices, partial=partial,
+                                      catalogue_complete=complete)
 
     def search(self,query,scope='all',page=0,field='all'):
         # Do not silently coerce or clamp untrusted page selectors. Validate
