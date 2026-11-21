@@ -152,3 +152,45 @@ def test_grouped_filter_keeps_age_on_its_own_source_only(tmp_path):
             a.source_provider: "match", b.source_provider: "unknown",
         }
         assert read_consolidated_notice_cover(db, group.document) == group
+
+
+def test_exact_age_predicate_before_page_and_retained_candidate_budget(tmp_path):
+    filename = tmp_path / "age-cursor.sqlite"
+    with closing(Storage(filename)) as db:
+        rows = []
+        for i in range(5):
+            row = public_row(record_id="unknown-" + str(i), source_provider="fixture")
+            rows.append(project(row))
+        a = original()
+        b = original(source_provider="fixture-other")
+        b.record_id = "conflicting"
+        proof = b.metadata["bibliography_evidence"]["youth_age"]
+        proof["record_id"] = b.record_id
+        proof["ranges"].append({"age_min": 4, "age_max": 6, "age_kind": "publisher",
+                                "source_label": "4 à 6 ans"})
+        rows += [project(a), project(b)]
+        sources = [persist(db, row) for row in rows]
+        for source in sources:
+            persist_exact_public_search_cover(db, source)
+        page = search_public_notice_c(db, a.title, age=12, page_size=1,
+                                      group_by_document=True, now=100)
+        assert [h.record_id for h in page.hits] == [a.record_id]
+        assert not page.has_more
+        assert not search_public_notice_c(db, a.title, age=5, now=100).hits
+        assert not search_public_notice_c(db, a.title, age=12, age_kind="reading", now=100).hits
+        for source in sources:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    with closing(Storage(filename)) as db:
+        page = search_public_notice_c(db, a.title, age=12, page_size=1,
+                                      max_scan=1, group_by_document=True, now=100)
+        assert [h.record_id for h in page.hits] == [a.record_id]
+        assert not page.has_more
+        assert not search_public_notice_c(db, a.title, age=5, now=100).hits
+
+
+@pytest.mark.parametrize("kw", [{"age": True}, {"age": -1}, {"age": 18},
+                                {"age_kind": "unqualified"}])
+def test_invalid_age_cursor_parameters(tmp_path, kw):
+    with closing(Storage(tmp_path / "invalid-age.sqlite")) as db:
+        with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
+            search_public_notice_c(db, "Même titre", **kw)
