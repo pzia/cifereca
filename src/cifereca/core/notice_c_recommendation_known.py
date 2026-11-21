@@ -6,7 +6,7 @@ projected object; only the UI host can exchange it for a current-view lease.
 """
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import asdict, fields
 from hashlib import sha256
 from typing import Any
 
@@ -17,8 +17,12 @@ from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
 from .notice_c_known_projection import _series_metadata, _source_alternative
 from .public_search_projection import (
     PublicClassification, PublicLanguageObservation, PublicSeriesRelation,
+    decode_public_classification, decode_public_language_observation,
+    decode_public_series_relation,
 )
-from .notice_c_public_age import PublicAgeObservation, PublicAgeRange
+from .notice_c_public_age import (
+    PublicAgeObservation, PublicAgeRange, decode_public_age_observation,
+)
 
 _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
@@ -57,11 +61,14 @@ def _native_hit(hit, binding):
                    ))):
         return False
     series = hit.series_relation
-    if (series is not None
-            and (type(series) is not PublicSeriesRelation
-                 or any(type(getattr(series, field.name)) is not str
-                        for field in fields(PublicSeriesRelation)))):
-        return False
+    if series is not None:
+        if (type(series) is not PublicSeriesRelation
+                or any(type(getattr(series, field.name)) is not str
+                       for field in fields(PublicSeriesRelation))
+                or decode_public_series_relation(
+                    asdict(series), provider_id=hit.provider_id,
+                ) != series):
+            return False
     language = hit.language_observation
     if language is not None:
         if (type(language) is not PublicLanguageObservation
@@ -70,7 +77,10 @@ def _native_hit(hit, binding):
                        or any(type(value) is not str for value in getattr(language, name))
                        for name in ("raw_tags", "languages"))
                 or any(type(getattr(language, name)) is not str for name in
-                       ("source", "source_field", "scope", "confidence", "freshness"))):
+                       ("source", "source_field", "scope", "confidence", "freshness"))
+                or decode_public_language_observation(
+                    language.wire(), provider_id=hit.provider_id,
+                ) != language):
             return False
     classification = hit.classification
     if classification is not None:
@@ -86,6 +96,8 @@ def _native_hit(hit, binding):
                                 and len(pair[1]) <= 32
                                 and all(type(value) is str for value in pair[1])))):
                 return False
+        if decode_public_classification(classification.wire()) != classification:
+            return False
     age = hit.age_observation
     if age is not None:
         if (type(age) is not PublicAgeObservation
@@ -100,8 +112,15 @@ def _native_hit(hit, binding):
                     or any(value is not None and type(value) is not int
                            for value in (age_range.age_min, age_range.age_max))
                     or type(age_range.age_kind) is not str
-                    or type(age_range.source_label) is not str):
+                    or type(age_range.source_label) is not str
+                    or len(age_range.source_label) > 120):
                 return False
+        if decode_public_age_observation(
+            age.wire(), provider_id=hit.provider_id, record_id=hit.record_id,
+            docbase=hit.docbase, medium=hit.medium,
+            source_revision=hit.source_revision,
+        ) != age:
+            return False
     return True
 
 
