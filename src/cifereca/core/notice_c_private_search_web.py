@@ -120,6 +120,8 @@ def _evidence(row, key, homepage):
     # could invoke key equality on an untrusted mapping.
     if (type(metadata) is not dict or len(metadata) > 256
             or any(type(name) is not str for name in metadata)
+            or (metadata.get("catalogue_access") is not None
+                and type(metadata["catalogue_access"]) is not str)
             or metadata.get("catalogue_access") == "shared_read_only"
             or metadata.get("search_provenance") is not None
             or row.owned is not None and row.owned is not False
@@ -184,9 +186,24 @@ def _prepare(service, row, identity):
         return None
     receipt = row.__dict__.get(_MARKER)
     if (type(receipt) is not _Receipt or receipt.token is not _WITNESS
-            or receipt.row_id != id(row) or type(receipt.call) is not _Call):
+            or type(receipt.row_id) is not int or receipt.row_id != id(row)
+            or type(receipt.call) is not _Call):
         return None
     call, key, proof = receipt.call, receipt.key, receipt.proof
+    # These packet objects are Core-issued, but an opaque dataclass/tuple
+    # can still be substituted on a mutable SearchResult before the writer.
+    # Never call a foreign equality, .current() or provider descriptor.
+    from .search_orchestration import SearchReadScope
+    from .notice_source_observation import _valid_key
+    if (type(identity) is not str or not identity
+            or type(call.scope) is not SearchReadScope
+            or type(call.binding) is not _Binding
+            or type(call.observed_at) is not int
+            or not 1 <= call.observed_at <= 2**63 - 1
+            or type(key) is not NoticeSourceKey or not _valid_key(key)
+            or type(proof) is not tuple or len(proof) != 3
+            or any(type(value) is not str for value in proof)):
+        return None
     if (identity != call.scope.identity_id or _source_key(row, identity) != key
             or _evidence(row, key, call.binding.descriptor.homepage) != proof):
         return None
@@ -231,7 +248,8 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
     # The write port must accept exactly the stamped, bounded response shape.
     # A generator/tuple can replay old receipts outside the call's batch;
     # an oversized batch cannot bypass stamp's all-or-nothing admission.
-    if type(rows) is not list or len(rows) > 10000:
+    if (type(rows) is not list or len(rows) > 10000
+            or type(identity_id) is not str or not identity_id):
         return 0
     count = 0
     for row in rows:
