@@ -323,7 +323,7 @@ def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
     return reserve_derived_publication(storage, intent).key
 
 
-def _read_pending_reservation(db, reservation, *, _private_guard=None):
+def _read_pending_receipt(db, reservation):
     if (not db.in_transaction or type(reservation) is not DerivedReservation
             or type(reservation.key) is not str
             or not reservation.key.startswith(_PREFIX)
@@ -343,6 +343,11 @@ def _read_pending_reservation(db, reservation, *, _private_guard=None):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     intent = _decode(reservation.key, row[0])
     record = json.loads(row[0], object_pairs_hook=_unique_pairs)
+    return row[0], intent, record
+
+
+def _read_pending_reservation(db, reservation, *, _private_guard=None):
+    raw, intent, record = _read_pending_receipt(db, reservation)
     if record["schema"] != _LEGACY_SCHEMA:
         # Only the isolated v3 recovery controller can supply the typed
         # exact guard. A generic callback, receipt digest or legacy caller
@@ -353,7 +358,7 @@ def _read_pending_reservation(db, reservation, *, _private_guard=None):
             raise DerivedJournalConflict("derived_journal_private_region_review_required")
     elif _private_guard is not None:
         raise DerivedJournalConflict("derived_journal_private_region_review_required")
-    return row[0], intent
+    return raw, intent
 
 
 def require_derived_reservation_in_transaction(db, reservation, *, expected,
