@@ -6,6 +6,7 @@ Never clear an ADEPT attempt, a historical ledger row or any physical file.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import time
@@ -45,8 +46,11 @@ def _intervention_key(source: SourceKey) -> str:
 
 
 def read_adept_intervention(db, source: SourceKey) -> int:
-    row = db.execute("SELECT value FROM metadata WHERE key=?",
-                     (_intervention_key(source),)).fetchone()
+    row = db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND 12 "
+        "THEN value ELSE NULL END FROM metadata WHERE key=?",
+        (_intervention_key(source),),
+    ).fetchone()
     if row is None:
         return 0
     raw = row[0]
@@ -57,10 +61,21 @@ def read_adept_intervention(db, source: SourceKey) -> int:
     raise ValueError("download_intervention_state_invalid")
 
 
+@contextmanager
+def _retry_connection(storage):
+    """Own only a fresh worker transaction, never settle caller-owned work."""
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("loan_download_retry_nested_transaction")
+        with db:
+            yield db
+
+
 def record_adept_intervention(storage, source: SourceKey, *, shared_lock) -> None:
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("loan_download_retry_source_rebound")
@@ -105,9 +120,23 @@ def _decode(raw) -> LoanDownloadRetry:
         raise ValueError("loan_download_retry_state_invalid") from None
 
 
+def _read_retry_in_db(db, source: SourceKey) -> LoanDownloadRetry:
+    row = db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND 1024 "
+        "THEN value ELSE NULL END FROM metadata WHERE key=?",
+        (_key(source),),
+    ).fetchone()
+    if row is None:
+        return LoanDownloadRetry()
+    if type(row[0]) is not str:
+        raise ValueError("loan_download_retry_state_invalid")
+    return _decode(row[0])
+
+
 def read_loan_download_retry(storage, source: SourceKey) -> LoanDownloadRetry:
     """Read one exact row; a corrupt row never licenses another delivery."""
-    return _decode(storage.metadata_get(_key(source)))
+    with _retry_connection(storage) as db:
+        return _read_retry_in_db(db, source)
 
 
 def record_loan_download_failure(storage, source: SourceKey, *, reason: str,
@@ -118,12 +147,11 @@ def record_loan_download_failure(storage, source: SourceKey, *, reason: str,
     if type(reason) is not str or reason not in _REASONS:
         raise ValueError("loan_download_retry_invalid_reason")
     key = _key(source)
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("loan_download_retry_source_rebound")
-        row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
-        previous = _decode(row[0] if row is not None else None)
+        previous = _read_retry_in_db(db, source)
         if previous.paused:
             return previous
         status = LoanDownloadRetry(previous.failures + 1, reason, int(time.time()))
@@ -147,7 +175,7 @@ def clear_loan_download_retry(storage, source: SourceKey, *, shared_lock) -> Non
     if not _lock_ok(shared_lock):
         raise ValueError("loan_download_retry_lock_required")
     keys = (_key(source), _intervention_key(source))
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         # Verified B is common on opening Sync. Avoid writes for resources
         # without a recorded download failure.
         if db.execute("SELECT 1 FROM metadata WHERE key IN (?, ?) LIMIT 1", keys).fetchone() is None:
