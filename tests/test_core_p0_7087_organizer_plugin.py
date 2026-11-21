@@ -324,6 +324,11 @@ def test_guided_rename_only_preserves_conflicts_and_can_reselect_empty(
     if safe_count:
         _put_epub(store, root, "Acquisitions/three.epub",
                   metadata=META.replace("Roman commun", "Roman unique"))
+    if safe_count:
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE catalog_entries SET title=? WHERE placement_id IN "
+                       "(SELECT placement_id FROM placements WHERE path=?)",
+                       ("Roman unique", str(root / "A/Acquisitions/three.epub")))
     module, plugin = _plugin(_service(store, root))
     host, tasks, renders = _host()
     c = plugin.controller(host, lambda *args: renders.append(args))
