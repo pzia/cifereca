@@ -373,3 +373,39 @@ def test_hidden_competing_result_rows_do_not_change_qualified_simple_grid():
     html = page_of() + '<table hidden>' + advanced_card("1792964") + '</table>'
     result = parse_public_search(html, URL)
     assert result.complete and result.total_results == len(result.items) == 1
+
+
+@pytest.mark.parametrize('tag', ['textarea', 'title', 'xmp', 'iframe',
+                                 'noembed', 'noframes', 'noscript'])
+@pytest.mark.parametrize('total,cards', [(0, ''), (1, FIRST)])
+def test_raw_text_cannot_attest_search_grid(tag, total, cards):
+    html = f'<{tag}>' + page_of(cards, total) + f'</{tag}>'
+    with pytest.raises(PublicSearchParseError, match='unknown_search_layout'):
+        parse_public_search(html, URL)
+
+
+@pytest.mark.parametrize('tag', ['textarea', 'title', 'xmp', 'iframe',
+                                 'noembed', 'noframes', 'noscript'])
+def test_raw_text_pseudo_end_tag_cannot_unhide_ancestor(tag):
+    hidden = (
+        f'<div hidden><{tag}></div></{tag}>'
+        + page_of(FIRST, 1) + '</div>'
+    )
+    # Fake result remains hidden; genuine grid and counter are unaffected.
+    page = parse_public_search(hidden + page_of('', 0), URL)
+    assert page.complete and page.total_results == 0 and page.items == ()
+
+
+@pytest.mark.parametrize('prefix', ['<textarea/>', '<title/>', '<iframe/>',
+                                    '<xmp/>', '<plaintext>ignored</plaintext>'])
+def test_malformed_raw_text_boundary_does_not_admit_later_grid(prefix):
+    with pytest.raises(PublicSearchParseError, match='html_structure'):
+        parse_public_search(prefix + page_of(), URL)
+
+
+def test_title_and_textarea_in_normal_page_do_not_shadow_visible_grid():
+    html = '<html><head><title>Recherche</title></head><body>'
+    html += '<textarea>Exemple de texte &lt;table&gt;</textarea>' + page_of()
+    html += '</body></html>'
+    page = parse_public_search(html, URL)
+    assert page.complete and page.total_results == len(page.items) == 1
