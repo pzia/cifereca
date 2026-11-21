@@ -106,4 +106,4 @@ def test_profile_diagnostic_is_not_a_second_quota(committed):
                   "declared_output_remaining", "declared_output_limit"):
         assert same[field] == foreign[field] == total[field]
     with pytest.raises(journal.DerivedJournalConflict, match="derived_capacity_invalid_profile"):
-        capacity.review_derived_capacity_status(db, identity_id="foreign\\x00id")
+        capacity.review_derived_capacity_status(db, identity_id="foreign\x00id")
