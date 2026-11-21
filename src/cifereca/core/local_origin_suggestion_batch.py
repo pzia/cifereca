@@ -39,8 +39,13 @@ class BatchScope:
             return False
 
     def bound(self):
-        r = self.request
-        return (self.current() and _binding_current(r.storage, r.identity_id, self.directory))
+        # A disappeared SQLite connection or rebound profile is a scope veto,
+        # including for callers probing this guard before scheduling a batch.
+        try:
+            r = self.request
+            return (self.current() and _binding_current(r.storage, r.identity_id, self.directory))
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True, slots=True, repr=False)
