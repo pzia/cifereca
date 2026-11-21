@@ -428,6 +428,9 @@ def _persist_consolidated_cover_source_txn(
     )
     if current is None or current != source:
         raise ValueError("stale_canonical_cover_source")
+    if visibility == "private":
+        from .notice_c_authenticated_web_retention import retain_private_web_field_txn
+        retain_private_web_field_txn(db, current, json.loads(original[0]))
     old = db.execute(
         "SELECT value FROM metadata WHERE key=?", (key,),
     ).fetchone()
