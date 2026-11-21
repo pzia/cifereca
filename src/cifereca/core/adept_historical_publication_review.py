@@ -6,6 +6,8 @@ activation, physical bytes or permission to repair. No network or FS probe.
 """
 from __future__ import annotations
 
+from .adept_historical_read_snapshot import historical_read_snapshot
+
 import sqlite3
 
 from .source_convergence import SourceKey
@@ -37,8 +39,7 @@ def review_legacy_adept_publication(storage, *, source: SourceKey):
         return result("scope_unverified")
     scope = source.scope
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
+        with historical_read_snapshot(storage) as db:
             references = db.execute(
                 "SELECT source_reference_id FROM source_references "
                 "WHERE identity_id=? AND provider_id=? AND credential_id=? "

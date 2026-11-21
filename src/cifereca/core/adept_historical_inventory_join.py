@@ -6,6 +6,8 @@ freshness, and never calls a runtime or repairs a binding.
 """
 from __future__ import annotations
 
+from .adept_historical_read_snapshot import historical_read_snapshot
+
 import json
 import sqlite3
 
@@ -25,8 +27,7 @@ def _text(value, *, empty=False):
 
 def _recorded_binding(storage, source):
     scope = source.scope
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         rows = db.execute(
             "SELECT status,executor,CASE WHEN length(CAST(metadata_json AS BLOB))<=? "
             "THEN metadata_json ELSE NULL END FROM acquisition_ledger "

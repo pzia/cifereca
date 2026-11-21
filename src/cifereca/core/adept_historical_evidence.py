@@ -6,6 +6,8 @@ borrower's name, a same-SHA placement or the current configuration.
 """
 from __future__ import annotations
 
+from .adept_historical_read_snapshot import historical_read_snapshot
+
 from pathlib import Path
 import sqlite3
 
@@ -28,8 +30,7 @@ def _snapshot(storage, source, placement_id, adept_receipt_ref):
     coords = _scope(source)
     identity = coords[0]
     source_id = _stable("source", *coords)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         reference = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,branch_id,"
             "edition_id,right_id,reference_kind FROM source_references "

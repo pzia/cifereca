@@ -6,6 +6,8 @@ transaction-specific receipt-to-placement provenance is produced.
 """
 from __future__ import annotations
 
+from .adept_historical_read_snapshot import historical_read_snapshot
+
 from pathlib import Path
 import sqlite3
 
@@ -30,8 +32,7 @@ def _candidate(storage, source):
         return "scope_unverified", None
     identity = coords[0]
     reference_id = _stable("source", *coords)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         reference = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,branch_id,"
             "edition_id,right_id,reference_kind FROM source_references "
