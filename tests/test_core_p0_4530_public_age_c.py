@@ -316,3 +316,71 @@ def test_exact_live_lookup_outside_budget_reapplies_age_predicate(tmp_path, chan
         assert page.known_matches == len(expected)
         assert all(hit.age_observation is not None for hit in page.hits)
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+class _HostileAgeMember:
+    def __hash__(self):
+        return hash("age_min")
+
+    def __eq__(self, other):
+        raise AssertionError("provider age proof equality executed")
+
+
+def test_structured_age_proof_rejects_foreign_keys_before_set_or_get():
+    from cifereca.core.notice_c_public_age import decode_public_age_observation
+
+    source = original()
+    proof = source.metadata["bibliography_evidence"]["youth_age"]
+    params = dict(provider_id=source.source_provider, record_id=source.record_id,
+                  docbase=source.docbase, medium=source.medium,
+                  source_revision=source.revision_id)
+    assert decode_public_age_observation(proof, **params) is not None
+    malformed = dict(proof)
+    malformed["ranges"] = [{_HostileAgeMember(): 12}]
+    assert decode_public_age_observation(malformed, **params) is None
+    assert decode_public_age_observation({
+        _HostileAgeMember(): 12,
+    }, **params) is None
+
+
+def test_reused_age_row_refuses_hostile_source_metadata_and_coordinates():
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    assert verified_same_call_public_age(row) is not None
+    candidate = original()
+    candidate.metadata = {_HostileAgeMember(): "untrusted"}
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    candidate = original()
+    candidate.source_provider = _HostileAgeMember()
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    stamp_same_call_public_age(row, original())
+    assert verified_same_call_public_age(row) is not None
+
+
+@pytest.mark.parametrize("change", ("bound", "range_container", "proof_source"))
+def test_mutated_native_age_receipt_refuses_unsafe_replay_before_wire(change):
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    valid = row._core_same_call_public_age
+    age = valid[2]
+    if change == "bound":
+        damaged = replace(age, ranges=(
+            replace(age.ranges[0], age_min=_HostileAgeMember()),
+        ))
+    elif change == "range_container":
+        damaged = replace(age, ranges=_HostileAgeMember())
+    else:
+        damaged = replace(age, source_field=_HostileAgeMember())
+    row._core_same_call_public_age = (valid[0], valid[1], damaged)
+    assert verified_same_call_public_age(row) is None
+    row._core_same_call_public_age = valid
+    assert verified_same_call_public_age(row) is not None
