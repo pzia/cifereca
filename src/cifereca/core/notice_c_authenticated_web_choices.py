@@ -33,6 +33,20 @@ def _epoch(value):
     return type(value) is int and 1 <= value < _EPOCH_LIMIT
 
 
+def _native_source_document(document):
+    # Frozen scope DTOs are still mutable through object.__setattr__; a
+    # foreign nested hash/equals must not run when checking duplicate refs.
+    return (type(document) is CoverDocumentScope
+            and all(type(getattr(document, name)) is str for name in (
+                "kind", "source_key", "provider_id", "credential_id",
+                "loan_id", "artifact_id", "placement_id",
+            ))
+            and (document.identity_id is None
+                 or type(document.identity_id) is str)
+            and (document.account_id is None
+                 or type(document.account_id) is str))
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _Binding:
     document: CoverDocumentScope
@@ -246,7 +260,7 @@ def read_authenticated_web_choices(service, document, *, reader_scope, source_do
     if (not is_canonical_cover_document(document)
             or type(reader_scope) is not SearchReadScope or not reader_scope.current(service)
             or type(source_documents) is not tuple or not 1 <= len(source_documents) <= 32
-            or any(type(d) is not CoverDocumentScope for d in source_documents)
+            or any(not _native_source_document(d) for d in source_documents)
             or len(set(source_documents)) != len(source_documents)):
         return None
     bindings = tuple(b for doc in sorted(source_documents, key=lambda d: d.source_key)
@@ -279,7 +293,9 @@ def resolve_authenticated_web_choice(service, menu, *, choice_id):
             or type(menu._scope) is not SearchReadScope
             or type(menu._bindings) is not tuple
             or not 1 <= len(menu._bindings) <= 32
-            or any(type(binding) is not _Binding for binding in menu._bindings)
+            or any(type(binding) is not _Binding
+                   or not _native_source_document(binding.document)
+                   for binding in menu._bindings)
             or type(menu.choices) is not tuple
             or not 1 <= len(menu.choices) <= 256
             or any(type(choice) is not AuthenticatedWebChoice
