@@ -731,9 +731,52 @@ def main():
                 "media_format": "pdf", "local_state": "local"})
             witnesses.append((book, content, pid, artifact))
 
+        # Only the isolated derived package gets genuine interrupted
+        # receipts. Seventeen rows exceed its public 16-entry page limit.
+        # The fixture writes before the review baseline, never via a tool.
+        derived_witnesses = []
+        if args.guided_only == "derived":
+            import os
+            from cifereca.core.derived_variant_journal import (
+                DerivedIntent, reserve_derived_publication,
+            )
+            parent, parent_bytes, parent_id, parent_artifact = witnesses[0]
+            info = parent.stat()
+            parent_stamp = (info.st_dev, info.st_ino, info.st_size,
+                            info.st_mtime_ns, info.st_ctime_ns)
+            stage_dir = parent.parent / ".cifereca-staging" / "variants"
+            stage_dir.mkdir(parents=True, exist_ok=False)
+            for number in range(17):
+                stage = stage_dir / f"synthetic-{number}.pdf"
+                target = parent.parent / f"derived-{number}.pdf"
+                content = f"%PDF-1.7\\nSynthetic derived receipt {number}\\n".encode("ascii")
+                stage.write_bytes(content)
+                st = stage.stat()
+                intent = DerivedIntent(
+                    identity_id=owner.identity_id,
+                    parent_placement_id=parent_id,
+                    parent_sha256=hashlib.sha256(parent_bytes).hexdigest(),
+                    parent_path=str(parent), staged_path=str(stage),
+                    candidate_path=str(target),
+                    output_sha256=hashlib.sha256(content).hexdigest(),
+                    output_size=len(content), parent_stamp=parent_stamp,
+                    output_stamp=(st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns),
+                    transformer_id="document.transformer.synthetic",
+                    transformer_version="1", profile_id="",
+                    profile_version="", options_fingerprint=f"fixture-{number}",
+                    variant_kind="optimized", media_format="pdf",
+                )
+                reservation = reserve_derived_publication(storage, intent)
+                os.link(stage, target)
+                derived_witnesses.append((reservation.key, stage, target))
+
         def fixture_evidence():
-            return tuple((book.read_bytes(), storage.placement_get(pid), artifact)
-                         for book, _content, pid, artifact in witnesses)
+            files = tuple((book.read_bytes(), storage.placement_get(pid), artifact)
+                          for book, _content, pid, artifact in witnesses)
+            receipts = tuple((storage.metadata_get(key), stage.read_bytes(),
+                              target.read_bytes(), stage.samefile(target))
+                             for key, stage, target in derived_witnesses)
+            return files, receipts
 
         before = durable_counts()
         evidence = fixture_evidence()
@@ -837,11 +880,56 @@ def main():
 
             def received():
                 report["checks"]["P0_7100_real_guided_" + key] = True
+                if args.guided_only == "derived" and key == "derived_list":
+                    following, = (node for node in walk(outer)
+                                  if isinstance(node, Gtk.Button)
+                                  and node.get_label() == "Page suivante")
+                    simulation, = (node for node in walk(outer)
+                                   if isinstance(node, Gtk.Button)
+                                   and node.get_label() == "Confirmer la simulation sans écriture")
+
+                    def labels_contain(fragment):
+                        return any(fragment in node.get_text() for node in walk(outer)
+                                   if isinstance(node, Gtk.Label) and node.get_visible())
+
+                    assert labels_contain("16 reçu(s)") and following.get_sensitive()
+                    assert not simulation.get_sensitive()
+                    following.emit("clicked")
+                    assert not following.get_sensitive()
+
+                    def second_receipt_page():
+                        assert not following.get_sensitive() and not simulation.get_sensitive()
+                        assert not labels_contain("16 reçu(s)")
+                        report["checks"]["P0_7093_native_derived_page_two"] = True
+                        (verify,) = (node for node in walk(outer)
+                                     if isinstance(node, Gtk.Button)
+                                     and node.get_label() == "Vérifier")
+                        verify.emit("clicked")
+                        assert not simulation.get_sensitive()
+
+                        def reviewed():
+                            assert labels_contain("Lien physique vérifié")
+                            assert durable_counts() == before and fixture_evidence() == evidence
+                            simulation.emit("clicked")
+                            assert not simulation.get_sensitive()
+
+                            def simulated():
+                                assert not simulation.get_sensitive()
+                                assert durable_counts() == before and fixture_evidence() == evidence
+                                report["checks"]["P0_7093_native_confirmed_simulation_no_write"] = True
+                                cancel_and_restart()
+
+                            until(lambda: button.get_sensitive() and
+                                  labels_contain("Simulation vérifiée ; aucune reprise effectuée."),
+                                  simulated)
+
+                        until(lambda: button.get_sensitive() and simulation.get_sensitive(), reviewed)
+
+                    until(lambda: button.get_sensitive() and labels_contain("1 reçu(s)"),
+                          second_receipt_page)
+                    return
                 if key not in ("organizer_preview", "origin_preview"):
-                    if args.guided_only == "derived" and key == "derived_list":
-                        cancel_and_restart()
-                    else:
-                        step(index + 1)
+                    step(index + 1)
                     return
 
                 def page_visible(number):
