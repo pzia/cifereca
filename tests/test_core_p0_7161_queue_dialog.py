@@ -11,11 +11,32 @@ from cifereca.core.canonical_sync_stage import persist_attested_source_reference
 from cifereca.core.loan_download_retry import (
     FAILURE_LIMIT, record_loan_download_failure, read_loan_download_retry,
 )
-from cifereca.gui import loan_download_retry_dialog as gui
 from cifereca.locking import InterProcessLock
 from tests.test_core_p0_3171_convergence_execution import rig
 from tests.test_core_p1_7161_loan_download_retry import loan_snapshot
 from tests.test_core_p0_3171_atomic_publication_v14 import rows
+
+
+def load_gui_without_gtk(monkeypatch):
+    """Load the controller under its real package but isolate TaskRunner's gi import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import ModuleType
+    from cifereca.task_queue import TaskPriority
+
+    stub = ModuleType("cifereca.gui.task_runner")
+    stub.TaskPriority = TaskPriority
+    path = (Path(__file__).resolve().parents[1] /
+            "src/cifereca/gui/loan_download_retry_dialog.py")
+    spec = importlib.util.spec_from_file_location(
+        "cifereca.gui._retry_dialog_inert_test", path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as local:
+        local.setitem(sys.modules, "cifereca.gui.task_runner", stub)
+        spec.loader.exec_module(module)
+    return module
 
 
 class Widget:
@@ -80,6 +101,7 @@ def all_widgets(root):
 def test_sync_retry_dialog_exact_three_attempts_and_safe_individual_action(
     rig, monkeypatch, case,
 ):
+    gui = load_gui_without_gtk(monkeypatch)
     service, account, source, snap, root, lock_path = loan_snapshot(rig)
     service.current_identity = NS(identity_id="A")
     persist_attested_source_references(service.storage, snap)
