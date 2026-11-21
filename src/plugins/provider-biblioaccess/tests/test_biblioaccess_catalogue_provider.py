@@ -419,6 +419,7 @@ def test_explicit_summary_zero_same_call_no_retry(body):
         assert response.public_notices == ()
         assert response.partial is False
         assert response.catalogue_complete is True
+        assert response.terminal_empty is True
         assert not session.last_search_warnings
         assert len(calls) == 1
         assert session.search("roman", page=2) == []
@@ -470,3 +471,91 @@ def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
 def test_summary_zero_requires_exact_tenant_query_and_route(path):
     assert not http_adapter.summary_attests_zero(
         path, "<p>Aucun r\u00e9sultat pour la recherche roman</p>")
+
+
+# The four negative and two positive query coordinates were observed in
+# the 21/11 field receipt (#7162). Markup and positive book IDs below
+# are synthetic; no private capture is distributed.
+@pytest.mark.parametrize("mode", ["sync", "progressive", "headless"])
+@pytest.mark.parametrize("query,positive", [
+    ("Potter", False), ("Victor Hugo", False), ("Victor", False), ("Hugo", False),
+    ("Harry Potter", True), ("Harry", True),
+])
+def test_field_query_receipt_stops_core_loose_variants(tmp_path, mode, query, positive):
+    from cifereca.config import Config
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    from urllib.parse import urlencode
+    from html import escape
+
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, request.url.params["query"]))
+        assert request.url.params["query"] == query  # no loose fallback GET
+        assert "cookie" not in request.headers
+        if request.url.path.endswith("SearchResultSummary"):
+            if positive:
+                return httpx.Response(302, headers={"location":
+                    "/1409/Catalog/Search?" + urlencode({"query": query, "pageindex": 0})})
+            return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                text="<p>Aucun r&eacute;sultat pour la recherche " + escape(query) + "</p>")
+        assert positive and request.url.path.endswith("/Catalog/Search")
+        return httpx.Response(200, headers={"content-type": "text/html"},
+            text='<a href="/1409/Catalog/Book/123/fixture">' + escape(query) + '</a>')
+
+    config = Config(tmp_path / "config.json")
+    config.set("library.directory", str(tmp_path / "library"))
+    config.set("identities", [{"id": "alice", "label": "Alice"}])
+    config.set("providers.accounts", [])
+    db = Storage(tmp_path / "notices.sqlite")
+    service = LibraryService(config, db, Diagnostics())
+    session, _ = _session(handler)
+    session.connect()
+    service._sessions = {session.provider_id: session}
+    try:
+        if mode == "sync":
+            rows = service.search(query, provider_id=session.provider_id, force=True)
+        elif mode == "progressive":
+            rows = []
+            summary = service.search_progressive(
+                query, provider_id=session.provider_id, force=True,
+                on_batch=lambda batch: rows.extend(batch.results))
+            assert not summary.cancelled and summary.result_count == int(positive)
+        else:
+            summary, rows = service.search_progressive_result_for_scope(
+                capture_search_read_scope(service, "alice"), query,
+                provider_id=session.provider_id, force=True)
+            assert not summary.cancelled and summary.result_count == int(positive)
+        assert len(rows) == int(positive)
+        assert len(calls) == (2 if positive else 1)
+        assert all(method == "GET" and term == query for method, _, term in calls)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+    finally:
+        service.close()
+        session.close()
+
+
+def test_terminal_empty_requires_valid_explicit_anonymous_response():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from cifereca.plugin_api import ProviderSearchResponse
+    from cifereca.core.search_orchestration import _terminal_anonymous_empty
+
+    anonymous = SimpleNamespace(credential_id="__public__")
+    response = ProviderSearchResponse([], catalogue_complete=True, terminal_empty=True)
+    assert _terminal_anonymous_empty(response, anonymous)
+    for changed in (
+        replace(response, terminal_empty=False),
+        replace(response, terminal_empty=1),
+        replace(response, catalogue_complete=None),
+        replace(response, catalogue_complete=1),
+        replace(response, partial=True),
+        replace(response, results=[None]),
+        replace(response, results=()),
+        replace(response, public_notices=(None,)),
+    ):
+        assert not _terminal_anonymous_empty(changed, anonymous)
+    assert not _terminal_anonymous_empty(response, SimpleNamespace(credential_id="private"))
