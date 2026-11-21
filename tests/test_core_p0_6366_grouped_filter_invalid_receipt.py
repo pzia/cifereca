@@ -37,10 +37,13 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
         assert primary["_cover_document_ref"] == canonical.document
         expanded, _ = expand_filter_sources([primary], scope="all")
         assert len(expanded) == 2
-        other_provider, = ({entry["provider_id"] for entry in expanded}
-                           - {primary["provider_id"]})
+        alternative, = (
+            entry for entry in expanded
+            if entry["provider_id"] != primary["provider_id"]
+        )
+        other_provider, other_author = alternative["provider_id"], alternative["author"]
         assert filter_loaded_with_documentary_proofs(
-            [primary], "Second", providers=(other_provider,),
+            [primary], other_author, providers=(other_provider,),
         ) == [primary]
 
         for corruption in ("epoch", "identity", "document", "packet"):
@@ -61,6 +64,6 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
                 [row], "Groupe stable", providers=(primary["provider_id"],),
             ) == [row]
             assert filter_loaded_with_documentary_proofs(
-                [row], "Second", providers=(other_provider,),
+                [row], other_author, providers=(other_provider,),
             ) == []
         assert db.entitlements() == db.acquisitions() == db.placements() == []
