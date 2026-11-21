@@ -49,10 +49,35 @@ _CONFIRM = re.compile(r"\bconfirmer\s+l[’']emprunt\b", re.IGNORECASE)
 _INLINE = frozenset(("span", "strong", "small", "b", "em", "a", "label", "i"))
 
 
+def _hidden_dom_node(node: _Node) -> bool:
+    """Ignore explicit invisible DOM labels in this offline structural report.
+
+    Stylesheet classes cannot be resolved here, so even a visible-looking
+    candidate still gives no proof of a provider quota or borrowing right.
+    """
+    if (node.tag in _HIDDEN or "hidden" in node.attrs
+            or node.attrs.get("aria-hidden", "").strip().casefold() == "true"):
+        return True
+    style = node.attrs.get("style", "")
+    if type(style) is not str or len(style) > 4096:
+        return True
+    for declaration in style.split(";"):
+        name, separator, value = declaration.partition(":")
+        if not separator:
+            continue
+        property_name = name.strip().casefold()
+        property_value = re.sub(r"\s*!important\s*$", "", value,
+                                flags=re.IGNORECASE).strip().casefold()
+        if ((property_name == "display" and property_value == "none")
+                or (property_name == "visibility"
+                    and property_value in {"hidden", "collapse"})):
+            return True
+    return False
+
+
 def _inline_visible_text(node: _Node, depth: int = 0) -> str:
     """Bounded ephemeral text for a single DOM label; never returned/logged."""
-    if (depth > 12 or node.tag in _HIDDEN or "hidden" in node.attrs
-            or node.attrs.get("aria-hidden") == "true"):
+    if depth > 12 or _hidden_dom_node(node):
         return ""
     parts: list[str] = []
     remaining = 512
@@ -93,8 +118,7 @@ def _count(value: int) -> int:
 
 
 def _walk(node: _Node, path: tuple[str, ...] = ()):
-    if (node.tag in _HIDDEN or "hidden" in node.attrs
-            or node.attrs.get("aria-hidden") == "true"):
+    if _hidden_dom_node(node):
         return
     tag = node.tag if node.tag in _SAFE_TAGS else "other"
     # The synthetic parser root is not a real HTML element.
