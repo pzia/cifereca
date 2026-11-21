@@ -64,7 +64,9 @@ def known_public_primary_facts(row):
     # A view mapping is mutable, unlike the Core-only sealed packet.
     # Validate native types BEFORE equality: an injected source/identity,
     # DocumentRef or display field must not execute foreign __eq__ in UI.
-    if (type(row) is not dict or type(row.get("source")) is not str
+    if (type(row) is not dict or len(row) > 256
+            or any(type(name) is not str for name in row)
+            or type(row.get("source")) is not str
             or row["source"] != "notice_c_public"):
         return None
     packet = row.get(_PRIMARY_FACT_FIELD)
@@ -75,7 +77,8 @@ def known_public_primary_facts(row):
             or type(identity) is not str or type(packet[1]) is not str
             or packet[1] != identity
             or type(packet[2]) is not PublicNoticeCHit
-            or type(meta) is not dict):
+            or type(meta) is not dict or len(meta) > 256
+            or any(type(name) is not str for name in meta)):
         return None
     hit = packet[2]
     document = row.get("_cover_document_ref")
