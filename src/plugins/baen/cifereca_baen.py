@@ -288,16 +288,29 @@ def _baen_explicit_download_offer(html_text, detail_url):
     generic_download = None
     for href, label in links:
         text = ' '.join(re.sub('<[^>]+>', ' ', html.unescape(label)).split()).casefold()
-        candidate = urljoin(detail_url, href)
-        if not _trusted_baen_url(candidate):
+        try:
+            candidate = urljoin(detail_url, html.unescape(href))
+            if not _trusted_baen_url(candidate):
+                continue
+            parts = urlsplit(candidate)
+        except ValueError:
+            # Malformed upstream HTML is not a public transfer offer.
             continue
-        path = urlsplit(candidate).path.casefold()
-        # The user capture observed /download/index/owned/id/... redirect
-        # to login: no anonymous/public EPUB entitlement is established.
-        # Do not even hand this account-only route to transport.http.
-        if (path.startswith('/download/index/owned/')
+        path = parts.path.casefold()
+        # A label such as "Download EPUB" does not make an auth endpoint,
+        # owned-file route, signed link or encoded traversal public. The
+        # only captured /download/index/owned/ path redirected to login.
+        # Do not even hand these candidates to transport.http.
+        if (parts.query or parts.fragment or '%' in parts.path
+                or '\\' in parts.path or not path.startswith('/')
+                or path.startswith('//')
+                or any(part in ('.', '..') for part in path.split('/'))
+                or path.startswith((
+                    '/customer/', '/account/', '/checkout/', '/cart/',
+                    '/login/', '/sso/', '/admin/', '/oauth/',
+                    '/download/index/',
+                ))
                 or path.endswith(('.pdf', '.mobi', '.azw', '.azw3'))):
-            continue
             continue
         epub_attested = 'epub' in text or path.endswith('.epub')
         if epub_attested:
