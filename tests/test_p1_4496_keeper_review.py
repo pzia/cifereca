@@ -227,3 +227,58 @@ def test_advice_never_settles_caller_transaction(store, tmp_path, reader):
     finally:
         if db.in_transaction:
             db.rollback()
+
+
+@pytest.mark.parametrize("enough", [True, False])
+def test_keeper_charges_repeated_hashes_before_any_pair_preview(store, tmp_path, monkeypatch, enough):
+    from cifereca.core import canonical_keeper_review as module
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/first.pdf", "Acquisitions/second.pdf",
+        "Livres/Auteur/Autrice - Roman.pdf",
+    ))
+    # Two candidates, each pair reads 2 * size, even though all 3 copies
+    # together would fit a smaller budget.
+    monkeypatch.setattr(module, "_MAX_HASH_BYTES", len(BYTES) * 4 - (not enough))
+    original = module.preview_canonical_duplicate
+    calls = []
+    def preview(*args, **kwargs):
+        calls.append(kwargs["candidate_placement_id"])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, "preview_canonical_duplicate", preview)
+    before = rows(store)
+    result = check(store, root)
+    assert result.status == ("review_required" if enough else "blocked")
+    assert len(calls) == (2 if enough else 0)
+    if not enough:
+        assert result.reason == "physical_budget"
+    assert rows(store) == before and not result.executable
+
+
+@pytest.mark.parametrize("mutate", ["same_bytes_new_inode", "missing", "keeper_changed"])
+def test_earlier_copy_change_after_pair_read_revokes_entire_keeper_advice(store, tmp_path, monkeypatch, mutate):
+    from cifereca.core import canonical_keeper_review as module
+    from pathlib import Path
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/first.pdf", "Acquisitions/second.pdf",
+        "Livres/Auteur/Autrice - Roman.pdf",
+    ))
+    original = module.preview_canonical_duplicate
+    seen = []
+    def preview(*args, **kwargs):
+        result = original(*args, **kwargs)
+        assert result.status == "unreferenced"
+        seen.append(kwargs["candidate_placement_id"])
+        if len(seen) == 2:
+            pid = kwargs["keeper_placement_id"] if mutate == "keeper_changed" else seen[0]
+            victim = Path(store.placement_get(pid)["path"])
+            victim.rename(victim.with_suffix(".old"))
+            if mutate != "missing":
+                victim.write_bytes(BYTES)
+        return result
+    monkeypatch.setattr(module, "preview_canonical_duplicate", preview)
+    before = rows(store)
+    result = check(store, root)
+    assert (result.status, result.reason) == ("blocked", "physical_evidence_changed")
+    assert len(seen) == 2 and not result.executable
+    assert not result.keeper_placement_id and not result.candidate_placement_ids
+    assert rows(store) == before
