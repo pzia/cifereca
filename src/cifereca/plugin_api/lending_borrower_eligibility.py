@@ -93,6 +93,10 @@ def assess_borrower_eligibility(
             notice.record_id, notice.docbase, notice.source_provider,
             notice.source_credential))
             or not _bounded(account.unique_id, allow_empty=True)
+            # Empty upstream borrower IDs are reserved for an explicitly
+            # primary account, never an unidentified linked reader.
+            or type(account.is_primary) is not bool
+            or (account.is_primary is False and account.unique_id == "")
             or (notice.source_collection is not None
                 and not _bounded(notice.source_collection))
             or notice.source_provider != account.provider_id
