@@ -202,6 +202,8 @@ class _SharedSearchFailure:
 def _shareable_failure(exc):
     if type(exc) is PublicRateLimitError:
         return _SharedSearchFailure("Numilog : public_catalog_rate_limited", exc.retry_after_seconds)
+    if type(exc) is PublicServiceUnavailableError:
+        return _SharedSearchFailure("Numilog : public_catalog_unavailable", exc.retry_after_seconds)
     if type(exc) is ProviderError:
         message = str(exc)
         prefix = "Numilog : public_catalog_"
@@ -223,7 +225,10 @@ def _await_public_search_flight(future, timeout):
         raise ProviderError("Numilog : public_catalog_request_in_progress") from None
     if type(outcome) is _SharedSearchFailure:
         if outcome.retry_after is not None:
-            error = PublicRateLimitError(outcome.message, None)
+            exception = (PublicServiceUnavailableError
+                         if outcome.message == "Numilog : public_catalog_unavailable"
+                         else PublicRateLimitError)
+            error = exception(outcome.message, None)
             error.retry_after_seconds = outcome.retry_after
             raise error
         raise ProviderError(outcome.message)
@@ -314,6 +319,13 @@ def _fetch_public_search_page(url, timeout, _before_get):
                                                response.headers.get("retry-after"))
                 if status in (301, 302, 303, 307, 308):
                     raise ProviderError("Numilog : public_catalog_redirect_unverified")
+                if status == 503:
+                    # Respect the supplier's bounded retry window: the cache
+                    # must not repeatedly GET the same unavailable public page.
+                    raise PublicServiceUnavailableError(
+                        "Numilog : public_catalog_unavailable",
+                        response.headers.get("retry-after"),
+                    )
                 if status != 200:
                     raise ProviderError("Numilog : public_catalog_unavailable")
                 mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()

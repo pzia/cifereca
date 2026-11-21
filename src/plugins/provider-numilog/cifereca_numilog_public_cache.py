@@ -172,7 +172,10 @@ class PublicCatalogueCache:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
                             'Numilog : public_detail_rate_limited',
                             'Numilog : public_readzis_rate_limited'} or (
-                                str(exc) == 'Numilog : public_detail_unavailable'
+                                str(exc) in {
+                                    'Numilog : public_catalog_unavailable',
+                                    'Numilog : public_detail_unavailable',
+                                }
                                 and hasattr(exc, 'retry_after_seconds')):
                 delay = getattr(exc, 'retry_after_seconds', 0.0)
                 # The exception is a remote transport boundary too: a huge
