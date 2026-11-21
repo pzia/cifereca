@@ -81,6 +81,19 @@ def test_cli_offline_no_core_or_database_writes(tmp_path, monkeypatch, capsys):
     assert result["counts"]["accounts"] == 3
     assert "PRIVATE" not in json.dumps(result)
     assert path.read_bytes() == before
+    assert cli.main(["adept-diagnostic", "--all"]) == 0
+    text = capsys.readouterr().out
+    assert "borrower_grant.explicit_grant_recorded: 1" in text
+    assert "borrower_grant.grant_not_recorded: 2" in text
+    assert "historical_adept_rows_without_reference: 0" in text
+    assert "PRIVATE" not in text
+    assert path.read_bytes() == before
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["adept-diagnostic", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    for option in ("--all", "--identity", "--provider", "--credential", "--account-id", "--json"):
+        assert option in help_text
     assert cli.main(["adept-diagnostic", "--all", "--identity", "PRIVATE_A", "--json"]) == 2
     assert json.loads(capsys.readouterr().out)["code"] == "invalid_scope"
 
