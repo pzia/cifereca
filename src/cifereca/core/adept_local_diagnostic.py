@@ -134,14 +134,19 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                      and type(generation) is int and 0 < generation < 9223372036854775807)
             grant = "explicit_grant_recorded" if valid else "grant_unverified"
         refs = loans[scope]
-        linked = [origin for ref in refs for origin in origins[ref]]
+        linked = [origin for ref, _state in refs for origin in origins[ref]]
         records.append({
             "account": index, "connection": connection_state,
             "identity_binding": binding_state(owner), "borrower_grant": grant,
             "loan_references": len(refs), "adept_origin_records": len(linked),
             "origin_owner_mismatch": sum(1 for o, _ in linked if o != owner),
             "origin_receipt_missing": sum(1 for _, receipt in linked if not receipt),
-            "origin_multiple_records": sum(len(origins[ref]) > 1 for ref in refs),
+            "origin_multiple_records": sum(len(origins[ref]) > 1 for ref, _state in refs),
+            "loan_references_without_adept_origin": sum(not origins[ref] for ref, _state in refs),
+            "loan_reference_states": {
+                label: sum(state == label for _ref, state in refs)
+                for label in ("active", "inactive", "unknown")
+            },
             "provisioning": "unknown", "current_right": "unknown",
         })
     if account_id is None:
