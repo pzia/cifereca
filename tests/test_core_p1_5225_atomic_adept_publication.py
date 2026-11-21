@@ -539,3 +539,32 @@ def test_adept_stage_cannot_be_adopted_as_its_final_library_destination(tmp_path
     assert produced.read_bytes() == b"PRIVATE STAGING BYTES"
     assert produced.stat().st_nlink == 1
     assert list(tmp_path.iterdir()) == [produced]
+
+
+
+def test_adept_planned_stage_is_independent_and_published_through_bridge(tmp_path):
+    """#5225 staging policy and the physical bridge form one admission contract."""
+    destination = tmp_path / "book.epub"
+    final, staged, repair = adept_acsm_plan.plan_adept_destination(
+        destination, force_refresh=False, legacy_acsm_artifact=False,
+        previous_path=None, unique_suffix=lambda: "nonce",
+    )
+    assert repair is False and final == destination and staged != final
+    assert staged.parent == final.parent and staged.name.startswith(".adept-stage-")
+    assert not final.exists()
+    staged.write_bytes(b"VALIDATED-DOWNLOAD")
+    published, *_rest = adept_artifact_publication.publish(
+        result={"artifact": {"path": str(staged), "format": "epub"}},
+        adept_destination=staged, acsm_format="epub",
+        loan=NS(id="synthetic-loan", identity_id="A", source_provider="test"),
+        repair_mode=repair, destination=final, previous_path=None,
+        Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+        inspect_artifact=lambda *_args: NS(
+            valid=True, media_format="epub", protected=False,
+        ),
+        adept_acsm_plan=adept_acsm_plan, uuid=uuid,
+        _TRACE_LOG=logging.getLogger("synthetic"),
+    )
+    assert published == destination and published.read_bytes() == b"VALIDATED-DOWNLOAD"
+    assert not staged.exists()
+    assert not list(tmp_path.glob(".adept-publish-*"))
