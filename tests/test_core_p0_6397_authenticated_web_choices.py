@@ -179,7 +179,7 @@ def test_unqualified_source_does_not_publish_choice(tmp_path, changes):
 
 @pytest.mark.parametrize("change", [
     "source_epoch", "session_epoch", "session", "disconnect", "plugin",
-    "account", "binding", "connection_aba", "source_revision", "eviction", "c_epoch",
+    "account", "binding", "connection_aba", "source_revision", "raw_eviction", "c_epoch",
 ])
 def test_choice_click_revalidates_exact_scopes(tmp_path, change):
     with closing(Storage(tmp_path / "stale.sqlite")) as db:
@@ -218,8 +218,10 @@ def test_choice_click_revalidates_exact_scopes(tmp_path, change):
             )
             persist_notice_cover(db, replacement, field_path=("cover",),
                                  cover_inventory_complete=False)
-        elif change == "eviction":
-            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        elif change == "raw_eviction":
+            from cifereca.core.notice_cover_repository import _opaque_key
+            with db._lock, db._connect() as sql:
+                sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(source.document),))
         else:
             host.source(a, url=HOST + "/resources/revised", at=11)
         assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) is None
@@ -260,3 +262,91 @@ def test_inert_session_generation_may_be_counter_or_opaque_uuid(tmp_path, genera
         assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == URL
         session._epoch = str(generation) if type(generation) is int else generation + "-new"
         assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) is None
+
+
+def test_qualified_private_eviction_restart_and_fresh_reference_revision(tmp_path):
+    path = tmp_path / "retained.sqlite"
+    with closing(Storage(path)) as db:
+        host = Host(db)
+        a = host.account("alice")
+        source, c = host.source(a)
+        menu = host.menu(c, source.document)
+        choice, = menu.choices
+        assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == URL
+        assert read_public_web_choices(db, c.document).choices == ()
+    with closing(Storage(path)) as db:
+        # New Core/session objects, same durable owner and connection epoch.
+        host = Host(db)
+        a = Account(identity_id="alice", provider_id="fixture-a",
+                    credential_id="card-alice", unique_id="reader-alice",
+                    is_primary=True)
+        host.accounts = [a]
+        host._sessions[host._session_key(a.provider_id, a.credential_id)] = Offline(a)
+        menu = host.menu(c, source.document)
+        assert resolve_authenticated_web_choice(host, menu, choice_id=menu.choices[0].choice_id) == URL
+        updated, revised = host.source(a, url=HOST + "/resources/revised", at=12)
+        assert updated.epoch == source.epoch + 2
+        assert updated.attribute.state == "pending"
+        assert revised.epoch == c.epoch + 1
+        assert resolve_authenticated_web_choice(host, menu, choice_id=menu.choices[0].choice_id) is None
+        fresh = host.menu(revised, updated.document)
+        assert resolve_authenticated_web_choice(host, fresh, choice_id=fresh.choices[0].choice_id) == HOST + "/resources/revised"
+        assert evict_notice_cover(db, updated.document, expected_epoch=updated.epoch)
+        assert resolve_authenticated_web_choice(host, fresh, choice_id=fresh.choices[0].choice_id) == HOST + "/resources/revised"
+        # Rebinding an old durable source must never reauthorize the reference.
+        db.provider_connection_put({"identity_id": "alice", "provider_id": a.provider_id,
+                                    "credential_id": a.credential_id, "enabled": False})
+        db.provider_connection_put({"identity_id": "alice", "provider_id": a.provider_id,
+                                    "credential_id": a.credential_id, "enabled": True})
+        stale = host.menu(revised, updated.document)
+        assert stale is None or stale.choices == ()
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+@pytest.mark.parametrize("damage", ["url", "scope", "proof", "epoch", "raw_delete", "sidecar_delete"])
+def test_retained_private_reference_rejects_bad_scope_digest_and_fence(tmp_path, damage):
+    import json
+    from cifereca.core.notice_c_authenticated_web_retention import _key
+    from cifereca.core.notice_cover_repository import _opaque_key, _fence_key
+    with closing(Storage(tmp_path / "damage.sqlite")) as db:
+        host = Host(db)
+        a = host.account("alice")
+        source, c = host.source(a)
+        menu = host.menu(c, source.document)
+        if damage != "raw_delete":
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        with db._lock, db._connect() as sql:
+            key = _key(source.document)
+            if damage == "raw_delete":
+                sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(source.document),))
+            elif damage == "sidecar_delete":
+                sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+            elif damage == "epoch":
+                key = _fence_key(_opaque_key(source.document))
+                raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
+                raw["epoch"] += 1
+                sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
+            else:
+                raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
+                if damage == "url":
+                    raw["field"]["links"][0]["url"] = HOST + "/resources/forged"
+                else:
+                    raw[damage] = "0" * 64
+                sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
+        assert resolve_authenticated_web_choice(host, menu, choice_id=menu.choices[0].choice_id) is None
+        assert not host.menu(c, source.document).choices
+
+
+def test_foreign_opaque_source_digest_cannot_be_rebound_to_own_scope(tmp_path):
+    with closing(Storage(tmp_path / "foreign.sqlite")) as db:
+        host = Host(db)
+        alice = host.account("alice")
+        bob = host.account("bob")
+        foreign, c = host.source(bob)
+        assert evict_notice_cover(db, foreign.document, expected_epoch=foreign.epoch)
+        forged = replace(foreign.document, identity_id="alice",
+                         credential_id=alice.credential_id, account_id=alice.unique_id)
+        menu = host.menu(c, forged)
+        assert menu is None or menu.choices == ()
+        assert host.menu(c, foreign.document, owner="bob").choices
