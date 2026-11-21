@@ -157,3 +157,52 @@ def test_previous_public_response_not_reused_after_failed_query(monkeypatch):
         assert first.public_notices[0].result is not first.results[0]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("requested,expected,partial,complete", [
+    ((), (0, 1, 2), False, None),
+    (("ebook",), (0, 1, 2), False, None),
+    (("epub",), (0,), True, None),
+    (("pdf",), (1,), True, None),
+    (("epub", "pdf"), (0, 1), True, None),
+    (("mp3",), (), True, None),
+    (("ebook", "mp3"), (0, 1, 2), True, None),
+])
+def test_shared_catalogue_formats_only_use_same_anonymous_cards(monkeypatch, requested, expected, partial, complete):
+    session = _session()
+    cards = [replace(row, format=fmt) for row, fmt in
+             zip(PUBLIC_PAGE.items, ("EPUB", "PDF", None))]
+    calls = []
+
+    def public(query, *, page, field):
+        calls.append((query, page, field))
+        return cards
+
+    monkeypatch.setattr(session, "search_public", public)
+    monkeypatch.setattr(session, "library", lambda: pytest.fail("private inventory read"))
+    try:
+        response = session.search_with_response_facets("jefferson", "catalog", content_types=requested)
+        assert response.results == [cards[i] for i in expected]
+        assert response.partial is partial and response.catalogue_complete is complete
+        assert response.terminal_empty is False
+        assert [notice.result.record_id for notice in response.public_notices] == [
+            cards[i].record_id for i in expected]
+        assert all(notice.result is not row and notice.result.owned is False
+                   and notice.result.downloadable is False and notice.result.download_url is None
+                   for row, notice in zip(response.results, response.public_notices))
+        assert calls == [("jefferson", 0, "all")]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("bad", ["epub", (False,), ("",), ("x"*81,), ("epub",)*33])
+def test_invalid_shared_catalogue_format_before_public_read(monkeypatch, bad):
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    session = _session()
+    monkeypatch.setattr(session, "search_public", lambda *a, **kw: pytest.fail("public network read"))
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unsupported_content_type"):
+            session.search_with_response_facets("jefferson", "catalog", content_types=bad)
+    finally:
+        session.close()

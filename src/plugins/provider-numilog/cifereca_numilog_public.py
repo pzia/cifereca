@@ -11,7 +11,7 @@ import re
 import unicodedata
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
-from cifereca.plugin_api import SearchResult
+from cifereca.plugin_api import SearchResult, ProviderCapabilityError
 from cifereca_numilog_html import Parser, ParseError, classes, public_book_url
 
 SEARCH_PATH = '/Pages/Recherche/ResultatRecherche.aspx'
@@ -24,6 +24,29 @@ _ADVANCED_TEXT = frozenset({'RATitle', 'RAAuthor', 'RARef'})
 _ADVANCED_CRITERIA = _ADVANCED_TEXT | {'RAFormat', 'RAPublisher'}
 _ADVANCED_FORMATS = frozenset({'3', '11', '14', '15', '16'})
 _BOOK_PATH = r'/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook'
+
+
+def requested_public_formats(content_types):
+    """Validate the same typed format request for both public read routes."""
+    if (type(content_types) not in (tuple, list, set, frozenset)
+            or len(content_types) > 32
+            or any(type(value) is not str or not 0 < len(value) <= 80
+                   for value in content_types)):
+        raise ProviderCapabilityError("Numilog public : unsupported_content_type")
+    return {value.casefold() for value in content_types} - {"all"}
+
+
+def filter_public_formats(rows, requested, complete):
+    """Pure loaded-page filter; no selected offer is a file receipt."""
+    partial = bool(requested - {"ebook", "epub", "pdf"})
+    if requested and "ebook" not in requested:
+        formats = requested & {"epub", "pdf"}
+        if formats and any(row.format is None for row in rows):
+            partial = True
+        rows = [row for row in rows if type(row.format) is str
+                and row.format.casefold() in formats]
+        complete = False
+    return rows, partial, None if partial else complete
 
 
 class PublicSearchParseError(ParseError):

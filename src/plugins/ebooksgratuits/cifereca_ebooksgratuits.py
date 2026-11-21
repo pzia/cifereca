@@ -1113,9 +1113,17 @@ def _opds_items(session,feed,feed_url,*,warnings=None,documentary=False):
         for category in entry.findall(ATOM+'category'):
             label=(category.get('label') or category.get('term') or '').strip()
             if not label:continue
-            if 'genre' in category.get('scheme','').casefold():
+            scheme = category.get('scheme', '').casefold().rstrip('/')
+            if documentary:
+                # A generic Atom category, or a scheme merely containing
+                # the substring "genre", is not a qualified genre field.
+                is_genre = bool(re.search(r'(?:^|[/#:])genres?$', scheme))
+            else:
+                is_genre = 'genre' in scheme
+            if is_genre:
                 genres.append(label)
-            else:categories.append(label)
+            else:
+                categories.append(label)
         metadata={'license_note':'Vérifier les droits selon le pays',
                   'acquisition_source':'opds-calibre',
                   'acquisition_evidence':'opds.entry.link',
@@ -1295,6 +1303,28 @@ def _opds_load_acquisition(session,initial,field,needle,*,initial_feed=None):
     raise ProviderError('Ebooks libres et gratuits : navigation_limit')
 
 
+def _documentary_opds_metadata(row):
+    """Keep explicit bounded genre labels and independent web proof only.
+
+    Do not carry acquisition URLs, raw source fields, rights, ambiguous
+    categories or inferred tags into the public documentary declaration.
+    Core still validates the public bibliography before persistence.
+    """
+    result = {}
+    if row.friendly_url:
+        result["public_url_evidence"] = "ebooksgratuits.public_search_record_identifier"
+    genres = row.metadata.get("genres")
+    if type(genres) is list and 0 < len(genres) <= 32 and all(
+        type(label) is str and 0 < len(label) <= 240
+        and label.isprintable()
+        and not label.lstrip().startswith(("/", "\\", "~/"))
+        and not re.search(r"(?i)https?://|file:|[^\s@]+@[^\s@]+\.[^\s@]+|(?:token|auth|cookie|signature|password|secret)\s*=|(?:bearer|basic)\s+\S+", label)
+        for label in genres
+    ):
+        result["genres"] = list(genres)
+    return result
+
+
 def _opds_search(session,query,scope='all',page=0,field='all',*,documentary=False):
     session.last_search_warnings=[]
     if not isinstance(field,str) or field.strip().lower() not in DESCRIPTOR.search_capabilities.fields:
@@ -1375,9 +1405,7 @@ def _opds_search(session,query,scope='all',page=0,field='all',*,documentary=Fals
                 rows=[replace(row, source_collection="public_catalog",
                               owned=False, downloadable=False, download_url=None,
                               thumbnail_url=None, description=None,
-                              metadata=({"public_url_evidence":
-                                         "ebooksgratuits.public_search_record_identifier"}
-                                        if row.friendly_url else {}))
+                              metadata=_documentary_opds_metadata(row))
                       for row in rows]
             return rows
         url,_,_=_opds_find_link(feed,current,'next')

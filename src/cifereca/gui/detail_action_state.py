@@ -1,6 +1,8 @@
 """Presentation-only action state shared by plugin and cached book details."""
 from __future__ import annotations
 
+from ..plugin_api.detail_action_descriptor import public_action_reason
+
 
 def apply_detail_action_state(button, action) -> None:
     """Reflect the producer's state without evaluating permissions or doing IO.
@@ -30,7 +32,7 @@ def apply_detail_action_state(button, action) -> None:
     if callable(styler):
         styler("destructive-action")
     raw_reason = getattr(action, "unavailable_reason", "")
-    reason = raw_reason.strip() if type(raw_reason) is str else ""
+    reason = public_action_reason(raw_reason)
     if state == "available" and not executable:
         reason = "Aucune action exécutable"
     if available:

@@ -128,7 +128,18 @@ class LaRochelleCatalogueSession(ProviderSession):
         from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
         from biblioaccess_observations import book_id_from_url
 
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or len(content_types) > 32
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("biblioaccess_catalogue_content_type_invalid")
+        requested = {value.casefold() for value in content_types} - {"all"}
+        # Search anchors attest a digital book notice, not a file format.
+        # Never substitute a speculative EPUB/PDF/audio format for None.
         rows, observation = self._search_with_observation(query, scope, 0, field)
+        unsupported = bool(requested - {"ebook"})
+        if requested and "ebook" not in requested:
+            rows = []
         anonymous = (
             self.credential_id == "__public__"
             and type(self.credentials) is dict and not self.credentials
@@ -149,14 +160,17 @@ class LaRochelleCatalogueSession(ProviderSession):
                 declarations.append(PublicSearchNotice(row))
         # No recognized record is not proof of an empty catalogue page.
         # Explicit clearing of the query is not a search attempt.
-        zero = (observation is not None
+        zero = (not unsupported and observation is not None
                 and observation.status == "summary_zero_attested"
                 and observation.completeness == "complete"
                 and not rows)
-        partial = len(declarations) != len(rows) or (bool(query.strip()) and not rows and not zero)
+        partial = (unsupported or len(declarations) != len(rows)
+                   or (bool(query.strip()) and not rows and not zero))
         # Keep the warning for list-only callers; the typed response expresses
         # a bounded page independently of a missing bibliographic observation.
         self.last_search_warnings = (
+            ["Résultats publics partiels : formats demandés non attestés."]
+            if unsupported else
             ["Résultats publics partiels : aucune notice reconnue."]
             if partial and not rows else
             ["Résultats publics partiels : notices sans preuve bibliographique."]
@@ -164,7 +178,9 @@ class LaRochelleCatalogueSession(ProviderSession):
         )
         return ProviderSearchResponse(
             results=rows, public_notices=tuple(declarations),
-            partial=partial, catalogue_complete=zero if query.strip() else None,
+            partial=partial, catalogue_complete=(
+                None if unsupported or not query.strip() else zero
+            ),
             terminal_empty=zero and anonymous,
         )
 
