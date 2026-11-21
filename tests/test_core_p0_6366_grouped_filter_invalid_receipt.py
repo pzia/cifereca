@@ -1,0 +1,66 @@
+"""A stale multi-source matching packet must not erase a known primary C.
+
+Controlled two-source SQLite admission, then eviction and restart. No supplier
+network, private identity authority, acquisition or placement.
+"""
+from contextlib import closing
+from copy import deepcopy
+
+from cifereca.core.document_filter import filter_loaded_with_documentary_proofs
+from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+from cifereca.core.notice_c_loaded_filter import expand_filter_sources
+from cifereca.core.notice_c_public_search import search_public_notice_c
+from cifereca.core.notice_cover_repository import evict_notice_cover
+from cifereca.storage import Storage
+from tests.test_core_p0_6366_multisource_c_search import shared
+from tests.test_core_p0_6366_public_c_sqlite_source_search import persist, verified_public
+
+
+def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_path):
+    filename = tmp_path / "invalid-group.sqlite"
+    with closing(Storage(filename)) as db:
+        first = persist(db, verified_public(
+            source_provider="bnf", record_id="primary",
+            title="Groupe stable", author="Premier",
+        ))
+        second = persist(db, verified_public(
+            source_provider="numilog-catalog", record_id="alternative",
+            title="Groupe stable", author="Second",
+        ))
+        canonical = shared(db, first, second)
+        for source in (first, second):
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+
+    with closing(Storage(filename)) as db:
+        page = search_public_notice_c(db, "Groupe stable", group_by_document=True)
+        primary, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        assert primary["_cover_document_ref"] == canonical.document
+        expanded, _ = expand_filter_sources([primary], scope="all")
+        assert len(expanded) == 2
+        other_provider, = ({entry["provider_id"] for entry in expanded}
+                           - {primary["provider_id"]})
+        assert filter_loaded_with_documentary_proofs(
+            [primary], "Second", providers=(other_provider,),
+        ) == [primary]
+
+        for corruption in ("epoch", "identity", "document", "packet"):
+            row = {**primary, "metadata": deepcopy(primary["metadata"])}
+            if corruption == "epoch":
+                row["metadata"]["notice_c_epoch"] = True
+            elif corruption == "identity":
+                row["identity_id"] = "bob"
+            elif corruption == "document":
+                row["_cover_document_ref"] = None
+            else:
+                row.pop("_core_notice_c_filter_sources")
+            rows, originals = expand_filter_sources([row], scope="all")
+            assert rows == [row] and originals == {}
+            # The primary is still searchable; the unsupported alternative
+            # author/provider cannot be promoted from stale group metadata.
+            assert filter_loaded_with_documentary_proofs(
+                [row], "Groupe stable", providers=(primary["provider_id"],),
+            ) == [row]
+            assert filter_loaded_with_documentary_proofs(
+                [row], "Second", providers=(other_provider,),
+            ) == []
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
