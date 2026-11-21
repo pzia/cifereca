@@ -988,7 +988,11 @@ def _opds_public_html_link(feed_url, raw):
             or path.endswith(('.xml', '.atom', '.opds'))
             or path in {'/feed', '/feed.php', '/fetch.php', '/index.php/feed',
                         '/index.php/fetch', '/index.php/feed.php',
-                        '/index.php/fetch.php', '/index.php/opensearch.xml'}
+                        '/index.php/fetch.php', '/index.php/opensearch.xml',
+                        # Search routes are navigation, not an entry's
+                        # individual HTML page, even without query params.
+                        '/search', '/search.aspx', '/index.php/search',
+                        '/index.php/search.aspx'}
             or path.startswith(('/feed/', '/fetch/',
                                 '/index.php/feed/', '/index.php/fetch/'))
             or any('%' in part for part in segments)):

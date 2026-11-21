@@ -189,3 +189,55 @@ def test_core_format_filter_uses_only_loaded_qualified_page(types, count, partia
         assert len(calls) == 3 * count
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("route", (
+    "/search",
+    "/Search.aspx",
+    "/index.php/search",
+    "/index.php/search.aspx",
+    "/%73earch",
+    "/index.php/%73earch",
+))
+def test_search_html_alternate_cannot_mint_a_book_web_reference(route):
+    from cifereca_ebooksgratuits import _opds_public_html_link
+    from cifereca.core.search_orchestration import _public_rows_from_response
+
+    assert _opds_public_html_link(FEED, route) is None
+    entries = BOOK.replace("/index.php/book/42", route)
+    session, calls = make_session(entries)
+    try:
+        # A book still has an EPUB offer in legacy Search, but a search
+        # navigation route cannot be surfaced as its web detail.
+        item, = session.search("Livre")
+        assert item.download_url == HOST + "/index.php/fetch/42.epub"
+        assert item.friendly_url is None
+        assert len(calls) == 3
+        # In the durable C declaration every unqualified HTML alternate
+        # refuses the whole entry, not just its web URL. Never claim exact
+        # book-only evidence after a contradictory link declaration.
+        public = session.search_with_response_facets("Livre", "catalog")
+        assert public.partial is True and public.results == []
+        assert public.public_notices == ()
+        assert _public_rows_from_response(public, session) == []
+        assert len(calls) == 6
+    finally:
+        session.close()
+
+
+def test_search_alternate_does_not_override_an_independent_book_html_link():
+    from cifereca_ebooksgratuits import _opds_public_html_link
+    assert _opds_public_html_link(FEED, "/index.php/book/42") == (
+        HOST + "/index.php/book/42"
+    )
+    extra_link = '<link rel="alternate" type="text/html" href="/index.php/search" />'
+    session, calls = make_session(BOOK.replace("</entry>", extra_link + "</entry>"))
+    try:
+        item, = session.search("Livre")
+        assert item.friendly_url == HOST + "/index.php/book/42"
+        assert item.downloadable is True
+        public = session.search_with_response_facets("Livre", "catalog")
+        assert public.partial is True and public.public_notices == ()
+        assert len(calls) == 6
+    finally:
+        session.close()
