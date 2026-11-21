@@ -236,7 +236,13 @@ def build_provider_account_editor(
         entry = (Adw.ActionRow() if boolean_mode else
                  Adw.ComboRow() if choice_mode else
                  Adw.PasswordEntryRow() if field.secret else Adw.EntryRow())
-        entry.set_title(field.label)
+        # One vocabulary for all providers, driven by public descriptor metadata.
+        # A personal ceiling is neither an official lender quota nor a right.
+        advisory = getattr(field, "advisory_loan_medium", None) in ("digital", "physical")
+        entry.set_title(
+            f"Plafond renseigné par vous · {field.label}"
+            if advisory else field.label
+        )
         if field.key in options:
             # Explicitly persisted empty strings are intentional. Never
             # resurrect a retired global/provider default over an existing
@@ -300,10 +306,14 @@ def build_provider_account_editor(
             option_fields[field.key] = entry
         group.add(entry)
         help_text = getattr(field, 'help_text', '')
-        if type(help_text) is str and help_text:
+        if advisory or (type(help_text) is str and help_text):
             note = Adw.ActionRow()
             note.set_title(field.label)
-            note.set_subtitle(help_text)
+            caution = "Préférence indicative : ni quota officiel ni autorisation d’emprunter."
+            note.set_subtitle(
+                caution + (" " + help_text if type(help_text) is str and help_text else "")
+                if advisory else help_text
+            )
             group.add(note)
     # Declarative borrower-specific fields consume only accounts previously
     # observed by Core; opening Settings never connects, inventories or GETs.
@@ -325,16 +335,25 @@ def build_provider_account_editor(
             branch_fields = {}
             for medium, branch_name in spec.branches:
                 entry = Adw.EntryRow()
-                entry.set_title(f"{spec.label} · {label} · {branch_name}")
+                entry.set_title(
+                    ("Plafond renseigné par vous · " if getattr(spec, "advisory_loan_limit", False) is True else "")
+                    + f"{spec.label} · {label} · {branch_name}"
+                )
                 saved = stored.get(borrower, {}).get(medium) if type(stored) is dict else None
                 entry.set_text(saved if type(saved) is str else spec.default)
                 group.add(entry)
                 branch_fields[medium] = entry
             scoped_option_fields[spec.key][borrower] = branch_fields
-        if borrowers and type(getattr(spec, "help_text", None)) is str and spec.help_text:
+        if borrowers and (getattr(spec, "advisory_loan_limit", False) is True
+                          or (type(getattr(spec, "help_text", None)) is str and spec.help_text)):
             note = Adw.ActionRow()
             note.set_title(spec.label)
-            note.set_subtitle(spec.help_text)
+            caution = "Préférence indicative : ni quota officiel ni autorisation d’emprunter."
+            help_text = getattr(spec, "help_text", "")
+            note.set_subtitle(
+                caution + (" " + help_text if type(help_text) is str and help_text else "")
+                if getattr(spec, "advisory_loan_limit", False) is True else help_text
+            )
             group.add(note)
     account_note = getattr(descriptor, "account_note", None)
     if option_fields and account_note:
