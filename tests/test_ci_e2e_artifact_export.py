@@ -67,6 +67,8 @@ class SafeE2EExportTests(unittest.TestCase):
             ("cold_web_choices", "cold_search_detail"),
             ("offline_search_list", "offline_recommendations_list"),
             ("complete", "invalidated_n2_warm_n3"),
+            ("complete", "epub_priority_cold"),
+            ("complete", "epub_priority_warm"),
         ):
             with self.subTest(cover=cover, local=local):
                 private.write_text(json.dumps({

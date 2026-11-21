@@ -334,6 +334,9 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     def cleanup():
         cleanup_stage()
         pool.shutdown(wait=True, cancel_futures=True)
+        cache_patch = state.pop("epub_cache_patch", None)
+        if cache_patch is not None:
+            cache_patch.stop()
         tmp.cleanup()
         if plugin_dir in sys.path:
             sys.path.remove(plugin_dir)
@@ -1018,12 +1021,149 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert after_n3["preview_created"] == before_n3["preview_created"]
                 assert after_n3["ui_failed"] == before_n3["ui_failed"]
                 report["checks"]["P0_4980_invalidated_n2_warm_n3_real_gtk"] = True
-                report["local_c_stage"] = "complete"
-                cleanup()
-                window.present()
-                complete()
+                verify_epub_priority(list_cover, detail_cover)
 
             later(40, guard(lambda: refreshed(monotonic() + 8)))
+
+        def verify_epub_priority(list_cover, detail_cover):
+            # Independent, explicitly synthetic Artifact/Placement proof.
+            # Neither this local fixture nor the already warm catalogue URL
+            # establishes a new relation to the three-source C above.
+            from cifereca import epub_metadata
+            from cifereca.core.book_cover_projection import CoverDocumentScope
+            from cifereca.core.covers import candidate
+            from cifereca.core.epub_cover_source import project_exact_embedded_cover
+            from cifereca.gui.document_cover_service import CoverSourceSnapshot
+            from zipfile import ZipFile
+
+            report["local_c_stage"] = "epub_priority_cold"
+            cache_root = root / "embedded-fixture-cache"
+
+            def isolated_cache(*, create=True):
+                if create:
+                    cache_root.mkdir(parents=True, exist_ok=True)
+                return cache_root
+
+            # All imported cover_cache_dir functions use this exact module
+            # global. The temporary override avoids touching any other cache.
+            cache_patch = patch.object(epub_metadata, "cache_dir", isolated_cache)
+            cache_patch.start()
+            state["epub_cache_patch"] = cache_patch
+            embedded_pixels = (39, 154, 74)
+
+            def prepare():
+                assert get_ident() != gtk_thread
+                epub = root / "priority-fixture.epub"
+                png = BytesIO()
+                Image.new("RGB", (400, 600), embedded_pixels).save(png, format="PNG")
+                png_bytes = png.getvalue()
+                with ZipFile(epub, "w") as archive:
+                    archive.writestr("mimetype", "application/epub+zip")
+                    archive.writestr("META-INF/container.xml",
+                        "<container xmlns='urn:oasis:names:tc:opendocument:xmlns:container'>"
+                        "<rootfiles><rootfile full-path='OPS/content.opf'/></rootfiles></container>")
+                    archive.writestr("OPS/content.opf",
+                        "<package xmlns='http://www.idpf.org/2007/opf' version='3.0'>"
+                        "<metadata><dc:title xmlns:dc='http://purl.org/dc/elements/1.1/'>"
+                        "EPUB fixture</dc:title></metadata><manifest>"
+                        "<item id='cover' href='cover.png' media-type='image/png' "
+                        "properties='cover-image'/></manifest><spine/></package>")
+                    archive.writestr("OPS/cover.png", png_bytes)
+                digest = hashlib.sha256(epub.read_bytes()).hexdigest()
+                metadata = epub_metadata.inspect_epub(epub)
+                scope = CoverDocumentScope(
+                    kind="placement", identity_id=owner,
+                    source_key="artifact:sha256:" + digest,
+                    artifact_id="sha256:" + digest,
+                    placement_id="fixture:epub-priority",
+                )
+                embedded = project_exact_embedded_cover(
+                    scope, revision=1, artifact_sha256=digest, artifact_metadata=metadata,
+                )
+                assert embedded is not None
+                physical = epub_metadata.cover_cache_dir() / embedded.resource.cache_name
+                assert physical.is_relative_to(cache_root)
+                assert physical.read_bytes() == png_bytes
+                physical.unlink()
+                assert not physical.exists()
+                catalogue = candidate(url, tier="catalog", source="fixture",
+                                      evidence_id="fixture:epub-priority")
+                assert catalogue is not None
+                snapshot = CoverSourceSnapshot(
+                    scope=scope, revision=1, candidates=(catalogue,),
+                    embedded=embedded, verified_epub_path=epub,
+                )
+                return snapshot, physical, png_bytes
+
+            def show_embedded(prepared):
+                snapshot, physical, png_bytes = prepared
+                embedded = snapshot.embedded
+                assert embedded is not None
+                assert loader._path(url).read_bytes() == replacement_body
+                scope = snapshot.scope
+                before_n2, before_n3 = n2.stats(), loader.stats()
+                n2.register(snapshot)
+
+                def bind():
+                    for variant, cover in (("list", list_cover), ("detail", detail_cover)):
+                        cover.bind_document(n2, scope, variant=variant)
+
+                def wait_embedded(deadline, warm, base_n2, base_n3):
+                    covers = (list_cover, detail_cover)
+                    if not all(
+                        cover.get_mapped()
+                        and isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                        and not cover.placeholder.get_visible()
+                        and not cover.spinner.get_visible()
+                        for cover in covers
+                    ):
+                        assert monotonic() < deadline, "EPUB priority GTK timeout"
+                        later(40, guard(lambda: wait_embedded(deadline, warm, base_n2, base_n3)))
+                        return
+                    for cover in covers:
+                        request = cover._request
+                        assert request.still_current and request.source_uri == embedded.candidate.url
+                        texture = cover.picture.get_paintable()
+                        with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                            assert image.convert("RGB").getpixel((0, 0)) == embedded_pixels
+                    decision = n2.decisions.peek(scope, revision=1)
+                    assert decision is not None and decision.tier == "embedded"
+                    assert physical.read_bytes() == png_bytes
+                    assert loader._path(url).read_bytes() == replacement_body
+                    assert reads == [doc, other_doc] and gets == ["GET", "GET"]
+                    current_n2, current_n3 = n2.stats(), loader.stats()
+                    assert current_n2["n1_selected_count"] == base_n2["n1_selected_count"] + (0 if warm else 1)
+                    assert current_n3["n3_epub_miss"] == base_n3["n3_epub_miss"] + (0 if warm else 1)
+                    assert current_n3["n3_epub_ok_recent_count"] == base_n3["n3_epub_ok_recent_count"] + (0 if warm else 1)
+                    assert current_n3["n3_epub_failed"] == base_n3["n3_epub_failed"]
+                    assert current_n3["download_ok"] == base_n3["download_ok"]
+                    assert current_n3["ui_applied"] >= base_n3["ui_applied"] + 2
+                    assert current_n3["ui_failed"] == base_n3["ui_failed"]
+                    assert window.service._account_context_epoch == account_epoch
+                    assert window.service._source_context_epoch == source_epoch
+                    if not warm:
+                        capture("00-notice-c-epub-priority-cold")
+                        report["checks"]["P0_4980_epub_priority_cold_real_gtk"] = True
+                        report["local_c_stage"] = "epub_priority_warm"
+                        bind()
+                        later(40, guard(lambda: wait_embedded(
+                            monotonic() + 8, True, current_n2, current_n3)))
+                        return
+                    assert current_n2["n2_hit"] >= base_n2["n2_hit"] + 2
+                    assert current_n3["n3_epub_hit"] >= base_n3["n3_epub_hit"] + 2
+                    capture("00-notice-c-epub-priority-warm")
+                    report["checks"]["P0_4980_epub_priority_warm_real_gtk"] = True
+                    report["local_c_stage"] = "complete"
+                    cleanup()
+                    window.present()
+                    complete()
+
+                bind()
+                later(40, guard(lambda: wait_embedded(
+                    monotonic() + 8, False, before_n2, before_n3)))
+
+            pending = pool.submit(prepare)
+            await_job(pending, show_embedded, monotonic() + 8)
 
         stamp_value = 1794900000
         future = pool.submit(project)
