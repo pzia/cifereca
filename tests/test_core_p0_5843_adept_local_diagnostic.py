@@ -408,3 +408,10 @@ def test_local_canonical_artifact_and_placement_evidence_remains_non_authorizing
         assert overall["counts"]["adept_origins_dangling_source_reference"] == 1
     finally:
         store.close()
+
+
+def test_python_evidence_join_cannot_start_after_deadline():
+    # No SQLite query, Core start or partial report is permitted after expiry.
+    with pytest.raises(diagnostic._Incomplete, match="snapshot_time_budget"):
+        diagnostic._snapshot(None, identity=None, provider=None, credential=None,
+                             account_id=None, deadline=0)
