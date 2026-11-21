@@ -58,3 +58,32 @@ def test_late_completion_after_submit_exception_is_inert(tmp_path):
         done(work())
         fail(RuntimeError("late failure"))
         assert not actions
+
+
+@pytest.mark.parametrize("bad_epoch", [True, False, 1.0, "1", None, 0, -1, 2**63])
+def test_invalid_expected_epoch_never_submits_menu(tmp_path, bad_epoch):
+    with closing(Storage(tmp_path / "epoch.sqlite")) as db:
+        c = setup(db)
+        submitted, actions = [], []
+        host = NS(service=NS(storage=db),
+                  runner=NS(submit=lambda *args, **kw: submitted.append(args)))
+        panel = NS(add_actions=actions.extend)
+        assert not request_public_web_actions(
+            host, panel, c.document, expected_epoch=bad_epoch,
+            current=lambda: True, Gtk=GTK, Gio=NS(),
+        )
+        assert not submitted and not actions
+
+
+@pytest.mark.parametrize("bad_epoch", [True, 1.0])
+def test_invalid_returned_epoch_never_publishes_menu(tmp_path, bad_epoch):
+    from dataclasses import replace
+
+    with closing(Storage(tmp_path / "returned-epoch.sqlite")) as db:
+        c = setup(db)
+        pending, actions, launches, _, toasts = request(db, c)
+        work, done, _ = pending.pop(0)
+        menu = work()
+        assert menu.epoch == 1
+        done(replace(menu, epoch=bad_epoch))
+        assert not actions and not launches and not toasts
