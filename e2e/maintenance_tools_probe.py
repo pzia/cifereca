@@ -749,7 +749,7 @@ def main():
             for number in range(17):
                 stage = stage_dir / f"synthetic-{number}.pdf"
                 target = parent.parent / f"derived-{number}.pdf"
-                content = f"%PDF-1.7\\nSynthetic derived receipt {number}\\n".encode("ascii")
+                content = f"%PDF-1.7\nSynthetic derived receipt {number}\n".encode("ascii")
                 stage.write_bytes(content)
                 st = stage.stat()
                 intent = DerivedIntent(
