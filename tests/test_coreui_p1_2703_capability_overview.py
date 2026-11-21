@@ -255,7 +255,7 @@ def test_installed_backup_flag_is_visible_only_as_transversal_declaration():
     matrix = declared_provider_matrix(descriptor)
     text, = source_capability_labels((matrix,))
     assert "Transversal : déclaré, non vérifié" in text
-    assert "Acquisition : non pris en charge (périmètres déclarés)" in text
+    assert "Acquisition : preuve indisponible" in text
     assert "Transversal : observation" not in text
     assert "sauvegarde autorisée" not in text
 
