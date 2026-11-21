@@ -58,9 +58,10 @@ def capacity_text(value):
 
 
 class DerivedController:
-    def __init__(self, broker, host, active, render):
+    def __init__(self, broker, host, active, render, *, capacity_only=False):
         self.broker, self.host, self.active, self.render = broker, host, active, render
         self.identity = host.identity_id
+        self.capacity_only = capacity_only
         self.page = self.reviewed = self.choice = None
         self.stop = None
         self.busy = self.disposed = False
@@ -73,9 +74,11 @@ class DerivedController:
         if self.busy or not self.current():
             return False
         page = self.page
-        if action == "capacity":
-            return False
-        if action == "overview":
+        if self.capacity_only:
+            if action != "capacity" or choice is not None or confirmed is not False:
+                return False
+            operation = lambda: self.broker.capacity(identity_id=self.identity, confirmed=True)
+        elif action == "overview":
             operation = lambda: self.broker.overview(identity_id=self.identity, confirmed=True)
         elif action == "list":
             operation = lambda: self.broker.list_receipts(identity_id=self.identity, confirmed=True)
@@ -310,52 +313,6 @@ class DerivedPlugin:
         return GuidedMaintenanceView(outer, controller.dispose)
 
 
-class CapacityController(DerivedController):
-    """Same lifecycle, with a deliberately disjoint action surface."""
-    def request(self, action, *, choice=None, confirmed=False):
-        if action != "capacity" or choice is not None or confirmed is not False:
-            return False
-        return self._request_capacity()
-
-    def _request_capacity(self):
-        if self.busy or not self.current():
-            return False
-        event = self.stop = Event()
-        self.busy = True
-        self.render(self, "capacity", "busy", None)
-        delivered = False
-
-        def cancelled():
-            return event.is_set() or not self.current()
-
-        def work():
-            if cancelled():
-                return None
-            try:
-                value = self.broker.capacity(identity_id=self.identity, confirmed=True)
-            except Exception:
-                return None
-            return None if cancelled() else value
-
-        def done(value):
-            nonlocal delivered
-            if delivered:
-                return
-            delivered = True
-            self.busy, self.stop = False, None
-            if self.current():
-                self.render(self, "capacity", "cancelled" if cancelled() else "ready",
-                            None if cancelled() else value)
-
-        try:
-            admitted = self.host.submit("Observation de capacité des variantes…", work, done)
-        except Exception:
-            admitted = False
-        if admitted is not True:
-            done(None)
-        return admitted is True
-
-
 class CapacityPlugin(DerivedPlugin):
     def describe(self):
         return MaintenanceToolInfo(
@@ -369,7 +326,8 @@ class CapacityPlugin(DerivedPlugin):
         marker = self.activation
         if marker is None or self.broker is None:
             raise RuntimeError("derived_capacity_unavailable")
-        return CapacityController(self.broker, host, lambda: marker is self.activation, render)
+        return DerivedController(self.broker, host, lambda: marker is self.activation, render,
+                                 capacity_only=True)
 
     def build_guided(self, host):
         from cifereca.plugin_api.guided_maintenance import GuidedMaintenanceView
