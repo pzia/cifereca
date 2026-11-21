@@ -163,7 +163,18 @@ def build_provider_account_editor(
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
-    enabled_row = Adw.ActionRow(); enabled_row.set_title("Source activée" if not descriptor.credential_fields else "Compte activé")
+    # An SSO or otherwise authenticated source may declare no credential field.
+    # It is still a personal account, never an anonymous catalogue.
+    account_bound = (
+        bool(descriptor.credential_fields)
+        or getattr(descriptor, "interactive_authentication", False) is True
+        or getattr(
+            getattr(descriptor, "capabilities", None),
+            "authentication", False,
+        ) is True
+    )
+    enabled_row = Adw.ActionRow()
+    enabled_row.set_title("Compte activé" if account_bound else "Source activée")
     # Only a literal persisted True can enable an existing source. A newly
     # created account stays OFF; old accounts missing the flag retain their
     # historical default, but corrupt truthy values must fail closed.

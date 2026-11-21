@@ -83,7 +83,12 @@ def build_provider_account_buttons(
             continue
         label = (
             f"Ajouter un compte {descriptor.display_name}"
-            if descriptor.credential_fields
+            if (descriptor.credential_fields
+                or getattr(descriptor, "interactive_authentication", False) is True
+                or getattr(
+                    getattr(descriptor, "capabilities", None),
+                    "authentication", False,
+                ) is True)
             else f"Ajouter la source {descriptor.display_name}"
         )
         add = Gtk.Button(label=label)
