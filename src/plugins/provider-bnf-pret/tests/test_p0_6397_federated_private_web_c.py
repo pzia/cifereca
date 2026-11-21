@@ -215,6 +215,81 @@ def test_private_writer_rejects_nonadmitted_batch_even_with_valid_old_receipt(
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
 
 
+@pytest.mark.parametrize("damage", [
+    "row_id", "key", "key_provider", "proof", "proof_member",
+    "call_scope", "call_binding", "call_observed", "identity",
+])
+def test_private_c_writer_refuses_modified_receipt_without_external_callbacks(
+    harness, damage,
+):
+    from dataclasses import replace
+
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    row, = session.search("fiction")
+    stamp_authenticated_search_rows(service, call, [row])
+    packet = row.__dict__["_core_private_web_search_receipt"]
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("external private C receipt equality")
+
+        def __hash__(self):
+            raise AssertionError("external private C receipt hash")
+
+        def current(self, *args):
+            raise AssertionError("external private C current callback")
+
+    if damage == "row_id":
+        changed = replace(packet, row_id=Hostile())
+    elif damage == "key":
+        changed = replace(packet, key=Hostile())
+    elif damage == "key_provider":
+        changed = replace(packet, key=replace(packet.key, provider_id=Hostile()))
+    elif damage == "proof":
+        changed = replace(packet, proof=Hostile())
+    elif damage == "proof_member":
+        changed = replace(packet, proof=(Hostile(), *packet.proof[1:]))
+    elif damage == "call_scope":
+        changed = replace(packet, call=replace(packet.call, scope=Hostile()))
+    elif damage == "call_binding":
+        changed = replace(packet, call=replace(packet.call, binding=Hostile()))
+    elif damage == "call_observed":
+        changed = replace(packet, call=replace(packet.call, observed_at=Hostile()))
+    else:
+        changed = packet
+
+    row.__dict__["_core_private_web_search_receipt"] = changed
+    identity = Hostile() if damage == "identity" else "alice"
+    assert persist_authenticated_search_rows(
+        service, [row], identity_id=identity,
+    ) == 0
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+    row.__dict__["_core_private_web_search_receipt"] = packet
+    assert persist_authenticated_search_rows(
+        service, [row], identity_id="alice",
+    ) == 1
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
+def test_private_web_catalogue_access_hostile_value_is_not_a_c_receipt(harness):
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    row, = session.search("fiction")
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("provider metadata equality")
+
+    row.metadata["catalogue_access"] = Hostile()
+    stamp_authenticated_search_rows(service, call, [row])
+    assert "_core_private_web_search_receipt" not in row.__dict__
+    assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 0
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
 def test_private_call_cannot_be_captured_as_foreign_reader(harness):
     service, session, _, client = harness
     assert capture_authenticated_search_call(service, session, "bob") is None
