@@ -89,7 +89,9 @@ def _valid_key(key: object) -> bool:
         return False
     if (not _id(key.provider_id) or not _id(key.branch_id)
             or not _id(key.record_id) or not _id(key.edition_id)
+            or type(key.visibility) is not str
             or key.visibility not in ("public", "private", "embedded")
+            or type(key.manifestation_role) is not str
             or key.manifestation_role not in (
                 "print", "digital", "other", "unknown"
             )):
@@ -186,7 +188,7 @@ def admit_source_notice(
     """
     if (not _valid_key(key) or not _id(parser_id)
             or not _id(parser_version)
-            or type(observed_at) is not int or observed_at < 1
+            or type(observed_at) is not int or not 1 <= observed_at <= 2**63 - 1
             or type(status) is not str or status not in ("complete", "partial")
             or not _validate_fields(raw_fields)):
         raise ValueError("invalid_source_notice_observation")
