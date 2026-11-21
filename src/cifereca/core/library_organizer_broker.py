@@ -9,12 +9,13 @@ import secrets
 import threading
 
 from ..plugin_api.library_organizer import (
-    OrganizerFileAdvice, OrganizerGroupAdvice, OrganizerPageAdvice,
+    OrganizerFileAdvice, OrganizerGroupAdvice, OrganizerPageAdvice, OrganizerDryRunAdvice,
 )
 from .library_organizer_review import (
     admit_organizer_review, run_organizer_review, select_organizer_keeper_advice,
 )
 from .library_sqlite_freshness import sqlite_source_stamp
+from .library_organizer_plan import prepare_organizer_dry_run, confirm_organizer_dry_run
 from .canonical_keeper_review import review_canonical_keeper
 
 
@@ -23,6 +24,7 @@ class LibraryOrganizerReadBrokerImpl:
         self._service = service
         self._lock = threading.Lock()
         self._active = None
+        self._dry_run = None
 
     def _project(self, scope, result, stamp):
         if (type(result) is not dict or result.get("mutation_authorized") is not False
@@ -43,6 +45,7 @@ class LibraryOrganizerReadBrokerImpl:
             has_more=result["next_cursor"] is not None,
             inventory_status=result["inventory_status"],
         )
+        self._dry_run = None
         self._active = (scope, result, stamp, page)
         return page
 
@@ -53,6 +56,7 @@ class LibraryOrganizerReadBrokerImpl:
         if token != page.token:
             return None
         if not scope.bound() or sqlite_source_stamp(scope.database) != stamp:
+            self._dry_run = None
             self._active = None
             return None
         return self._active
@@ -62,6 +66,7 @@ class LibraryOrganizerReadBrokerImpl:
             return None
         with self._lock:
             self._active = None
+            self._dry_run = None
             try:
                 scope = admit_organizer_review(self._service)
                 if scope is None or scope.identity != identity_id or not scope.bound():
@@ -100,7 +105,7 @@ class LibraryOrganizerReadBrokerImpl:
                 if active is None:
                     return None
                 scope, result, stamp, page = active
-                if not page.eligible or page.selected:
+                if not page.eligible or page.selected or page.dry_run_state:
                     return None
                 # SQLite's stamp cannot detect a replaced or missing file.
                 # Refresh each previously eligible group's physical/dependency
@@ -128,13 +133,51 @@ class LibraryOrganizerReadBrokerImpl:
                 self._active = None
                 return None
 
+    def _review_dry_run(self, token, confirmed, *, confirm):
+        if confirmed is not True:
+            return None
+        with self._lock:
+            try:
+                active = self._current(token)
+                if active is None:
+                    return None
+                scope, report, stamp, page = active
+                if confirm:
+                    if page.dry_run_state != "prepared" or self._dry_run is None:
+                        return None
+                    plan = confirm_organizer_dry_run(scope, report, self._dry_run, confirmed=True)
+                else:
+                    if page.dry_run_state:
+                        return None
+                    plan = prepare_organizer_dry_run(scope, report, confirmed=True)
+                if (plan is None or not plan.entries or plan.executable is not False
+                        or plan.confirmed is not confirm or self._current(token) is None):
+                    self._active = self._dry_run = None
+                    return None
+                updated = replace(page, token=secrets.token_hex(32),
+                    dry_run_state="confirmed" if confirm else "prepared",
+                    dry_run_entries=tuple(OrganizerDryRunAdvice(
+                        e.operation, e.current, e.proposed, e.state) for e in plan.entries))
+                self._dry_run = None if confirm else plan
+                self._active = (scope, report, stamp, updated)
+                return updated
+            except Exception:
+                self._active = self._dry_run = None
+                return None
+
+    def prepare_dry_run(self, *, token, confirmed=False):
+        return self._review_dry_run(token, confirmed, confirm=False)
+
+    def confirm_dry_run(self, *, token, confirmed=False):
+        return self._review_dry_run(token, confirmed, confirm=True)
+
     def cancel(self, *, token):
         with self._lock:
             if (type(token) is str and self._active is not None
                     and self._active[3].token == token):
-                self._active = None
+                self._active = self._dry_run = None
 
     def revoke(self):
         """Host-only lifetime boundary; not part of the public protocol."""
         with self._lock:
-            self._active = None
+            self._active = self._dry_run = None

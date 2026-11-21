@@ -27,6 +27,14 @@ class OrganizerGroupAdvice:
     keeper: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class OrganizerDryRunAdvice:
+    operation: str
+    current: str
+    proposed: str
+    state: str
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class OrganizerPageAdvice:
     token: str
@@ -39,6 +47,8 @@ class OrganizerPageAdvice:
     has_more: bool
     inventory_status: str
     mutation_authorized: bool = False
+    dry_run_state: str = ""
+    dry_run_entries: tuple[OrganizerDryRunAdvice, ...] = ()
 
 
 @runtime_checkable
@@ -47,4 +57,6 @@ class LibraryOrganizerReadBroker(Protocol):
     def preview(self, *, identity_id: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def next_page(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def select_all_advice(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
+    def prepare_dry_run(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
+    def confirm_dry_run(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def cancel(self, *, token: str) -> None: ...
