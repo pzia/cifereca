@@ -18,7 +18,7 @@ import time
 from ..catalog import LocalCatalog
 from ..locking import InterProcessLock
 from ..paths import acquisition_lock_file
-from .canonical_publication import _physical_target, _same_file, _stable
+from .canonical_publication import _physical_target, _same_file, _stable, _canonical_write_transaction
 from .source_convergence import SourceKey
 from .canonical_adept_attempt import release_completed_attempt_in_transaction
 from .canonical_runtime_attempt import release_runtime_attempt_in_transaction
@@ -180,10 +180,7 @@ def record_completed_delivery_for_recovery(
     }
     data = json.dumps(stage, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     now = int(time.time())
-    with storage._lock, storage._connect() as db:
-        if db.in_transaction:
-            raise ValueError("canonical_intake_nested_transaction")
-        db.execute("BEGIN IMMEDIATE")
+    with _canonical_write_transaction(storage) as db:
         if not _exact_borrower_bound_in_db(db, scope):
             raise ValueError("canonical_intake_account_rebound")
         row = db.execute(
@@ -338,8 +335,7 @@ def mark_completed_delivery_published(
         raise ValueError("canonical_intake_invalid_published_transition")
     _require_idle_connection(storage)
     now = int(time.time())
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with _canonical_write_transaction(storage) as db:
         row = _checkpoint(db, _stage_id(source, offer_id))
         scope = source.scope
         if row is None or row[5] not in (_STAGED, "complete"):
