@@ -68,16 +68,24 @@ def display(page):
 
 
 class GuidedOrganizer:
-    """Widget-independent, one request at a time, no queued work after disposal."""
+    """One worker lease; cancellation revokes pages but never mutates books."""
     def __init__(self, broker, host, active, render):
         self.broker, self.host, self.active, self.render = broker, host, active, render
         self.identity_id = host.identity_id
-        self.page = None
-        self.busy = self.disposed = False
+        self.page = self.stop = self._pending_page = None
+        self.busy = self.disposed = self._cancelled = False
 
     def current(self):
         return (not self.disposed and self.active() and self.host.is_current()
                 and self.host.identity_id == self.identity_id)
+
+    def _cancel_token(self, page):
+        if type(page) is OrganizerPageAdvice:
+            try:
+                self.broker.cancel(token=page.token)
+            except Exception:
+                # Never leak private broker errors to the tool row.
+                pass
 
     def request(self, action):
         if self.busy or not self.current():
@@ -91,15 +99,30 @@ class GuidedOrganizer:
             operation = lambda: self.broker.select_all_advice(token=page.token, confirmed=True)
         else:
             return False
+
+        from threading import Event
+        stop = self.stop = Event()
+        self._pending_page = page
+        self.page = None
         self.busy = True
+        self._cancelled = False
         self.render(None, True)
         delivered = False
 
+        def abandoned():
+            return stop.is_set() or not self.current()
+
         def work():
-            if not self.current():
+            if abandoned():
                 return None
-            value = operation()
-            return value if self.current() else None
+            try:
+                value = operation()
+            except Exception:
+                return None
+            if abandoned():
+                self._cancel_token(value)
+                return None
+            return value
 
         def done(value):
             nonlocal delivered
@@ -107,13 +130,18 @@ class GuidedOrganizer:
                 return
             delivered = True
             self.busy = False
-            if not self.current():
-                self.page = None
-                if not self.disposed and self.active():
+            self.stop = self._pending_page = None
+            if abandoned():
+                self._cancel_token(value)
+                self._cancel_token(page)
+                if self.current():
                     self.render(None, False)
                 return
-            self.page = (value if type(value) is OrganizerPageAdvice
-                         and value.mutation_authorized is False else None)
+            if type(value) is OrganizerPageAdvice and value.mutation_authorized is False:
+                self.page = value
+            else:
+                self._cancel_token(value)
+                self._cancel_token(page)
             self.render(self.page, False)
 
         try:
@@ -124,9 +152,34 @@ class GuidedOrganizer:
             done(None)
         return admitted is True
 
+    def cancel(self):
+        if not self.current() or self._cancelled:
+            return False
+        if self.busy:
+            if self.stop is None:
+                return False
+            self._cancelled = True
+            self.stop.set()
+            self._cancel_token(self._pending_page)
+            self.page = None
+            # The worker remains leased; a restart must await its completion.
+            self.render(None, True)
+            return True
+        if self.page is None:
+            return False
+        self._cancelled = True
+        self._cancel_token(self.page)
+        self.page = None
+        self.render(None, False)
+        return True
+
     def dispose(self):
         self.disposed = True
-        self.page = None
+        if self.stop is not None:
+            self.stop.set()
+        self._cancel_token(self._pending_page)
+        self._cancel_token(self.page)
+        self.page = self._pending_page = None
 
 
 class OrganizerPlugin:
@@ -179,10 +232,13 @@ class OrganizerPlugin:
         outer.append(group)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         following, accept = Gtk.Button(label="Page suivante"), Gtk.Button(label="Tout accepter (avis)")
+        cancel = Gtk.Button(label="Annuler")
         following.set_sensitive(False)
         accept.set_sensitive(False)
+        cancel.set_sensitive(False)
         actions.append(following)
         actions.append(accept)
+        actions.append(cancel)
         outer.append(actions)
         detail = Gtk.Label(xalign=0)
         detail.set_wrap(True)
@@ -194,13 +250,20 @@ class OrganizerPlugin:
             start.set_sensitive(not busy)
             following.set_sensitive(not busy and page is not None and page.has_more)
             accept.set_sensitive(not busy and page is not None and bool(page.eligible) and not page.selected)
+            cancel.set_sensitive(not controller._cancelled and (busy or page is not None))
             detail.set_visible(True)
-            detail.set_text("Revue locale en cours…" if busy else display(page))
+            detail.set_text(
+                "Arrêt demandé…" if busy and controller._cancelled
+                else "Revue locale en cours…" if busy
+                else "Revue annulée. Relancer explicitement." if controller._cancelled
+                else display(page)
+            )
 
         controller = self.controller(host, render)
         start.connect("clicked", lambda _b: controller.request("preview"))
         following.connect("clicked", lambda _b: controller.request("next"))
         accept.connect("clicked", lambda _b: controller.request("select"))
+        cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)
 
 
