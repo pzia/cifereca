@@ -256,3 +256,76 @@ def test_complete_public_page_does_not_claim_partial(monkeypatch):
         assert len(requests) == 1
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("requested,expected,partial,complete", [
+    ((), (0, 1, 2), False, True),
+    (("ebook",), (0, 1, 2), False, True),
+    (("epub",), (0,), True, None),
+    (("pdf",), (1,), True, None),
+    (("epub", "pdf"), (0, 1), True, None),
+    (("mp3",), (), True, None),
+    (("ebook", "mp3"), (0, 1, 2), True, None),
+])
+def test_typed_format_filter_reads_same_cached_page(monkeypatch, requested, expected, partial, complete):
+    requests = fixture(monkeypatch)
+    original = client.parse_public_search
+
+    def parsed(*args):
+        page = original(*args)
+        rows = tuple(replace(row, format=fmt) for row, fmt in
+                     zip(page.items, ("EPUB", "PDF", None)))
+        return replace(page, items=rows, total_results=len(rows), next_url=None,
+                       pagination_links=(), complete=True)
+
+    monkeypatch.setattr(client, "parse_public_search", parsed)
+    s, _ = session()
+    try:
+        response = s.search_with_response_facets("jefferson", scope="catalog",
+                                                content_types=requested)
+        legacy = s.search("jefferson")
+        assert len(legacy) == 3
+        assert response.results == [legacy[index] for index in expected]
+        assert response.partial is partial and response.catalogue_complete is complete
+        assert response.terminal_empty is False
+        assert len(response.public_notices) == len(response.results)
+        assert all(notice.result is row for row, notice in
+                   zip(response.results, response.public_notices))
+        assert all(not row.owned and not row.downloadable and row.download_url is None
+                   for row in response.results)
+        assert len(requests) == 1
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("bad", ["epub", (False,), ("",), ("x"*81,), ("epub",)*33])
+def test_invalid_public_format_before_http(monkeypatch, bad):
+    requests = fixture(monkeypatch)
+    s, _ = session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unsupported_content_type"):
+            s.search_with_response_facets("jefferson", content_types=bad)
+        assert requests == []
+    finally:
+        s.close()
+
+
+def test_exact_formats_without_unknown_rows_are_non_exhaustive_filtered_window(monkeypatch):
+    requests = fixture(monkeypatch)
+    original = client.parse_public_search
+
+    def parsed(*args):
+        page = original(*args)
+        rows = tuple(replace(row, format="EPUB") for row in page.items)
+        return replace(page, items=rows, total_results=len(rows), next_url=None,
+                       pagination_links=(), complete=True)
+
+    monkeypatch.setattr(client, "parse_public_search", parsed)
+    s, _ = session()
+    try:
+        response = s.search_with_response_facets("jefferson", content_types=("pdf",))
+        assert response.results == [] and response.public_notices == ()
+        assert response.partial is False and response.catalogue_complete is False
+        assert response.terminal_empty is False and len(requests) == 1
+    finally:
+        s.close()
