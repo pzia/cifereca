@@ -128,3 +128,52 @@ def test_close_during_cache_source_read_cancels_pending_waiters(loader):
     finally:
         release.set()
         svc.close()
+
+
+@pytest.mark.parametrize("subscribe", [False, True])
+def test_close_cancels_n3_even_without_source_subscription(loader, monkeypatch, subscribe):
+    children = []
+    delivered = []
+    callbacks = []
+
+    def fake_load(_uri, callback, **_kwargs):
+        key = len(callbacks)
+        callbacks.append(callback)
+        return NS(cancel=lambda: children.append(key))
+
+    monkeypatch.setattr(loader, "load", fake_load)
+    svc = DocumentCoverService(loader)
+    svc.register(proof())
+    options = {"on_source_changed": lambda: None} if subscribe else {}
+    # In the subscribed case the 33rd viewer exceeds the per-document
+    # subscription cap; its N3 child must still be canceled on close.
+    count = 33 if subscribe else 2
+    reads = [svc.get_cover(REF, "detail", delivered.append, **options)
+             for _ in range(count)]
+    assert svc._source_subscription_count == (32 if subscribe else 0)
+    svc.close()
+    assert sorted(children) == list(range(count))
+    assert all(not read.active and not read.still_current for read in reads)
+    for callback in callbacks:
+        callback(None)
+    for read in reads:
+        read.cancel()
+    assert delivered == []
+    assert sorted(children) == list(range(count))
+
+
+def test_close_before_n3_child_attaches_cancels_it_once(loader, monkeypatch):
+    svc = DocumentCoverService(loader)
+    svc.register(proof())
+    events = []
+
+    def fake_load(_uri, callback, **_kwargs):
+        svc.close()
+        callback(None)
+        return NS(cancel=lambda: events.append("canceled"))
+
+    monkeypatch.setattr(loader, "load", fake_load)
+    handle = svc.get_cover(REF, "detail", lambda _: events.append("delivered"))
+    assert not handle.active and not handle.still_current
+    handle.cancel()
+    assert events == ["canceled"]
