@@ -210,6 +210,22 @@ class _SuggestionContinuation:
     page_size: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _PublicComparisonEvidence:
+    """Private witness of the exact file reviewed before a title may be sent."""
+    storage: object
+    root: Path
+    identity: str
+    placement: str
+    evidence: tuple
+    signature: tuple
+
+    def matches_scope(self, request):
+        return (self.storage is request.storage and self.root == request.root
+                and self.identity == request.identity_id
+                and self.placement == request.placement_id)
+
+
 def suggest_local_placement_documents(storage, *, library_root: Path,
                                      identity_id: str, placement_id: str,
                                      explicitly_requested: bool = False,
@@ -225,12 +241,13 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     from .local_origin_documentary_suggestions import suggest_known_public_documents
 
     def result(reason, suggestions=None, *, metadata="local_catalogue_only", next_page=None,
-               local_isbns=()):
+               local_isbns=(), public_evidence=None):
         return {
             "status": "partial" if suggestions is not None else "excluded",
             "reason": reason,
             "suggestions": suggestions,
             "continuation": next_page,
+            "public_comparison_evidence": public_evidence if suggestions is not None else None,
             "metadata_evidence": metadata if suggestions is not None else "not_checked",
             "local_isbns": local_isbns if suggestions is not None else (),
             "isbn_catalogue_comparison_performed": False,
@@ -288,8 +305,12 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
                 storage, library_root, identity_id, placement_id, local,
                 signature, title, author, local_isbns, page + 1, page_size,
             ) if suggestions.has_more and page < 200 else None)
+            public_evidence = (_PublicComparisonEvidence(
+                storage, library_root, identity_id, placement_id, local, signature,
+            ) if page == 0 and metadata == "verified_epub_opf_description" else None)
         return result("documentary_comparison_only", suggestions,
-                      metadata=metadata, next_page=following, local_isbns=local_isbns)
+                      metadata=metadata, next_page=following, local_isbns=local_isbns,
+                      public_evidence=public_evidence)
     except _CandidateRejected as exc:
         return result(str(exc))
     except (DerivedPublicationConflict, sqlite3.Error, OSError, RuntimeError,
