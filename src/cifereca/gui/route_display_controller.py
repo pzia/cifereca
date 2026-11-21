@@ -23,6 +23,11 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             and getattr(window, "_route_display_token", None) is token
         )
 
+    # Contextual review leases belong to one exact Library selection.
+    from .guided_book_review_host import dispose_guided_book_reviews
+    dispose_guided_book_reviews(window)
+    if not is_current():
+        return
     # Preserve the #1492 per-row callback invalidation when leaving Outils.
     if route != "tools":
         dispose_lines = getattr(window, "_dispose_maintenance_lines", None)

@@ -1,13 +1,15 @@
 # Suggestions de provenance
 
-Contribution indépendante de lecture, activée par défaut. Le broker
-`library.origin.read` et le host de maintenance guidée sont nécessaires.
-Comparaison par lots strictement limitée aux notices publiques connues :
-aucun GET fournisseur, aucune association, aucune écriture. Une absence de
-correspondance ne prouve pas une absence d'origine.
+Contribution indépendante activée par défaut, dans Maintenance et la fiche
+Bibliothèque du profil actif. Ports `library.origin.read` (lots) et
+`library.origin.detail.read` (fiche). Comparaison locale paginée avec les
+notices publiques déjà connues : aucune absence, origine ou licence attestée.
 
-Le Core conserve le moteur, les preuves et les règles de scope. Le package
-ne reçoit que les résultats descriptifs et les jetons publics. Le contrat
-guidé est importé lors du montage seulement. Le raccordement host et le
-retrait de la ligne native sont des étapes ultérieures ; les actions
-contextuelles de détail restent à migrer séparément.
+Dans la fiche seulement, après vérification OPF, une action distincte peut
+envoyer explicitement le titre à un catalogue anonyme admissible. Choix
+bornés, jetons à usage unique, révocation sur changement de contexte.
+Aucun téléchargement ni association, aucune écriture de Notice C ou A/B.
+
+Le Core conserve moteur, vérification des octets et autorité de scope.
+Le host générique possède worker, widgets et lifecycle. Désactivation ou
+désinstallation retire les contributions ; aucun moteur natif de secours.

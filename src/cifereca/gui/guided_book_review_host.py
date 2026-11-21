@@ -85,9 +85,13 @@ class GuidedBookReviewLease:
 
     def dispose(self):
         self._lease.dispose()
-        for button in self._buttons:
+        buttons, self._buttons = self._buttons, []
+        for button in buttons:
             button._cifereca_action_context_revoked = True
-        self._buttons.clear()
+        for button in buttons:
+            hide = getattr(button, "set_visible", None)
+            if callable(hide):
+                hide(False)
         dispose, self._dispose = self._dispose, None
         if callable(dispose):
             try:
@@ -191,3 +195,12 @@ def mount_guided_book_reviews(window, detail, row, item, *, token):
         except Exception:
             lease.dispose()
     return tuple(mounted)
+
+
+
+def dispose_guided_book_reviews(window):
+    """Retire exact former mounts before any reentrant GTK disposal signal."""
+    mounts = getattr(window, "_guided_book_review_mounts", ())
+    window._guided_book_review_mounts = ()
+    for lease in mounts:
+        lease.dispose()

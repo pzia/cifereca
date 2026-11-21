@@ -21,7 +21,7 @@ from tests.test_core_p0_4520_recovery_operator import _setup
 
 def runtime(tmp_path, service, spec, protocol):
     factories = maintenance_read_ports(service)
-    assert set(factories) == {item[3] for item in TOOLS}
+    assert set(factories) == {item[3] for item in TOOLS} | {"library.origin.detail.read"}
     manager = PluginManager(
         package_store=PackageStore(tmp_path / "packages"),
         state_store=PluginStateStore(tmp_path / "state.json"),
@@ -112,3 +112,56 @@ def test_derived_activation_never_reuses_old_simulation(tmp_path):
         if manager is not None:
             manager.close()
         db.close()
+
+
+def test_installed_contextual_contribution_uses_same_port_and_is_optional(store, tmp_path):
+    from types import SimpleNamespace as NS
+    from cifereca.gui.guided_book_review_host import (
+        mount_guided_book_reviews, dispose_guided_book_reviews,
+    )
+    from cifereca.plugin_api.guided_book_review import GuidedBookReviewTool
+    from tests.test_coreui_p0_4030_suggestion_action import _host
+    from tests.test_core_p0_4030_suggestion_operator import _more_public
+    window, panel, row, item, token, tasks, buttons, groups, toasts = _host(store, tmp_path)
+    _more_public(store, 21)
+    window._identity_context_generation = 1
+    spec = TOOLS[1]
+    manager, _ = runtime(tmp_path, window.service, spec, LocalOriginBatchReadBroker)
+    window.plugin_manager = manager
+    before = rows(store)
+    try:
+        assert isinstance(manager.service(spec[2]), GuidedBookReviewTool)
+        first, = mount_guided_book_reviews(window, panel, row, item, token=token)
+        window._guided_book_review_mounts = (first,)
+        button, = buttons
+        assert not tasks and not groups
+        button.callback(button)
+        work, done, _ = tasks[0]
+        done(work())
+        assert len(groups) == 1 and ("Page", "1") in groups[0][1]
+        button.callback(button)
+        work, done, _ = tasks[1]
+        result = work()
+        assert result.page == 2
+        manager.set_enabled(spec[2], False)
+        dispose_guided_book_reviews(window)
+        done(result)
+        button.callback(button)
+        assert len(tasks) == 2 and len(groups) == 1
+        assert mount_guided_book_reviews(window, panel, row, item, token=token) == ()
+        manager.set_enabled(spec[2], True)
+        buttons.clear()
+        fresh, = mount_guided_book_reviews(window, panel, row, item, token=token)
+        try:
+            assert fresh is not first
+            button, = buttons
+            button.callback(button)
+            work, done, _ = tasks[-1]
+            done(work())
+            assert ("Page", "1") in groups[-1][1]
+        finally:
+            fresh.dispose()
+        assert rows(store) == before
+    finally:
+        dispose_guided_book_reviews(window)
+        manager.close()

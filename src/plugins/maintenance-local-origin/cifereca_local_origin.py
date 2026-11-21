@@ -116,15 +116,29 @@ class BatchController:
 
 class OriginPlugin:
     def __init__(self):
-        self.broker = self.activation = None
+        self.broker = self.detail_broker = self.activation = None
+        self._detail_controller = None
 
     def activate(self, context):
         self.broker = context.broker("library.origin.read")
+        self.detail_broker = context.broker("library.origin.detail.read")
+        if self.detail_broker is not None:
+            from cifereca_local_origin_detail import DetailController
+            self._detail_controller = DetailController
         self.activation = object()
         return self
 
     def deactivate(self):
-        self.activation = self.broker = None
+        self.activation = self.broker = self.detail_broker = None
+        self._detail_controller = None
+
+    def contribute_book_review(self, host):
+        marker = self.activation
+        if marker is None or self.detail_broker is None or self._detail_controller is None:
+            return lambda: None
+        controller = self._detail_controller(
+            self.detail_broker, host, lambda: marker is self.activation)
+        return controller.mount()
 
     def describe(self):
         return MaintenanceToolInfo(

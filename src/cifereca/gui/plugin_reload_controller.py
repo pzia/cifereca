@@ -13,6 +13,10 @@ def plugins_changed(window) -> None:
         return
     if window.plugin_manager is None:
         return
+    from .guided_book_review_host import dispose_guided_book_reviews
+    dispose_guided_book_reviews(window)
+    if getattr(window, "_closed", False):
+        return
     try:
         window.service.attach_plugin_manager(window.plugin_manager)
     except Exception:

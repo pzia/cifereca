@@ -34,7 +34,7 @@ def rig(service):
 
 def test_package_paginates_only_on_explicit_click(store, tmp_path):
     descriptor, = json.loads((ROOT / "cifereca-plugin.json").read_text())["plugins"]
-    assert descriptor["requires_brokers"] == ["library.origin.read"]
+    assert descriptor["requires_brokers"] == ["library.origin.read", "library.origin.detail.read"]
     assert descriptor["enabled_by_default"] is True
     service, root, _ = _service(store, tmp_path)
     for i in range(4):

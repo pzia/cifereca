@@ -7,6 +7,7 @@ desktop runtime will register them with the page/tool cutover.
 from .activation_scoped_broker import ActivationScopedReadFactory
 from .library_organizer_broker import LibraryOrganizerReadBrokerImpl
 from .local_origin_review_broker import LocalOriginBatchReadBrokerImpl
+from .local_origin_detail_broker import LocalOriginDetailReadFactory
 from .derived_maintenance_broker import DerivedMaintenanceReadBrokerImpl
 
 
@@ -20,6 +21,7 @@ def maintenance_read_ports(service):
             lambda: LocalOriginBatchReadBrokerImpl(service),
             ("preview", "next_page", "cancel"),
         ),
+        "library.origin.detail.read": LocalOriginDetailReadFactory(service),
         "library.derived.read": ActivationScopedReadFactory(
             lambda: DerivedMaintenanceReadBrokerImpl(service),
             ("overview", "capacity", "list_receipts", "next_page", "verify", "simulate", "cancel"),
