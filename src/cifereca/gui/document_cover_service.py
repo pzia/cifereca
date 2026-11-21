@@ -21,6 +21,7 @@ from time import perf_counter
 from pathlib import Path
 from threading import Lock, RLock
 from typing import Literal
+from weakref import WeakSet
 
 from ..core.book_cover_cache import (
     CoverCacheToken, CoverDecisionCache, CoverSubscription,
@@ -198,9 +199,12 @@ class CoverReadRequest:
 
     def cancel(self) -> None:
         with self._lock:
+            if not self._active:
+                return
             self._active = False
             self._paint_receipt = None
             child = self._child
+            self._child = None
             unsubscribe = self._cancel_source_subscription
             self._cancel_source_subscription = None
         if child is not None:
@@ -215,8 +219,9 @@ class CoverReadRequest:
 
     def _attach(self, child: CoverRequest) -> None:
         with self._lock:
-            self._child = child
             active = self._active
+            if active:
+                self._child = child
         if not active:
             child.cancel()
 
@@ -282,6 +287,9 @@ class DocumentCoverService:
             CoverDocumentScope,
             dict[int, tuple[CoverReadRequest, Callable[[], None]]],
         ] = {}
+        # Track even N3-only reads and consumers refused by the bounded
+        # N2 subscription port. Weak ownership does not retain dead views.
+        self._live_reads: WeakSet[CoverReadRequest] = WeakSet()
         self._source_subscription_id = 0
         self._source_subscription_count = 0
         self._resolving: set[CoverDocumentScope] = set()
@@ -958,6 +966,7 @@ class DocumentCoverService:
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
+            self._live_reads.add(handle)
             if on_source_changed is not None:
                 self._subscribe_source(document, handle, on_source_changed)
             snapshot = self._snapshots.get(document)
@@ -1169,8 +1178,10 @@ class DocumentCoverService:
             # service-side observer removed. Otherwise a worker that captured
             # callbacks before close can post a late GTK rebind to a disposed
             # window, even though _closed revoked the N2 selection.
-            handles = {handle for bucket in self._source_subscriptions.values()
-                       for handle, _callback in bucket.values()}
+            handles = set(self._live_reads)
+            self._live_reads.clear()
+            handles.update(handle for bucket in self._source_subscriptions.values()
+                           for handle, _callback in bucket.values())
             handles.update(
                 handle for waiters in self._read_waiters.values()
                 for handle, _callback in waiters
