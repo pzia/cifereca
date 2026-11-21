@@ -69,123 +69,131 @@ def preview_canonical_duplicate(
             or candidate_placement_id == keeper_placement_id):
         return report("blocked", "invalid_request")
     try:
+        # The storage reuses a thread-local connection, even for schema
+        # consultation. No read-only advisory may commit or roll back it.
+        if storage._connect().in_transaction:
+            return report("blocked", "nested_transaction")
         if storage.schema_version() < 14:
             return report("blocked", "schema_unavailable")
-        with storage._lock, storage._connect() as db:
-            # A consistent read snapshot even when a sync publishes during
-            # this (potentially expensive) offline physical verification.
-            db.execute("BEGIN")
-            query = (
-                "SELECT path,identity_id,artifact_id,state,provider_id,"
-                "source_item_id FROM placements WHERE placement_id=?"
-            )
-            candidate = db.execute(query, (candidate_placement_id,)).fetchone()
-            keeper = db.execute(query, (keeper_placement_id,)).fetchone()
-            if candidate is None or keeper is None:
-                return report("blocked", "placement_missing")
-            if (type(candidate[0]) is not str or not candidate[0]
-                    or type(keeper[0]) is not str or not keeper[0]
-                    or candidate[0] == keeper[0]
-                    or candidate[1] != keeper[1] or candidate[2] != keeper[2]
-                    or candidate[3] != "present" or keeper[3] != "present"
-                    or candidate[4:] != (None, None)
-                    or keeper[4:] != (None, None)
-                    or type(candidate[1]) is not str or not candidate[1]
-                    or type(candidate[2]) is not str):
-                return report("blocked", "scope_mismatch")
-            artifact = db.execute(
-                "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
-                (candidate[2],),
-            ).fetchone()
-            if (artifact is None or type(artifact[0]) is not str
-                    or len(artifact[0]) != 64
-                    or any(ch not in "0123456789abcdef" for ch in artifact[0])
-                    or candidate[2] != "sha256:" + artifact[0]
-                    or type(artifact[1]) is not int or artifact[1] <= 0):
-                return report("blocked", "artifact_unverified")
-            owner = db.execute(
-                "SELECT directory_name FROM identities WHERE identity_id=?",
-                (candidate[1],),
-            ).fetchone()
-            if owner is None or type(owner[0]) is not str or not owner[0]:
-                return report("blocked", "profile_ambiguous")
-            if db.execute(
-                "SELECT 1 FROM identities WHERE directory_name=? "
-                "AND identity_id<>? LIMIT 1",
-                (owner[0], candidate[1]),
-            ).fetchone() is not None:
-                return report("blocked", "profile_ambiguous")
-            # The physical verifier checks the exact registered owner
-            # directory; unrelated profile names carry no authority here.
-            owner_dir = owner[0]
-            reserved = frozenset((owner_dir,))
-            observations = []
-            for raw in (candidate[0], keeper[0]):
-                path = Path(raw)
-                try:
-                    before = os.stat(path, follow_symlinks=False)
-                except OSError:
-                    return report("blocked", "physical_evidence_changed")
-                if (not stat.S_ISREG(before.st_mode)
-                        or not _verified_copy(
-                            raw, root=library_root, owner_directory=owner_dir,
-                            registered_directories=reserved, size=artifact[1],
-                            sha256=artifact[0],
-                        ) or not _same_file(path, before)):
-                    return report("blocked", "physical_evidence_changed")
-                observations.append((path, before))
-
-            # #4496: after the existing physical checks (which preserve the
-            # historical physical_evidence_changed reason for symlink/ABA),
-            # an attested Outbox is neither a keeper nor a retiree.
-            if ordinary_dedup_paths_excluded(
-                (candidate[0], keeper[0]), library_root=library_root,
-                identity_id=candidate[1], owner_directory=owner_dir,
-            ):
-                return report("blocked", "excluded_path")
-
-            # Count the exact references for human-readable diagnostics.
-            # A generic/unknown path elsewhere still prevents retirement.
-            catalogue = db.execute(
-                "SELECT COUNT(*) FROM catalog_entries WHERE placement_id=?",
-                (candidate_placement_id,),
-            ).fetchone()[0]
-            backup = db.execute(
-                "SELECT COUNT(*) FROM backup_items WHERE local_path=?",
-                (candidate[0],),
-            ).fetchone()[0]
-            if catalogue > 100_000 or backup > 100_000:
-                return report("blocked", "dependency_budget_exceeded")
-            # Read the canonical, *Artifact-level* provenance graph inside
-            # the same SQLite snapshot. Provenance cannot be attributed to
-            # the candidate or keeper path individually, and never authorizes
-            # an account right or destruction from SHA alone.
-            origins, linked_sources = db.execute(
-                "SELECT COUNT(o.origin_link_id),"
-                "COUNT(DISTINCT s.source_reference_id) "
-                "FROM origin_links o LEFT JOIN source_references s "
-                "ON s.source_reference_id=o.source_reference_id "
-                "AND s.identity_id=o.identity_id "
-                "WHERE o.identity_id=? AND o.artifact_id=?",
-                (candidate[1], candidate[2]),
-            ).fetchone()
-            if origins > 100_000 or linked_sources > 100_000:
-                return report("blocked", "dependency_budget_exceeded")
-            active = candidate_has_active_dependencies_in_db(
-                db, placement_id=candidate_placement_id, path=candidate[0],
-            )
-            if any(not _same_file(path, before) for path, before in observations):
-                return report("blocked", "physical_evidence_changed")
-            if active:
-                return report(
-                    "blocked", "active_references", catalogue=catalogue,
-                    backup=backup, other=True, origins=origins,
-                    linked_sources=linked_sources, counted=True,
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
+                return report("blocked", "nested_transaction")
+            with db:
+                # A consistent read snapshot even when a sync publishes during
+                # this (potentially expensive) offline physical verification.
+                db.execute("BEGIN")
+                query = (
+                    "SELECT path,identity_id,artifact_id,state,provider_id,"
+                    "source_item_id FROM placements WHERE placement_id=?"
                 )
-            return report(
-                "unreferenced", "verified_no_active_references",
-                origins=origins, linked_sources=linked_sources, counted=True,
-            )
+                candidate = db.execute(query, (candidate_placement_id,)).fetchone()
+                keeper = db.execute(query, (keeper_placement_id,)).fetchone()
+                if candidate is None or keeper is None:
+                    return report("blocked", "placement_missing")
+                if (type(candidate[0]) is not str or not candidate[0]
+                        or type(keeper[0]) is not str or not keeper[0]
+                        or candidate[0] == keeper[0]
+                        or candidate[1] != keeper[1] or candidate[2] != keeper[2]
+                        or candidate[3] != "present" or keeper[3] != "present"
+                        or candidate[4:] != (None, None)
+                        or keeper[4:] != (None, None)
+                        or type(candidate[1]) is not str or not candidate[1]
+                        or type(candidate[2]) is not str):
+                    return report("blocked", "scope_mismatch")
+                artifact = db.execute(
+                    "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
+                    (candidate[2],),
+                ).fetchone()
+                if (artifact is None or type(artifact[0]) is not str
+                        or len(artifact[0]) != 64
+                        or any(ch not in "0123456789abcdef" for ch in artifact[0])
+                        or candidate[2] != "sha256:" + artifact[0]
+                        or type(artifact[1]) is not int or artifact[1] <= 0):
+                    return report("blocked", "artifact_unverified")
+                owner = db.execute(
+                    "SELECT directory_name FROM identities WHERE identity_id=?",
+                    (candidate[1],),
+                ).fetchone()
+                if owner is None or type(owner[0]) is not str or not owner[0]:
+                    return report("blocked", "profile_ambiguous")
+                if db.execute(
+                    "SELECT 1 FROM identities WHERE directory_name=? "
+                    "AND identity_id<>? LIMIT 1",
+                    (owner[0], candidate[1]),
+                ).fetchone() is not None:
+                    return report("blocked", "profile_ambiguous")
+                # The physical verifier checks the exact registered owner
+                # directory; unrelated profile names carry no authority here.
+                owner_dir = owner[0]
+                reserved = frozenset((owner_dir,))
+                observations = []
+                for raw in (candidate[0], keeper[0]):
+                    path = Path(raw)
+                    try:
+                        before = os.stat(path, follow_symlinks=False)
+                    except OSError:
+                        return report("blocked", "physical_evidence_changed")
+                    if (not stat.S_ISREG(before.st_mode)
+                            or not _verified_copy(
+                                raw, root=library_root, owner_directory=owner_dir,
+                                registered_directories=reserved, size=artifact[1],
+                                sha256=artifact[0],
+                            ) or not _same_file(path, before)):
+                        return report("blocked", "physical_evidence_changed")
+                    observations.append((path, before))
+
+                # #4496: after the existing physical checks (which preserve the
+                # historical physical_evidence_changed reason for symlink/ABA),
+                # an attested Outbox is neither a keeper nor a retiree.
+                if ordinary_dedup_paths_excluded(
+                    (candidate[0], keeper[0]), library_root=library_root,
+                    identity_id=candidate[1], owner_directory=owner_dir,
+                ):
+                    return report("blocked", "excluded_path")
+
+                # Count the exact references for human-readable diagnostics.
+                # A generic/unknown path elsewhere still prevents retirement.
+                catalogue = db.execute(
+                    "SELECT COUNT(*) FROM catalog_entries WHERE placement_id=?",
+                    (candidate_placement_id,),
+                ).fetchone()[0]
+                backup = db.execute(
+                    "SELECT COUNT(*) FROM backup_items WHERE local_path=?",
+                    (candidate[0],),
+                ).fetchone()[0]
+                if catalogue > 100_000 or backup > 100_000:
+                    return report("blocked", "dependency_budget_exceeded")
+                # Read the canonical, *Artifact-level* provenance graph inside
+                # the same SQLite snapshot. Provenance cannot be attributed to
+                # the candidate or keeper path individually, and never authorizes
+                # an account right or destruction from SHA alone.
+                origins, linked_sources = db.execute(
+                    "SELECT COUNT(o.origin_link_id),"
+                    "COUNT(DISTINCT s.source_reference_id) "
+                    "FROM origin_links o LEFT JOIN source_references s "
+                    "ON s.source_reference_id=o.source_reference_id "
+                    "AND s.identity_id=o.identity_id "
+                    "WHERE o.identity_id=? AND o.artifact_id=?",
+                    (candidate[1], candidate[2]),
+                ).fetchone()
+                if origins > 100_000 or linked_sources > 100_000:
+                    return report("blocked", "dependency_budget_exceeded")
+                active = candidate_has_active_dependencies_in_db(
+                    db, placement_id=candidate_placement_id, path=candidate[0],
+                )
+                if any(not _same_file(path, before) for path, before in observations):
+                    return report("blocked", "physical_evidence_changed")
+                if active:
+                    return report(
+                        "blocked", "active_references", catalogue=catalogue,
+                        backup=backup, other=True, origins=origins,
+                        linked_sources=linked_sources, counted=True,
+                    )
+                return report(
+                    "unreferenced", "verified_no_active_references",
+                    origins=origins, linked_sources=linked_sources, counted=True,
+                )
     except (OSError, ValueError, TypeError, RuntimeError, RecursionError):
         return report("blocked", "inspection_unavailable")
     except Exception:

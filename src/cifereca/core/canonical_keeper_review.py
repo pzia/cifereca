@@ -93,34 +93,42 @@ def review_canonical_keeper(
             or not library_root.is_absolute() or ".." in library_root.parts):
         return blocked("invalid_scope")
     try:
+        # schema_version() itself uses the worker's connection context
+        # manager. Refuse before it can settle caller-owned writes.
+        if storage._connect().in_transaction:
+            return blocked("nested_transaction")
         if storage.schema_version() < 14:
             return blocked("schema_unavailable")
 
         def snapshot():
-            with storage._lock, storage._connect() as db:
-                db.execute("BEGIN")
-                owner_row = db.execute(
-                    "SELECT directory_name FROM identities WHERE identity_id=?",
-                    (identity_id,),
-                ).fetchone()
-                if (owner_row is None or type(owner_row[0]) is not str
-                        or not owner_row[0] or owner_row[0] in (".", "..")
-                        or "/" in owner_row[0] or "\\" in owner_row[0]):
-                    raise ValueError("keeper_profile_unverified")
-                owner_name = owner_row[0]
-                if db.execute(
-                    "SELECT 1 FROM identities WHERE directory_name=? "
-                    "AND identity_id<>? LIMIT 1",
-                    (owner_name, identity_id),
-                ).fetchone() is not None:
-                    raise ValueError("keeper_profile_ambiguous")
-                rows = db.execute(
-                    "SELECT placement_id,path,state,provider_id,source_item_id "
-                    "FROM placements WHERE identity_id=? AND artifact_id=? "
-                    "ORDER BY placement_id LIMIT ?",
-                    (identity_id, artifact_id, _MAX_ROWS + 1),
-                ).fetchall()
-                return owner_name, rows
+            with storage._lock:
+                db = storage._connect()
+                if db.in_transaction:
+                    raise ValueError("keeper_nested_transaction")
+                with db:
+                    db.execute("BEGIN")
+                    owner_row = db.execute(
+                        "SELECT directory_name FROM identities WHERE identity_id=?",
+                        (identity_id,),
+                    ).fetchone()
+                    if (owner_row is None or type(owner_row[0]) is not str
+                            or not owner_row[0] or owner_row[0] in (".", "..")
+                            or "/" in owner_row[0] or "\\" in owner_row[0]):
+                        raise ValueError("keeper_profile_unverified")
+                    owner_name = owner_row[0]
+                    if db.execute(
+                        "SELECT 1 FROM identities WHERE directory_name=? "
+                        "AND identity_id<>? LIMIT 1",
+                        (owner_name, identity_id),
+                    ).fetchone() is not None:
+                        raise ValueError("keeper_profile_ambiguous")
+                    rows = db.execute(
+                        "SELECT placement_id,path,state,provider_id,source_item_id "
+                        "FROM placements WHERE identity_id=? AND artifact_id=? "
+                        "ORDER BY placement_id LIMIT ?",
+                        (identity_id, artifact_id, _MAX_ROWS + 1),
+                    ).fetchall()
+                    return owner_name, rows
 
         owner_name, original_rows = snapshot()
         if len(original_rows) > _MAX_ROWS:
