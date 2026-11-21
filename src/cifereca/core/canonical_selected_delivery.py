@@ -327,6 +327,7 @@ def complete_selected_delivery(
     runtime_used = [False]
     adept_attempt_id = [""]
     runtime_attempt_id = [""]
+    runtime_phase = [""]
 
     def refresh_adept_profile(profile_name, profile_id):
         require_borrower()
@@ -344,8 +345,27 @@ def complete_selected_delivery(
         require_adept_profile(profile_name, profile_id)
 
     def mark_adept_attempt(profile_name: str, profile_id):
-        if source.kind != "loan":
+        if source.kind == "purchase":
+            # A purchase can also spend a single-use ADEPT token. The
+            # loan-only fence cannot be reused as it asserts a loan cycle.
+            # Claim immediately before fulfillment, never on inventory/GET.
             require_adept_profile(profile_name, profile_id)
+            operation = begin_runtime_attempt(
+                storage, source=source, offer_id=offer.delivery_offer_id,
+                shared_lock=shared_lock, phase="purchase_acsm",
+            )
+            try:
+                require_adept_profile(profile_name, profile_id)
+                if not attempt_current() or not admission_current():
+                    raise ValueError("canonical_delivery_runtime_admission_changed")
+            except Exception:
+                release_unsubmitted_runtime_attempt(
+                    storage, source=source, offer_id=offer.delivery_offer_id,
+                    operation_id=operation, shared_lock=shared_lock,
+                )
+                raise
+            runtime_attempt_id[0] = operation
+            runtime_phase[0] = "purchase_acsm"
             return
         refresh_adept_profile(profile_name, profile_id)
         operation = begin_loan_adept_attempt(
@@ -375,14 +395,24 @@ def complete_selected_delivery(
                     operation_id=adept_attempt_id[0], shared_lock=shared_lock,
                 )
                 adept_attempt_id[0] = ""
-            raise
-        except RuntimeDispatchNotSubmitted as error:
-            if type(error) is RuntimeDispatchNotSubmitted and runtime_attempt_id[0]:
+            if (type(error) is AdeptFulfillmentNotSubmitted
+                    and runtime_attempt_id[0] and runtime_phase[0] == "purchase_acsm"):
                 release_unsubmitted_runtime_attempt(
                     storage, source=source, offer_id=offer.delivery_offer_id,
                     operation_id=runtime_attempt_id[0], shared_lock=shared_lock,
                 )
                 runtime_attempt_id[0] = ""
+                runtime_phase[0] = ""
+            raise
+        except RuntimeDispatchNotSubmitted as error:
+            if (type(error) is RuntimeDispatchNotSubmitted
+                    and runtime_attempt_id[0] and runtime_phase[0] == "runtime"):
+                release_unsubmitted_runtime_attempt(
+                    storage, source=source, offer_id=offer.delivery_offer_id,
+                    operation_id=runtime_attempt_id[0], shared_lock=shared_lock,
+                )
+                runtime_attempt_id[0] = ""
+                runtime_phase[0] = ""
             raise
 
     runtime_artifact_path: list[Path | None] = [None]
@@ -410,7 +440,7 @@ def complete_selected_delivery(
                 or request["format"].casefold() != destination.suffix[1:].casefold()):
             raise ValueError("canonical_delivery_runtime_target_invalid")
         expected_adept = None
-        if source.kind == "loan" and request["source"].get("type") == "acsm":
+        if request["source"].get("type") == "acsm":
             expected_adept = acsm_profile()
             if (type(request.get("profile")) is not str
                     or request["profile"] != expected_adept[0]
@@ -445,6 +475,7 @@ def complete_selected_delivery(
                 )
                 raise
             runtime_attempt_id[0] = operation
+            runtime_phase[0] = "runtime"
         result = dispatch_acquisition(request)
         require_borrower()
         if expected_adept is not None:
@@ -731,7 +762,7 @@ def complete_selected_delivery(
             ensure_ascii=False, separators=(",", ":"),
         )
         receipt = "core-delivery:" + hashlib.sha256(fact.encode("utf-8")).hexdigest()
-        if adept_attempt_id[0] and not adept_receipt_ref:
+        if (adept_attempt_id[0] or runtime_phase[0] == "purchase_acsm") and not adept_receipt_ref:
             # A runtime-guarded ACSM has the same Core ADEPT provenance.
             adept_receipt_ref = "core-adept:" + secrets.token_hex(32)
         return CompletedDelivery(

@@ -55,8 +55,12 @@ def _decode(raw):
     try:
         data = json.loads(raw)
         if (type(data) is dict and _encode(data) == raw
-                and set(data) == {"schema", "operation", "offer_digest", "started_at"}
-                and type(data["schema"]) is int and data["schema"] == 1
+                and type(data.get("schema")) is int
+                and ((data["schema"] == 1
+                      and set(data) == {"schema", "operation", "offer_digest", "started_at"})
+                     or (data["schema"] == 2 and set(data) == {
+                         "schema", "operation", "offer_digest", "started_at", "phase"
+                     } and data["phase"] in ("runtime", "purchase_acsm")))
                 and _hex(data["operation"], 32) and _hex(data["offer_digest"], 64)
                 and type(data["started_at"]) is int
                 and 0 < data["started_at"] <= 253402300799):
@@ -70,9 +74,9 @@ def read_runtime_attempt_in_db(db, source):
     """Return negative evidence even for a damaged marker; no private data."""
     row = _record(db, source)
     if row is None:
-        return False, 0
+        return False, 0, ""
     data = _decode(row[0])
-    return True, data["started_at"] if data is not None else 0
+    return (True, data["started_at"], data.get("phase", "runtime")) if data is not None else (True, 0, "unknown")
 
 
 def pending_runtime_attempt(storage, source):
@@ -84,12 +88,15 @@ def pending_runtime_attempt(storage, source):
         return read_runtime_attempt_in_db(db, source)[0]
 
 
-def begin_runtime_attempt(storage, *, source, offer_id, shared_lock):
+def begin_runtime_attempt(storage, *, source, offer_id, shared_lock, phase="runtime"):
     from .canonical_recovery import _exact_borrower_bound_in_db, _lock_ok
     if not _lock_ok(shared_lock):
         raise ValueError("canonical_runtime_attempt_lock_required")
+    if (phase not in ("runtime", "purchase_acsm")
+            or (phase == "purchase_acsm" and source.kind != "purchase")):
+        raise ValueError("canonical_runtime_attempt_invalid_phase")
     operation = secrets.token_hex(16)
-    raw = _encode({"schema": 1, "operation": operation,
+    raw = _encode({"schema": 2, "operation": operation, "phase": phase,
                    "offer_digest": _digest(offer_id), "started_at": int(time.time())})
     with storage._lock:
         db = storage._connect()

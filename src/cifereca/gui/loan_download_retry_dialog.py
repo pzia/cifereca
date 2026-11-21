@@ -54,12 +54,17 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         title.add_css_class("heading")
         panel.append(title)
         state = ("Ressource inactive" if row.inactive else
+                 "Intervention ADEPT requise" if row.runtime_hold and row.runtime_phase == "purchase_acsm" else
                  "Intervention runtime requise" if row.runtime_hold else
                  "Intervention ADEPT requise" if row.adept_hold or row.profile_refused_at else
                  "En pause" if row.retry.paused else "À retenter")
         failed_at = row.retry.last_failed_at
         if row.runtime_hold:
-            reason = "Résultat du runtime incertain. Rejeu non qualifié ; vérifiez les diagnostics."
+            reason = (
+                "Résultat du fulfillment ADEPT de l’achat incertain. Vérifiez les diagnostics."
+                if row.runtime_phase == "purchase_acsm" else
+                "Résultat du runtime incertain. Rejeu non qualifié ; vérifiez les diagnostics."
+            )
             failed_at = row.runtime_started_at
         elif row.adept_hold:
             reason = "Résultat du fulfillment ADEPT incertain. Vérifiez les diagnostics."
