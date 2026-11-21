@@ -89,3 +89,58 @@ def test_discard_entire_page_if_evidence_changed_during_search(store, tmp_path, 
     report = _request(store, root, pid)
     assert report["status"] == "excluded"
     assert report["suggestions"] is None
+
+
+
+@pytest.mark.parametrize("column,sql_value", [
+    ("title", b"Roman commun"), ("author", b"Autrice"),
+    ("title", 42), ("author", 42),
+])
+def test_non_native_catalogue_text_never_dispatches_known_c(
+    store, tmp_path, monkeypatch, column, sql_value,
+):
+    root, path, pid, _ = _setup(store, tmp_path)
+    original_bytes = path.read_bytes()
+    with store._lock, store._connect() as db:
+        db.execute(
+            f"UPDATE catalog_entries SET {column}=? WHERE catalog_entry_id=?",
+            (sql_value, "synthetic-local"),
+        )
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("untrusted catalogue never queries C"),
+    )
+    report = _request(store, root, pid)
+    assert report["status"] == "excluded"
+    assert report["reason"] == "catalogue_evidence_unavailable"
+    assert report["suggestions"] is None
+    assert not report["provider_access_performed"]
+    assert path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("column", ["title", "author"])
+def test_non_native_epub_catalogue_text_is_not_silently_ignored(
+    store, tmp_path, monkeypatch, column,
+):
+    from tests.test_core_p0_4030_epub_evidence import _local_epub, META
+
+    root, path, pid = _local_epub(store, tmp_path, META)
+    digest = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+    store.catalog_entry_put({
+        "catalog_entry_id": "epub-local", "artifact_id": "sha256:" + digest,
+        "placement_id": pid, "identity_id": "A", "provider_id": "local",
+        "title": "Roman commun", "author": "Autrice", "local_state": "local",
+    })
+    with store._lock, store._connect() as db:
+        db.execute(
+            f"UPDATE catalog_entries SET {column}=? WHERE catalog_entry_id=?",
+            (b"corrupt-binary", "epub-local"),
+        )
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("untrusted catalogue never queries C"),
+    )
+    report = _request(store, root, pid)
+    assert report["status"] == "excluded"
+    assert report["reason"] == "catalogue_evidence_unavailable"
+    assert path.is_file()
