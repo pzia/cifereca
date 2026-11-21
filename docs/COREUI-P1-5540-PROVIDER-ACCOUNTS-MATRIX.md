@@ -10,7 +10,7 @@ du plugin** et **preuve de comportement à l'exécution**.
 | Source | Type / accès | Champs credential | Comptes et emprunteurs déclarés | Options présentées par le contrat | Prêts / plafond personnel |
 | --- | --- | --- | --- | --- | --- |
 | **BnF — Catalogue général** (`bnf-catalogue`) | Catalogue public SRU, anonyme | Aucun | Aucune identité emprunteur déclarée ; `connect()` renvoie `[]` | Aucune | Aucun prêt ni plafond |
-| **Gallica** (`gallica`) | Catalogue public, anonyme | Aucun | `connect()` expose actuellement un `Account` nommé « Catalogue public » | `opds_url` (texte) | Pas de capacité de prêt |
+| **Gallica** (`gallica`) | Catalogue public, anonyme | Aucun | `connect()` ne renvoie **aucun** `Account`, même pour une ancienne connexion explicite ; ses options enregistrées restent inchangées | `opds_url` (texte) | Pas de capacité de prêt |
 | **Kobo** (`kobo`) | Bibliothèque privée par **Kobo-Vault**, token | `api_token` secret | `multiple_credentials=True` mais `max_accounts_per_identity=1` ; pas de lecteur lié déclaré | `base_url` (texte), `display_profile` (texte, défaut Android, migration en lecture seule) | Pas de plafond de prêt |
 | **Numilog** (`numilog`) | Mes achats / bibliothèque personnelle | `email`, `password` secret | Plusieurs credentials déclarés ; pas de lecteur lié | Aucune option de compte déclarée dans ce descriptor | Achat, pas de quota de prêt |
 | **BnF Prêt** (`bnf-pret`) | Compte lecteur / prêts numériques | `username`, `password` secret | Plusieurs credentials possibles ; un emprunteur par connexion | `manual_loan_limit` entier [0, 99], défaut 4 | Limite **personnelle indicative** ; inventaire décrit comme partiel |
@@ -59,13 +59,15 @@ n'atteste pas la validité d'un abonnement ou d'une session distante.
 
 ## Écarts précis à traiter dans #5540
 
-1. **Catalogue anonyme :** `bnf-catalogue` retourne `[]` alors que
-   `gallica` crée actuellement un `Account` « Catalogue public » sans
-   authentification. Définir si le contrat expose une **source publique**
-   sans compte ou une identité technique non emprunteuse, puis empêcher
-   qu'un compte factice apparaisse comme credential/lecteur dans Paramètres.
-   **Ne pas supprimer directement le retour `Account` sans audit de ses
-   consommateurs** (recherche, broker et tests).
+1. **Catalogue anonyme (tranche #5540 du 21/11) :** `bnf-catalogue` et
+   `gallica` renvoient désormais `[]` lors de `connect()`, y compris
+   pour une connexion Gallica historiquement configurée. Aucune identité
+   emprunteur fictive n'est publiée au runtime. Les anciennes lignes
+   `providers.accounts[]`, leurs préférences `opds_url` et leur profil
+   local restent **stockés sans migration ni suppression implicite**.
+   Leurs éventuelles migrations de stockage et les droits fournisseur
+   ne sont pas couverts par cette tranche.
+
 2. **Multi-comptes :** expliciter la différence entre
    `multiple_credentials` et `max_accounts_per_identity`
    (Kobo déclare les deux). La liste et l'éditeur doivent appliquer le

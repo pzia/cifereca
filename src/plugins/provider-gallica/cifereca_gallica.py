@@ -220,21 +220,15 @@ class GallicaSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
+        """An OPDS catalogue is not an authenticated reader account.
+
+        Keep both the canonical singleton and explicit legacy connection
+        sessions operational; their configured options still belong to the
+        saved provider row. Neither connection has a borrower identity and
+        neither may manufacture a primary Account as a side effect.
+        """
         self.connected = True
-        if self.credential_id == "__public__" and type(self.credentials) is dict and not self.credentials:
-            self._accounts = []
-            return self.accounts
-        self._accounts = [
-            Account(
-                display_name="Catalogue public",
-                barcode="",
-                unique_id="",
-                is_primary=True,
-                provider_id=self.provider_id,
-                credential_id=self.credential_id,
-                provider_label=self.descriptor.display_name,
-            )
-        ]
+        self._accounts = []
         return self.accounts
 
     def close(self) -> None:
