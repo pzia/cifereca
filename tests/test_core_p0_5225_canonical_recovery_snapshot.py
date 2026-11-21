@@ -102,3 +102,37 @@ def test_wrong_final_digest_cannot_advance_operation_journal(rig, monkeypatch):
                 artifact_id="sha256:" + "0"*64, shared_lock=lock)
     assert journal(service.storage) == before
     assert (root / "A" / "book.pdf").read_bytes() == BYTES
+
+
+def test_completed_handoff_and_final_B_commit_use_full_durability(rig, monkeypatch):
+    service, account, source, snapshot, root, lock_path = rig
+    storage = service.storage
+    db = storage._connect()
+    db.execute("PRAGMA synchronous=NORMAL")
+    seen = []
+    db.set_trace_callback(seen.append)
+    try:
+        original = force_failure_once(monkeypatch)
+        _staged(rig, monkeypatch)
+        monkeypatch.setattr(execution, "publish_completed_acquisition", original)
+        assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+        assert run(service, account, snapshot, root, lock_path, {source},
+                   lambda *_: pytest.fail("completed receipt must avoid GET"))[0].status == "recovered"
+        assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+    finally:
+        db.set_trace_callback(None)
+    # Explicit FULL barriers wrap the receipt, canonical B and terminal
+    # journal transition, with COMMIT before restoring ordinary WAL mode.
+    for action in ("INSERT INTO acquisition_ledger(", "INSERT INTO artifacts(",
+                   "UPDATE acquisition_ledger SET status='complete'"):
+        index = next(i for i, sql in enumerate(seen) if sql.startswith(action))
+        before = seen[:index]
+        full = max(i for i, sql in enumerate(before) if sql == "PRAGMA synchronous=FULL")
+        begin = max(i for i, sql in enumerate(before) if sql == "BEGIN IMMEDIATE")
+        assert full < begin
+        assert "PRAGMA synchronous=1" not in seen[full:index]
+        commit = next(i for i in range(index, len(seen)) if seen[i] == "COMMIT")
+        restore = next(i for i in range(index, len(seen)) if seen[i] == "PRAGMA synchronous=1")
+        assert commit < restore
+    assert service.calls == 1 and rows(storage) == (1, 1, 1, 1)
+    assert journal(storage)[0][:2] == ("complete", "sha256:" + SHA)

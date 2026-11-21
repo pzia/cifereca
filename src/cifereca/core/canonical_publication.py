@@ -8,6 +8,7 @@ right inventory, filename, ISBN, matching SHA or a different profile.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable
 import hashlib
@@ -78,6 +79,26 @@ class PublicationResult:
     source_reference_id: str
     origin_link_ids: tuple[str, ...]
     changed: bool
+
+
+@contextmanager
+def _canonical_write_transaction(storage):
+    """Durable handoff/B commit; preserve the caller's WAL configuration."""
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("canonical_write_nested_transaction")
+        previous = db.execute("PRAGMA synchronous").fetchone()[0]
+        try:
+            # A completed receipt may release a one-use fence, and the B
+            # commit permits staging cleanup. Neither may rely on NORMAL
+            # WAL durability against power loss.
+            db.execute("PRAGMA synchronous=FULL")
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                yield db
+        finally:
+            db.execute(f"PRAGMA synchronous={int(previous)}")
 
 
 def publish_completed_acquisition(
@@ -163,6 +184,9 @@ def publish_completed_acquisition(
             or row.delivery_offer_id != explicit_offer_id):
         raise ValueError("canonical_explicit_selected_offer_unattested")
 
+    if storage._connect().in_transaction:
+        raise ValueError("canonical_write_nested_transaction")
+
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
     try:
@@ -206,8 +230,7 @@ def publish_completed_acquisition(
     )
     now = int(time.time())
     changed = False
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with _canonical_write_transaction(storage) as db:
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_publisher_context_rebound")
         # Revocation of the source's inventory switch is also a hard fence
