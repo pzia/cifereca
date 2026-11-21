@@ -158,6 +158,7 @@ class CoverReadRequest:
         self._child: CoverRequest | None = None
         # Authoritative N2 selected URI, never inferred from physical N3.
         self._source_uri: str | None = None
+        self._selection_token: CoverCacheToken | None = None
         # Recheck the EXACT N2 selection at GTK idle-paint time, not just
         # at the N3 worker callback (which may queue an idle beforehand).
         self._is_selected: Callable[[], bool] | None = None
@@ -597,14 +598,27 @@ class DocumentCoverService:
 
         def work() -> None:
             changed = False
+            subscribers = ()
             try:
                 assessment = qualify_failed_epub_cover(
                     snapshot.embedded.resource,
                     source_path=snapshot.verified_epub_path,
                 )
-                changed = self.apply_qualified_epub_fallback(
-                    document, assessment, expected_token=token,
-                ) is not None
+                with self._lock:
+                    changed = self.apply_qualified_epub_fallback(
+                        document, assessment, expected_token=token,
+                    ) is not None
+                    if changed:
+                        # A second variant can still be waiting for its N3
+                        # failure when the first has already revoked EPUB N2.
+                        # Its late delivery is correctly rejected as stale;
+                        # notify the exact old-token subscribers now instead.
+                        subscribers = tuple(
+                            (reader, callback)
+                            for reader, callback in
+                            self._source_subscriptions.get(document, {}).values()
+                            if reader._selection_token == token
+                        )
             except (OSError, TypeError, ValueError, RuntimeError):
                 # No private path, source URL or ZIP exception can become a
                 # GTK diagnostic. Treat any unexpected failure as retryable.
@@ -619,7 +633,11 @@ class DocumentCoverService:
                         while len(self._qualify_cooldown) > self._max_documents:
                             self._qualify_cooldown.popitem(last=False)
             if changed:
-                for waiting_handle, waiting_callback in waiters:
+                # A subscribed reader may also be in the qualifier's
+                # waiters. One notification per handle, outside the lock.
+                consumers = dict(subscribers)
+                consumers.update(waiters)
+                for waiting_handle, waiting_callback in consumers.items():
                     if not waiting_handle.active:
                         continue
                     try:
@@ -1047,6 +1065,10 @@ class DocumentCoverService:
                 if snapshot is not None and decision is not None
                 and decision.status == "selected" else None
             )
+            # Bind the token while registration and fallback CAS are
+            # serialized. Even a reader not yet dispatched to N3 belongs
+            # to the exact selection it must later be notified to rebind.
+            handle._selection_token = selected_token
             elapsed_ms = (perf_counter() - started) * 1000
             if math.isfinite(elapsed_ms) and elapsed_ms >= 0:
                 self._n2_recent[outcome].append(elapsed_ms)
