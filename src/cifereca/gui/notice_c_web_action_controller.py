@@ -94,11 +94,11 @@ def request_selected_authenticated_web_actions(host, row, *, selected_id, contex
 
     def source_current():
         objects = getattr(host, "search_objects", None)
-        return (type(objects) is dict and objects.get(key) is row
-                and getattr(panel, "_authenticated_web_request_token", None) is token)
+        return type(objects) is dict and objects.get(key) is row
 
     def current():
         return (source_current() and host.search_page.detail is panel
+                and getattr(panel, "_authenticated_web_request_token", None) is token
                 and get_selected() is cell
                 and host._search_detail_context_current(selected_id, context))
 
