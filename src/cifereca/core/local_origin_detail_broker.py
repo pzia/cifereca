@@ -10,11 +10,15 @@ from threading import Lock
 from ..plugin_api.local_origin_detail import (
     LocalOriginDetailMatch, LocalOriginDetailPage, LocalOriginPublicChoice,
     LocalOriginPublicMatch, LocalOriginPublicReport,
+    LocalOriginPrivateChoice, LocalOriginPrivateMatch, LocalOriginPrivateReport,
 )
 from .activation_scoped_broker import ActivationScopedReadFactory
 from .local_origin_public_catalogue import (
     PublicCatalogueCandidate, available_local_public_catalogues,
     search_local_public_catalogue,
+)
+from .local_origin_private_catalogue import (
+    PrivateDocumentaryMatch, available_known_private_catalogues, compare_known_private_catalogue,
 )
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
 from .local_origin_suggestion_operator import (
@@ -28,6 +32,7 @@ class LocalOriginDetailReadBrokerImpl:
         self._service = service
         self._activation_current = activation_current
         self._public = {}
+        self._private = {}
         self._lock = Lock()
         self._generation = 0
         self._active = None
@@ -66,13 +71,17 @@ class LocalOriginDetailReadBrokerImpl:
                 return None
             # Only a verified first OPF page can offer an explicit anonymous
             # comparison. Discovery is inert and never dispatches a provider.
-            choices = ()
+            choices = private_choices = ()
             if (request.page == 0 and self._activation_current is not None
                     and result["metadata_evidence"] == "verified_epub_opf_description"):
                 choices = tuple((token_hex(32), choice)
                                 for choice in available_local_public_catalogues(
                                     self._service, request,
                                     evidence=result.get("public_comparison_evidence")))
+                private_choices = tuple((token_hex(32), choice)
+                                        for choice in available_known_private_catalogues(
+                                            self._service, request,
+                                            evidence=result.get("public_comparison_evidence")))
             page = LocalOriginDetailPage(
                 token_hex(32), known.page + 1,
                 tuple(LocalOriginDetailMatch(
@@ -84,12 +93,17 @@ class LocalOriginDetailReadBrokerImpl:
                 known.status, result["metadata_evidence"],
                 public_choices=tuple(LocalOriginPublicChoice(token, choice.provider_id)
                                      for token, choice in choices),
+                private_choices=tuple(LocalOriginPrivateChoice(
+                    token, choice.scope.provider_id, choice.scope.credential_id,
+                    choice.scope.account_id, choice.kind,
+                ) for token, choice in private_choices),
             )
             with self._lock:
                 if self._revoked or self._generation != generation:
                     return None
                 self._active = (page.token, following, view)
                 self._public = {token: (choice, view, generation) for token, choice in choices}
+                self._private = {token: (choice, view, generation) for token, choice in private_choices}
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -109,6 +123,7 @@ class LocalOriginDetailReadBrokerImpl:
             generation = self._generation
             self._active = None
             self._public.clear()
+            self._private.clear()
         try:
             if still_current() is not True:
                 return None
@@ -133,6 +148,7 @@ class LocalOriginDetailReadBrokerImpl:
                 return None
             self._active = None
             self._public.clear()
+            self._private.clear()
             self._generation += 1
             generation = self._generation
         return self._read(request, view, generation)
@@ -185,11 +201,59 @@ class LocalOriginDetailReadBrokerImpl:
         except Exception:
             return None
 
+    def compare_private(self, *, token, confirmed=False):
+        if (confirmed is not True or type(token) is not str
+                or self._activation_current is None):
+            return None
+        with self._lock:
+            if self._revoked:
+                return None
+            selected = self._private.pop(token, None)
+            if selected is None:
+                return None
+            choice, view, generation = selected
+        request = choice.request
+
+        def live():
+            return self._live(generation, view, request)
+
+        try:
+            if not live():
+                return None
+            result = compare_known_private_catalogue(
+                self._service, request, account=choice.account, kind=choice.kind,
+                choice=choice, confirmed=True, still_current=live,
+            )
+            if (not live() or type(result) is not dict
+                    or result.get("status") not in ("partial", "excluded", "scope_changed", "unavailable")
+                    or type(result.get("window_truncated")) is not bool
+                    or any(result.get(flag) is not False for flag in (
+                        "coverage_complete", "fresh_network_verified", "provider_access_performed",
+                        "association_authorized", "may_write_origin_or_right"))
+                    or type(result.get("candidates")) is not tuple
+                    or len(result["candidates"]) > 50):
+                return None
+            if any(type(row) is not PrivateDocumentaryMatch or row.source.scope != choice.scope
+                   or row.source.kind != choice.kind for row in result["candidates"]):
+                return None
+            report = LocalOriginPrivateReport(
+                result["status"], choice.scope.provider_id, choice.scope.credential_id,
+                choice.scope.account_id, choice.kind,
+                tuple(LocalOriginPrivateMatch(
+                    row.source.edition_id, row.title, row.author, row.comparison,
+                    row.evidence, row.title_observed_at,
+                ) for row in result["candidates"]), result["window_truncated"],
+            )
+            return report if live() else None
+        except Exception:
+            return None
+
     def cancel(self, *, token):
         with self._lock:
             if self._active is not None and type(token) is str and token == self._active[0]:
                 self._active = None
                 self._public.clear()
+                self._private.clear()
                 self._generation += 1
 
     def revoke(self):
@@ -198,6 +262,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._revoked = True
             self._active = None
             self._public.clear()
+            self._private.clear()
             self._generation += 1
 
 
@@ -211,6 +276,6 @@ class LocalOriginDetailReadFactory:
     def for_activation(self, plugin_id, *, current):
         factory = ActivationScopedReadFactory(
             lambda: LocalOriginDetailReadBrokerImpl(self._service, activation_current=current),
-            ("preview", "next_page", "search_public", "cancel"),
+            ("preview", "next_page", "search_public", "compare_private", "cancel"),
         )
         return factory.for_activation(plugin_id, current=current)

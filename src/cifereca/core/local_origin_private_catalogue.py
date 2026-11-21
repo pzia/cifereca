@@ -14,13 +14,14 @@ from .canonical_recovery import _exact_borrower_bound_in_db
 from .local_origin_documentary_suggestions import _fold
 from .local_origin_epub_evidence import read_verified_epub_bibliography
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
-from .local_origin_suggestion_preview import _verified_candidate
+from .local_origin_suggestion_preview import _PublicComparisonEvidence, _verified_candidate
 from .notice_c_purchase_descriptive_read import _read_descriptive_txn
 from .public_search_projection import _public_bibliographic_text
 
 _MAX_REFERENCES = 128
 _MAX_LOANS = 4096
 _MAX_MATCHES = 50
+_MAX_CHOICES = 16
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -137,8 +138,109 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors):
             return tuple(rows), tuple(matches), truncated
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class PrivateCatalogueChoice:
+    request: LocalOriginSuggestionRequest
+    account: Account
+    scope: ProviderRightsScope
+    kind: str
+    binding: tuple
+    evidence: _PublicComparisonEvidence
+
+
+def _binding(service, request, account, scope):
+    """Inert exact account/session binding, never a provider dispatch."""
+    try:
+        registry, sessions = service.accounts, service._sessions
+        if (type(registry) not in (list, tuple) or len(registry) > _MAX_LOANS
+                or type(sessions) is not dict or len(sessions) > 256
+                or not request.current() or _coords(account) != _scope_coords(scope)
+                or scope.identity_id != request.identity_id or scope.credential_id == "__public__"
+                or service.sync_source_enabled(account) is not True
+                or not service._provider_enabled_for_identity(scope.provider_id, scope.identity_id)):
+            return None
+        matched = [row for row in registry if type(row) is Account
+                   and _coords(row) == _scope_coords(scope)]
+        selected = [s for s in sessions.values()
+                    if (getattr(s, "provider_id", None), getattr(s, "credential_id", None))
+                    == (scope.provider_id, scope.credential_id)]
+        if len(matched) != 1 or matched[0] is not account or len(selected) != 1:
+            return None
+        session = selected[0]
+        upstream = session.accounts
+        if (getattr(session, "connected", None) is not True
+                or getattr(session, "_closed", False) is not False
+                or type(upstream) not in (tuple, list) or len(upstream) > _MAX_LOANS
+                or sum(type(row) is Account and _coords(row) == _scope_coords(scope)
+                       for row in upstream) != 1):
+            return None
+        return registry, sessions, session
+    except Exception:
+        return None
+
+
+def available_known_private_catalogues(service, request, *, evidence=None):
+    """Expose at most 16 explicitly selectable, connected cached surfaces.
+
+    No inventory request and no descriptive comparison before consent.
+    More accounts may exist; absence is never attested.
+    """
+    try:
+        if (type(request) is not LocalOriginSuggestionRequest
+                or request.service is not service or request.page != 0
+                or type(evidence) is not _PublicComparisonEvidence
+                or not evidence.matches_scope(request) or not request.current()):
+            return ()
+        accounts = service.accounts
+        if type(accounts) not in (list, tuple) or len(accounts) > _MAX_LOANS:
+            return ()
+        candidates = []
+        for account in accounts:
+            if type(account) is not Account or account.identity_id != request.identity_id:
+                continue
+            scope = ProviderRightsScope(*_coords(account))
+            # Do not project arbitrary account metadata or control characters.
+            if not all(type(x) is str and len(x) <= 256
+                       and all(ord(ch) >= 32 and ord(ch) != 127 for ch in x)
+                       for x in _scope_coords(scope)):
+                continue
+            binding = _binding(service, request, account, scope)
+            if binding is not None:
+                candidates.append((account, scope, binding))
+        choices = []
+        with request.storage._lock:
+            db = request.storage._connect()
+            if db.in_transaction:
+                return ()
+            with db:
+                db.execute("BEGIN")
+                for kind in ("purchase", "loan"):
+                    for account, scope, binding in candidates:
+                        if not _exact_borrower_bound_in_db(db, scope):
+                            continue
+                        if db.execute(
+                                "SELECT 1 FROM source_references WHERE identity_id=? AND provider_id=? "
+                                "AND credential_id=? AND account_id=? AND reference_kind=? "
+                                "AND state='active' AND evidence_kind='provider_response' "
+                                "AND evidence_ref<>'' LIMIT 1", (*_scope_coords(scope), kind),
+                        ).fetchone() is None:
+                            continue
+                        choices.append(PrivateCatalogueChoice(request, account, scope, kind, binding, evidence))
+                        if len(choices) >= _MAX_CHOICES:
+                            break
+                    if len(choices) >= _MAX_CHOICES:
+                        break
+        if not request.current():
+            return ()
+        return tuple(choice for choice in choices if
+                     (binding := _binding(service, request, choice.account, choice.scope)) is not None
+                     and all(old is new for old, new in zip(choice.binding, binding)))
+    except Exception:
+        return ()
+
+
 def compare_known_private_catalogue(service, request, *, account, kind,
-                                    confirmed=False, still_current=lambda: True):
+                                    confirmed=False, choice=None, still_current=lambda: True):
     """One expressly selected connected account; cached claims only.
 
     A partial first window is not a complete inventory or a negative result.
@@ -160,43 +262,20 @@ def compare_known_private_catalogue(service, request, *, account, kind,
         scope = ProviderRightsScope(*_coords(account))
         if scope.identity_id != request.identity_id or scope.credential_id == "__public__":
             return report("excluded")
-        registry = service.accounts
-        sessions = service._sessions
-        if type(registry) not in (list, tuple) or len(registry) > _MAX_LOANS:
+        binding = _binding(service, request, account, scope)
+        if binding is None:
             return report("excluded")
-        if type(sessions) is not dict or len(sessions) > 256:
-            return report("excluded")
-
-        def selected():
-            return [session for session in sessions.values()
-                    if (getattr(session, "provider_id", None),
-                        getattr(session, "credential_id", None)) ==
-                    (scope.provider_id, scope.credential_id)]
-
-        registered = selected()
-        if len(registered) != 1:
-            return report("excluded")
-        session = registered[0]
+        if choice is not None and (
+                type(choice) is not PrivateCatalogueChoice or choice.request is not request
+                or choice.account is not account or choice.scope != scope or choice.kind != kind
+                or not all(old is new for old, new in zip(choice.binding, binding))
+                or not choice.evidence.matches_scope(request)):
+            return report("scope_changed")
 
         def live():
-            if (still_current() is not True or not request.current()
-                    or service.accounts is not registry or service._sessions is not sessions
-                    or _coords(account) != _scope_coords(scope)
-                    or len(registry) > _MAX_LOANS or len(sessions) > 256
-                    or service.sync_source_enabled(account) is not True
-                    or not service._provider_enabled_for_identity(scope.provider_id, scope.identity_id)
-                    or getattr(session, "connected", None) is not True
-                    or getattr(session, "_closed", False) is not False):
-                return False
-            matched = [row for row in registry
-                       if type(row) is Account and _coords(row) == _scope_coords(scope)]
-            present = selected()
-            upstream = session.accounts
-            return (len(matched) == 1 and matched[0] is account
-                    and len(present) == 1 and present[0] is session
-                    and type(upstream) in (tuple, list) and len(upstream) <= _MAX_LOANS
-                    and sum(type(row) is Account and _coords(row) == _scope_coords(scope)
-                            for row in upstream) == 1)
+            observed = _binding(service, request, account, scope)
+            return (still_current() is True and observed is not None
+                    and all(old is new for old, new in zip(binding, observed)))
 
         if not live():
             return report("excluded")
@@ -204,6 +283,9 @@ def compare_known_private_catalogue(service, request, *, account, kind,
                                  identity_id=request.identity_id,
                                  placement_id=request.placement_id,
                                  catalogue=True) as (local, path, signature):
+            if choice is not None and (choice.evidence.evidence != local
+                                       or choice.evidence.signature != signature):
+                return report("scope_changed")
             if local[6] not in ("epub", "kepub"):
                 return report("excluded")
             description = read_verified_epub_bibliography(path, signature)

@@ -117,3 +117,53 @@ def test_purchases_reuse_exact_c_reader_without_fabricating_a_notice(private_rig
     assert candidate.title_observed_at == 100 and candidate.comparison == "title_author_concordant"
     assert queried == [candidate.source, candidate.source]
     assert not calls and rows(service.storage) == before
+
+
+@pytest.mark.parametrize("change", ["none", "view", "activation", "cancel", "new_preview",
+                                    "session", "account", "same_bytes_new_inode", "disabled"])
+def test_private_choice_is_one_shot_exact_and_read_only(private_rig, change):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    service, request, account, session, calls, path, key, snap = private_rig
+    active, visible = [True], [True]
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: active[0])
+    def preview():
+        return broker.preview(identity_id="A", placement_id=request.placement_id,
+                              still_current=lambda: visible[0], confirmed=True)
+    before, data = rows(service.storage), path.read_bytes()
+    page = preview()
+    choice, = page.private_choices
+    assert (choice.provider_id, choice.credential_id, choice.account_id, choice.kind) == (
+        "seller", "card-A", "buyer-A", "loan")
+    assert broker.compare_private(token=choice.token) is None
+    assert broker.compare_private(token="forged", confirmed=True) is None
+    assert not calls
+    if change == "view":
+        visible[0] = False
+    elif change == "activation":
+        active[0] = False
+    elif change == "cancel":
+        broker.cancel(token=page.token)
+    elif change == "new_preview":
+        assert preview().private_choices[0].token != choice.token
+    elif change == "session":
+        service._sessions["private"] = NS(**vars(session))
+    elif change == "account":
+        other = replace(account)
+        service.accounts = [other]
+        session.accounts = [other]
+    elif change == "same_bytes_new_inode":
+        path.rename(path.with_suffix(".old"))
+        path.write_bytes(data)
+    elif change == "disabled":
+        service.sync_source_enabled = lambda a: False
+    report = broker.compare_private(token=choice.token, confirmed=True)
+    if change == "none":
+        assert report.status == "partial"
+        match, = report.matches
+        assert match.title == "Roman commun" and match.comparison == "title_author_concordant"
+        assert not any((report.coverage_complete, report.fresh_network_verified,
+                        report.provider_access_performed, report.association_authorized))
+    else:
+        assert report is None or (report.status != "partial" and not report.matches)
+    assert broker.compare_private(token=choice.token, confirmed=True) is None
+    assert calls == [] and rows(service.storage) == before and path.read_bytes() == data

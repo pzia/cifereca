@@ -47,6 +47,40 @@ class LocalOriginPublicReport:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPrivateChoice:
+    token: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalOriginPrivateMatch:
+    edition_id: str
+    title: str
+    author: str | None
+    comparison: str
+    evidence: str
+    observed_at: int | None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPrivateReport:
+    status: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    kind: str
+    matches: tuple[LocalOriginPrivateMatch, ...]
+    window_truncated: bool
+    coverage_complete: bool = False
+    fresh_network_verified: bool = False
+    provider_access_performed: bool = False
+    association_authorized: bool = False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class LocalOriginDetailPage:
     token: str
     page: int
@@ -60,6 +94,7 @@ class LocalOriginDetailPage:
     provider_access_performed: bool = False
     association_authorized: bool = False
     public_choices: tuple[LocalOriginPublicChoice, ...] = ()
+    private_choices: tuple[LocalOriginPrivateChoice, ...] = ()
 
 
 @runtime_checkable
@@ -75,4 +110,5 @@ class LocalOriginDetailReadBroker(Protocol):
                 page_size: int = 20) -> LocalOriginDetailPage | None: ...
     def next_page(self, *, token: str, confirmed: bool = False) -> LocalOriginDetailPage | None: ...
     def search_public(self, *, token: str, confirmed: bool = False) -> LocalOriginPublicReport | None: ...
+    def compare_private(self, *, token: str, confirmed: bool = False) -> LocalOriginPrivateReport | None: ...
     def cancel(self, *, token: str) -> None: ...
