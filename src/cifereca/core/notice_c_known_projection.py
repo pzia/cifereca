@@ -24,6 +24,30 @@ _PRIMARY_FACT_TOKEN = object()
 _PRIMARY_FACT_FIELD = "_core_notice_c_primary_facts"
 
 
+def _native_c_source_ref(document):
+    # Guard a frozen DocumentRef's mutable scalar members before dataclass
+    # equality or repository source routing; a correct class alone is not
+    # sufficient when a view has substituted foreign __eq__/__hash__.
+    if type(document) is not CoverDocumentScope:
+        return False
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return False
+    if (document.identity_id is not None
+            and (type(document.identity_id) is not str
+                 or len(document.identity_id) > 512
+                 or not document.identity_id.isprintable())):
+        return False
+    if (document.account_id is not None
+            and (type(document.account_id) is not str
+                 or len(document.account_id) > 512
+                 or not document.account_id.isprintable())):
+        return False
+    return is_notice_cover_document(document)
+
+
 def known_public_primary_facts(row):
     """Read the exact Core-created C-source packet, not loose metadata proof.
 
@@ -49,10 +73,9 @@ def known_public_primary_facts(row):
         return None
     hit = packet[2]
     document = row.get("_cover_document_ref")
-    if (type(hit.document) is not CoverDocumentScope
-            or type(document) is not CoverDocumentScope
+    if (not _native_c_source_ref(hit.document)
+            or not _native_c_source_ref(document)
             or hit.document != document
-            or not is_notice_cover_document(hit.document)
             or type(hit.epoch) is not int
             or type(meta.get("notice_c_epoch")) is not int
             or hit.epoch != meta["notice_c_epoch"]):
