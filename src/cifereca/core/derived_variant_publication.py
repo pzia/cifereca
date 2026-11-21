@@ -97,12 +97,12 @@ def _verified_variant_file(path: Path, digest: str, *, expected_size=None):
 @contextmanager
 def _publication_connection(storage, *, durable):
     db = storage._connect()
+    if db.in_transaction:
+        raise DerivedPublicationConflict("derived_journal_nested_transaction")
     if not durable:
         with db:
             yield db
         return
-    if db.in_transaction:
-        raise DerivedPublicationConflict("derived_journal_nested_transaction")
     synchronous = db.execute("PRAGMA synchronous").fetchone()[0]
     try:
         db.execute("PRAGMA synchronous=FULL")
