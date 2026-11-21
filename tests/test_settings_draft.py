@@ -1963,3 +1963,43 @@ def test_preexisting_half_empty_adept_source_marker_stays_fail_closed_on_save(ed
     assert saved["adept_source_provider_id"] == ""
     assert saved["adept_source_connection_id"] == ""
     assert _selected_adept_source(saved) == (True, None, None)
+
+
+def test_sso_and_authenticated_sources_without_credential_fields_are_not_anonymous(editor):
+    """A zero-field SSO account must not be published as a public identity."""
+    _config, values = editor
+    descriptors = {
+        "sso": ProviderDescriptor(
+            id="sso", display_name="SSO synthétique", description="test",
+            capabilities=ProviderCapabilities(authentication=True),
+            interactive_authentication=True,
+            credential_fields=(),
+        ),
+        "private-option": ProviderDescriptor(
+            id="private-option", display_name="Identité privée", description="test",
+            capabilities=ProviderCapabilities(authentication=True),
+            credential_fields=(),
+        ),
+        "local-public": ProviderDescriptor(
+            id="local-public", display_name="Source anonyme historique",
+            description="test", capabilities=ProviderCapabilities(),
+            credential_fields=(),
+        ),
+    }
+    values["accounts"] = [
+        dict(
+            id=provider + "-a", provider=provider, identity="alice",
+            enabled=True, label="", fields={}, option_fields={},
+            original_credentials={}, original_options={}, original_account={},
+            scoped_option_fields={},
+        )
+        for provider in descriptors
+    ]
+    draft = validate(editor, descriptors=descriptors)
+    rows = {row["provider"]: row for row in draft.data["providers"]["accounts"]}
+    assert rows["sso"]["anonymous"] is False
+    assert rows["private-option"]["anonymous"] is False
+    assert rows["local-public"]["anonymous"] is True  # existing legacy contract
+    assert all(row["identity_id"] == "alice" for row in rows.values())
+    assert all(row["credentials"] == {} for row in rows.values())
+    assert not _config.path.exists()
