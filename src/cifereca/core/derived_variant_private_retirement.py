@@ -18,7 +18,8 @@ from time import monotonic
 import zipfile
 
 from ..artifact_inspection import inspect_artifact_content
-from ..epub_metadata import _bounded_directory
+from ..epub_metadata import MAX_XML, _bounded_directory, _member, _read, _xml
+from xml.etree.ElementTree import ParseError
 from . import derived_variant_journal as journal
 from . import derived_variant_private_region as region
 from .derived_variant_compact_receipt import _measure_compact_in_transaction
@@ -143,6 +144,40 @@ def _read_content(fd, intent):
                          and i.file_size <= 1000 * max(i.compress_size, 1)
                          and not stat.S_ISLNK(i.external_attr >> 16)
                          for i in infos), "derived_retirement_reader_unverified")
+        # The common strict inspector validates CRC/package XML but admits
+        # even an empty package. Require an actual bounded XHTML spine.
+        # Parse XML via the existing DTD/entity-refusing reader first.
+        ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+        opf = "{http://www.idpf.org/2007/opf}"
+        container = _xml(_read(archive, "META-INF/container.xml", MAX_XML))
+        roots = container.findall(ocf + "rootfiles/" + ocf + "rootfile")
+        _require(container.tag == ocf + "container" and len(roots) == 1)
+        member = roots[0].get("full-path", "")
+        _require(bool(member) and not member.startswith("/")
+                 and _member("", member) == member)
+        package = _xml(_read(archive, member, MAX_XML))
+        manifests, spines = package.findall(opf + "manifest"), package.findall(opf + "spine")
+        _require(package.tag == opf + "package" and len(manifests) == len(spines) == 1)
+        items = manifests[0].findall(opf + "item")
+        by_id = {item.get("id"): item for item in items}
+        _require(None not in by_id and len(items) == len(by_id))
+        refs = spines[0].findall(opf + "itemref")
+        _require(0 < len(refs) <= 512)
+        checked = set()
+        total_spine = 0
+        for ref in refs:
+            item = by_id.get(ref.get("idref"))
+            _require(item is not None and item.get("media-type") == "application/xhtml+xml")
+            name = _member(str(Path(member).parent), item.get("href"))
+            if name in checked:
+                continue
+            document = _read(archive, name, MAX_XML)
+            total_spine += len(document)
+            _require(total_spine <= _MAX_CONTENT)
+            page = _xml(document)
+            _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
+                     and page.find("{http://www.w3.org/1999/xhtml}body") is not None)
+            checked.add(name)
     inspected = inspect_artifact_content(data, expected_format="epub", strict_structure=True)
     _require(inspected.valid is True and inspected.media_format == "epub"
              and inspected.protected is False, "derived_retirement_reader_unverified")
@@ -199,7 +234,7 @@ def _evidence(storage, db, *, root, identity_id, receipt, binding, lock, current
         mount = region._mount_id(stage_dir)
         region_stamp = region._private_directory(stage_dir, exact=True)
         final_stamp = region._directory_stamp(final_dir)
-        _require(parent_dir != final_dir and region._directory_stamp(parent_dir) == final_stamp
+        _require(region._directory_stamp(parent_dir) == final_stamp
                  and region._mount_id(parent_dir) == region._mount_id(final_dir) == mount)
         def opened(name, folder):
             fd = os.open(name, region._FLAGS, dir_fd=folder)
@@ -328,7 +363,7 @@ def prepare_private_stage_retirement(storage, *, library_root, identity_id,
     except journal.DerivedJournalConflict:
         raise
     except (OSError, ValueError, RuntimeError, TypeError, KeyError, sqlite3.Error,
-            zipfile.BadZipFile, NotImplementedError, UnicodeError, RecursionError):
+            zipfile.BadZipFile, NotImplementedError, UnicodeError, RecursionError, ParseError):
         raise journal.DerivedJournalConflict("derived_retirement_unverified") from None
 
 
@@ -384,5 +419,5 @@ def retire_private_stage(storage, *, library_root, identity_id, receipt_sha256,
     except journal.DerivedJournalConflict:
         raise
     except (OSError, ValueError, RuntimeError, TypeError, KeyError, sqlite3.Error,
-            zipfile.BadZipFile, NotImplementedError, UnicodeError, RecursionError):
+            zipfile.BadZipFile, NotImplementedError, UnicodeError, RecursionError, ParseError):
         raise journal.DerivedJournalConflict("derived_retirement_unverified") from None
