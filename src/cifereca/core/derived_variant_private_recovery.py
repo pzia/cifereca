@@ -135,10 +135,10 @@ class _PrivateRecoveryGuard:
                     )
                     _measure_compact_in_transaction(db, require_paired=True)
                     paths, inodes = {}, {}
-                    for key, _size in journal._measure(db)[0]:
-                        raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-                        prior = journal._decode(key, raw)
-                        _index_receipt_references(paths, inodes, key, prior)
+                    for receipt_key, _size in journal._measure(db)[0]:
+                        raw = db.execute("SELECT value FROM metadata WHERE key=?", (receipt_key,)).fetchone()[0]
+                        prior = journal._decode(receipt_key, raw)
+                        _index_receipt_references(paths, inodes, receipt_key, prior)
                     require(not _other_receipt_dependency(paths, inodes, reservation.key, intent))
 
                     def absent():
