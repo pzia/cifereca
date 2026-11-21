@@ -245,3 +245,18 @@ def test_unsafe_url_is_refused_by_admission_before_any_c_write(tmp_path, url):
         with db._lock, db._connect() as sql:
             assert sql.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+@pytest.mark.parametrize("generation", [0, "ab0123456789" * 2])
+def test_inert_session_generation_may_be_counter_or_opaque_uuid(tmp_path, generation):
+    with closing(Storage(tmp_path / "generation.sqlite")) as db:
+        host = Host(db)
+        a = host.account("alice")
+        session = host._sessions[(a.provider_id, a.credential_id)]
+        session._epoch = generation
+        source, c = host.source(a)
+        menu = host.menu(c, source.document)
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == URL
+        session._epoch = str(generation) if type(generation) is int else generation + "-new"
+        assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) is None
