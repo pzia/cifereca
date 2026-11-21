@@ -134,7 +134,7 @@ class QualificationProbeTests(unittest.TestCase):
         )
         result = qualify_bnf_borrow_dom(detail, page="detail")
         self.assertEqual(result["copies_label"]["count"], 1)
-        self.assertEqual(result["copies_label"]["tag_paths"], ["html/main/article/p"])
+        self.assertEqual(result["copies_label"]["tag_paths"], ["article/p"])
         self.assertEqual(result["offer_verified"], False)
         self.assert_no_authority(result)
         self.assert_private_not_exposed(result)
