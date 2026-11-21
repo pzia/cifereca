@@ -424,7 +424,80 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             window._library_entries_cache = [rows[0]]
             window._recent_entries_cache = [rows[1]]
             state["projected_rows"] = rows
-            show_route("library")
+            verify_documentary_summary()
+
+        def verify_documentary_summary():
+            # Complement the real SQLite/adapter receipt in #1072 by checking
+            # the actual mapped GTK label and list with controlled projection
+            # packets. These DTOs are presentation fixtures, NOT new rights,
+            # supplier evidence, or a second documentary writer.
+            from cifereca.core.notice_c_purchase_descriptive_read import (
+                PurchaseDescriptiveFact, PurchaseDescriptiveNotice,
+            )
+            from cifereca.core.notice_c_purchase_library_projection import (
+                PurchaseLibraryNotice, PurchaseLibraryStatus,
+            )
+            from cifereca.plugin_api import SourceReference
+            page = window.library_page
+            items = []
+            for record, provider, book_title in (
+                ("edition-a", "fixture-c-a", "Roman documentaire"),
+                ("edition-b", "fixture-c-b", "Atlas à actualiser"),
+            ):
+                scope = ProviderRightsScope(owner, provider, "fixture-card", "fixture-buyer")
+                source = SourceReference(scope, "purchases", record, "purchase", "purchase")
+                key = "fixture-purchase:" + record
+                item = {
+                    "key": key, "identity_id": owner, "provider_id": provider,
+                    "item_id": record, "source": "private_catalog_observation",
+                    "state": "remote_catalog", "local": False,
+                    "title": book_title, "author": "", "metadata": {},
+                    "possessions": [], "source_refs": [{
+                        "identity_id": owner, "provider_id": provider,
+                        "credential_id": scope.credential_id,
+                        "account_id": scope.account_id, "item_id": record,
+                        "kind": "purchase",
+                    }],
+                }
+                if record == "edition-a":
+                    fact = PurchaseDescriptiveFact("title", book_title, provider,
+                                                  "synthetic", "synthetic", 100)
+                    item["_purchase_library_notice"] = PurchaseLibraryNotice(
+                        key, source, PurchaseDescriptiveNotice(doc, epoch, 100, (fact,)))
+                else:
+                    item["_purchase_library_status"] = PurchaseLibraryStatus(
+                        key, source, "failed", 1)
+                items.append(item)
+            expected = ("Enrichissement documentaire (achats qualifiés) : "
+                        "1 fiches disponibles · 1 non abouties")
+            window._library_entries_cache = items
+            window.navigate("library")
+            window._render_library(items)
+
+            def check(deadline):
+                if not page._documentary_summary.get_mapped():
+                    assert monotonic() < deadline, "documentary summary GTK not mapped"
+                    later(40, guard(lambda: check(deadline)))
+                    return
+                assert page.store.get_n_items() == 2
+                assert page._documentary_summary.get_text() == expected
+                window.library_controls.set_state(
+                    QueryState(text="Roman documentaire", field="title"), notify=False)
+                window._render_library(items)
+                assert page.store.get_n_items() == 1
+                assert page._documentary_summary.get_text() == expected
+                assert page._documentary_summary.get_mapped()
+                capture("00-purchase-documentary-mixed-" + label)
+                report["checks"]["P0_1072_mixed_documentary_native_gtk_" + label] = True
+                # Restore the original six-view corpus before any cover
+                # subscription. Synthetic packets must not enter its metrics.
+                page.clear_rows()
+                window.library_controls.set_state(QueryState(), notify=False)
+                window._library_entries_cache = [state["projected_rows"][0]]
+                assert not reads
+                show_route("library")
+
+            later(80, guard(lambda: check(monotonic() + 8)))
 
         label = "offline" if offline else "cold"
         route_timings = {}
