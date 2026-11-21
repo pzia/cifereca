@@ -3,6 +3,10 @@ from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
 )
 
+# The generic book-review host accepts 12 actions including preview.
+# Keep the same limit locally and report any truncated choice window.
+_MAX_CATALOGUE_ACTIONS = 11
+
 _LABELS = {
     "title_related": "Titre voisin",
     "title_concordant_author_unknown": "Titre concordant, auteur inconnu",
@@ -121,7 +125,8 @@ class DetailController:
             self.finished = not value.can_continue
             self.host.add_group("Suggestions de provenance — lecture seule", known_rows(value))
             if value.page == 1 and value.metadata_evidence == "verified_epub_opf_description":
-                for index, choice in enumerate(value.public_choices):
+                public_choices = value.public_choices[:_MAX_CATALOGUE_ACTIONS]
+                for index, choice in enumerate(public_choices):
                     if not self.current():
                         return
                     self.host.add_action(
@@ -130,17 +135,37 @@ class DetailController:
                         lambda selected=choice, original=value: self.search(selected, original),
                     )
 
-                for index, choice in enumerate(value.private_choices):
+                remaining = _MAX_CATALOGUE_ACTIONS - len(public_choices)
+                private_choices = value.private_choices[:remaining]
+                accounts = []
+                for index, choice in enumerate(private_choices):
                     if not self.current():
                         return
                     surface = "achats" if choice.kind == "purchase" else "prêts"
+                    # The short numbered action is backed by an exact,
+                    # visible account description and full tooltip. Long
+                    # coordinate IDs cannot cause the host to drop a button.
+                    label = f"Comparer {surface} — compte {index + 1}"
+                    coordinates = ("Fournisseur : " + choice.provider_id
+                                   + " · Connexion : " + choice.credential_id
+                                   + " · Compte : " + (choice.account_id or "principal"))
+                    accounts.append((label, coordinates))
                     self.host.add_action(
-                        "private-" + str(index),
-                        "Comparer " + surface + " : " + choice.provider_id + " · "
-                        + choice.credential_id + " · " + (choice.account_id or "principal"),
-                        "Consentement explicite pour ce compte uniquement. Cache local, aucune transmission.",
+                        "private-" + str(index), label,
+                        "Cache local, aucune transmission. " + coordinates,
                         lambda selected=choice, original=value: self.compare_private(selected, original),
                     )
+                if value.private_choices:
+                    accounts.append(("Couverture",
+                        "Choix partiels ; d’autres comptes ou surfaces peuvent exister."))
+                hidden = (len(value.public_choices) - len(public_choices)
+                          + len(value.private_choices) - len(private_choices))
+                if hidden:
+                    accounts.append(("Limite de la fiche",
+                        f"{hidden} choix supplémentaires connus ne sont pas affichés "
+                        "dans cette fenêtre. Aucune absence attestée."))
+                if accounts:
+                    self.host.add_group("Catalogues à comparer explicitement", tuple(accounts))
 
         return self._submit(work, display)
 
