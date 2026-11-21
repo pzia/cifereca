@@ -28,7 +28,7 @@ from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightObservation
 from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
-from ..plugin_api.errors import AdeptFulfillmentNotSubmitted
+from ..plugin_api.errors import AdeptFulfillmentNotSubmitted, RuntimeDispatchNotSubmitted
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
@@ -375,6 +375,14 @@ def complete_selected_delivery(
                     operation_id=adept_attempt_id[0], shared_lock=shared_lock,
                 )
                 adept_attempt_id[0] = ""
+            raise
+        except RuntimeDispatchNotSubmitted as error:
+            if type(error) is RuntimeDispatchNotSubmitted and runtime_attempt_id[0]:
+                release_unsubmitted_runtime_attempt(
+                    storage, source=source, offer_id=offer.delivery_offer_id,
+                    operation_id=runtime_attempt_id[0], shared_lock=shared_lock,
+                )
+                runtime_attempt_id[0] = ""
             raise
 
     runtime_artifact_path: list[Path | None] = [None]

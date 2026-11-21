@@ -40,6 +40,7 @@ from .canonical_loan_retry_guard import historical_adept_retry_blocked
 from .adept_runtime_preflight import AdeptProfileUnavailable
 from .canonical_adept_attempt import describe_loan_adept_attempt
 from .canonical_runtime_attempt import pending_runtime_attempt
+from ..plugin_api.errors import RuntimeDispatchNotSubmitted
 from .loan_download_retry import (
     clear_loan_download_retry, read_loan_download_retry, record_adept_intervention,
     record_loan_download_failure,
@@ -736,6 +737,8 @@ def execute_admitted_convergence(
                     record_adept_intervention(initial_storage, key, shared_lock=shared_lock)
                 except Exception:
                     _LOG.warning("TRACE convergence code=download_intervention_record_failed")
+            if phase == "delivery" and type(error) is RuntimeDispatchNotSubmitted:
+                reason = "canonical_runtime_preflight_refused"
             runtime_held = False
             if phase == "delivery":
                 try:

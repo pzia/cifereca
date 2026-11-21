@@ -739,10 +739,12 @@ class KoboAdeptRuntime:
                 self.preflight_acsm_profile(payload.get('profile'))
             self._require_download(payload)
         except UserFacingError as error:
-            if not is_acsm:
-                raise
-            # Older Core versions still receive the historical error.
-            refusal = getattr(plugin_api, "AdeptFulfillmentNotSubmitted", None)
+            # Only this synchronous, pre-command boundary attests that
+            # the installed runtime has not submitted a delivery.
+            kind = payload.get('source', {}).get('type') if type(payload.get('source')) is dict else None
+            refusal_name = ("AdeptFulfillmentNotSubmitted" if is_acsm
+                            else "RuntimeDispatchNotSubmitted" if kind == 'kobo' else None)
+            refusal = getattr(plugin_api, refusal_name, None) if refusal_name else None
             if refusal is None:
                 raise
             raise refusal(error.user_message, code=error.code,

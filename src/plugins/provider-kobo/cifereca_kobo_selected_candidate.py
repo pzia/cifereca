@@ -345,9 +345,16 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 staged = True
                 try:
                     runtime_execute(request)
-                except Exception:
+                except Exception as error:
                     if not core_current():
                         raise ProviderCapabilityError("kobo_candidate_admission_changed") from None
+                    refusal = getattr(plugin_api, "RuntimeDispatchNotSubmitted", None)
+                    if type(error) is refusal and bound() and stage_current():
+                        # The Core callback already validated and released its
+                        # exact live claim. Preserve the typed refusal, not
+                        # the private text or command of an upstream runtime.
+                        raise refusal("Runtime indisponible avant livraison.",
+                                      code="kobo_runtime_preflight_refused") from None
                     raise ProviderCapabilityError("kobo_candidate_runtime_failed") from None
                 require_core()
                 if not bound():
