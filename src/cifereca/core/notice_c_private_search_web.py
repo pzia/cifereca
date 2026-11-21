@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from sqlite3 import Error as SQLiteError
 import time
 
 from ..models import Account, SearchResult
@@ -246,7 +247,9 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                         relation_proof_id="private-self:" + _coordinate_digest(doc.source_key),
                     )
                     count += 1
-        except (AttributeError, TypeError, ValueError, LookupError, RuntimeError):
+        except (AttributeError, TypeError, ValueError, LookupError, RuntimeError, SQLiteError):
+            # Exit the SQLite context before containing its failure: neither
+            # a partial source nor a canonical sidecar may escape rollback.
             # Optional private documentary enrichment must not hide Search results.
             continue
     return count
