@@ -82,9 +82,20 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             row[key] = Hostile()
             expanded, originals = expand_filter_sources([row], scope="all")
             assert expanded == [row] and originals == {}
-        from cifereca.core.notice_c_loaded_filter import matching_source_label
+        from cifereca.core.notice_c_loaded_filter import (
+            matching_source_label, collapse_filter_sources, _MARKER,
+        )
         assert matching_source_label({
             "_notice_c_matched_providers": (other_provider,),
             "provider_id": Hostile(),
         }) == ""
+        class HostileHash:
+            def __hash__(self):
+                raise AssertionError("foreign hash in group collapse")
+
+            def __eq__(self, other):
+                raise AssertionError("foreign equality in group collapse")
+
+        foreign = {_MARKER: HostileHash(), "provider_id": other_provider}
+        assert collapse_filter_sources([foreign], {}) == [foreign]
         assert db.entitlements() == db.acquisitions() == db.placements() == []
