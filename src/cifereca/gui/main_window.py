@@ -1166,6 +1166,9 @@ class MainWindow(Adw.ApplicationWindow):
         if sections is not None:
             add_adept_historical_maintenance_line(
                 self, sections["recovery"], Gtk=Gtk, Adw=Adw, mode="holds")
+            from cifereca.gui.loan_download_retry_dialog import add_maintenance_retry_entry
+            add_maintenance_retry_entry(
+                self, sections["recovery"], _page_context, Gtk=Gtk, Adw=Adw)
             from cifereca.gui.maintenance_sections import show_unavailable, finish_sections
             statuses = getattr(manager, "statuses", None)
             if callable(statuses):
