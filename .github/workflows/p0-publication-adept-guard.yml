@@ -1,0 +1,65 @@
+name: P0 Publication · ADEPT historical replay guard
+
+# #4496/#7244: offline proof at the precise provider/Core retry boundary.
+# Never call a provider, mutate a library, unlock a legacy hold or release.
+on:
+  pull_request:
+    paths:
+      - 'src/cifereca/core/canonical_loan_retry_guard.py'
+      - 'src/cifereca/core/adept_retry_guard.py'
+      - 'src/cifereca/core/loan_download_retry_review.py'
+      - 'src/cifereca/core/canonical_adept_attempt.py'
+      - 'src/cifereca/core/adept_historical_maintenance.py'
+      - 'src/cifereca/core/convergence_execution.py'
+      - 'src/cifereca/core/canonical_selected_offers.py'
+      - 'src/plugins/provider-paris/**'
+      - 'src/plugins/provider-numilog/**'
+      - 'src/plugins/provider-kobo/**'
+      - 'tests/test_core_p0_7244_duplicate_historical_attention.py'
+      - 'tests/test_core_p0_976_historical_maintenance.py'
+      - '.github/workflows/p0-publication-adept-guard.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/cifereca/core/canonical_loan_retry_guard.py'
+      - 'src/cifereca/core/adept_retry_guard.py'
+      - 'src/cifereca/core/loan_download_retry_review.py'
+      - 'src/cifereca/core/canonical_adept_attempt.py'
+      - 'src/cifereca/core/adept_historical_maintenance.py'
+      - 'src/cifereca/core/convergence_execution.py'
+      - 'src/cifereca/core/canonical_selected_offers.py'
+      - 'src/plugins/provider-paris/**'
+      - 'src/plugins/provider-numilog/**'
+      - 'src/plugins/provider-kobo/**'
+      - 'tests/test_core_p0_7244_duplicate_historical_attention.py'
+      - 'tests/test_core_p0_976_historical_maintenance.py'
+      - '.github/workflows/p0-publication-adept-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-publication-adept-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  historical-replay:
+    name: P0 ADEPT replay fence · offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install Core and synthetic test dependencies
+        run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9"
+      - name: Verify exact historical hold, replay fence and operator projection
+        run: |
+          python -m pytest -q \
+            tests/test_core_p0_7244_duplicate_historical_attention.py \
+            tests/test_core_p0_976_historical_maintenance.py \
+            tests/test_core_0977_adept_retry_guard.py

@@ -35,7 +35,7 @@ def cached_notice_cover_snapshot(
             or (document.account_id is not None
                 and (type(document.account_id) is not str
                      or len(document.account_id) > 512
-                     or not document.account_id.isprintable())))
+                     or not document.account_id.isprintable()))
             or document.kind not in ("catalogue", "public_catalogue")):
         return None
     storage = getattr(service, "storage", None)

@@ -342,3 +342,91 @@ def test_filtered_c_copy_cannot_mint_new_core_witness_from_equal_title(
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+
+class _HostileCField:
+    def __eq__(self, other):
+        raise AssertionError("foreign equality in Search C N3 view")
+
+    def __hash__(self):
+        raise AssertionError("foreign hash in Search C N3 view")
+
+
+@pytest.mark.parametrize("damage", (
+    "key", "source", "identity", "document", "nested_document", "epoch",
+))
+def test_c_filtered_copy_with_hostile_values_never_mints_a_gtk_pin(tmp_path, damage):
+    from dataclasses import replace
+
+    db, host, row, original = _seed(tmp_path)
+    try:
+        projected = {**original, "metadata": dict(original["metadata"])}
+        if damage in ("key", "source", "identity"):
+            projected[{"key": "key", "source": "source",
+                       "identity": "identity_id"}[damage]] = _HostileCField()
+        elif damage == "document":
+            projected["_cover_document_ref"] = _HostileCField()
+        elif damage == "nested_document":
+            changed = replace(original["_cover_document_ref"])
+            object.__setattr__(changed, "source_key", _HostileCField())
+            projected["_cover_document_ref"] = changed
+        else:
+            projected["metadata"]["notice_c_epoch"] = _HostileCField()
+        cell = NS(
+            key=row.key, _cover_document_ref=original["_cover_document_ref"],
+            _cover_public_c_epoch=original["metadata"]["notice_c_epoch"],
+        )
+        attach_filtered_known_public_c(host, cell, projected)
+        assert not hasattr(cell, "_cover_known_public_c_receipt")
+        assert not known_public_c_cell_current(
+            host, cell, getattr(cell, "_cover_known_public_c_receipt", None),
+        )
+        assert known_public_c_cell_current(
+            host, row, row._cover_known_public_c_receipt,
+        )
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("damage", (
+    "window_mode", "binding_mode", "binding_doc", "binding_epoch",
+    "binding_key", "row_doc", "row_epoch", "row_key", "item_doc",
+    "item_epoch", "item_identity",
+))
+def test_c_list_n3_validation_fails_closed_on_changed_receipt_or_cell(
+    tmp_path, damage,
+):
+    from dataclasses import replace
+
+    db, host, row, item = _seed(tmp_path)
+    try:
+        receipt = row._cover_known_public_c_receipt
+        assert known_public_c_cell_current(host, row, receipt)
+        if damage == "window_mode":
+            host._search_mode = _HostileCField()
+        elif damage == "binding_mode":
+            receipt = replace(receipt, context=(_HostileCField(), *receipt.context[1:]))
+        elif damage == "binding_doc":
+            receipt = replace(receipt, document=_HostileCField())
+        elif damage == "binding_epoch":
+            receipt = replace(receipt, epoch=_HostileCField())
+        elif damage == "binding_key":
+            receipt = replace(receipt, row_key=_HostileCField())
+        elif damage == "row_doc":
+            row._cover_document_ref = _HostileCField()
+        elif damage == "row_epoch":
+            row._cover_public_c_epoch = _HostileCField()
+        elif damage == "row_key":
+            row.key = _HostileCField()
+        elif damage == "item_doc":
+            item["_cover_document_ref"] = _HostileCField()
+        elif damage == "item_epoch":
+            item["metadata"]["notice_c_epoch"] = _HostileCField()
+        else:
+            item["identity_id"] = _HostileCField()
+        assert not known_public_c_cell_current(host, row, receipt)
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

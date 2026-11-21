@@ -397,6 +397,8 @@ def test_changed_filter_is_not_next_page(target):
     "<p>Aucun r\u00e9sultat pour la recherche <span>roman</span></p>",
     "<html><head><title>Recherche</title></head><body>"
     "<p>Aucun r&eacute;sultat pour la recherche roman</p></body></html>",
+    "<html><head><meta http-equiv='content-type' content='text/html'></head><body>"
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p></body></html>",
 ])
 def test_explicit_summary_zero_same_call_no_retry(body):
     url = http_adapter.search_summary_url("roman")
@@ -441,6 +443,10 @@ def test_explicit_summary_zero_same_call_no_retry(body):
     "<p>Aucun r\u00e9sultat pour la recherche roman</p><a href='Search?pageindex=1'>Suite</a>",
     "<p>Aucun r\u00e9sultat pour la recherche roman</p><p>Aucun r\u00e9sultat pour la recherche autre</p>",
     "<p>Aucun r\u00e9sultat pour la recherche roman",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p>"
+    "<meta http-equiv='refresh' content='0;url=/1409/Account/Login'>",
+    "<html><head><meta HTTP-EQUIV=' REFRESH ' content='0; URL=/1409/Catalog/Search'></head>"
+    "<body><p>Aucun r\u00e9sultat pour la recherche roman</p></body></html>",
 ])
 def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
     calls = []
@@ -559,3 +565,36 @@ def test_terminal_empty_requires_valid_explicit_anonymous_response():
     ):
         assert not _terminal_anonymous_empty(changed, anonymous)
     assert not _terminal_anonymous_empty(response, SimpleNamespace(credential_id="private"))
+
+
+def test_hidden_book_cards_never_publish_public_notice_c_or_web_choice():
+    # Producer-to-Core contract: a hidden template is not a source of C.
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0",
+            })
+        assert request.url.path.endswith("/Catalog/Search")
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<template><a href="/1409/Catalog/Book/999/hidden">'
+            'Fausse notice</a></template>'
+            '<div aria-hidden="true"><a href="/1409/Catalog/Book/998/hidden">'
+            'Autre fausse notice</a></div>'
+            '<a href="/1409/Catalog/Book/123/public">Notice visible</a>'
+        ))
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        assert [row.record_id for row in response.results] == ["123"]
+        assert len(response.public_notices) == 1
+        assert response.public_notices[0].result.record_id == "123"
+        assert response.catalogue_complete is False
+        assert response.terminal_empty is False
+        assert len(calls) == 2
+    finally:
+        session.close()
