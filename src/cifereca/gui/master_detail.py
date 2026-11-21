@@ -335,16 +335,22 @@ class MasterDetailPage(Gtk.Box):
     def select_key(self, key: str) -> bool:
         """Select a visible row by stable key and reveal it without changing filters."""
         target = str(key)
+        matches = []
         for index in range(self.store.get_n_items()):
             row = self.store.get_item(index)
             if isinstance(row, BookListItem) and row.key == target:
-                self.selection.set_selected(index)
-                try:
-                    self.listview.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
-                except (AttributeError, TypeError):
-                    pass
-                return True
-        return False
+                matches.append(index)
+                if len(matches) > 1:
+                    return False
+        if not matches:
+            return False
+        index = matches[0]
+        self.selection.set_selected(index)
+        try:
+            self.listview.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
+        except (AttributeError, TypeError):
+            pass
+        return True
 
     def _set_narrow_detail_context(self, active: bool) -> None:
         """Reserve the narrow page for the active detail without losing list state."""
@@ -456,6 +462,8 @@ class MasterDetailPage(Gtk.Box):
         # complete ListStore on every batch. Public plugin rows can also
         # update their presentation while keeping the same selection key.
         if (existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count
+                and (selected_key is None or (existing_keys.count(selected_key) == 1
+                                              and new_keys.count(selected_key) == 1))
                 and all(_same_book_row_presentation(old, new)
                         for old, new in zip(existing_rows, rows))
                 and not (self is getattr(self.window, "search_page", None)
@@ -487,10 +495,9 @@ class MasterDetailPage(Gtk.Box):
                     self.store.append(row)
             self._update_count(total_count if total_count is not None else len(rows))
             self.list_stack.set_visible_child_name("list" if rows else "empty")
-            if rows and selected_key is not None:
-                restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
-                if restored is not None:
-                    self.selection.set_selected(restored)
+            if (selected_key is not None and existing_keys.count(selected_key) == 1
+                    and new_keys.count(selected_key) == 1):
+                self.selection.set_selected(new_keys.index(selected_key))
         finally:
             self._replacing_rows = replacing_rows
         if (not self._replacing_rows and self._narrow_detail_visible
