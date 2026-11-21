@@ -30,9 +30,12 @@ class OrganizerDryRunPlan:
     confirmed: bool = False
     executable: bool = False
     group_index: int | None = None
+    rename_only: bool = False
+    excluded_count: int = 0
 
 
-def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=None):
+def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=None,
+                              rename_only=False):
     """Fresh explicit page selection. No filesystem or SQLite changes.
 
     Only the existing naming broker can supply a rename proposal.
@@ -42,6 +45,7 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
     """
     if (confirmed is not True or type(scope) is not OrganizerScope
             or type(report) is not dict or not scope.bound()
+            or type(rename_only) is not bool or (rename_only and group_index is not None)
             or (group_index is not None and
                 (type(group_index) is not int or not 0 <= group_index < 4))):
         return None
@@ -121,7 +125,17 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
             entries = tuple(e for e in entries if e.placement_id in selected_ids)
             if not entries:
                 return None
-        return OrganizerDryRunPlan(scope, anchor, entries, group_index=group_index)
+        excluded_count = 0
+        if rename_only:
+            # Filter AFTER evaluating all collisions and held operations.
+            # This is a page-local selection, never a claim that another
+            # page cannot propose the same destination or that a writer is safe.
+            proposed_count = len(entries)
+            entries = tuple(e for e in entries
+                            if e.operation == "rename" and e.state == "review_only")
+            excluded_count = proposed_count - len(entries)
+        return OrganizerDryRunPlan(scope, anchor, entries, group_index=group_index,
+                                   rename_only=rename_only, excluded_count=excluded_count)
     except Exception:
         return None
 
@@ -130,11 +144,13 @@ def confirm_organizer_dry_run(scope, report, plan, *, confirmed=False):
     """Confirm the displayed dry-run only after fresh exact re-evaluation."""
     if (confirmed is not True or type(plan) is not OrganizerDryRunPlan
             or plan.scope is not scope or plan.confirmed is not False
-            or plan.executable is not False):
+            or plan.executable is not False or not plan.entries):
         return None
     fresh = prepare_organizer_dry_run(
-        scope, report, confirmed=True, group_index=plan.group_index)
+        scope, report, confirmed=True, group_index=plan.group_index,
+        rename_only=plan.rename_only)
     if fresh is None or fresh != plan:
         return None
     return OrganizerDryRunPlan(scope, fresh.anchor, fresh.entries, confirmed=True,
-                               group_index=fresh.group_index)
+                               group_index=fresh.group_index, rename_only=fresh.rename_only,
+                               excluded_count=fresh.excluded_count)
