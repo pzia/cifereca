@@ -291,7 +291,8 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         # disclose an arbitrary exception, fixture title, URL or account.
         stage = data.get("local_c_stage")
         local_stages = {"setup", "seed", "complete", "warm_n2_cold_n3",
-                        "distinct_c_shared_n3", "invalidated_n2_warm_n3"} | {
+                        "distinct_c_shared_n3", "invalidated_n2_warm_n3",
+                        "epub_priority_cold", "epub_priority_warm"} | {
             prefix + suffix
             for prefix in ("cold_", "offline_")
             for suffix in ("project", "library_route", "library_list",
