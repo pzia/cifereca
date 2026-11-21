@@ -141,11 +141,20 @@ def release_unsubmitted_runtime_attempt(storage, *, source, offer_id, operation_
     from .canonical_recovery import _lock_ok
     if not _lock_ok(shared_lock):
         raise ValueError("canonical_runtime_attempt_lock_required")
+    # The standalone refusal must carry a real claim. The optional empty
+    # operation is reserved for completed intake, not this explicit release.
+    if not _hex(operation_id, 32):
+        raise ValueError("canonical_runtime_attempt_release_invalid")
     with storage._lock:
         db = storage._connect()
         if db.in_transaction:
             raise ValueError("canonical_runtime_attempt_nested_transaction")
-        with db:
-            db.execute("BEGIN IMMEDIATE")
-            release_runtime_attempt_in_transaction(db, source=source, offer_id=offer_id,
-                                                   operation_id=operation_id)
+        synchronous = db.execute("PRAGMA synchronous").fetchone()[0]
+        try:
+            db.execute("PRAGMA synchronous=FULL")
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                release_runtime_attempt_in_transaction(db, source=source, offer_id=offer_id,
+                                                       operation_id=operation_id)
+        finally:
+            db.execute(f"PRAGMA synchronous={int(synchronous)}")
