@@ -112,6 +112,32 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             and candidate._captured_fields == fields)
 
 
+def _unique_lender_account(accounts, provider, credential, requester):
+    """Reapply the same inert inventory rule at admission and publication."""
+    if type(accounts) not in (list, tuple) or len(accounts) > 512:
+        return None
+    matching = [
+        a for a in accounts
+        if (type(a) is Account and a.is_primary is True
+            and a.identity_id != requester
+            and a.provider_id == provider
+            and a.credential_id == credential)
+    ]
+    if len(matching) != 1:
+        return None
+    account = matching[0]
+    # A provider+credential session key is not scoped by profile.
+    if any(
+        type(other) is not Account
+        or (other.provider_id == provider
+            and other.credential_id == credential
+            and other.identity_id != account.identity_id)
+        for other in accounts
+    ):
+        return None
+    return account
+
+
 def discover_possible_borrow_lenders(
     service: Any, *, requesting_identity_id: str,
     notices: tuple[SearchResult, ...],
@@ -160,26 +186,10 @@ def discover_possible_borrow_lenders(
                     or type(item.record_id) is not str or not item.record_id):
                 continue
             provider, credential = item.source_provider, item.source_credential
-            matching = [
-                a for a in accounts
-                if (type(a) is Account and a.is_primary is True
-                    and a.identity_id != requesting_identity_id
-                    and a.provider_id == provider
-                    and a.credential_id == credential)
-            ]
-            if len(matching) != 1:
-                continue
-            account = matching[0]
-            # The session key is provider+credential, not profile. If this
-            # key is registered to another profile too, the apparent
-            # lender session cannot be safely attributed to A.
-            if any(
-                type(other) is not Account
-                or (other.provider_id == provider
-                    and other.credential_id == credential
-                    and other.identity_id != account.identity_id)
-                for other in accounts
-            ):
+            account = _unique_lender_account(
+                accounts, provider, credential, requesting_identity_id,
+            )
+            if account is None:
                 continue
             route = (
                 account.identity_id, provider, credential, account.unique_id,
@@ -293,6 +303,10 @@ def discover_possible_borrow_lenders(
     # One inert, bounded pass over the admitted set: no new provider or SQL
     # call. Any change of an earlier source aborts this mixed snapshot.
     try:
+        final_accounts = service.accounts
+        if type(final_accounts) not in (list, tuple) or len(final_accounts) > 512:
+            return ()
+        final_accounts = tuple(final_accounts)
         for route, row in result.items():
             if row is None:
                 continue
@@ -312,7 +326,9 @@ def discover_possible_borrow_lenders(
                     or type(state.get('_epoch')) is not type(generation)
                     or state.get('_epoch') != generation
                     or sum(a is account for a in registered) != 1
-                    or sum(a is account for a in service.accounts) != 1):
+                    or _unique_lender_account(
+                        final_accounts, account.provider_id, account.credential_id,
+                        requesting_identity_id) is not account):
                 return ()
         visible = _label_lenders([row for row in result.values() if row is not None])
         if (service.identity_by_id(requesting_identity_id) is not requester
