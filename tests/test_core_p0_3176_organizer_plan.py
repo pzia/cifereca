@@ -125,6 +125,10 @@ def test_rename_only_filters_after_collision_detection_and_rechecks_exact_select
     two, _ = _put_epub(store, root, "Acquisitions/two.epub", metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
     three, pid = _put_epub(store, root, "Acquisitions/three.epub",
                            metadata=META.replace("Roman commun", "Roman unique"))
+    # The shared fixture uses a fixed catalogue title even for custom OPF.
+    # A distinct safe proposal needs matching independent catalogue evidence.
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE catalog_entries SET title=? WHERE placement_id=?", ("Roman unique", pid))
     scope, page = _run(_service(store, root))
     before = rows(store)
     all_plan = prepare_organizer_dry_run(scope, page, confirmed=True)
