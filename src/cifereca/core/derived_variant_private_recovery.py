@@ -136,7 +136,7 @@ class _PrivateRecoveryGuard:
                     _measure_compact_in_transaction(db, require_paired=True)
                     paths, inodes = {}, {}
                     for key, _size in journal._measure(db)[0]:
-                        raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                        raw = journal._read_logical_receipt(db, key)
                         prior = journal._decode(key, raw)
                         _index_receipt_references(paths, inodes, key, prior)
                     require(not _other_receipt_dependency(paths, inodes, reservation.key, intent))

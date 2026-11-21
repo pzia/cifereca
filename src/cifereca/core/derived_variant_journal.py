@@ -217,8 +217,11 @@ def _read_logical_receipt(db, key):
     Physical corrupt values are returned to the existing decoder (or
     partial capacity report). Missing or ambiguous authority fails closed.
     """
-    row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
-    if key.startswith(_COMMITTED):
+    if type(key) is not str:
+        raise DerivedJournalConflict("derived_journal_corrupt")
+    row = db.execute("SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND ? "
+                     "THEN value END FROM metadata WHERE key=?", (_MAX_RECORD_BYTES, key)).fetchone()
+    if key.startswith(_COMMITTED) and _digest(key[len(_COMMITTED):]):
         from .derived_variant_compact_receipt import _retired_receipt
         retired = _retired_receipt(db, key)
         if retired is not None:

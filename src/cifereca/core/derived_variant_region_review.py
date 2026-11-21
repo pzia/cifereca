@@ -46,7 +46,7 @@ def _snapshot(storage, identity_id):
             rows, _ = journal._measure(db)
             records = []
             for key, _size in rows:
-                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                raw = journal._read_logical_receipt(db, key)
                 # An unreadable receipt may name any stage; fail closed globally.
                 intent = journal._decode(key, raw)
                 records.append((key, journal._receipt_digest(raw), intent))

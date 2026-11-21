@@ -7,6 +7,7 @@ Both namespaces are validated in the same SQLite read transaction.
 from __future__ import annotations
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, _PREFIX, _COMMITTED, _MAX_RECORDS,
     _MAX_TOTAL_BYTES, _MAX_RESERVED_OUTPUT_BYTES, _decode, _measure,
 )
@@ -40,9 +41,7 @@ def review_derived_capacity_status(storage, *, identity_id=None):
             pending = committed = declared_output = 0
             profile_pending = profile_committed = profile_output = 0
             for key, _size in rows:
-                raw = db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (key,),
-                ).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 declared_output += intent.output_size
                 if intent.identity_id == identity_id:

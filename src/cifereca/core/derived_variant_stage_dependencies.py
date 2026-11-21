@@ -13,7 +13,7 @@ import re
 from urllib.parse import unquote, urlsplit
 
 from . import derived_variant_compact_receipt as compact
-from .derived_variant_journal import _unique_pairs
+from .derived_variant_journal import _unique_pairs, _read_logical_receipt
 
 _MAX_ROWS = 32768
 _MAX_BYTES = 16 * 1024 * 1024
@@ -204,15 +204,12 @@ def scan_stage_references(db, selected):
             try:
                 if kind == "metadata" and type(key) is str and key.startswith(compact._PREFIX):
                     # A shadow is historical receipt data, not a second consumer,
-                    # but only while its exact authoritative original still exists.
-                    # Never exempt a namespace, an orphan or another stage's proof.
+                    # only with the exact authoritative logical original:
+                    # physical receipt or validated atomic retirement marker.
+                    # Never exempt an orphan or another stage's proof.
                     original_key, original = compact.decode_committed_witness(key, raw)
-                    backing = db.execute(
-                        "SELECT value FROM metadata WHERE key=? AND "
-                        "length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
-                        (original_key, compact._MAX_PROOF_BYTES),
-                    ).fetchone()
-                    if backing != (original,):
+                    backing = _read_logical_receipt(db, original_key)
+                    if backing != original:
                         return unknown()
                     candidates = tuple(path for path in candidates
                                        if selected[path] != original_key)

@@ -92,9 +92,7 @@ def _snapshot(scope):
             witnesses = []
             bindings = {}
             for key, size in rows:
-                raw = db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (key,),
-                ).fetchone()[0]
+                raw = journal._read_logical_receipt(db, key)
                 witnesses.append((key, _receipt_witness(raw)))
                 phase = "pending" if key.startswith(journal._PREFIX) else "committed"
                 counts[phase] += 1
