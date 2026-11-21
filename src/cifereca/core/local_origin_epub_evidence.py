@@ -42,7 +42,7 @@ def _isbn13(value):
     return None
 
 
-def _explicit_isbns(metadata, opf, dc, *, allow_refinements):
+def _explicit_isbns(package, metadata, opf, dc, *, allow_refinements):
     """EPUB 2 scheme/URN and EPUB 3 reserved ONIX identifier-type.
 
     Only standard local ID refinements are read. Unknown/custom schemes,
@@ -56,9 +56,9 @@ def _explicit_isbns(metadata, opf, dc, *, allow_refinements):
     # the package declares it again (checked by the caller).
     refinements = metadata.findall(opf + "meta")
     if len(refinements) > 256:
-        refinements = ()
+        return ()
     counts = {}
-    for node in metadata.iter():
+    for node in package.iter():
         identifier = node.get("id")
         if identifier:
             counts[identifier] = counts.get(identifier, 0) + 1
@@ -179,7 +179,7 @@ def _read_epub_details(stream):
             prefix = package.get("prefix", "")
             allow_refinements = (package.get("version", "").startswith("3.")
                                  and "onix:" not in prefix.casefold())
-            isbns = _explicit_isbns(metadata[0], opf, dc, allow_refinements=allow_refinements)
+            isbns = _explicit_isbns(package, metadata[0], opf, dc, allow_refinements=allow_refinements)
             return title, authors, isbns, _documentary_nature(metadata[0], dc)
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
