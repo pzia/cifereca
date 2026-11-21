@@ -202,7 +202,7 @@ def test_blob_receipt_is_closed_corruption_not_unhandled_attribute_error(committ
         journal.summarize_derived_journal(db)
     with pytest.raises(journal.DerivedJournalConflict, match="derived_journal_corrupt"):
         journal.reserve_derived_publication(db, intent)
-    assert type(db.metadata_get(key)) is bytes
+    assert db._connect().execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone() == (raw.encode("ascii"),)
     assert Path(intent.staged_path).samefile(intent.candidate_path)
 
 
