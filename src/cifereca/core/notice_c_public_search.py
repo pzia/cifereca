@@ -39,6 +39,8 @@ _MAX_MATCHES = 50
 _STALE_AFTER = 86400
 _FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "language"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
+from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
+
 _BIBLIO_FIELDS = frozenset((
     "schema", "record_id", "docbase", "scenario", "source_collection",
     "medium", "revision_id", "title", "author", "format", "publisher",
@@ -72,6 +74,7 @@ class PublicNoticeCHit:
     series_relation: PublicSeriesRelation | None = None
     language_observation: PublicLanguageObservation | None = None
     classification: PublicClassification | None = None
+    age_observation: PublicAgeObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +135,7 @@ def _public_observation(
             return None
         bio = parsed.get("public_bibliography")
         if (type(bio) is not dict or not _BIBLIO_FIELDS <= set(bio)
-                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification"}
+                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification", "age_observation"}
                 or type(bio["schema"]) is not int or bio["schema"] != 1
                 or bio["source_collection"] != "public_catalog"
                 or bio["medium"] not in ("digital", "physical", "unknown")):
@@ -191,6 +194,15 @@ def _public_observation(
             classification = decode_public_classification(bio["classification"])
             if classification is None:
                 return None
+        age = None
+        if "age_observation" in bio:
+            age = decode_public_age_observation(
+                bio["age_observation"], provider_id=key.provider_id,
+                record_id=bio["record_id"], docbase=bio["docbase"],
+                medium=bio["medium"], source_revision=bio["revision_id"],
+            )
+            if age is None:
+                return None
         last_seen = payload.get("last_seen_at", persisted.observation.observed_at)
         if (type(last_seen) is not int
                 or last_seen < persisted.observation.observed_at
@@ -217,7 +229,7 @@ def _public_observation(
             edition_id=key.edition_id,
             published_at=bio["published_at"], series_relation=relation,
             language_observation=language,
-            classification=classification,
+            classification=classification, age_observation=age,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -598,7 +610,7 @@ def search_public_notice_c(
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
                 language_observation=bib.language_observation,
-                classification=bib.classification,
+                classification=bib.classification, age_observation=bib.age_observation,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
@@ -654,7 +666,8 @@ def search_public_notice_c(
                         and src.observed_at == hit.observed_at
                         and bib.series_relation == hit.series_relation
                         and bib.language_observation == hit.language_observation
-                        and bib.classification == hit.classification):
+                        and bib.classification == hit.classification
+                        and bib.age_observation == hit.age_observation):
                     hit = replace(
                         hit, document=ref, epoch=epoch,
                         cover_state=cover_state,

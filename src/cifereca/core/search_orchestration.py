@@ -612,6 +612,8 @@ def _public_rows_from_response(
                         _CORE_PUBLIC_COVER_WITNESS,
                         _public_cover_witness_coordinates(projected),
                     )
+                    from .notice_c_public_age import stamp_same_call_public_age
+                    stamp_same_call_public_age(projected, row)
                     if projected.friendly_url is not None:
                         projected._core_same_call_public_web_witness = (
                             _CORE_PUBLIC_WEB_WITNESS,

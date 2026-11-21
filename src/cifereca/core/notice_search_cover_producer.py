@@ -191,6 +191,10 @@ def admit_public_search_catalogue(
     classification = declared_public_classification(row.metadata)
     if classification is not None:
         fields["classification"] = classification.wire()
+    from .notice_c_public_age import verified_same_call_public_age
+    age = verified_same_call_public_age(row)
+    if age is not None:
+        fields["age_observation"] = age.wire()
     result = {"thumbnail_url": public_cover_url, "public_bibliography": fields}
     # An independently witnessed positive link is not a cover claim.
     # The omitted image stays pending. The existing source writer retains
