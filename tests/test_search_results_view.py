@@ -200,7 +200,8 @@ def test_stale_public_selection_never_starts_holdings_or_acquisition():
     tree = ast.parse(owner.read_text())
     method = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                   and n.name == "_search_selected")
-    namespace = {"result_row": result_row}
+    namespace = {"result_row": result_row, "__name__": "cifereca.gui.search_details",
+                 "__package__": "cifereca.gui"}
     module = ast.fix_missing_locations(ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
         method,
