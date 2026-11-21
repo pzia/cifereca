@@ -723,3 +723,64 @@ def test_independent_drm_entrypoint_cannot_shadow_provider_kdrm_helper(
     from cifereca_kobo_selected_candidate import scoped_kdrm_source
     assert scoped_kdrm_source is helper.scoped_kdrm_source
     assert sys.modules["cifereca_kobo_kdrm"] is drm_entrypoint
+
+
+@pytest.mark.parametrize("failure", ["preflight", "ambiguous_after_enter", "revoked_before_report"])
+def test_kdrm_runtime_phase_proof_is_not_silently_retried_or_downgraded(
+    tmp_path, monkeypatch, failure,
+):
+    """#7231: selected KDRM delivery has a distinct pre-dispatch refusal.
+
+    An entered/ambiguous DRM callback is never a RetryableContentDownload
+    and is not converted into a no-command witness by the provider.
+    """
+    from cifereca.plugin_api import RuntimeDispatchNotSubmitted
+
+    session, vault, broker, account, _ = setup()
+    trace = ready(session, vault)
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "attested_https_download",
+        lambda **_: pytest.fail("KDRM may not fall back to a plain HTTP GET"),
+    )
+    current = [True]
+    calls = []
+    private = "PRIVATE_RUNTIME_INTERNAL_MESSAGE_MUST_NOT_ESCAPE"
+
+    def runtime(request):
+        calls.append("runtime")
+        destination = Path(request["destination"])
+        if failure == "preflight":
+            raise RuntimeDispatchNotSubmitted(private, code="local_preflight")
+        if failure == "revoked_before_report":
+            current[0] = False
+            raise RuntimeDispatchNotSubmitted(private, code="local_preflight")
+        destination.write_bytes(b"partial and unverified bytes")
+        raise RuntimeError(private)
+
+    try:
+        offer = selected(session, account, "book-1")
+        assert offer.delivery == "available" and offer.delivery_offer_id.startswith("kobo.runtime:")
+        if failure == "preflight":
+            with pytest.raises(RuntimeDispatchNotSubmitted) as caught:
+                deliver(session, account, "book-1", offer.delivery_offer_id,
+                        tmp_path, runtime, allowed=lambda: current[0])
+            assert type(caught.value) is RuntimeDispatchNotSubmitted
+            assert caught.value.code == "kobo_runtime_preflight_refused"
+        else:
+            with pytest.raises(ProviderCapabilityError) as caught:
+                deliver(session, account, "book-1", offer.delivery_offer_id,
+                        tmp_path, runtime, allowed=lambda: current[0])
+            assert str(caught.value) in (
+                "kobo_candidate_runtime_failed",
+                "kobo_candidate_admission_changed",
+            )
+            if failure == "ambiguous_after_enter":
+                assert str(caught.value) == "kobo_candidate_runtime_failed"
+            else:
+                assert str(caught.value) == "kobo_candidate_admission_changed"
+        assert private not in str(caught.value)
+        assert calls == ["runtime"]
+        assert list(tmp_path.iterdir()) == []
+        assert any(mode == "delegated" for _, mode in trace)
+    finally:
+        session.close()
