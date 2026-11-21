@@ -41,11 +41,27 @@ def _native_group_document(document):
 
 
 def attach_filter_sources(row, hits):
+    # Construct the opaque packet only from an exact, internally consistent
+    # Core group. Avoid indexing an empty tuple or invoking foreign equality
+    # on a hit whose frozen fields have been replaced after the source read.
+    if (type(row) is not dict or type(hits) is not tuple
+            or not 2 <= len(hits) <= _MAX_SOURCES
+            or type(row.get("identity_id")) is not str):
+        return
     first = hits[0]
-    if (2 <= len(hits) <= _MAX_SOURCES
-            and all(type(hit) is PublicNoticeCHit
-                    and hit.document == first.document and hit.epoch == first.epoch
-                    for hit in hits)):
+    if (type(first) is not PublicNoticeCHit
+            or not _native_group_document(first.document)
+            or type(first.epoch) is not int
+            or type(first.provider_id) is not str
+            or type(first.record_id) is not str):
+        return
+    if all(type(hit) is PublicNoticeCHit
+           and _native_group_document(hit.document)
+           and type(hit.epoch) is int
+           and type(hit.provider_id) is str
+           and type(hit.record_id) is str
+           and hit.document == first.document and hit.epoch == first.epoch
+           for hit in hits):
         row[_FIELD] = (_TOKEN, row["identity_id"], first.document, first.epoch, hits)
 
 
@@ -141,8 +157,9 @@ def collapse_filter_sources(rows, originals):
             primary["_notice_c_matched_providers"] = ()
             groups[marker] = primary
             out.append(primary)
-        provider = row["provider_id"]
-        if provider not in primary["_notice_c_matched_providers"]:
+        provider = row.get("provider_id")
+        if (type(provider) is str and 0 < len(provider) <= 64
+                and provider not in primary["_notice_c_matched_providers"]):
             primary["_notice_c_matched_providers"] += (provider,)
     return out
 
