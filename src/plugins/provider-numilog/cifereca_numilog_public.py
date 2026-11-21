@@ -48,7 +48,25 @@ _EVIDENCE_ATTRIBUTES = frozenset({
 
 
 class _PublicSearchParser(Parser):
+    # HTMLParser normally treats RCDATA/RAWTEXT other than script/style
+    # as markup. A pseudo closing tag in such text must never unwind a
+    # hidden ancestor or manufacture a catalogue grid.
+    CDATA_CONTENT_ELEMENTS = (
+        'script', 'style', 'textarea', 'title', 'xmp', 'iframe',
+        'noembed', 'noframes', 'noscript',
+    )
+
+    def handle_startendtag(self, tag, attrs):
+        # In HTML a slash does not terminate these non-void elements.
+        # Refuse the ambiguous boundary rather than admit following text.
+        if tag in self.CDATA_CONTENT_ELEMENTS or tag == 'plaintext':
+            _fail('html_structure')
+        super().handle_startendtag(tag, attrs)
+
     def handle_starttag(self, tag, attrs):
+        # PLAINTEXT has no closing tag in HTML.
+        if tag == 'plaintext':
+            _fail('html_structure')
         seen = set()
         for name, _value in attrs:
             if name in _EVIDENCE_ATTRIBUTES:
@@ -64,7 +82,7 @@ def _safe_text(value, maximum):
 
 
 # Public field proof must never come from a hidden/template subtree.
-_HIDDEN_TAGS = {'script', 'style', 'template', 'noscript', 'iframe', 'svg'}
+_HIDDEN_TAGS = {*_PublicSearchParser.CDATA_CONTENT_ELEMENTS, 'template', 'svg'}
 
 
 def _hidden(node):

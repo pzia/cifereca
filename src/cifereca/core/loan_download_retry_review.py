@@ -31,7 +31,7 @@ class LoanDownloadRetryRow:
     title: str
     retry: LoanDownloadRetry
     adept_hold: bool
-    inactive: bool
+    inactive: bool  # Includes unknown/unattested; never reset without active A.
     profile_refused_at: int = 0
     runtime_hold: bool = False
     runtime_started_at: int = 0
@@ -200,7 +200,7 @@ def review_loan_download_retries(service, *, identity_id: str):
                         title = next((fact.value for fact in notice.facts
                                       if fact.field == "title"), title)
             result.append(LoanDownloadRetryRow(
-                source, title, retry, hold, state == "inactive", refused_at,
+                source, title, retry, hold, state != "active", refused_at,
                 runtime_hold, runtime_started_at, runtime_phase, invalid, hold_origin,
                 marker_state,
             ))
@@ -242,7 +242,7 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
                 intervention = read_adept_intervention(db, source)
             except ValueError:
                 raise ValueError("loan_download_retry_reset_changed") from None
-            if (len(refs) != 1 or refs[0][0] == "inactive"
+            if (len(refs) != 1 or refs[0][0] != "active"
                     or (source.kind == "loan" and _has_adept_hold(db, source, scopes))
                     or intervention
                     or read_runtime_attempt_in_db(db, source)[0]

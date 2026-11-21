@@ -198,3 +198,9 @@ def plan_publish_format_path(
             destination.stem + ".reacquired-" + unique_suffix() + destination.suffix
         )
     return destination
+
+
+def private_adept_stage_path(path: Path) -> bool:
+    """Core-reserved ADEPT work names must never become ordinary book stock."""
+    return any(part.startswith((".adept-stage-", ".adept-publish-"))
+               for part in path.parts)

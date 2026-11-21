@@ -6,17 +6,147 @@ projected object; only the UI host can exchange it for a current-view lease.
 """
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import asdict, fields
 from hashlib import sha256
 from typing import Any
 
 from ..models import SearchResult
+from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _MAX_SOURCES, is_canonical_cover_document
 from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
 from .notice_c_known_projection import _series_metadata, _source_alternative
+from .public_search_projection import (
+    PublicClassification, PublicLanguageObservation, PublicSeriesRelation,
+    decode_public_classification, decode_public_language_observation,
+    decode_public_series_relation,
+)
+from .notice_c_public_age import (
+    PublicAgeObservation, PublicAgeRange, decode_public_age_observation,
+)
 
 _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
+
+
+def _native_canonical(document):
+    # Frozen CoverDocumentScope can still have foreign attributes injected.
+    # Refuse them before is_canonical_cover_document compares fields.
+    return (type(document) is CoverDocumentScope
+            and all(type(getattr(document, name)) is str
+                    and len(getattr(document, name)) <= 512
+                    and getattr(document, name).isprintable()
+                    for name in ("kind", "source_key", "provider_id",
+                                 "credential_id", "loan_id", "artifact_id",
+                                 "placement_id"))
+            and (document.identity_id is None
+                 or type(document.identity_id) is str)
+            and (document.account_id is None
+                 or type(document.account_id) is str)
+            and is_canonical_cover_document(document))
+
+
+def _native_hit(hit, binding):
+    # A frozen PublicNoticeCHit or nested public evidence can be altered
+    # after the original Core receipt was issued. Refuse all malformed
+    # members before generating a new source summary or dereferencing ages.
+    if (type(hit) is not PublicNoticeCHit
+            or not _native_canonical(hit.document)
+            or type(hit.epoch) is not int
+            or type(hit.observed_at) is not int
+            or not 0 <= hit.observed_at < 2**63
+            or type(hit.last_seen_at) is not int
+            or not hit.observed_at <= hit.last_seen_at < 2**63
+            or type(hit.stale) is not bool
+            or type(hit.cover_state) is not str
+            or hit.cover_state not in ("available", "missing", "pending")
+            or type(hit.edition_id) is not str
+            or len(hit.edition_id) > 512
+            or (hit.document, hit.epoch) != binding
+            or any(value is not None and (
+                type(value) is not str or len(value) > 8192)
+                   for value in (
+                       hit.provider_id, hit.record_id, hit.docbase, hit.medium,
+                       hit.source_revision, hit.title, hit.author, hit.publisher,
+                       hit.published_at, hit.media_format, hit.description,
+                   ))):
+        return False
+    series = hit.series_relation
+    if series is not None:
+        if (type(series) is not PublicSeriesRelation
+                or any(type(getattr(series, field.name)) is not str
+                       for field in fields(PublicSeriesRelation))
+                or decode_public_series_relation(
+                    asdict(series), provider_id=hit.provider_id,
+                ) != series):
+            return False
+    language = hit.language_observation
+    if language is not None:
+        if (type(language) is not PublicLanguageObservation
+                or any(type(getattr(language, name)) is not tuple
+                       or len(getattr(language, name)) > 16
+                       or any(type(value) is not str for value in getattr(language, name))
+                       for name in ("raw_tags", "languages"))
+                or any(type(getattr(language, name)) is not str for name in
+                       ("source", "source_field", "scope", "confidence", "freshness"))
+                or decode_public_language_observation(
+                    language.wire(), provider_id=hit.provider_id,
+                ) != language):
+            return False
+    classification = hit.classification
+    if classification is not None:
+        if (type(classification) is not PublicClassification
+                or type(classification.entries) is not tuple
+                or len(classification.entries) > 16):
+            return False
+        for pair in classification.entries:
+            if (type(pair) is not tuple or len(pair) != 2
+                    or type(pair[0]) is not str
+                    or not (type(pair[1]) is str
+                            or (type(pair[1]) is tuple
+                                and len(pair[1]) <= 32
+                                and all(type(value) is str for value in pair[1])))):
+                return False
+        if decode_public_classification(classification.wire()) != classification:
+            return False
+    age = hit.age_observation
+    if age is not None:
+        if (type(age) is not PublicAgeObservation
+                or any(type(getattr(age, name)) is not str for name in
+                       ("provider_id", "record_id", "docbase", "medium", "source_field"))
+                or (age.source_revision is not None
+                    and type(age.source_revision) is not str)
+                or type(age.ranges) is not tuple or not 1 <= len(age.ranges) <= 16):
+            return False
+        for age_range in age.ranges:
+            if (type(age_range) is not PublicAgeRange
+                    or any(value is not None and type(value) is not int
+                           for value in (age_range.age_min, age_range.age_max))
+                    or type(age_range.age_kind) is not str
+                    or type(age_range.source_label) is not str
+                    or len(age_range.source_label) > 120):
+                return False
+        if decode_public_age_observation(
+            age.wire(), provider_id=hit.provider_id, record_id=hit.record_id,
+            docbase=hit.docbase, medium=hit.medium,
+            source_revision=hit.source_revision,
+        ) != age:
+            return False
+    return True
+
+
+def _same_native_snapshot(left, right, depth=0):
+    # The original DTO snapshot is bounded and contains only tuple/str/int/
+    # bool/None. Compare this known native tree against a possibly modified
+    # receipt without ever invoking foreign __eq__ on its inner members.
+    if depth > 24 or type(left) is not type(right):
+        return False
+    if type(left) is tuple:
+        return (len(left) == len(right)
+                and all(_same_native_snapshot(a, b, depth + 1)
+                        for a, b in zip(left, right)))
+    if type(left) in (str, int, bool, type(None)):
+        return left == right
+    return False
 
 
 def _snapshot(item):
@@ -95,7 +225,13 @@ def known_public_notice_candidates(
             scenario="notice_c_public", source_provider=hit.provider_id,
             source_credential="", source_collection="notice_c_public",
             revision_id=hit.source_revision, owned=None, downloadable=None,
+            # Share Search C's documentary status vocabulary. This is a
+            # partial *known-source* page, never a complete supplier query
+            # or an indication of purchase/borrowing rights.
             metadata={"notice_c_known": True, "notice_c_stale": hit.stale,
+                      "notice_c_query_status": page.status,
+                      "notice_c_cover_state": hit.cover_state,
+                      "notice_c_epoch": hit.epoch,
                       **_series_metadata(hit)},
         )
         alternative_hits = tuple(
@@ -127,14 +263,15 @@ def known_public_c_binding_facts(item: object):
     proof = getattr(item, "_core_known_public_c_projection", None)
     if (type(proof) is not tuple or len(proof) != 7
             or proof[0] is not _TOKEN or proof[1] != id(item)
-            or not is_canonical_cover_document(proof[2])
+            or not _native_canonical(proof[2])
             or type(proof[3]) is not int or not 1 <= proof[3] < 2**63
             or type(proof[4]) is not tuple):
         return None
-    # Compare only bounded native public fields. No callbacks, repr or
-    # provider-supplied coercion on GTK.
+    # Compare only bounded native public fields. The opaque packet's
+    # nested snapshot can be replaced independently of the SearchResult.
+    # Never execute equality from a foreign object inside that packet.
     try:
-        if _snapshot(item) != proof[4]:
+        if not _same_native_snapshot(_snapshot(item), proof[4]):
             return None
     except (ValueError, TypeError):
         return None
@@ -156,8 +293,7 @@ def known_public_c_alternative_hits(item: object):
     alternatives = item.metadata.get("notice_c_source_alternatives", [])
     if (type(hits) is not tuple or len(hits) >= _MAX_SOURCES
             or type(alternatives) is not list or len(hits) != len(alternatives)
-            or any(type(hit) is not PublicNoticeCHit
-                   or (hit.document, hit.epoch) != binding for hit in hits)
+            or any(not _native_hit(hit, binding) for hit in hits)
             or [_source_alternative(hit) for hit in hits] != alternatives):
         return None
     return hits
@@ -173,8 +309,7 @@ def known_public_c_primary_hit(item: object):
     if binding is None:
         return None
     hit = item._core_known_public_c_projection[6]
-    if (type(hit) is not PublicNoticeCHit
-            or (hit.document, hit.epoch) != binding
+    if (not _native_hit(hit, binding)
             or (hit.provider_id, hit.record_id, hit.docbase, hit.medium,
                 hit.source_revision, hit.title, hit.author, hit.publisher,
                 hit.published_at, hit.media_format, hit.description) != (

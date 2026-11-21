@@ -30,8 +30,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         elif not rows:
             body = "Aucun échec de téléchargement enregistré pour cette identité."
         else:
-            paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at or row.runtime_hold or row.local_state_invalid)
-                         for row in rows)
+            paused = sum(row.can_reset for row in rows)
             body = f"{len(rows)} téléchargement(s) à vérifier, dont {paused} en pause."
         dialog = Adw.MessageDialog.new(window, "Téléchargements à reprendre", body)
         dialog.add_response("close", "Fermer")
@@ -53,7 +52,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         title.set_wrap(True)
         title.add_css_class("heading")
         panel.append(title)
-        state = ("Ressource inactive" if row.inactive else
+        state = ("Ressource inactive ou non attestée" if row.inactive else
                  "État local à vérifier" if row.local_state_invalid else
                  "Intervention ADEPT requise" if row.runtime_hold and row.runtime_phase == "purchase_acsm" else
                  "Intervention runtime requise" if row.runtime_hold else
@@ -149,8 +148,7 @@ def refresh_loan_download_retry_summary(window, scope, label):
             return
         active = [row for row in rows if not row.inactive]
         holds = sum(bool(row.adept_hold or row.profile_refused_at or row.runtime_hold or row.local_state_invalid) for row in active)
-        paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at or row.runtime_hold or row.local_state_invalid)
-                     for row in active)
+        paused = sum(row.can_reset for row in active)
         retrying = len(active) - holds - paused
         label.set_label(
             f"Téléchargements : {paused} en pause · {retrying} à retenter · "
