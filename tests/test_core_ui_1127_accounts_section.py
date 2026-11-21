@@ -77,3 +77,23 @@ def test_buttons_only_offer_ready_non_public_descriptors_and_do_not_bind_actions
     ]
     assert section.children[-1].children == [button for button,_ in buttons]
     assert all(not button.connections for button,_ in buttons)
+
+
+def test_fieldless_sso_or_authenticated_source_is_labelled_as_account():
+    Gtk, _ = environment()
+    descriptors = [
+        NS(id="sso", display_name="SSO", state="ready",
+           credential_fields=(), interactive_authentication=True),
+        NS(id="auth", display_name="Compte", state="ready",
+           credential_fields=(), capabilities=NS(authentication=True)),
+        NS(id="public", display_name="Public", state="ready",
+           credential_fields=(), capabilities=NS(authentication=False)),
+    ]
+    buttons = build_provider_account_buttons(
+        section=Widget(), descriptors=descriptors, public_ids=set(), Gtk=Gtk,
+    )
+    assert [(button.label, provider) for button, provider in buttons] == [
+        ("Ajouter un compte SSO", "sso"),
+        ("Ajouter un compte Compte", "auth"),
+        ("Ajouter la source Public", "public"),
+    ]
