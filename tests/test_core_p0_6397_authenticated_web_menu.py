@@ -140,3 +140,41 @@ def test_selected_row_replacement_revokes_pending_private_menu(tmp_path, monkeyp
         host.search_objects[cell.key] = replace(row)
         deliver(pending)
         assert not actions and not launches
+
+
+@pytest.mark.parametrize("phase", ["menu", "click"])
+@pytest.mark.parametrize("change", ["record", "scenario", "revision", "session", "generation", "account"])
+def test_private_worker_completion_cannot_outlive_exact_coordinates(tmp_path, phase, change):
+    with closing(Storage(tmp_path / "late.sqlite")) as db:
+        core, row = setup(db, 1)
+        host, panel, gio, pending, actions, launches, _ = ui(core)
+        assert controller.request_authenticated_search_web_actions(
+            host, panel, row, reader_scope=capture_search_read_scope(core, "alice"),
+            current=lambda: True, Gtk=GTK, Gio=gio,
+        )
+        if phase == "click":
+            deliver(pending)
+            root, = actions
+            root.callback(root)
+        work, done, _ = pending.pop(0)
+        value = work()
+        assert value is not None
+        session = core._sessions[(row.source_provider, row.source_credential)]
+        if change == "record":
+            row.record_id = "replacement-record"
+        elif change == "scenario":
+            row.scenario = "replacement-scenario"
+        elif change == "revision":
+            row.revision_id = "replacement-revision"
+        elif change == "session":
+            session.connected = False
+        elif change == "generation":
+            session._epoch = "replacement-generation"
+        else:
+            core.account("alice").unique_id = "replacement-account"
+        # A valid worker response became obsolete before GLib delivery.
+        done(value)
+        done(value)
+        assert not launches
+        if phase == "menu":
+            assert not actions
