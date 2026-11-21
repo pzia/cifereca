@@ -236,12 +236,16 @@ def with_known_public_field_provenance(presentation, item):
         observed_at = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
     except (OverflowError, OSError, ValueError, TypeError):
         return presentation
+    # A displayed C field can be attributed only when its exact native
+    # value still agrees with the Core hit. Never execute supplier-defined
+    # __eq__ while decorating a mutable view row.
+    from .search_known_public_c_age import _same_native
     proven = {}
     series = hit.series_relation
-    if series is not None and metadata.get("series") == [series.label]:
+    if series is not None and _same_native(metadata.get("series"), [series.label]):
         proven[("Série", series.label)] = series
     language = hit.language_observation
-    if language is not None and metadata.get("languages") == list(language.languages):
+    if language is not None and _same_native(metadata.get("languages"), list(language.languages)):
         for value in language.languages:
             proven[("Langue", value)] = language
     # The primary source's plain catalogue fields carry source-level
