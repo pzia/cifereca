@@ -125,6 +125,7 @@ def stage_uncommitted_digital_inventory(
     # revoke completeness rather than silently underestimate occupation.
     loan_identity_by_id: dict[str, tuple[object, ...]] = {}
     trustworthy_states = True
+    expected = set(expected_upstreams)
     for loan in snapshot.loans:
         if not _loan_matches_scope(loan, upstream_scope):
             return None
@@ -150,8 +151,18 @@ def stage_uncommitted_digital_inventory(
                 or loan.state not in ("active", "returned", "expired", "inactive")
                 or loan.medium == "unknown"):
             trustworthy_states = False
-        if loan.medium == "digital" and loan.state == "active":
-            active.add(loan.id)
+        if loan.medium == "digital":
+            # A complete list of declared branch receipts cannot qualify
+            # digital rows from an *undeclared* upstream. In particular,
+            # a digital loan labelled SYRACUSE with only DILICOM/OVERDRIVE
+            # coverage is not evidence that all digital loans were visited.
+            # Only a real matching upstream can authorize future subtraction.
+            if (type(loan.provider) is not str
+                    or not loan.provider.isascii()
+                    or loan.provider.casefold() not in expected):
+                trustworthy_states = False
+            if loan.state == "active":
+                active.add(loan.id)
     if tuple(seen_rows) != tuple((
         loan.id, loan.identity_id, loan.source_provider,
         loan.source_credential, loan.source_account_id,
@@ -164,7 +175,6 @@ def stage_uncommitted_digital_inventory(
         for row in snapshot.branches if type(row) is LoanBranchCoverage
         and row.medium == "digital"
     }
-    expected = set(expected_upstreams)
     observed = set(declared)
     # Unknown-medium branches could contain digital loans and must not be
     # ignored merely because every declared digital branch is complete.

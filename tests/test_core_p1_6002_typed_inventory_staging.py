@@ -225,3 +225,46 @@ def test_exact_duplicate_loan_replay_stays_complete_and_counts_once():
         SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
         manual_total=4, inventory=result,
     ).remaining is None
+
+
+@pytest.mark.parametrize("upstream", [
+    "SYRACUSE", "UNKNOWN", "PARIS", "", None, 42, "DILICOM/OVERDRIVE",
+])
+def test_undeclared_or_untyped_upstream_digital_loan_revokes_completeness(upstream):
+    """Provider-supplied rows must match installed expected digital branches.
+
+    Complete pagination labels alone cannot qualify a foreign digital loan.
+    In particular a physical-only upstream cannot be silently counted in
+    the digital borrower's allowance without matching branch coverage.
+    """
+    receipt = snapshot(rows=(
+        loan(1), replace(loan(2), provider=upstream),
+    ))
+    staged = staging(receipt=receipt)
+    assert staged is not None
+    assert staged.status == "partial"
+    assert staged.pagination_complete is False
+    assert staged.durably_committed is False
+    assert staged.active_loan_ids == ("loan-1", "loan-2")
+    assert evaluate_digital_remaining(
+        SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
+        manual_total=4, inventory=staged,
+    ).remaining is None
+
+
+def test_two_declared_digital_upstreams_preserve_provisional_positive_rows():
+    receipt = snapshot(rows=(
+        loan(1),
+        replace(loan(2), provider="OVERDRIVE"),
+        loan(3, medium="physical"),
+    ))
+    staged = staging(receipt=receipt)
+    assert staged is not None
+    assert staged.status == "success"
+    assert staged.pagination_complete is True
+    assert staged.durably_committed is False
+    assert staged.active_loan_ids == ("loan-1", "loan-2")
+    assert evaluate_digital_remaining(
+        SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
+        manual_total=4, inventory=staged,
+    ).remaining is None
