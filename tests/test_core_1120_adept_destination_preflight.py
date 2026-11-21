@@ -200,3 +200,29 @@ def test_nonrepair_adept_plan_publishes_from_private_stage_without_clobber(tmp_p
     assert destination.read_bytes() == b"PREEXISTING-BYTES"
     assert not staged.exists()
     assert not list(tmp_path.glob(".adept-publish-*"))
+
+
+
+def test_invalid_adept_stage_never_becomes_a_visible_final_artifact(tmp_path):
+    import logging
+    import uuid
+    from types import SimpleNamespace as NS
+    from cifereca.core import adept_acsm_plan, adept_artifact_publication
+    from cifereca.providers import ProviderConfigurationError
+
+    final, stage, repair = _plan(tmp_path / "book.epub")
+    assert final != stage and repair is False
+    stage.write_bytes(b"NOT-A-VERIFIED-EPUB")
+    with pytest.raises(ProviderConfigurationError, match="Artefact Kobo-Adept invalide"):
+        adept_artifact_publication.publish(
+            result={"artifact": {"path": str(stage), "format": "epub"}},
+            adept_destination=stage, acsm_format="epub",
+            loan=NS(id="loan", identity_id="owner", source_provider="test"),
+            repair_mode=repair, destination=final, previous_path=None,
+            Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+            inspect_artifact=lambda *_args, **_kw: NS(valid=False, media_format=None),
+            adept_acsm_plan=adept_acsm_plan, uuid=uuid,
+            _TRACE_LOG=logging.getLogger("synthetic"),
+        )
+    assert stage.read_bytes() == b"NOT-A-VERIFIED-EPUB"
+    assert not final.exists()
