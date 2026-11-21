@@ -14,6 +14,7 @@ import re
 
 from .notice_source_observation import (
     NoticeSourceKey, NoticeSourceObservation, _valid_key, _id as _source_id, admit_source_notice, _MAX_BYTES as _MAX_SOURCE_JSON_BYTES,
+    _validate_fields,
 )
 
 _MAX_FIELDS = 32
@@ -107,7 +108,9 @@ def _kind(value: object) -> str:
 
 
 def field_digest(value: object) -> str:
-    """Digest one JSON value for a deliberately approved stable field."""
+    """Digest one bounded admitted JSON field, without foreign callbacks."""
+    if not _validate_fields({"value": value}):
+        raise ValueError("invalid_parser_witness_field")
     try:
         body = json.dumps(
             value, ensure_ascii=True, sort_keys=True,
@@ -154,6 +157,18 @@ def review_parse_witness(
     # confirmation, even if all fields are missing.
     if input_sha256 != baseline.approved_input_sha256:
         return ParseWitnessReview("source_changed", ())
+    # Only structurally admissible native parser output may support a
+    # regression diagnosis. In particular a colliding foreign dict key
+    # must never execute equality during critical-field lookup.
+    if not _validate_fields(raw_fields):
+        raise ValueError("invalid_parser_witness_review")
+    try:
+        encoded = json.dumps(raw_fields, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ValueError("invalid_parser_witness_review") from exc
+    if len(encoded) > _MAX_SOURCE_JSON_BYTES:
+        raise ValueError("invalid_parser_witness_review")
     misses = []
     for position, field in enumerate(baseline.critical_fields, 1):
         current = raw_fields
