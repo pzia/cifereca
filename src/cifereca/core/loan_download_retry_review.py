@@ -226,8 +226,7 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
     if storage._connect().in_transaction:
         raise ValueError("loan_download_retry_nested_transaction")
     with InterProcessLock(acquisition_lock_file()):
-        with _retry_connection(storage) as db:
-            db.execute("BEGIN IMMEDIATE")
+        with _retry_connection(storage, write=True) as db:
             if not current() or not _exact_borrower_bound_in_db(db, scope):
                 raise ValueError("loan_download_review_scope_changed")
             refs = db.execute(
