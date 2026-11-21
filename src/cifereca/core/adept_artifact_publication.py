@@ -106,6 +106,12 @@ def _publish_new_adept_without_clobber(
             os.fsync(dest_fd)
             if not names_current():
                 raise ProviderConfigurationError("Artefact final modifié")
+            # The final fsync has completed, but retirement still requires
+            # the private source's ctime and single-link ownership to match.
+            # Do not use the destination's weaker hardlink stamp to authorize
+            # a staging unlink after a concurrent source alias appears.
+            if not stage_current():
+                raise ProviderConfigurationError("Artefact final modifié")
             _remove_own(stage_fd, produced_path.name, before)
             linked = None
             return destination
