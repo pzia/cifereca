@@ -12,7 +12,8 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | maintenance.audit.covers | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
 | maintenance.audit.languages | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
 | maintenance.library.local-origin | Provenance | library.origin.read, library.origin.detail.read / #4030 | Comparaison documentaire bornée |
-| Adaptateur ADEPT historique | Provenance | Core / #976, #7244 | Diagnostic et association sous gardes existantes |
+| Adaptateur ADEPT historique — provenances | Provenance | Core / #976 | Diagnostic et association sous gardes existantes |
+| Adaptateur ADEPT historique — verrous | Reprise | Même contrôleur Core / #7244 | Diagnostic des verrous et vérification des fichiers ; aucun déverrouillage autorisé |
 | maintenance.cleanup.duplicates.recover | Reprise | library.maintenance / #3185 | Reprise supervisée des tombstones |
 | maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue, capacité et simulation ; pas de reprise effective |
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
