@@ -185,3 +185,45 @@ def test_in_place_notice_change_revokes_lender_choice(phase):
     if phase != "queued":
         window.runner.submit.assert_not_called()
     args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
+
+
+def test_worker_retained_after_submit_exception_cannot_execute():
+    panel, args, dialogs = setup(multiple=False)
+    window = panel.window
+    retained = []
+
+    def refuse(_label, work, done, fail, **kwargs):
+        retained.append((work, done, fail))
+        raise RuntimeError("submission refused")
+
+    window.runner.submit.side_effect = refuse
+    assert present_normal_lender_choice(panel, **args)
+    dialogs[0].respond("borrow")
+    assert window._cross_profile_borrow_pending is None
+    work, done, fail = retained[0]
+    # A new consent dialog does not renew ownership of old queued work.
+    assert present_normal_lender_choice(panel, **args)
+    assert work() == {"status": "blocked"}
+    done(None)
+    fail(None)
+    args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
+    assert window._cross_profile_borrow_pending is not None
+    dialogs[-1].respond("cancel")
+    assert window._cross_profile_borrow_pending is None
+
+
+@pytest.mark.parametrize("completion_first", [False, True])
+def test_confirmed_worker_dispatch_is_one_shot(completion_first):
+    panel, args, dialogs = setup(multiple=False)
+    window = panel.window
+    assert present_normal_lender_choice(panel, **args)
+    dialogs[0].respond("borrow")
+    _, work, done, _ = window.runner.submit.call_args.args
+    result = work()
+    if completion_first:
+        done(result)
+    assert work() == {"status": "blocked"}
+    args["service"].execute_normal_lender_borrow_for_current_identity.assert_called_once()
+    done(result)
+    window._activity_result.assert_called_once()
+    assert window._cross_profile_borrow_pending is None
