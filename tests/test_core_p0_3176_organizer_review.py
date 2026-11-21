@@ -117,6 +117,47 @@ def test_keeper_accept_all_is_advice_only(store, tmp_path):
     assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
 
 
+
+@pytest.mark.parametrize("drift", ["sqlite", "binding", "other_scope", "missing_anchor"])
+def test_direct_keeper_advice_rejects_stale_review_snapshot(store, tmp_path, monkeypatch, drift):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is not None
+    if drift == "sqlite":
+        store.metadata_set("organizer-advice-drift", "yes")
+    elif drift == "binding":
+        monkeypatch.setattr(
+            store, "exact_profile_directory_binding", lambda _identity: ("wrong", True),
+        )
+    elif drift == "other_scope":
+        scope = review.admit_organizer_review(service)
+        assert scope is not None and scope is not result["review_anchor"].scope
+    else:
+        result = {k: v for k, v in result.items() if k != "review_anchor"}
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+
+
+def test_direct_keeper_advice_rejects_sql_change_during_confirmation(store, tmp_path, monkeypatch):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    original = review.preview_keeper_bulk
+
+    def changed_during_preview(*args, **kwargs):
+        selected = original(*args, **kwargs)
+        if kwargs.get("accept_all") is True:
+            store.metadata_set("organizer-confirmation-drift", "yes")
+        return selected
+
+    monkeypatch.setattr(review, "preview_keeper_bulk", changed_during_preview)
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+
+
 def test_page_continuation_invalidated_by_sql_or_identity_change(store, tmp_path):
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
