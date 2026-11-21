@@ -1,6 +1,8 @@
 """Core publication schema for the installed Kobo-ADEPT runtime's facts."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import re
 
@@ -29,7 +31,28 @@ _RESPONSE_VALIDATION_REASONS = frozenset({
 _METRICS = {"duration_ms": (0, 86_400_000), "stdout_bytes": (0, 67_108_864),
             "stderr_bytes": (0, 67_108_864), "returncode": (-255, 255)}
 _MEASURED_READS = frozenset({"contract", "capabilities", "profile list", "loans list"})
-_CALLER_CATEGORIES = frozenset({"activation", "core_probe", "unattributed"})
+_RUNTIME_CALLERS = frozenset({"activation", "core_probe", "unattributed"})
+_CORE_READ_CALLERS = {
+    "dashboard_opening": frozenset({"profile list"}),
+    "reconciliation_candidates": frozenset({"profile list"}),
+    "reconciliation_lease": frozenset({"profile list"}),
+    "reconciliation_inventory": frozenset({"profile list", "loans list"}),
+}
+_CALLER_CATEGORIES = _RUNTIME_CALLERS | frozenset(_CORE_READ_CALLERS)
+_CORE_READ_CALLER = ContextVar("adept_core_read_caller", default=None)
+
+
+@contextmanager
+def adept_read_caller(category: str):
+    """Annotate a synchronous Core read boundary, not its identity or rights."""
+    if type(category) is not str or category not in _CORE_READ_CALLERS:
+        raise ValueError("invalid Core ADEPT read caller")
+    marker = _CORE_READ_CALLER.set(category)
+    try:
+        yield
+    finally:
+        _CORE_READ_CALLER.reset(marker)
+
 
 
 def _valid_read_observation(key: str, value: object) -> bool:
@@ -57,7 +80,10 @@ def public_fields(value: object) -> dict:
         return {}
     for key in ("caller_category", "read_scope_ref"):
         if key in value and (value["operation"] not in _MEASURED_READS
-                             or not _valid_read_observation(key, value[key])):
+                             or not _valid_read_observation(key, value[key])
+                             or (key == "caller_category"
+                                 and value[key] in _CORE_READ_CALLERS
+                                 and value["operation"] not in _CORE_READ_CALLERS[value[key]])):
             return {}
     status, code = value.get("status"), value.get("code")
     if type(status) is not str or type(code) is not str:
@@ -113,10 +139,19 @@ def from_runtime(detail: object, status: object) -> dict:
     # Optional runtime measurements, never identity, freshness or ownership
     # attestations. Preserve them only for the four measured read operations.
     if operation in _MEASURED_READS:
-        for key in ("caller_category", "read_scope_ref"):
-            value = detail.get(key)
-            if _valid_read_observation(key, value):
-                fields[key] = value
+        caller = detail.get("caller_category")
+        if type(caller) is str and caller in _RUNTIME_CALLERS:
+            fields["caller_category"] = caller
+        # Only the Core's synchronous context may assert a Core category.
+        # Preserve activation and core_probe, even inside an annotated read.
+        # A plugin cannot manufacture a new Core caller through its payload.
+        core_caller = _CORE_READ_CALLER.get()
+        if (fields.get("caller_category") in (None, "unattributed")
+                and operation in _CORE_READ_CALLERS.get(core_caller, ())):
+            fields["caller_category"] = core_caller
+        value = detail.get("read_scope_ref")
+        if _valid_read_observation("read_scope_ref", value):
+            fields["read_scope_ref"] = value
     return public_fields(fields)
 
 
