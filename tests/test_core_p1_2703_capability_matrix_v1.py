@@ -35,7 +35,7 @@ def test_all_declared_families_are_read_only_and_preserve_implemented_vs_live():
     )
     assert CAPABILITY_MATRIX_CONTRACT == "capability-matrix/1"
     assert result.schema_version == 1
-    assert len(result.observations) == 7
+    assert len(result.observations) == 8
     found = {x.operation: x for x in result.observations}
     for name in ("catalog.search", "personal_inventory.list", "loan.inventory",
                  "loan.borrow", "acquisition.download"):
@@ -47,6 +47,7 @@ def test_all_declared_families_are_read_only_and_preserve_implemented_vs_live():
         assert item.connected is True
         assert item.mode == "unknown"
         assert item.authorizes_mutation is False
+    assert result.exact("catalog.detail", "unknown").status == "unsupported"
     assert result.exact("loan.return", "unknown") is None
     for name in ("loan.renew", "artifact.backup"):
         item = found[name]
@@ -159,3 +160,31 @@ def test_versioned_contract_is_frozen_without_implicit_fallback():
 def test_matrix_rejects_cross_provider_or_overlapping_claims(rows, code):
     with pytest.raises(ValueError, match="^" + code + "$"):
         CapabilityMatrix("synthetic", rows)
+
+
+@pytest.mark.parametrize("search,holdings", [
+    (False, False), (True, False), (False, True), (True, True),
+])
+def test_catalogue_search_and_detail_declarations_are_independent_and_inert(
+    search, holdings,
+):
+    matrix = declared_provider_matrix(
+        _descriptor(search=search, holdings=holdings),
+        enabled=False, connected=False,
+    )
+    expected_search = "unverified" if search else "unsupported"
+    expected_detail = "unverified" if holdings else "unsupported"
+    observed_search = matrix.exact("catalog.search", "unknown")
+    observed_detail = matrix.exact("catalog.detail", "unknown")
+    assert (observed_search.status, observed_detail.status) == (
+        expected_search, expected_detail,
+    )
+    assert observed_detail.source_kind == "code"
+    assert observed_detail.evidence_ref == ""
+    assert observed_detail.enabled is False
+    assert observed_detail.connected is False
+    assert observed_detail.authorizes_mutation is False
+    # A code declaration never asserts a verified public or private edition.
+    assert matrix.exact("catalog.detail", "edition") is None
+    assert matrix.exact("catalog.detail", "account") is None
+    assert matrix.exact("catalog.detail", "unknown", edition_id="epub") is None
