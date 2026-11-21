@@ -368,3 +368,49 @@ def test_select_key_refuses_duplicate_without_changing_selection():
     store.append(BookRow("ambiguous", title="Autre source"))
     assert select(page, "ambiguous") is False
     assert selection.get_selected_item() is initial
+
+
+@pytest.mark.parametrize("change", ["replace", "remove", "move", "duplicate", "reselect"])
+def test_select_key_does_not_focus_stale_index_after_synchronous_notification(change):
+    _, _, select = production_methods("select_key")
+    initial = BookRow("current")
+    target = BookRow("target")
+    page, store, selection, *_ = page_with(initial)
+    store.append(target)
+    scrolled = []
+    page.listview = NS(scroll_to=lambda *args: scrolled.append(args))
+    select.__globals__["Gtk"].ListScrollFlags = NS(FOCUS=1)
+
+    def on_selected():
+        # Avoid recursive notification in the synthetic selection facade.
+        selection.changed = None
+        if change == "replace":
+            store.items[1] = BookRow(target.key, title="Autre instance")
+        elif change == "remove":
+            store.items.pop()
+        elif change == "move":
+            store.items[:] = [target, initial]
+            selection.position = 0
+        elif change == "duplicate":
+            store.append(BookRow(target.key, title="Autre source"))
+        elif change == "reselect":
+            selection.position = 0
+
+    selection.changed = on_selected
+    assert select(page, target.key) is False
+    assert scrolled == []
+
+
+def test_select_key_focuses_exact_still_selected_row_after_independent_append():
+    _, _, select = production_methods("select_key")
+    initial, target = BookRow("current"), BookRow("target")
+    page, store, selection, *_ = page_with(initial)
+    store.append(target)
+    scrolled = []
+    page.listview = NS(scroll_to=lambda *args: scrolled.append(args))
+    select.__globals__["Gtk"].ListScrollFlags = NS(FOCUS=1)
+    selection.changed = lambda: store.append(BookRow("independent"))
+
+    assert select(page, target.key) is True
+    assert selection.get_selected_item() is target
+    assert scrolled == [(1, 1, None)]
