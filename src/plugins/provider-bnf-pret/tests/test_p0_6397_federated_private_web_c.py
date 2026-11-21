@@ -195,18 +195,13 @@ def test_private_commit_failure_never_counts_rolled_back_publication(harness, mo
     @contextmanager
     def fail_at_transaction_exit():
         conn = real_connect()
-        try:
-            yield conn
-            # All Core writes have already succeeded; emulate a rejected
-            # SQLite commit before any staged row can become durable.
-            attempted.append("commit")
-            conn.rollback()
-            raise OperationalError("controlled commit failure")
-        finally:
-            # Storage._connect owns a reusable thread-local SQLite handle.
-            # Closing it here poisons the retry, rather than simulating
-            # a commit error; rollback above is the required failure.
-            pass
+        yield conn
+        # All Core writes have already succeeded; emulate a rejected SQLite
+        # commit before any staged row can become durable. Storage owns this
+        # reusable connection; closing it would invalidate the later retry.
+        attempted.append("commit")
+        conn.rollback()
+        raise OperationalError("controlled commit failure")
 
     with monkeypatch.context() as patch:
         patch.setattr(storage, "_connect", fail_at_transaction_exit)
