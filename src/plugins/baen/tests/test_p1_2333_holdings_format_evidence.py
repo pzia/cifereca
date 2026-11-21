@@ -210,3 +210,44 @@ def test_unsigned_public_generic_download_stays_format_unknown():
         assert transport.calls == []
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("markup", [
+    '<a href="/downloads/opaque">Download</a>',
+    '<a href="/downloads/book">Download</a>',
+    '<a href="/downloads/book">DOWNLOAD</a>',
+    '<a href="/downloads/book">Download file</a>',
+    '<a href="/downloads/book">Download</a>'
+    '<a href="/downloads/book.pdf">Download EPUB</a>',
+])
+def test_generic_download_button_never_dispatches_unverified_format(
+    markup, tmp_path,
+):
+    obj, transport = session(markup)
+    try:
+        observation = obj.holdings(book())
+        assert observation.availability_status == "unknown"
+        with pytest.raises(ProviderError, match="aucun lien EPUB public explicite"):
+            obj.download_direct(book(), tmp_path)
+        assert obj.client.calls == [DETAIL, DETAIL]
+        assert transport.calls == []
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        obj.close()
+
+
+def test_explicit_epub_offer_remains_distinct_from_generic_download():
+    from cifereca_baen import _baen_explicit_download_offer
+
+    page = (
+        '<a href="/downloads/opaque">Download</a>'
+        '<a href="/downloads/confirmed.epub">Download EPUB</a>'
+    )
+    candidate, verified = _baen_explicit_download_offer(page, DETAIL)
+    assert candidate == "https://www.baen.com/downloads/confirmed.epub"
+    assert verified is True
+    candidate, verified = _baen_explicit_download_offer(
+        '<a href="/downloads/opaque">Download</a>', DETAIL,
+    )
+    assert candidate == "https://www.baen.com/downloads/opaque"
+    assert verified is False
