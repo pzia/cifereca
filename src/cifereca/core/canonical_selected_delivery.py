@@ -31,7 +31,9 @@ from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReferen
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
-from .canonical_adept_attempt import begin_loan_adept_attempt, pending_loan_adept_attempt
+from .canonical_adept_attempt import (
+    begin_loan_adept_attempt, pending_loan_adept_attempt, release_unsubmitted_attempt,
+)
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
 from .adept_runtime_preflight import require_fresh_acsm_capability
 from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
@@ -319,21 +321,39 @@ def complete_selected_delivery(
     runtime_used = [False]
     adept_attempt_id = [""]
 
-    def mark_adept_attempt(profile_name: str):
-        if source.kind == "loan":
-            require_borrower()
-            # No cached UI readiness and no durable marker before this
-            # exact, scoped, read-only installed-runtime capability veto.
-            require_fresh_acsm_capability(
-                service, profile_name,
-                scope_current=lambda: borrower_current() is True and current() is True,
-            )
-            require_borrower()
-            adept_attempt_id[0] = begin_loan_adept_attempt(
+    def mark_adept_attempt(profile_name: str, profile_id):
+        if source.kind != "loan":
+            require_adept_profile(profile_name, profile_id)
+            return
+        require_borrower()
+        # No cached UI readiness or durable marker before this exact,
+        # scoped read-only installed-runtime capability veto.
+        require_fresh_acsm_capability(
+            service, profile_name,
+            scope_current=lambda: borrower_current() is True and current() is True,
+        )
+        # Fresh capability reads can change the profile binding while the
+        # CLI runs. Check its *name and stable reference* again before claim.
+        current_name, _ = service.resolve_adept_profile_for_identity(borrower_identity)
+        if current_name != profile_name:
+            raise ValueError("adept_borrower_profile_changed")
+        require_adept_profile(profile_name, profile_id)
+        operation = begin_loan_adept_attempt(
+            storage, source=source, offer_id=offer.delivery_offer_id,
+            shared_lock=shared_lock,
+        )
+        try:
+            # No external runtime call has been entered yet. This is the
+            # only place we may release our own newly created claim on a
+            # local refusal. Any exception from dispatch itself is ambiguous.
+            require_adept_profile(profile_name, profile_id)
+        except Exception:
+            release_unsubmitted_attempt(
                 storage, source=source, offer_id=offer.delivery_offer_id,
-                shared_lock=shared_lock,
+                operation_id=operation, shared_lock=shared_lock,
             )
-            require_borrower()
+            raise
+        adept_attempt_id[0] = operation
 
     runtime_artifact_path: list[Path | None] = [None]
     runtime_artifact_digest: list[str | None] = [None]
@@ -372,8 +392,7 @@ def complete_selected_delivery(
         require_borrower()
         runtime_used[0] = True
         if expected_adept is not None:
-            mark_adept_attempt(expected_adept[0])
-            require_adept_profile(*expected_adept)
+            mark_adept_attempt(*expected_adept)
         result = service.execute_acquisition_request(request)
         require_borrower()
         if expected_adept is not None:
@@ -550,8 +569,7 @@ def complete_selected_delivery(
                 "options": {"force": False},
             }
             require_adept_profile(profile, profile_id)
-            mark_adept_attempt(profile)
-            require_adept_profile(profile, profile_id)
+            mark_adept_attempt(profile, profile_id)
             result = service.execute_acquisition_request(request)
             require_adept_profile(profile, profile_id)
             if type(result) is not dict:
