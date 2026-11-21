@@ -74,3 +74,31 @@ def test_other_receipt_shadow_does_not_hide_reference(committed):
         )
     assert observed[intent.staged_path] == "referenced"
     assert db.metadata_get(pk) == proof
+
+
+
+@pytest.mark.parametrize("kind", ["title", "extension", "blob", "unknown_table", "attached"])
+def test_unclassified_sql_consumers_never_look_clear(committed, kind):
+    db, intent, _placement, key, raw, pk, proof, args = committed
+    stage = intent.staged_path
+    with db._lock, db._connect() as sql:
+        if kind == "title":
+            sql.execute("UPDATE catalog_entries SET title=?",
+                        (stage,))
+            # A committed variant can lack a catalogue row in a fixture;
+            # use a guaranteed existing identity label as well.
+            sql.execute("UPDATE identities SET label=? WHERE identity_id='id1'", (stage,))
+        elif kind in ("extension", "blob"):
+            sql.execute("ALTER TABLE identities ADD COLUMN future_reference TEXT")
+            value = json.dumps({"ref": stage}) if kind == "extension" else b"opaque"
+            sql.execute("UPDATE identities SET future_reference=? WHERE identity_id='id1'", (value,))
+        elif kind == "unknown_table":
+            sql.execute("CREATE TABLE future_reader (path TEXT)")
+            sql.execute("INSERT INTO future_reader VALUES(?)", (stage,))
+        else:
+            sql.execute("ATTACH DATABASE ':memory:' AS other")
+        sql.execute("BEGIN") if not sql.in_transaction else None
+        result = dependencies.scan_stage_references(sql, {stage: key})
+        assert result[stage] == ("referenced" if kind in ("title", "extension") else "unverified")
+    assert db.metadata_get(key) == raw
+    assert Path(stage).samefile(intent.candidate_path)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 from urllib.parse import unquote, urlsplit
 
 from . import derived_variant_compact_receipt as compact
@@ -41,6 +42,55 @@ _TEXT_COLUMNS = (
     ("origin_links", "evidence_ref"), ("cache", "namespace"), ("cache", "cache_key"),
     ("acquisition_ledger", "error_message"), ("backup_items", "error"),
 )
+
+
+# Schema-owned tables in Storage v17. The semantic columns above retain
+# their stricter format-specific parsing. Residual columns may contain a
+# path in an opaque identifier, title, label, status or later migration.
+# Scan every residual TEXT/BLOB cell within the same global budget.
+_SQL_TABLES = frozenset((
+    "metadata", "cache", "backup_items", "entitlements", "artifacts", "placements",
+    "acquisition_ledger", "catalog_entries", "identities", "provider_connections",
+    "provider_accounts", "adept_profile_bindings", "device_bindings", "sync_runs",
+    "device_placements", "artifact_variants", "action_events",
+    "paris_borrower_adept_bindings", "source_references", "origin_links",
+    "provider_cardinality_policies", "adept_borrower_grants",
+    "paris_adept_grant_retirements", "provider_connection_epochs",
+    "adept_borrower_grant_generations",
+))
+_SQL_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
+
+
+def _residual_columns(db):
+    # Attached databases and unknown tables have no reviewed consumer
+    # contract. They must not turn a partial search into a clear verdict.
+    if any(name not in ("main", "temp") for _, name, _ in db.execute("PRAGMA database_list")):
+        raise ValueError("derived_stage_dependency_schema")
+    if db.execute("SELECT 1 FROM sqlite_temp_schema WHERE type='table' LIMIT 1").fetchone():
+        raise ValueError("derived_stage_dependency_schema")
+    tables = db.execute(
+        "SELECT name FROM main.sqlite_schema WHERE type='table' "
+        "AND substr(name,1,7)!='sqlite_' ORDER BY name LIMIT 65"
+    ).fetchall()
+    names = {row[0] for row in tables}
+    if len(tables) > 64 or not names <= _SQL_TABLES:
+        raise ValueError("derived_stage_dependency_schema")
+    covered = set(_JSON_COLUMNS + _STRUCTURED_COLUMNS + _TEXT_COLUMNS)
+    covered.update((("metadata", "key"), ("metadata", "value")))
+    residual = []
+    for table in sorted(names):
+        fields = db.execute(
+            "SELECT name,hidden FROM pragma_table_xinfo(?) LIMIT 129", (table,)
+        ).fetchall()
+        if not fields or len(fields) > 128:
+            raise ValueError("derived_stage_dependency_schema")
+        for column, hidden in fields:
+            if (type(column) is not str or _SQL_IDENTIFIER.fullmatch(column) is None
+                    or hidden != 0):
+                raise ValueError("derived_stage_dependency_schema")
+            if (table, column) not in covered:
+                residual.append((table, column))
+    return tuple(residual)
 
 
 def _strings(value, depth=0):
@@ -124,11 +174,17 @@ def scan_stage_references(db, selected):
     queries.extend((table, "NULL", col, "json") for table, col in _JSON_COLUMNS)
     queries.extend((table, "NULL", col, "structured") for table, col in _STRUCTURED_COLUMNS)
     queries.extend((table, "NULL", col, "path") for table, col in _TEXT_COLUMNS)
+    try:
+        queries.extend((table, "NULL", col, "residual")
+                       for table, col in _residual_columns(db))
+    except (ValueError, TypeError):
+        return unknown()
     for table, key_col, column, kind in queries:
         size = f"length(CAST({column} AS BLOB))"
         if key_col != "NULL":
             size += f"+length(CAST({key_col} AS BLOB))"
-        where = f"WHERE {column} IS NOT NULL" if kind == "path" else ""
+        where = (f"WHERE typeof({column}) IN ('text','blob')" if kind == "residual"
+                 else f"WHERE {column} IS NOT NULL" if kind == "path" else "")
         for key, length, raw in db.execute(
             f"SELECT CASE WHEN {size}<=? THEN {key_col} END, {size}, "
             f"CASE WHEN {size}<=? THEN {column} END FROM {table} {where} LIMIT ?",
@@ -169,7 +225,7 @@ def scan_stage_references(db, selected):
                         for path in candidates:
                             if _matches_stage(text, path):
                                 status[path] = "referenced"
-                if kind in ("json", "structured") or (kind in ("metadata", "path") and (
+                if kind in ("json", "structured") or (kind in ("metadata", "path", "residual") and (
                         raw.lstrip().startswith(("{", "[", '"')) or chr(92) in raw)):
                     parsed = json.loads(raw, object_pairs_hook=_unique_pairs)
                     if kind == "json" and type(parsed) is not dict:
