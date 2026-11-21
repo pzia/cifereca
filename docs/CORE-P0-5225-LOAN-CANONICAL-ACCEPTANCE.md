@@ -86,9 +86,12 @@ la recette.
 
 Le contrôle transactionnel de la transition vers `complete` a été renforcé
 par #7333 : SourceReference provider attestée, OriginLink reçu exact et
-Placement du profil doivent exister au même instant SQLite. #7349 ajoute
-la revalidation de B lors de la relecture idempotente du journal déjà
-complet (**à considérer livrée uniquement après CI et fusion**).
+Placement du profil doivent exister au même instant SQLite. #7349 est
+fusionnée sur `main` (`f011f753a5c97f0c121977c21f33a53f205d759c`) : la
+relecture idempotente d'un journal `complete` revalide cette même preuve B
+avant de conclure, avec les trois contrôles du HEAD exact verts (PR CI,
+AST et installation Core complète). Cette preuve synthétique ne remplace
+pas les deux Sync authentifiées La Rochelle du protocole terrain.
 Les scénarios synthétiques #7305/#7318 valident rollback et reprise, sans
 prétendre reproduire une panne de courant matérielle.
 
