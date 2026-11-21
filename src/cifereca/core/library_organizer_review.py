@@ -68,10 +68,15 @@ class OrganizerScope:
     def bound(self):
         # The connection is worker-local. The binding API takes its own
         # non-reentrant lock, so do not hold it across that call.
-        return (self.current()
-                and not self.storage._connect().in_transaction
-                and self.storage.exact_profile_directory_binding(self.identity)
-                == (self.directory, True))
+        # Confirmation calls this guard *before* their own exception boundary:
+        # unavailable SQLite/binding must refuse the advice, never escape to UI.
+        try:
+            return (self.current()
+                    and not self.storage._connect().in_transaction
+                    and self.storage.exact_profile_directory_binding(self.identity)
+                    == (self.directory, True))
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True, slots=True, repr=False)
