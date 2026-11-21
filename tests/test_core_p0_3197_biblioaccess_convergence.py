@@ -23,7 +23,8 @@ from test_biblioaccess_sso import _canonical_row, _synced_session
 @pytest.mark.parametrize("first_opening", [False, True])
 @pytest.mark.parametrize("scenario", ["on", "off", "unset", "revoked_during_get",
                                       "historical_attention", "other_loan_attention",
-                                      "adept_failed", "adept_raised", "receipt_failed"])
+                                      "adept_failed", "adept_raised", "receipt_failed",
+                                      "promotion_failed", "publication_failed"])
 def test_biblioaccess_core_canonical_convergence(
     tmp_path, monkeypatch, first_opening, scenario,
 ):
@@ -144,6 +145,18 @@ def test_biblioaccess_core_canonical_convergence(
                             if item["identity_id"] == "default")
             return service.synchronize_account_source(account)
 
+        recovered_after_checkpoint = scenario in {"promotion_failed", "publication_failed"}
+        if recovered_after_checkpoint:
+            from cifereca.core import convergence_execution as engine
+            fault = ("promote_completed_delivery" if scenario == "promotion_failed"
+                     else "publish_completed_acquisition")
+            original_operation = getattr(engine, fault)
+
+            def unavailable_after_checkpoint(*_a, **_kw):
+                raise RuntimeError("synthetic failure after durable canonical receipt")
+
+            monkeypatch.setattr(engine, fault, unavailable_after_checkpoint)
+
         if scenario == "receipt_failed":
             from cifereca.core import convergence_execution as engine
 
@@ -156,6 +169,43 @@ def test_biblioaccess_core_canonical_convergence(
         assert first.get("canonical_execution", {}).get("downloaded", 0) == int(expected_download)
         if scenario == "receipt_failed":
             monkeypatch.setattr(engine, "record_completed_delivery_for_recovery", checkpoint)
+        if recovered_after_checkpoint:
+            import json
+            from tests.test_core_p0_3171_crash_recovery_v14 import journal
+            assert first["canonical_execution"]["failed"] == 1
+            assert calls == ["GET", "ADEPT"] and not db.placements()
+            staged, = journal(db)
+            assert staged[:2] == ("canonical_receipt_staged", None)
+            receipt = json.loads(staged[2])
+            staged_path = Path(receipt["path"])
+            assert staged_path.is_relative_to(service.library_dir() / "hugues" / ".canonical-delivery")
+            assert staged_path.read_bytes() == BYTES
+            assert receipt["sha256"] == SHA and receipt["adept_receipt"]
+            assert receipt["source"][:4] == [
+                account.identity_id, account.provider_id, account.credential_id, account.unique_id,
+            ]
+            with db._lock, db._connect() as sql:
+                assert sql.execute("SELECT count(*) FROM metadata WHERE key LIKE ?",
+                                   ("canonical.adept_attempt.v1:%",)).fetchone() == (0,)
+                assert sql.execute("SELECT count(*) FROM origin_links").fetchone() == (0,)
+            # The normal opening recovery must preserve completed intake,
+            # and only a fresh canonical Sync is allowed to publish it.
+            db.acquisition_recover_interrupted()
+            assert journal(db) == [staged]
+            monkeypatch.setattr(engine, fault, original_operation)
+            recovered = sync(not first_opening)["canonical_execution"]
+            assert recovered["recovered"] == 1 and recovered["downloaded"] == 0
+            assert calls == ["GET", "ADEPT"]
+            placement, = db.placements()
+            assert placement["artifact_id"] == "sha256:" + SHA
+            assert Path(placement["path"]).read_bytes() == BYTES
+            assert Path(placement["path"]).parent == service.library_dir() / "hugues" / "Acquisitions"
+            assert journal(db)[0][:2] == ("complete", "sha256:" + SHA)
+            assert sync(first_opening)["canonical_execution"]["present_attested"] == 1
+            assert calls == ["GET", "ADEPT"] and db.placements() == [placement]
+            with db._lock, db._connect() as sql:
+                assert sql.execute("SELECT count(*) FROM origin_links").fetchone() == (2,)
+            return
         blocked_retry = scenario in {"adept_failed", "adept_raised", "receipt_failed"}
         if blocked_retry:
             assert first["canonical_execution"]["failed"] == 1
