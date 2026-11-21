@@ -130,3 +130,51 @@ def test_private_call_cannot_be_captured_as_foreign_reader(harness):
     service, session, _, client = harness
     assert capture_authenticated_search_call(service, session, "bob") is None
     assert not client.calls
+
+
+def test_private_sql_failure_rolls_back_and_exact_receipt_can_retry(harness, monkeypatch):
+    from sqlite3 import OperationalError
+    from cifereca.core import notice_c_private_search_web as writer
+    service, session, _, client = harness
+    call = capture_authenticated_search_call(service, session, "alice")
+    row, = session.search("fiction")
+    stamp_authenticated_search_rows(service, call, [row])
+    real = writer._persist_consolidated_cover_source_txn
+    attempted = []
+
+    def fail_after_source(db, **kw):
+        # The source was already staged in the real SQLite transaction.
+        attempted.append(kw["source"])
+        raise OperationalError("synthetic write failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(writer, "_persist_consolidated_cover_source_txn", fail_after_source)
+        assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 0
+    assert len(attempted) == 1
+    scope = capture_search_read_scope(service, "alice")
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
+    assert writer._persist_consolidated_cover_source_txn is real
+    assert persist_authenticated_search_rows(service, [row], identity_id="alice") == 1
+    menu = read_authenticated_web_for_search(service, row, reader_scope=scope)
+    assert len(menu.choices) == 1 and len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
+def test_optional_private_sql_failure_does_not_hide_live_search_result(harness, monkeypatch):
+    from sqlite3 import OperationalError
+    from cifereca.core import notice_c_private_search_web as writer
+    service, session, account, client = harness
+    attempted = []
+
+    def fail_after_source(db, **kw):
+        attempted.append(kw["source"])
+        raise OperationalError("synthetic write failure")
+
+    monkeypatch.setattr(writer, "_persist_consolidated_cover_source_txn", fail_after_source)
+    row, = service.search("fiction", provider_id=session.provider_id, force=True)
+    assert row.source_account_id == account.unique_id
+    assert len(attempted) == 1 and len(client.calls) == 1
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
