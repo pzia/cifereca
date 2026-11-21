@@ -366,7 +366,9 @@ def test_primary_c_classification_provenance_does_not_attach_to_local_sections(t
     with closing(Storage(path)) as db:
         source = persist(db, verified_public(
             record_id="classified", title="Notice classée",
-            metadata={"subjects": ["Astronomie"], "genre": "Roman"},
+            metadata={"subjects": ["Astronomie"], "genre": "Roman",
+                      "keywords": ["Espace"], "tags": ["Cosmos"],
+                      "themes": ["Galaxies"]},
         ), at=100)
         persist_exact_public_search_cover(db, source)
         assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
@@ -389,13 +391,19 @@ def test_primary_c_classification_provenance_does_not_attach_to_local_sections(t
             section.title: {f.label: f for f in section.fields}
             for section in visible.sections
         }
-        for label in ("Sujet", "Genre"):
+        for label in ("Sujet", "Genre", "Thème"):
             field = by_section["Détail"][label]
             assert field.provenance.source == "Notice C · observation de source"
             assert field.provenance.provider_id == item["provider_id"]
             assert field.provenance.source_id == "classified"
             assert field.provenance.observed_at == "1970-01-01T00:01:40+00:00"
+        for label in ("Sujet", "Genre"):
             assert by_section["Bibliothèque"][label].provenance is None
+        keywords = [f for sec in visible.sections if sec.title == "Détail"
+                    for f in sec.fields if f.label == "Mot-clé"]
+        assert {field.value for field in keywords} == {"Espace", "Cosmos"}
+        assert all(field.provenance.source == "Notice C · observation de source"
+                   for field in keywords)
 
         class Hostile:
             def __eq__(self, other):
