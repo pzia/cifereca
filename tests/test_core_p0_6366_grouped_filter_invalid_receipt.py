@@ -84,6 +84,30 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             assert expanded == [row] and originals == {}
         from dataclasses import replace
         packet = primary["_core_notice_c_filter_sources"]
+        for member in ("kind", "source_key", "provider_id",
+                       "credential_id", "identity_id"):
+            mutated = replace(primary["_cover_document_ref"])
+            object.__setattr__(mutated, member, Hostile())
+            for position in ("row", "packet", "hit"):
+                candidate = {**primary}
+                if position == "row":
+                    candidate["_cover_document_ref"] = mutated
+                elif position == "packet":
+                    candidate["_core_notice_c_filter_sources"] = (
+                        *packet[:2], mutated, *packet[3:],
+                    )
+                else:
+                    candidate["_core_notice_c_filter_sources"] = (
+                        *packet[:4], (
+                            replace(packet[4][0], document=mutated),
+                            *packet[4][1:],
+                        ),
+                    )
+                expanded, originals = expand_filter_sources(
+                    [candidate], scope="all",
+                )
+                assert expanded == [candidate] and originals == {}
+        # A separate valid source must not be suppressed by bad packet data.
         for tampered in (
             (packet[0], Hostile(), *packet[2:]),
             (*packet[:4], (replace(packet[4][0], provider_id=Hostile()), *packet[4][1:])),
