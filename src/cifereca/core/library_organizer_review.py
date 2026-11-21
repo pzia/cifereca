@@ -442,5 +442,7 @@ def select_organizer_keeper_advice(scope, result, *, confirmed=False):
         selected = preview_keeper_bulk(reviews, identity_id=scope.identity, accept_all=True)
         return (selected if scope.bound()
                 and sqlite_source_stamp(scope.database) == anchor.stamp else None)
-    except (ValueError, TypeError, KeyError):
+    except Exception:
+        # Advice selection is read-only. A failed SQLite/physical recheck or
+        # a revoked/malformed private preview must never escape to CoreUI.
         return None
