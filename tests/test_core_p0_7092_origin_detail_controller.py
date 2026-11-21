@@ -122,3 +122,37 @@ def test_choice_window_respects_actual_host_action_budget(rig, public_count, pri
         if private_count > remaining:
             assert f"{private_count-remaining} choix supplémentaires" in text
     assert not calls
+
+
+def test_paged_host_exposes_all_bounded_choices_without_network(rig):
+    from dataclasses import replace
+    from cifereca.plugin_api.local_origin_detail import (
+        LocalOriginPrivateChoice, LocalOriginPublicChoice,
+    )
+    service, session, request, calls, path = rig
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    page = c.broker.preview(identity_id=request.identity_id, placement_id=request.placement_id,
+                            still_current=lambda: True, confirmed=True)
+    public = tuple(LocalOriginPublicChoice(f"pub-{i}", f"catalogue-{i}") for i in range(8))
+    private = tuple(LocalOriginPrivateChoice(f"priv-{i}", "provider", "credential",
+                                          f"account-{i}", "purchase") for i in range(16))
+    c.broker = NS(preview=lambda **kw: replace(page, public_choices=public, private_choices=private))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    assert actions["preview"][2]()
+    deliver(tasks)
+    old = actions["catalogue-slot-1"][2]
+    seen = set()
+    for _ in range(3):
+        seen.update(k for k in actions if k.startswith("catalogue-slot-"))
+        more = [v[2] for k, v in actions.items() if k.startswith("catalogue-more-")]
+        if more:
+            assert more[0]()
+            deliver(tasks)
+    assert seen == {f"catalogue-slot-{i}" for i in range(1, 25)}
+    assert old() is False
+    assert not calls and not toasts

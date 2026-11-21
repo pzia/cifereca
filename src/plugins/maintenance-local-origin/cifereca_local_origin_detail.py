@@ -94,6 +94,8 @@ class DetailController:
         self.identity, self.placement = host.identity_id, host.placement_id
         self.page = None
         self.used = set()
+        self.choice_window = ()
+        self.choice_actions = ()
         self.busy = self.finished = self.disposed = False
 
     def current(self):
@@ -138,6 +140,9 @@ class DetailController:
             self.finished = not value.can_continue
             self.host.add_group("Suggestions de provenance — lecture seule", known_rows(value))
             if value.page == 1 and value.metadata_evidence == "verified_epub_opf_description":
+                if callable(getattr(self.host, "retire_action", None)):
+                    self._show_choice_window(value, 0)
+                    return
                 public_choices = value.public_choices[:_MAX_CATALOGUE_ACTIONS]
                 for index, choice in enumerate(public_choices):
                     if not self.current():
@@ -182,9 +187,70 @@ class DetailController:
 
         return self._submit(work, display)
 
+    def _show_choice_window(self, original, offset):
+        """Page inert, already admitted choices without an extra provider query."""
+        if not self.current() or self.page is not original:
+            return
+        for key in self.choice_actions:
+            if self.host.retire_action(key) is not True:
+                self.choice_window = ()
+                return
+        self.choice_actions = ()
+        self.choice_window = ()
+        choices = tuple(("public", x) for x in original.public_choices) + tuple(
+            ("private", x) for x in original.private_choices)
+        # Ten choices + an optional continuation + the permanent preview.
+        count = 10 if len(choices) - offset > 11 else 11
+        window = choices[offset:offset + count]
+        self.choice_window = tuple(choice for _, choice in window)
+        keys, accounts = [], []
+        for index, (kind, choice) in enumerate(window, offset + 1):
+            if not self.current():
+                return
+            key = "catalogue-slot-" + str(index)
+            if kind == "public":
+                title = "Envoyer le titre à " + choice.provider_id
+                tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
+                action = lambda selected=choice: self.search(selected, original)
+            else:
+                surface = "achats" if choice.kind == "purchase" else "prêts"
+                title = f"Comparer {surface} — choix {index}"
+                coordinates = ("Fournisseur : " + choice.provider_id
+                               + " · Connexion : " + choice.credential_id
+                               + " · Compte : " + (choice.account_id or "principal"))
+                tooltip = "Cache local, aucune transmission. " + coordinates
+                accounts.append((title, coordinates))
+                action = lambda selected=choice: self.compare_private(selected, original)
+            self.host.add_action(key, title, tooltip, action)
+            keys.append(key)
+        following = offset + len(window)
+        if following < len(choices):
+            key = "catalogue-more-" + str(following)
+            self.host.add_action(
+                key, "Autres catalogues", "Afficher les choix suivants sans recherche.",
+                lambda: self._next_choice_window(original, following),
+            )
+            keys.append(key)
+        self.choice_actions = tuple(keys)
+        if choices:
+            accounts.append(("Fenêtre", f"Choix {offset + 1} à {following} sur {len(choices)} connus. Découverte partielle ; aucune absence attestée."))
+        if accounts:
+            self.host.add_group("Catalogues à comparer explicitement", tuple(accounts))
+
+    def _next_choice_window(self, original, offset):
+        if self.busy or not self.current() or self.page is not original:
+            return False
+        return self._submit(
+            lambda: original,
+            lambda value: self._show_choice_window(original, offset)
+            if value is original else None,
+        )
+
     def compare_private(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
                 or not any(item is choice for item in original.private_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
                 or choice.token in self.used):
             return False
         self.used.add(choice.token)
@@ -206,6 +272,8 @@ class DetailController:
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
                 or not any(item is choice for item in original.public_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
                 or choice.token in self.used):
             return False
         self.used.add(choice.token)
