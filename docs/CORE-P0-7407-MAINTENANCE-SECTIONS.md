@@ -14,7 +14,8 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | maintenance.library.local-origin | Provenance | library.origin.read, library.origin.detail.read / #4030 | Comparaison documentaire bornée |
 | Adaptateur ADEPT historique | Provenance | Core / #976, #7244 | Diagnostic et association sous gardes existantes |
 | maintenance.cleanup.duplicates.recover | Reprise | library.maintenance / #3185 | Reprise supervisée des tombstones |
-| maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue, capacité et simulation ; pas de reprise effective |
+| maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue et simulation ; pas de reprise effective |
+| maintenance.library.derived-capacity | Stockage | library.derived.read / #6937 | Observations séparées ; aucune restitution de quota |
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
 
-Restent à livrer : dissociation capacité/reprise dans le package variantes, accès contextuel unique aux téléchargements suspendus, intégration des métadonnées contradictoires à la qualité documentaire, renvois des actions historiques et recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
+Restent à livrer : accès contextuel unique aux téléchargements suspendus, intégration des métadonnées contradictoires à la qualité documentaire, renvois des actions historiques et recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
