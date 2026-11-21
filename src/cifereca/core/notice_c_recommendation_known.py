@@ -15,6 +15,10 @@ from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _MAX_SOURCES, is_canonical_cover_document
 from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
 from .notice_c_known_projection import _series_metadata, _source_alternative
+from .public_search_projection import (
+    PublicClassification, PublicLanguageObservation, PublicSeriesRelation,
+)
+from .notice_c_public_age import PublicAgeObservation, PublicAgeRange
 
 _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
@@ -35,6 +39,70 @@ def _native_canonical(document):
             and (document.account_id is None
                  or type(document.account_id) is str)
             and is_canonical_cover_document(document))
+
+
+def _native_hit(hit, binding):
+    # A frozen PublicNoticeCHit or nested public evidence can be altered
+    # after the original Core receipt was issued. Refuse all malformed
+    # members before generating a new source summary or dereferencing ages.
+    if (type(hit) is not PublicNoticeCHit
+            or not _native_canonical(hit.document)
+            or type(hit.epoch) is not int
+            or (hit.document, hit.epoch) != binding
+            or any(value is not None and type(value) is not str
+                   for value in (
+                       hit.provider_id, hit.record_id, hit.docbase, hit.medium,
+                       hit.source_revision, hit.title, hit.author, hit.publisher,
+                       hit.published_at, hit.media_format, hit.description,
+                   ))):
+        return False
+    series = hit.series_relation
+    if (series is not None
+            and (type(series) is not PublicSeriesRelation
+                 or any(type(getattr(series, field.name)) is not str
+                        for field in fields(PublicSeriesRelation)))):
+        return False
+    language = hit.language_observation
+    if language is not None:
+        if (type(language) is not PublicLanguageObservation
+                or any(type(getattr(language, name)) is not tuple
+                       or len(getattr(language, name)) > 16
+                       or any(type(value) is not str for value in getattr(language, name))
+                       for name in ("raw_tags", "languages"))
+                or any(type(getattr(language, name)) is not str for name in
+                       ("source", "source_field", "scope", "confidence", "freshness"))):
+            return False
+    classification = hit.classification
+    if classification is not None:
+        if (type(classification) is not PublicClassification
+                or type(classification.entries) is not tuple
+                or len(classification.entries) > 16):
+            return False
+        for pair in classification.entries:
+            if (type(pair) is not tuple or len(pair) != 2
+                    or type(pair[0]) is not str
+                    or not (type(pair[1]) is str
+                            or (type(pair[1]) is tuple
+                                and len(pair[1]) <= 32
+                                and all(type(value) is str for value in pair[1])))):
+                return False
+    age = hit.age_observation
+    if age is not None:
+        if (type(age) is not PublicAgeObservation
+                or any(type(getattr(age, name)) is not str for name in
+                       ("provider_id", "record_id", "docbase", "medium", "source_field"))
+                or (age.source_revision is not None
+                    and type(age.source_revision) is not str)
+                or type(age.ranges) is not tuple or not 1 <= len(age.ranges) <= 16):
+            return False
+        for age_range in age.ranges:
+            if (type(age_range) is not PublicAgeRange
+                    or any(value is not None and type(value) is not int
+                           for value in (age_range.age_min, age_range.age_max))
+                    or type(age_range.age_kind) is not str
+                    or type(age_range.source_label) is not str):
+                return False
+    return True
 
 
 def _same_native_snapshot(left, right, depth=0):
@@ -190,17 +258,7 @@ def known_public_c_alternative_hits(item: object):
     alternatives = item.metadata.get("notice_c_source_alternatives", [])
     if (type(hits) is not tuple or len(hits) >= _MAX_SOURCES
             or type(alternatives) is not list or len(hits) != len(alternatives)
-            or any(type(hit) is not PublicNoticeCHit
-                   or not _native_canonical(hit.document)
-                   or type(hit.epoch) is not int
-                   or any(value is not None and type(value) is not str
-                          for value in (
-                              hit.provider_id, hit.record_id, hit.docbase,
-                              hit.medium, hit.source_revision, hit.title,
-                              hit.author, hit.publisher, hit.published_at,
-                              hit.media_format, hit.description,
-                          ))
-                   or (hit.document, hit.epoch) != binding for hit in hits)
+            or any(not _native_hit(hit, binding) for hit in hits)
             or [_source_alternative(hit) for hit in hits] != alternatives):
         return None
     return hits
@@ -216,15 +274,7 @@ def known_public_c_primary_hit(item: object):
     if binding is None:
         return None
     hit = item._core_known_public_c_projection[6]
-    if (type(hit) is not PublicNoticeCHit
-            or not _native_canonical(hit.document)
-            or type(hit.epoch) is not int
-            or any(value is not None and type(value) is not str for value in (
-                hit.provider_id, hit.record_id, hit.docbase, hit.medium,
-                hit.source_revision, hit.title, hit.author, hit.publisher,
-                hit.published_at, hit.media_format, hit.description,
-            ))
-            or (hit.document, hit.epoch) != binding
+    if (not _native_hit(hit, binding)
             or (hit.provider_id, hit.record_id, hit.docbase, hit.medium,
                 hit.source_revision, hit.title, hit.author, hit.publisher,
                 hit.published_at, hit.media_format, hit.description) != (
