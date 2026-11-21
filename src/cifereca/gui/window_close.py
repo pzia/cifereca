@@ -8,6 +8,8 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     if window._closed:
         return False
     window._closed = True
+    from cifereca.gui.guided_book_review_host import dispose_guided_book_reviews
+    dispose_guided_book_reviews(window)
     # Revoke presentation leases and detach opt-in plugin pages before any
     # other window-owned resource is released. This is not Core cancellation.
     from cifereca.gui import page_lifecycle_controller

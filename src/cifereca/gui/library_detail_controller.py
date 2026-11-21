@@ -22,6 +22,11 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         begin_local_public_web_selection, request_local_public_web_action,
     )
     web_token = begin_local_public_web_selection(window, "library")
+    from .guided_book_review_host import dispose_guided_book_reviews
+    dispose_guided_book_reviews(window)
+    if (getattr(window, "_closed", False)
+            or window._public_web_selection_library is not web_token):
+        return
     window._cancel_cached_book_details()
     if not row:
         window.library_page.detail.empty(
@@ -185,8 +190,14 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         )
     window._add_local_book_actions(detail,item)
     if not foreign:
-        from .local_origin_suggestion_action import add_local_origin_suggestion_action
-        add_local_origin_suggestion_action(window, detail, row, item, token=web_token)
+        from .guided_book_review_host import mount_guided_book_reviews
+        mounted = mount_guided_book_reviews(window, detail, row, item, token=web_token)
+        if (getattr(window, "_closed", False)
+                or window._public_web_selection_library is not web_token):
+            for lease in mounted:
+                lease.dispose()
+            return
+        window._guided_book_review_mounts = mounted
     if not foreign:
         # Preserve original action ordering for current-profile details.
         window._add_book_recommendation_action(detail, item)

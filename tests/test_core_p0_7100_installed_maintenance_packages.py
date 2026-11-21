@@ -41,6 +41,9 @@ def manager(path, *, host=True, ports=TOOLS, headless=False):
         brokers[key] = ActivationScopedReadFactory(
             lambda: NS(preview=lambda **kw: pytest.fail("mount performed work")), ("preview",),
         )
+    if "library.origin.read" in brokers:
+        brokers["library.origin.detail.read"] = ActivationScopedReadFactory(
+            lambda: NS(), ("preview", "next_page", "search_public", "cancel"))
     return PluginManager(
         package_store=PackageStore(path / "packages"),
         state_store=PluginStateStore(path / "state.json"),
