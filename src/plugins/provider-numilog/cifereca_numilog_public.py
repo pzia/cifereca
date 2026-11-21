@@ -366,8 +366,17 @@ def parse_public_search(text, source_url):
         if len(grids) != 1:
             _fail('unknown_search_layout')
         cards = _nodes(grids[0], 'LivreDuThemeDetail')
+        # Exact result selectors outside the qualified grid are competing
+        # evidence, not ignorable rows in an otherwise complete result.
+        if (len(_nodes(root, 'LivreDuThemeDetail')) != len(cards)
+                or any(n.tag != 'tr' for n in cards)
+                or any(len(_nodes(n, 'LivreDuThemeDetail')) != 1 for n in cards)):
+            _fail('unknown_search_layout')
         empty_markers = [n for n in _visible_walk(grids[0])
                          if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
+        if len([n for n in _visible_walk(root)
+                if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']) != len(empty_markers):
+            _fail('inconsistent_results')
     explicit_empty = (len(empty_markers) == 1
                       and empty_markers[0].tag == 'span'
                       and {'alert', 'alert-warning'}.issubset(classes(empty_markers[0]))

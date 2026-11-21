@@ -345,3 +345,31 @@ def test_selected_format_has_exact_selector_provenance():
     assert item.metadata['field_evidence']['selected_format_label'] == {
         'source_url': ADVANCED, 'source': '.BuySelectedFormat', 'kind': 'observed_public_html'}
     assert item.metadata['isbn_digital'] is None and not item.owned
+
+
+@pytest.mark.parametrize('total,cards', [(0, ''), (1, FIRST)])
+def test_simple_grid_does_not_ignore_competing_visible_result_rows(total, cards):
+    html = page_of(cards, total) + '<table>' + advanced_card("1792964") + '</table>'
+    with pytest.raises(PublicSearchParseError, match='unknown_search_layout'):
+        parse_public_search(html, URL)
+
+
+def test_simple_grid_does_not_ignore_competing_empty_marker():
+    outside = (f'<span id="{GRID_ID}_ctl01_lblAucunLivre" class="alert alert-warning">'
+               'Aucun livre trouvé avec ces critères.</span>')
+    with pytest.raises(PublicSearchParseError, match='inconsistent_results'):
+        parse_public_search(page_of() + outside, URL)
+
+
+def test_simple_grid_requires_native_row_and_no_nested_result_selector():
+    for cards in (FIRST.replace('<tr class="LivreDuThemeDetail">', '<div class="LivreDuThemeDetail">', 1)
+                       .replace('</tr>', '</div>', 1),
+                  FIRST.replace('<td', '<td class="LivreDuThemeDetail"', 1)):
+        with pytest.raises(PublicSearchParseError, match='unknown_search_layout'):
+            parse_public_search(page_of(cards, 2), URL)
+
+
+def test_hidden_competing_result_rows_do_not_change_qualified_simple_grid():
+    html = page_of() + '<table hidden>' + advanced_card("1792964") + '</table>'
+    result = parse_public_search(html, URL)
+    assert result.complete and result.total_results == len(result.items) == 1
