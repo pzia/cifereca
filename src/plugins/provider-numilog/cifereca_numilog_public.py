@@ -20,6 +20,9 @@ MAX_HTML_BYTES = 4 * 1024 * 1024
 MAX_CARDS = 100
 _FILTERS = frozenset({'fltrTheme', 'fltrPrice', 'fltrLang', 'fltrPub'})
 _PARAMS = _FILTERS | {'mode', 'query', 'GRID_PAGE'}
+_ADVANCED_TEXT = frozenset({'RATitle', 'RAAuthor', 'RARef'})
+_ADVANCED_CRITERIA = _ADVANCED_TEXT | {'RAFormat', 'RAPublisher'}
+_ADVANCED_FORMATS = frozenset({'3', '11', '14', '15', '16'})
 _BOOK_PATH = r'/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook'
 
 
@@ -105,7 +108,7 @@ def _optional(node, name, maximum=2000):
     return value or None
 
 
-def _query(url):
+def _query(url, *, allow_advanced=False):
     if not _safe_text(url, 4096) or any(c.isspace() for c in url) or '\\' in url:
         _fail('invalid_search_url')
     try:
@@ -114,8 +117,21 @@ def _query(url):
                 or p.path != SEARCH_PATH or p.fragment):
             _fail('invalid_search_url')
         q = parse_qs(p.query, keep_blank_values=True, max_num_fields=10)
-        if (set(q) - _PARAMS or any(len(v) != 1 for v in q.values())
-                or q.get('mode') != ['brSimple'] or 'query' not in q
+        if any(len(v) != 1 for v in q.values()):
+            _fail('invalid_search_url')
+        if allow_advanced and q.get('mode') == ['Ra']:
+            # Only the native observed GET coordinates. No advanced pager
+            # or POST is attested; the transport keeps its brSimple gate.
+            if (set(q) - (_ADVANCED_CRITERIA | {'mode', 'fltrPrice'})
+                    or not set(q) & _ADVANCED_CRITERIA
+                    or any(not _safe_text(q[k][0], 200) or not q[k][0].strip()
+                           for k in q.keys() & _ADVANCED_TEXT)
+                    or ('RAFormat' in q and q['RAFormat'][0] not in _ADVANCED_FORMATS)
+                    or ('RAPublisher' in q and not re.fullmatch(r'[1-9][0-9]{0,8}', q['RAPublisher'][0]))
+                    or ('fltrPrice' in q and q['fltrPrice'][0] not in {'5', '10'})):
+                _fail('invalid_search_url')
+            return {k: v[0] for k, v in q.items()}
+        if (set(q) - _PARAMS or q.get('mode') != ['brSimple'] or 'query' not in q
                 or not _safe_text(q['query'][0], 512)):
             _fail('invalid_search_url')
         if 'GRID_PAGE' in q and not re.fullmatch(r'0|[1-9][0-9]{0,3}', q['GRID_PAGE'][0]):
@@ -127,7 +143,7 @@ def _query(url):
         _fail('invalid_search_url')
 
 
-def _search_link(href, source_url):
+def _search_link(href, source_url, *, allow_advanced=False):
     if not _safe_text(href, 4096) or '\\' in href or any(c.isspace() for c in href):
         _fail('invalid_search_url')
     # Relative links are accepted only in the form observed in the fixture.
@@ -135,7 +151,7 @@ def _search_link(href, source_url):
             or href.startswith(SEARCH_PATH + '?')):
         _fail('invalid_search_url')
     value = urljoin(source_url, href)
-    return value, _query(value)
+    return value, _query(value, allow_advanced=allow_advanced)
 
 
 def _product_link(href, source_url):
@@ -227,6 +243,10 @@ def _card(card, source_url, rank, page_index):
     if len(format_labels) > 10 or any(len(f) > 80 for f in format_labels):
         _fail('invalid_formats')
     selected = _optional(card, 'FormatLivre', 80)
+    explicit_selected = _optional(card, 'BuySelectedFormat', 80)
+    if selected and explicit_selected and selected != explicit_selected:
+        _fail('ambiguous_field')
+    selected = explicit_selected or selected
     if selected == 'Choix format':
         selected = None
     options = []
@@ -307,7 +327,8 @@ class PublicSearchPage:
 
 def parse_public_search(text, source_url):
     """Parse one page, never fetch another; invalid layouts cannot mean zero."""
-    query = _query(source_url)
+    query = _query(source_url, allow_advanced=True)
+    advanced = query['mode'] == 'Ra'
     page_index = int(query.get('GRID_PAGE', '0'))
     if type(text) is not str or len(text) > MAX_HTML_BYTES or len(text.encode('utf-8', errors='replace')) > MAX_HTML_BYTES:
         _fail('html_size')
@@ -320,11 +341,26 @@ def parse_public_search(text, source_url):
     except ParseError:
         _fail('html_structure')
     grids = [n for n in _visible_walk(root) if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
-    if len(grids) != 1:
-        _fail('unknown_search_layout')
-    cards = _nodes(grids[0], 'LivreDuThemeDetail')
-    empty_markers = [n for n in _visible_walk(grids[0])
-                     if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
+    if advanced:
+        # #7163 observed positive advanced page: tr.LivreDuThemeDetail
+        # and lblNbLivres. No empty advanced layout or pager was captured.
+        if len(grids) > 1:
+            _fail('unknown_search_layout')
+        cards = _nodes(grids[0] if grids else root, 'LivreDuThemeDetail')
+        if (not cards or any(n.tag != 'tr' for n in cards)
+                or any(len(_nodes(n, 'LivreDuThemeDetail')) != 1 for n in cards)
+                or len(_nodes(root, 'LivreDuThemeDetail')) != len(cards)):
+            _fail('unknown_search_layout')
+        empty_markers = [n for n in _visible_walk(root)
+                         if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
+        if empty_markers:
+            _fail('inconsistent_results')
+    else:
+        if len(grids) != 1:
+            _fail('unknown_search_layout')
+        cards = _nodes(grids[0], 'LivreDuThemeDetail')
+        empty_markers = [n for n in _visible_walk(grids[0])
+                         if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
     explicit_empty = (len(empty_markers) == 1
                       and empty_markers[0].tag == 'span'
                       and {'alert', 'alert-warning'}.issubset(classes(empty_markers[0]))
@@ -338,7 +374,20 @@ def parse_public_search(text, source_url):
     if (other_labels not in ([], ['résultat(s)'])
             or (other_labels and not totals)):
         _fail('unqualified_total')
-    if not totals and explicit_empty and not cards and not _nodes(root, 'pagination'):
+    if advanced:
+        counters = [n for n in _visible_walk(root)
+                    if n.attrs.get('id') in {'lblNbLivres', GRID_ID.removesuffix('_GridView1') + '_lblNbLivres'}]
+        if len(counters) != 1:
+            _fail('unqualified_total')
+        count = _selected_text(counters[0])
+        if not re.fullmatch(r'[0-9]{1,9}', count) or count == '0':
+            _fail('unqualified_total')
+        total = int(count)
+        # The older numeric counter, if present, is independent negative
+        # evidence. Never prefer one contradictory count over another.
+        if totals and (len(totals) != 1 or int(totals[0]) != total):
+            _fail('inconsistent_results')
+    elif not totals and explicit_empty and not cards and not _nodes(root, 'pagination'):
         total = 0  # Observed upstream empty result, never a generic missing count.
     elif len(totals) == 1:
         total = int(totals[0])
@@ -352,6 +401,8 @@ def parse_public_search(text, source_url):
     if len({item.record_id for item in items}) != len(items):
         _fail('duplicate_product')
     pagers = _nodes(root, 'pagination')
+    if advanced and pagers:
+        _fail('invalid_pagination')
     if len(pagers) > 1:
         _fail('ambiguous_pagination')
     if total == 0 and pagers:
@@ -389,7 +440,7 @@ def parse_public_search(text, source_url):
     for link in _nodes(root, 'panel-sous-filtre'):
         if len(facets) >= 200 or link.tag != 'a':
             _fail('invalid_facets')
-        url, target = _search_link(link.attrs.get('href'), source_url)
+        url, target = _search_link(link.attrs.get('href'), source_url, allow_advanced=advanced)
         # Facet navigation must preserve every *other* active filter.
         # Looking only at keys in the target silently accepts links which
         # remove an existing filter (e.g. dropping selected language when
@@ -399,7 +450,9 @@ def parse_public_search(text, source_url):
         if (len(changed) != 1
                 or changed[0] not in target
                 or target.get('mode') != query['mode']
-                or target.get('query') != query['query']
+                or (advanced and {k: v for k, v in target.items() if k in _ADVANCED_CRITERIA}
+                    != {k: v for k, v in query.items() if k in _ADVANCED_CRITERIA})
+                or (not advanced and target.get('query') != query['query'])
                 # The observed facet URL resets pagination; a facet link
                 # that also jumps to an arbitrary result page is unproven.
                 or target.get('GRID_PAGE', '0') != '0'):

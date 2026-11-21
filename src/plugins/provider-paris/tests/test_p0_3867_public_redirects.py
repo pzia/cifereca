@@ -434,3 +434,54 @@ def test_guarded_paris_pnb_refuses_revoked_lease_before_any_https_request(monkey
             client._get_pnb_response(FOREIGN, admission_current=lambda: False)
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("signed_url", [FOREIGN, START])
+@pytest.mark.parametrize("phase", ["body", "revoked", "before_headers"])
+def test_guarded_paris_protocol_failure_is_retryable_only_in_admitted_body(
+    monkeypatch, signed_url, phase,
+):
+    from cifereca_paris_client import ParisContentTransferUnavailable, ParisError
+
+    client = ParisClient("https://bibliotheques.paris.fr")
+    live = [True]
+    seen = []
+
+    class BrokenBody(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("partial")
+            yield b"A" * (64 * 1024)
+            if phase == "revoked":
+                live[0] = False
+            raise httpx.RemoteProtocolError("SYNTHETIC_PRIVATE_URL")
+        def close(self):
+            pass
+
+    def supplier(request):
+        seen.append("request")
+        if phase == "before_headers":
+            raise httpx.RemoteProtocolError("SYNTHETIC_PRIVATE_URL")
+        return httpx.Response(200, stream=BrokenBody())
+
+    def factory(**_kwargs):
+        return httpx.Client(transport=httpx.MockTransport(supplier),
+                            trust_env=False, follow_redirects=False)
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    if signed_url == START:
+        client.client.close()
+        client.client = factory()
+    try:
+        with pytest.raises(ParisError) as error:
+            client._get_pnb_response(signed_url, admission_current=lambda: live[0])
+        assert (type(error.value) is ParisContentTransferUnavailable) is (phase == "body")
+        if phase == "before_headers":
+            assert type(error.value) is ParisRedirectError
+            assert seen == ["request"]
+        else:
+            assert seen == ["request", "partial"]
+        if phase == "revoked":
+            assert "Core admission revoked" in str(error.value)
+        assert "SYNTHETIC_PRIVATE_URL" not in str(error.value)
+    finally:
+        client.close()
