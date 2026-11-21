@@ -598,6 +598,24 @@ def main():
                            and node.get_title() == "Provenances de prêts historiques"]
         assert len(historical_rows) == 1
         assert "sans accès fournisseur" in historical_rows[0].get_subtitle()
+        held_rows = [node for node in walk(w._tools_box)
+                     if isinstance(node, Adw.ActionRow)
+                     and node.get_title() == "Verrous de téléchargements ADEPT"]
+        assert len(held_rows) == 1
+        def section_contains(row, heading):
+            ancestor = row.get_parent()
+            while ancestor is not None and ancestor is not w._tools_box:
+                first = ancestor.get_first_child()
+                if isinstance(first, Gtk.Label) and first.get_text() == heading:
+                    return True
+                ancestor = ancestor.get_parent()
+            return False
+        assert section_contains(historical_rows[0], "Origine et provenance")
+        assert section_contains(held_rows[0], "Reprise des opérations")
+        assert "aucun déverrouillage autorisé" in held_rows[0].get_subtitle()
+        assert not any(isinstance(node, Gtk.Button)
+                       and getattr(node, "_cifereca_action_label", "") == "Verrous…"
+                       for node in walk(historical_rows[0]))
         report["checks"]["P0_976_historical_local_review_row"] = True
         organizer_rows = [node for node in walk(w._tools_box)
                           if isinstance(node, Adw.ActionRow)
