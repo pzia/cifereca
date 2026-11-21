@@ -1,6 +1,8 @@
 """#4988: explicit consent for the normal lender path, without copy rights."""
 from __future__ import annotations
 
+from threading import Lock
+
 from ..core.borrow_for_identity_discovery import possible_lender_matches
 
 
@@ -51,8 +53,18 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             release()
             return
         stage = "submitted"
+        dispatch_lock = Lock()
+        dispatched = False
 
         def work():
+            nonlocal dispatched
+            # A rejected submission or completed dialog cannot dispatch a
+            # retained worker. Consume this local dispatch at most once;
+            # Core still owns the durable claim and all execution authority.
+            with dispatch_lock:
+                if dispatched or not owns("submitted"):
+                    return {"status": "blocked"}
+                dispatched = True
             # No widget reads on the worker. Core revalidates exact candidate,
             # requester object, epochs, lender/session and at-most-once claim.
             if (not route_current() or not possible_lender_matches(
