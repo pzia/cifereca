@@ -33,6 +33,7 @@ class LoanDownloadRetryRow:
     profile_refused_at: int = 0
     runtime_hold: bool = False
     runtime_started_at: int = 0
+    runtime_phase: str = ""
 
     @property
     def can_reset(self) -> bool:
@@ -140,7 +141,7 @@ def review_loan_download_retries(service, *, identity_id: str):
             retry = _decode(raw[0] if raw is not None else None)
             hold = kind == "loan" and _has_adept_hold(db, source, scopes)
             refused_at = read_adept_intervention(db, source)
-            runtime_hold, runtime_started_at = read_runtime_attempt_in_db(db, source)
+            runtime_hold, runtime_started_at, runtime_phase = read_runtime_attempt_in_db(db, source)
             if not (retry.failures or hold or refused_at or runtime_hold):
                 continue
             title = "Référence " + edition
@@ -160,7 +161,7 @@ def review_loan_download_retries(service, *, identity_id: str):
                                       if fact.field == "title"), title)
             result.append(LoanDownloadRetryRow(
                 source, title, retry, hold, state == "inactive", refused_at,
-                runtime_hold, runtime_started_at,
+                runtime_hold, runtime_started_at, runtime_phase,
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")
