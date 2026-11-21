@@ -1169,7 +1169,18 @@ class MainWindow(Adw.ApplicationWindow):
             from cifereca.gui.loan_download_retry_dialog import add_maintenance_retry_entry
             add_maintenance_retry_entry(
                 self, sections["recovery"], _page_context, Gtk=Gtk, Adw=Adw)
-            from cifereca.gui.maintenance_sections import show_unavailable, finish_sections
+            from cifereca.gui.maintenance_sections import show_unavailable, finish_sections, add_section_links
+            disposers = self._guided_maintenance_disposers
+            registry = getattr(manager, "registry_generation", None)
+            add_section_links(
+                sections, services, Gtk=Gtk,
+                current=lambda: (
+                    not self._closed and self._tools_box is box
+                    and self._guided_maintenance_disposers is disposers
+                    and _page_context.is_current()
+                    and self.plugin_manager is manager
+                    and getattr(manager, "registry_generation", None) == registry),
+            )
             statuses = getattr(manager, "statuses", None)
             if callable(statuses):
                 show_unavailable(sections, statuses(), services, Gtk=Gtk)
