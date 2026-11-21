@@ -113,24 +113,40 @@ def known_public_alternative_facts(row):
 
 def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None:
     """Only an exact, unpossessed, descriptive anonymous mirror is redundant."""
-    if (type(row) is not dict
-            or row.get("source") != "known_catalog"
-            or row.get("identity_id") != identity_id
-            or row.get("local") is not False
-            or any(row.get(name) for name in ("placement_id", "artifact_id", "local_path"))
-            or row.get("state") not in ("remote_catalog", "available_to_buy")):
+    # These are provider-mirrored presentation dictionaries, not an
+    # immutable Core witness. Inspect native keys/values before any equality
+    # or truthiness: foreign __eq__/__bool__ must not affect a C-first view.
+    if type(row) is not dict or any(type(name) is not str for name in row):
         return None
+    source, owner, state = (
+        row.get("source"), row.get("identity_id"), row.get("state"),
+    )
+    if (type(source) is not str or source != "known_catalog"
+            or type(owner) is not str or owner != identity_id
+            or row.get("local") is not False
+            or type(state) is not str
+            or state not in ("remote_catalog", "available_to_buy")):
+        return None
+    for name in ("placement_id", "artifact_id", "local_path"):
+        value = row.get(name)
+        if value is not None and (type(value) is not str or bool(value)):
+            return None
     meta = row.get("metadata")
     if (type(meta) is not dict
+            or any(type(name) is not str for name in meta)
             or type(meta.get("catalogue_scope_version")) is not int
-            or meta.get("catalogue_scope_version") not in (2, 3)
-            or meta.get("source_credential") != "__public__"
-            or meta.get("source_collection") != "public_catalog"
-            or meta.get("source_account_id") not in (None, "")):
+            or meta["catalogue_scope_version"] not in (2, 3)
+            or type(meta.get("source_credential")) is not str
+            or meta["source_credential"] != "__public__"
+            or type(meta.get("source_collection")) is not str
+            or meta["source_collection"] != "public_catalog"):
+        return None
+    account = meta.get("source_account_id")
+    if account is not None and (type(account) is not str or account != ""):
         return None
     revision = meta.get("source_revision")
     if meta["catalogue_scope_version"] == 2:
-        if revision not in (None, ""):
+        if revision is not None and (type(revision) is not str or revision != ""):
             return None
         revision = None
     elif type(revision) is not str or not revision:
@@ -140,7 +156,6 @@ def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None
     if any(type(value) is not str or not value for value in coords):
         return None
     return (*coords, revision)
-
 
 def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
     metadata = hit.classification.wire() if hit.classification is not None else {}
