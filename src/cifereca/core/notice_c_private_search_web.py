@@ -142,12 +142,17 @@ def _evidence(row, key, homepage):
 
 def stamp_authenticated_search_rows(service, call, rows):
     """Only the exact returned objects get the transient Core observation receipt."""
-    if type(rows) is not list or len(rows) > 10000:
+    if type(rows) not in (list, tuple):
         return
+    # Invalidate receipts BEFORE admission and its 10k budget check.
+    # A reused row in an oversized or wrong-container response must not
+    # keep an older call's private publication authority. Even rejected
+    # materialized batches are cleared (persistence already walks each row).
     for row in rows:
         if type(row) is SearchResult:
             row.__dict__.pop(_MARKER, None)
-    if type(call) is not _Call or not call.binding.current(service, call.scope):
+    if (type(rows) is not list or len(rows) > 10000
+            or type(call) is not _Call or not call.binding.current(service, call.scope)):
         return
     seen = {}
     for row in rows:
