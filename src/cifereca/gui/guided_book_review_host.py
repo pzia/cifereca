@@ -19,13 +19,15 @@ def _text(value, maximum):
 class GuidedBookReviewLease:
     __slots__ = ("_lease", "_placement", "_ui_current", "_thread", "_action",
                  "_group", "_toast", "_buttons", "_ids", "_dispose",
-                 "_phase", "_pending", "_group_disposers")
+                 "_phase", "_pending", "_group_disposers", "_issued", "_retire")
 
-    def __init__(self, lease, placement, ui_current, add_action, add_group, toast):
+    def __init__(self, lease, placement, ui_current, add_action, add_group, toast, retire=None):
         self._lease, self._placement = lease, placement
         self._ui_current, self._thread = ui_current, get_ident()
         self._action, self._group, self._toast = add_action, add_group, toast
-        self._buttons, self._ids = [], set()
+        self._retire = retire
+        self._buttons, self._ids = {}, set()
+        self._issued = 0
         self._dispose = None
         self._phase = None
         self._pending = []
@@ -85,9 +87,11 @@ class GuidedBookReviewLease:
         if (self._phase not in ("mount", "delivery") or not self._ui_live()
                 or not _text(action_id, 80)
                 or not _text(title, 256) or not _text(tooltip, 1024)
-                or not callable(invoke) or action_id in self._ids or len(self._ids) >= 12):
+                or not callable(invoke) or action_id in self._ids or len(self._ids) >= 12
+                or self._issued >= 64):
             return
         self._ids.add(action_id)
+        self._issued += 1
 
         def clicked(button):
             if (self._phase is None and self._ui_live()
@@ -115,7 +119,23 @@ class GuidedBookReviewLease:
             if callable(hide):
                 hide(False)
             return
-        self._buttons.append(button)
+        self._buttons[args[0]] = button
+
+    def retire_action(self, action_id):
+        """Optional bounded replacement of a live action during delivery only."""
+        if (self._phase != "delivery" or not self._ui_live()
+                or not _text(action_id, 80) or action_id not in self._buttons):
+            return False
+        button = self._buttons.pop(action_id)
+        self._ids.discard(action_id)
+        button._cifereca_action_context_revoked = True
+        button._cifereca_review_action_retired = True
+        hide = getattr(button, "set_visible", None)
+        if callable(hide):
+            hide(False)
+        if callable(self._retire):
+            self._retire(button)
+        return True
 
     def _mount(self, contribute):
         if self._phase is not None or self._dispose is not None or not self._ui_live():
@@ -154,7 +174,7 @@ class GuidedBookReviewLease:
     def dispose(self):
         self._lease.dispose()
         self._pending.clear()
-        buttons, self._buttons = self._buttons, []
+        buttons, self._buttons = tuple(self._buttons.values()), {}
         groups, self._group_disposers = self._group_disposers, []
         for button in buttons:
             button._cifereca_action_context_revoked = True
@@ -241,7 +261,8 @@ def admit_guided_book_review(window, detail, row, item, *, token, resolved):
 
         lease = GuidedBookReviewLease(
             GuidedMaintenanceHostLease(identity, valid, enqueue), placement,
-            ui_current, add_action, detail.add_review_group, window.toast)
+            ui_current, add_action, detail.add_review_group, window.toast,
+            retire=getattr(detail, "remove_review_action", None))
         return lease if lease._ui_live() else None
     except Exception:
         return None

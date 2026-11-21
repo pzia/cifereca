@@ -558,3 +558,237 @@ def test_exact_anonymous_series_reaches_durable_c_from_paris_parser(
         assert len(calls) == 1
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("mode", ["direct", "sync", "progressive", "headless"])
+@pytest.mark.parametrize("scenario,scope", [
+    ("CATALOGUE", "physical"), ("EBOOKS", "digital"),
+])
+def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
+    tmp_path, monkeypatch, scenario, scope, mode,
+):
+    from dataclasses import replace
+    from cifereca.config import Config
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+    from cifereca.models import Account
+    from cifereca.core.notice_c_private_series import (
+        capture_series_call, stamp_series_rows, persist_series_rows,
+        read_series_for_search, _key,
+    )
+    from cifereca.core.notice_c_cover_index import (
+        canonical_cover_document_ref, read_consolidated_notice_cover,
+    )
+    from cifereca.core.notice_cover_projection import notice_cover_document_ref
+    from cifereca.core.notice_cover_repository import read_notice_cover, evict_notice_cover
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.search_orchestration import capture_search_read_scope
+
+    payload = _response(scenario, _facet(field="SeriesTitle_exact", label="Page facet"))
+    payload["d"]["Results"][0]["CustomResult"] = (
+        '<a href="/Search?field=SeriesTitle_idx">Cycle astral</a>'
+    )
+    calls = []
+    def respond(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payload)
+
+    config = Config(tmp_path / "config.json")
+    config.set("library.directory", str(tmp_path / "library"))
+    config.set("identities", [{"id": "alice", "label": "Alice"},
+                              {"id": "bob", "label": "Bob"}])
+    config.set("providers.accounts", [])
+    path = tmp_path / "private-series.sqlite"
+    service = LibraryService(config, Storage(path), Diagnostics())
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris",
+        credentials={"username": "fixture", "password": "fixture"},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = _client(respond)
+    session.connected = True
+    session._accounts = [
+        Account(identity_id="alice", provider_id=session.provider_id,
+                credential_id=session.credential_id, unique_id=identifier)
+        for identifier in ("", "secondary")
+    ]
+    service.accounts = list(session._accounts)
+    service._sessions = {service._session_key(session.provider_id, session.credential_id): session}
+    monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: True)
+    db = service.storage
+    db.provider_connection_put({
+        "identity_id": "alice", "provider_id": session.provider_id,
+        "credential_id": session.credential_id, "enabled": True,
+    })
+    try:
+        assert capture_series_call(service, session, "bob") is None
+        assert service.current_identity.identity_id == "alice"
+        lease = capture_search_read_scope(service, "alice")
+        if mode == "direct":
+            call = capture_series_call(service, session, "alice")
+            assert call is not None
+            response = session.search_with_response_facets("Synthetic book", scope)
+            row, = response.results
+            assert response.public_notices[0].result is not row
+            stamp_series_rows(service, call, response.results)
+            assert persist_series_rows(service, [replace(row)], identity_id="alice") == 0
+            assert persist_series_rows(service, response.results, identity_id="alice") == 1
+        elif mode == "sync":
+            row, = service.search(
+                "Synthetic book", scope=scope, provider_id=session.provider_id, force=True,
+            )
+        elif mode == "progressive":
+            batches = []
+
+            def receive(batch):
+                actual, = batch.results
+                assert read_series_for_search(service, actual, reader_scope=lease).label == "Cycle astral"
+                batches.append(actual)
+
+            summary = service.search_progressive(
+                "Synthetic book", scope=scope, provider_id=session.provider_id,
+                force=True, on_batch=receive,
+            )
+            assert not summary.cancelled and summary.result_count == 1
+            row, = batches
+        else:
+            summary, rows = service.search_progressive_result_for_scope(
+                lease, "Synthetic book", scope=scope, provider_id=session.provider_id, force=True,
+            )
+            assert not summary.cancelled and summary.result_count == 1
+            row, = rows
+        assert row.source_account_id is None
+        assert persist_series_rows(service, [replace(row)], identity_id="alice") == 0
+        key = _key(row, "alice")
+        assert key.account_id is None and key.visibility == "private"
+        document = notice_cover_document_ref(key)
+        canonical = canonical_cover_document_ref(key.edition_id)
+        source = read_notice_cover(db, document)
+        member, = read_consolidated_notice_cover(db, canonical).sources
+        assert member.private_series_digest is not None
+        assert member.public_bibliography is None and member.private_web_digest is None
+        lease = capture_search_read_scope(service, "alice")
+        assert read_series_for_search(service, row, reader_scope=lease).label == "Cycle astral"
+        assert read_series_for_search(service, row, reader_scope=capture_search_read_scope(
+            service, "bob",
+        )) is None
+        row.metadata["series"] = ["Other"]
+        assert persist_series_rows(service, [row], identity_id="alice") == 0
+        assert read_series_for_search(service, row, reader_scope=lease).label == "Cycle astral"
+        assert search_public_notice_c(db, "Cycle astral").hits == ()
+        assert evict_notice_cover(db, document, expected_epoch=source.epoch)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert len(calls) == 1
+    finally:
+        service.close()
+
+    service = LibraryService(config, Storage(path), Diagnostics())
+    try:
+        from cifereca.core.source_context import revoke_source_context
+
+        assert not service._sessions
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: True)
+        lease = capture_search_read_scope(service, "alice")
+        relation = read_series_for_search(service, row, reader_scope=lease)
+        assert relation.label == "Cycle astral"
+        assert relation.scope == scenario
+        assert relation.source_field == "Search.CustomResult"
+
+        # A disabled provider is not an offline authority even though the
+        # durable connection is still enabled. Exercise both entry and exit
+        # policy checks; no session or mocked supplier request is involved.
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: False)
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        policy = iter((True, False))
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: next(policy))
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        revoke_source_context(service)
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda p, i=None: True)
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        lease = capture_search_read_scope(service, "alice")
+        assert read_series_for_search(service, row, reader_scope=lease) == relation
+
+        # Durable connection disable/re-enable is a separate ABA fence.
+        # A fresh read lease is still not evidence of the old source epoch.
+        connection = {
+            "identity_id": "alice", "provider_id": row.source_provider,
+            "credential_id": row.source_credential,
+        }
+        service.storage.provider_connection_put(dict(connection, enabled=False))
+        assert read_series_for_search(service, row, reader_scope=lease) is None
+        service.storage.provider_connection_put(dict(connection, enabled=True))
+        assert read_series_for_search(service, row, reader_scope=capture_search_read_scope(
+            service, "alice",
+        )) is None
+        assert search_public_notice_c(service.storage, "Cycle astral").hits == ()
+        assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+        assert len(calls) == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("subject,expected", [
+    (["Astronomie", "Sciences"], ["Astronomie", "Sciences"]),
+    ([], None),
+    (["https://private.example/?token=fixture"], None),
+    (["file:/home/private"], None),
+])
+def test_exact_anonymous_subject_reaches_durable_c(tmp_path, subject, expected):
+    from types import SimpleNamespace
+    from contextlib import closing
+    from cifereca.core.search_orchestration import (
+        _public_rows_from_response, _mirror_remote_results,
+    )
+    from cifereca.core.notice_cover_repository import read_notice_cover, evict_notice_cover
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.storage import Storage
+
+    payload = _response("EBOOKS", _facet(values=[
+        {"Label": "Page seulement", "Count": 9, "IsSelected": False},
+    ]))
+    resource = payload["d"]["Results"][0]["Resource"]
+    resource.update(Subj=subject, Tags=["Jeunesse"], BlogPostCategories=["Blog"])
+    calls = []
+
+    def respond(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payload)
+
+    session = ParisProviderSession(
+        credential_id="__public__", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = _client(respond)
+    path = tmp_path / "paris-subject.sqlite"
+    try:
+        response = session.search_with_response_facets("Synthetic book", "digital")
+        raw, = response.results
+        assert response.public_notices[0].result is raw
+        assert raw.metadata.get("subjects") == expected
+        assert not {"tags", "paris_blog_categories", "recommended_age"} & raw.metadata.keys()
+        assert raw.owned is raw.downloadable is False and raw.download_url is None
+        with closing(Storage(path)) as db:
+            row, = _public_rows_from_response(response, session)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            exact = row._core_notice_cover_document_ref
+            canonical = row._core_notice_canonical_cover_document_ref
+            classification = read_consolidated_notice_cover(db, canonical).sources[0].public_bibliography.classification
+            assert (classification.wire() if classification else None) == (
+                {"subjects": expected} if expected else None)
+            assert evict_notice_cover(db, exact, expected_epoch=read_notice_cover(db, exact).epoch)
+        with closing(Storage(path)) as db:
+            hits = search_public_notice_c(db, "astronomie", field="subject").hits
+            assert len(hits) == int(expected is not None)
+            if hits:
+                assert hits[0].document == canonical
+            for needle in ("Jeunesse", "Blog", "Page seulement"):
+                assert not search_public_notice_c(db, needle, field="subject").hits
+            assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert len(calls) == 1
+    finally:
+        session.close()

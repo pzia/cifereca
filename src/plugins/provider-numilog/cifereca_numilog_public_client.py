@@ -94,7 +94,9 @@ def public_search_url(query: str, page: int = 0) -> str:
 _MAX_RETAINED_BYTES = 2 * 1024 * 1024
 _PARSER_FAMILY_DIGEST = sha256(b"numilog.public.search.html").hexdigest()
 # Bump with changes to the replay parser and its dependent HTML helpers.
-_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v1").hexdigest()
+# v2: strict counter/card/layout and inert-text boundaries (#7163, #7396).
+# Keep the family digest: retained v1 inputs can be evaluated by v2.
+_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v2").hexdigest()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -153,7 +155,9 @@ def _parse_search_body(body, url):
         return parse_public_search(body.decode("utf-8-sig", errors="replace"), url)
     except PublicSearchParseError as exc:
         reason = exc.code if type(exc.code) is str and exc.code in _LAYOUT_REASONS else "unknown"
-        raise ProviderError("Numilog : public_catalog_layout_unverified:" + reason) from None
+        error = ProviderError("Numilog : public_catalog_layout_unverified:" + reason)
+        error.code = "search_protocol_unverified"
+        raise error from None
 
 
 def _parse_retained_search_input(raw):
@@ -197,6 +201,7 @@ _MAX_PUBLIC_SEARCH_FLIGHTS = 16
 class _SharedSearchFailure:
     message: str
     retry_after: float | None = None
+    code: str | None = None
 
 
 def _shareable_failure(exc):
@@ -213,7 +218,11 @@ def _shareable_failure(exc):
             return _SharedSearchFailure(message)
         layout = prefix + "layout_unverified:"
         if message.startswith(layout) and message[len(layout):] in _LAYOUT_REASONS | {"unknown"}:
-            return _SharedSearchFailure(message)
+            code = getattr(exc, "code", None)
+            return _SharedSearchFailure(
+                message, code="search_protocol_unverified"
+                if type(code) is str and code == "search_protocol_unverified" else None,
+            )
     return _SharedSearchFailure("Numilog : public_catalog_network_unavailable")
 
 
@@ -231,7 +240,10 @@ def _await_public_search_flight(future, timeout):
             error = exception(outcome.message, None)
             error.retry_after_seconds = outcome.retry_after
             raise error
-        raise ProviderError(outcome.message)
+        error = ProviderError(outcome.message)
+        if outcome.code == "search_protocol_unverified":
+            error.code = outcome.code
+        raise error
     page, body = outcome
     return deepcopy(page), body
 

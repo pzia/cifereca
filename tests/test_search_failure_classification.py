@@ -296,3 +296,18 @@ def test_exception_graph_budget_fails_closed_without_stale_permission():
     assert search_failure_code(root) is None
     assert not public_service_unavailable(root)
     assert should_stop_search_variants(root)
+
+
+def test_unverified_protocol_is_terminal_without_stale_permission():
+    from cifereca.search_failures import should_stop_search_variants
+
+    error = ProviderError("PRIVATE_HTML")
+    error.code = "search_protocol_unverified"
+    for cause in (None, httpx.ReadTimeout("PRIVATE_URL")):
+        error.__cause__ = cause
+        assert search_failure_code(error) == "SearchProtocolUnverified"
+        assert should_stop_search_variants(error)
+        assert not public_service_unavailable(error)
+    error.__cause__ = _http_error(403)
+    assert search_failure_code(error) == "SearchAccessDenied"
+    assert not public_service_unavailable(error)

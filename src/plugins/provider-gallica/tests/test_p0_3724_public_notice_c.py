@@ -187,3 +187,46 @@ def test_conflicting_ark_alternate_cannot_supply_a_web_choice(tmp_path):
         assert len(calls) == 1
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ("<dcterms:subject>Astronomie</dcterms:subject>", ["Astronomie"]),
+    ("<dcterms:subject>Astronomie</dcterms:subject>"
+     "<dcterms:subject>Astronomie</dcterms:subject>", ["Astronomie"]),
+    ('<category term="Astronomie"/>', None),
+    ("<dcterms:subject><b>Astronomie</b></dcterms:subject>", None),
+    ("<dcterms:subject>https://private.example/?token=secret</dcterms:subject>", None),
+])
+def test_explicit_subject_retained_after_eviction_and_restart(tmp_path, fields, expected):
+    from contextlib import closing
+
+    entries = ENTRY.replace("</entry>", fields + "</entry>")
+    obj, calls = session(entries)
+    filename = tmp_path / "gallica-subjects.sqlite"
+    try:
+        with closing(Storage(filename)) as db:
+            response = obj.search_with_response_facets(
+                "Notice exacte Gallica", "catalog", field="title",
+            )
+            raw, = response.results
+            assert response.public_notices[0].result is raw
+            assert raw.metadata.get("subjects") == expected
+            assert raw.owned is raw.downloadable is False and raw.download_url is None
+            row, = _public_rows_from_response(response, obj)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            source = read_notice_cover(db, row._core_notice_cover_document_ref)
+            canonical = row._core_notice_canonical_cover_document_ref
+            facts = read_consolidated_notice_cover(db, canonical).sources[0].public_bibliography
+            assert (facts.classification.wire() if facts.classification else None) == (
+                {"subjects": expected} if expected else None)
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        with closing(Storage(filename)) as db:
+            hits = search_public_notice_c(db, "astronomie", field="subject").hits
+            assert len(hits) == int(bool(expected))
+            if hits:
+                assert hits[0].document == canonical
+            assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert len(calls) == 1
+    finally:
+        obj.close()

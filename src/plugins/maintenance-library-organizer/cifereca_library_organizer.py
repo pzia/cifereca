@@ -64,7 +64,23 @@ def display(page):
         lines.append("Aucun groupe enregistré dans cette page de l’inventaire SQL.")
     lines.extend(("", "« Tout accepter (avis) » ne sélectionne que des recommandations, "
                   "sans effet sur les fichiers, droits ou provenances."))
+    if page.dry_run_state:
+        lines.extend(("", "Simulation confirmée — aucune exécution."
+                      if page.dry_run_state == "confirmed" else "Plan à blanc — à confirmer."))
+        labels = {"rename": "Renommage", "classify": "Classement", "keeper": "Copie à conserver"}
+        states = {"review_only": "Avis uniquement", "relocation_held": "Déplacement bloqué",
+                  "cleanup_held": "Retrait bloqué", "destination_conflict": "Collision"}
+        for entry in page.dry_run_entries:
+            lines.append(f"{labels.get(entry.operation, 'Revue')} : {entry.current} → {entry.proposed}"
+                         f" · {states.get(entry.state, 'Bloqué')}")
     return "\n".join(lines)
+
+
+def can_prepare(page):
+    return (type(page) is OrganizerPageAdvice and not page.dry_run_state
+            and (page.eligible > 0 or any(
+                group.copies == 1 and (file.reason == "rename_advice_only" or file.classified_path)
+                for group in page.groups for file in group.files)))
 
 
 class GuidedOrganizer:
@@ -95,8 +111,13 @@ class GuidedOrganizer:
             operation = lambda: self.broker.preview(identity_id=self.identity_id, confirmed=True)
         elif action == "next" and page is not None and page.has_more:
             operation = lambda: self.broker.next_page(token=page.token, confirmed=True)
-        elif action == "select" and page is not None and page.eligible and not page.selected:
+        elif action == "select" and page is not None and page.eligible and not page.selected and not page.dry_run_state:
             operation = lambda: self.broker.select_all_advice(token=page.token, confirmed=True)
+        elif action == "prepare" and can_prepare(page) and callable(getattr(self.broker, "prepare_dry_run", None)):
+            operation = lambda: self.broker.prepare_dry_run(token=page.token, confirmed=True)
+        elif (action == "confirm" and page is not None and page.dry_run_state == "prepared"
+              and callable(getattr(self.broker, "confirm_dry_run", None))):
+            operation = lambda: self.broker.confirm_dry_run(token=page.token, confirmed=True)
         else:
             return False
 
@@ -240,6 +261,9 @@ class OrganizerPlugin:
         actions.append(accept)
         actions.append(cancel)
         outer.append(actions)
+        simulation = Gtk.Button(label="Préparer le plan à blanc")
+        simulation.set_sensitive(False)
+        outer.append(simulation)
         detail = Gtk.Label(xalign=0)
         detail.set_wrap(True)
         detail.set_selectable(True)
@@ -249,7 +273,11 @@ class OrganizerPlugin:
         def render(page, busy):
             start.set_sensitive(not busy)
             following.set_sensitive(not busy and page is not None and page.has_more)
-            accept.set_sensitive(not busy and page is not None and bool(page.eligible) and not page.selected)
+            accept.set_sensitive(not busy and page is not None and bool(page.eligible) and not page.selected and not page.dry_run_state)
+            prepared = page is not None and page.dry_run_state == "prepared"
+            simulation.set_label("Confirmer la simulation" if prepared else "Préparer le plan à blanc")
+            simulation.set_sensitive(not busy and ((prepared and callable(getattr(controller.broker, "confirm_dry_run", None)))
+                or (can_prepare(page) and callable(getattr(controller.broker, "prepare_dry_run", None)))))
             cancel.set_sensitive(not controller._cancelled and (busy or page is not None))
             detail.set_visible(True)
             detail.set_text(
@@ -263,6 +291,8 @@ class OrganizerPlugin:
         start.connect("clicked", lambda _b: controller.request("preview"))
         following.connect("clicked", lambda _b: controller.request("next"))
         accept.connect("clicked", lambda _b: controller.request("select"))
+        simulation.connect("clicked", lambda _b: controller.request(
+            "confirm" if controller.page is not None and controller.page.dry_run_state == "prepared" else "prepare"))
         cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)
 

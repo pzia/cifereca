@@ -12,7 +12,7 @@ from time import monotonic
 from typing import Any, Callable, Iterable
 
 from .catalogue_link import safe_document_link_url
-from .plugin_api.detail_action_descriptor import inactive_without_target
+from .plugin_api.detail_action_descriptor import inactive_without_target, public_action_reason
 from .plugin_api.models import (
     BookRef, CachedBookDetail, DetailField, DetailSection, Provenance,
     UiBookDetailAction,
@@ -73,6 +73,8 @@ def _valid_result(
         if not title:
             continue
         raw_url = action.uri
+        if type(raw_url) is not str:
+            continue
         if raw_url:
             uri = safe_document_link_url(raw_url, relation="related")
             if not uri:
@@ -87,7 +89,7 @@ def _valid_result(
             title=title, icon_name=_text(action.icon_name, 64) or "view-more-symbolic",
             uri=uri, callback=callback,
             state=action.state,
-            unavailable_reason=_text(action.unavailable_reason, 280),
+            unavailable_reason=public_action_reason(action.unavailable_reason),
             priority=action.priority, destructive=action.destructive,
         ))
     if not sections and not actions:
