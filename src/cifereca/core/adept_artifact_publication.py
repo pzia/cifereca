@@ -48,9 +48,10 @@ def _publish_new_adept_without_clobber(
                     and _source_current(stage_fd, produced_path.name, before))
 
         if produced_path == destination:
-            if not stage_current():
-                raise ProviderConfigurationError("Artefact final modifié")
-            return destination
+            # A stage cannot simultaneously be the final library placement.
+            # Accepting it would bypass the exclusive link/fsync protocol and
+            # silently make a provisional ADEPT name a published artifact.
+            raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
         dest_fd = _create_directory(destination.parent)
         if not _current_directory(destination.parent, dest_fd):
             raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
