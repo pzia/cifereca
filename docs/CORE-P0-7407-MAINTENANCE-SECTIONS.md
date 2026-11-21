@@ -11,6 +11,7 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | maintenance.audit.integrity | Intégrité | metadata, library.read / #3185 | Suspendu par garde manager |
 | maintenance.audit.covers | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
 | maintenance.audit.languages | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
+| maintenance.audit.metadata | Qualité | catalog / #7407, #6366 | Rapport agrégé partiel des divergences et compléments C ; aucune correction |
 | maintenance.library.local-origin | Provenance | library.origin.read, library.origin.detail.read / #4030 | Comparaison documentaire bornée |
 | Adaptateur ADEPT historique — provenances | Provenance | Core / #976 | Diagnostic et association sous gardes existantes |
 | Adaptateur ADEPT historique — verrous | Reprise | Même contrôleur Core / #7244 | Diagnostic des verrous et vérification des fichiers ; aucun déverrouillage autorisé |
@@ -19,4 +20,4 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue, capacité et simulation ; pas de reprise effective |
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
 
-Restent à livrer : dissociation capacité/reprise dans le package variantes, intégration des métadonnées contradictoires à la qualité documentaire, renvois des actions historiques et recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
+Restent à livrer : dissociation capacité/reprise dans le package variantes, suggestions détaillées par livre (rapport agrégé livré, aucune correction), renvois des actions historiques et recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
