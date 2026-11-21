@@ -21,6 +21,14 @@ _ALTERNATIVE_FIELDS = (
     ("title", "Titre"), ("author", "Auteur"), ("publisher", "Éditeur"),
     ("published_at", "Publication"), *_FIELDS, ("description", "Résumé (extrait)"),
 )
+# DetailField labels are owned by book_detail_metadata, distinct from the
+# multi-source prose labels above (Sujets -> Sujet, Genres -> Genre, etc.).
+_CLASSIFICATION_DETAIL_LABELS = (
+    ("subjects", "Sujet"), ("subject", "Sujet"),
+    ("genres", "Genre"), ("genre", "Genre"),
+    ("keywords", "Mot-clé"), ("tags", "Mot-clé"),
+    ("themes", "Thème"),
+)
 
 
 def _native_mapping(value):
@@ -91,16 +99,17 @@ def _alternative_proven_fields(alternative, hit, index, provider):
         ) for number, value in enumerate(values, 1))
     age = hit.age_observation
     if age is not None:
+        from .search_known_public_c_age import _same_native
         raw_evidence = alternative.get("bibliography_evidence")
         supplied = alternative.get("youth_age_ranges")
         verified = age.filter_ranges()
         # The source's original bounded parser observation and its admitted
         # filter ranges must BOTH match. Never show an age inferred from a
         # different provider, conflicting alternatives or edited metadata.
-        if (verified and type(raw_evidence) is dict
-                and raw_evidence.get("youth_age") == age.wire()
-                and type(supplied) is list and supplied == verified
-                and len(verified) <= 16):
+        if (verified and len(verified) <= 16
+                and type(raw_evidence) is dict
+                and _same_native(raw_evidence.get("youth_age"), age.wire())
+                and _same_native(supplied, verified)):
             labels = {
                 "interest": "intérêt", "reading": "lecture",
                 "publisher": "éditeur", "recommended": "recommandé",
@@ -235,14 +244,30 @@ def with_known_public_field_provenance(presentation, item):
         observed_at = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
     except (OverflowError, OSError, ValueError, TypeError):
         return presentation
+    # A displayed C field can be attributed only when its exact native
+    # value still agrees with the Core hit. Never execute supplier-defined
+    # __eq__ while decorating a mutable view row.
+    from .search_known_public_c_age import _same_native
     proven = {}
     series = hit.series_relation
-    if series is not None and metadata.get("series") == [series.label]:
+    if series is not None and _same_native(metadata.get("series"), [series.label]):
         proven[("Série", series.label)] = series
     language = hit.language_observation
-    if language is not None and metadata.get("languages") == list(language.languages):
+    if language is not None and _same_native(metadata.get("languages"), list(language.languages)):
         for value in language.languages:
             proven[("Langue", value)] = language
+    # Each classified subject/genre/tag is a separate SOURCE observation,
+    # not a reconciled truth or a field-path from the supplier parser.
+    # Protect independent fields from another field's late mutation.
+    classified = set()
+    classifications = hit.classification.wire() if hit.classification is not None else {}
+    for name, label in _CLASSIFICATION_DETAIL_LABELS:
+        if name in classifications and _same_native(
+            metadata.get(name), classifications[name],
+        ):
+            classified.update(
+                (label, value) for value in _values(classifications[name], limit=4096)
+            )
     # The primary source's plain catalogue fields carry source-level
     # provenance, not a fabricated parser field-path. Never decorate local
     # metadata or a changed value merely because its label matches.
@@ -259,8 +284,12 @@ def with_known_public_field_provenance(presentation, item):
         if type(field.value) is not str or field.provenance is not None:
             return field
         proof = proven.get((field.label, field.value))
-        if proof is not None:
+        if (proof is not None and section_title in
+                ("Détail", "Essentiel", "Catalogue")):
             source = proof.source + " · " + proof.source_field
+        elif (section_title in ("Détail", "Essentiel")
+              and (field.label, field.value) in classified):
+            source = "Notice C · observation de source"
         elif section_title == "Catalogue" and catalogue.get(field.label) == field.value:
             source = "Notice C · observation de source"
         else:

@@ -237,7 +237,11 @@ def _await_public_search_flight(future, timeout):
 
 
 def _coalesced_public_search(url, timeout):
-    key = (_transport_digest(url), timeout)
+    # The timeout is a per-caller wait budget, not part of the anonymous GET's
+    # URL/headers. Different budgets must not create simultaneous duplicate
+    # transports; the leader retains its own HTTP timeout and each follower
+    # independently applies its wait timeout in _await_public_search_flight.
+    key = _transport_digest(url)
     with _PUBLIC_SEARCH_FLIGHT_LOCK:
         flight = _PUBLIC_SEARCH_FLIGHTS.get(key)
         leader = flight is None and len(_PUBLIC_SEARCH_FLIGHTS) < _MAX_PUBLIC_SEARCH_FLIGHTS

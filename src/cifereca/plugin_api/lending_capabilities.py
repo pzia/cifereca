@@ -139,6 +139,8 @@ def assess_lending_operation(
                         account.identity_id, account.unique_id,
                     ))
             and bool(account.identity_id)
+            and type(account.is_primary) is bool
+            and (account.is_primary is True or bool(account.unique_id))
         )
         exact_session = bool(
             type(provider) is str and type(credential) is str
@@ -151,13 +153,15 @@ def assess_lending_operation(
         # Bound at most 512 already-known accounts. This is a memory read,
         # NEVER a session.accounts property call or provider refresh.
         # Duplicate borrower registrations must not count as readiness.
-        account_ready = bool(
-            type(current_accounts) in (list, tuple)
-            and len(current_accounts) <= 512
-            and exact_session
-            and sum(
-                1 for row in current_accounts if (
-                type(row) is Account
+        # Count by upstream borrower coordinate BEFORE comparing primary/linked
+        # roles. Two records sharing an ID with conflicting roles remain an
+        # ambiguous registration; filtering by role first would hide one.
+        matching = []
+        if (type(current_accounts) in (list, tuple)
+                and len(current_accounts) <= 512 and exact_session):
+            matching = [
+                row for row in current_accounts
+                if type(row) is Account
                 and all(type(value) is str for value in (
                     row.identity_id, row.provider_id,
                     row.credential_id, row.unique_id,
@@ -166,8 +170,13 @@ def assess_lending_operation(
                 and row.provider_id == account.provider_id
                 and row.credential_id == account.credential_id
                 and row.unique_id == account.unique_id
-                )
-            ) == 1
+            ]
+        account_ready = bool(
+            len(matching) == 1
+            and type(matching[0].is_primary) is bool
+            and matching[0].is_primary is account.is_primary
+            and (matching[0].is_primary is True
+                 or bool(matching[0].unique_id))
         )
         ready = bool(plugin_ready and connected and not closed and exact_session and account_ready)
     except Exception:

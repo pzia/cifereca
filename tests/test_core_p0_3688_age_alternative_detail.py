@@ -74,7 +74,14 @@ def test_age_of_second_source_has_its_own_provenance_in_both_details(tmp_path):
 
         # The same copy of metadata is not an exact source proof: the value
         # must agree with the immutable hit AND the original age wire.
-        for changed in ("age", "wire", "kind"):
+        class HostileEquals:
+            def __eq__(self, _other):
+                raise AssertionError("supplier-defined equality was invoked")
+
+        for changed in (
+            "age", "wire", "kind", "range_numeric_type", "wire_numeric_type",
+            "range_hostile_equality", "wire_hostile_equality",
+        ):
             meta = deepcopy(search["metadata"])
             alternative = meta["notice_c_source_alternatives"][0]
             if changed == "age":
@@ -83,8 +90,17 @@ def test_age_of_second_source_has_its_own_provenance_in_both_details(tmp_path):
                 alternative["bibliography_evidence"]["youth_age"]["source_field"] = (
                     "other.fixture.age"
                 )
-            else:
+            elif changed == "kind":
                 alternative["youth_age_ranges"][0]["age_kind"] = "reading"
+            elif changed == "range_numeric_type":
+                # Python would accept 12.0 == 12 but source receipts do not.
+                alternative["youth_age_ranges"][0]["age_min"] = 12.0
+            elif changed == "wire_numeric_type":
+                alternative["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = 12.0
+            elif changed == "range_hostile_equality":
+                alternative["youth_age_ranges"][0]["age_min"] = HostileEquals()
+            else:
+                alternative["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = HostileEquals()
             forged = {**search, "metadata": meta}
             part = known_public_alternative_section(meta, item=forged)
             assert part is not None

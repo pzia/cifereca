@@ -117,6 +117,79 @@ def test_keeper_accept_all_is_advice_only(store, tmp_path):
     assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
 
 
+
+@pytest.mark.parametrize("drift", ["sqlite", "binding", "other_scope", "missing_anchor"])
+def test_direct_keeper_advice_rejects_stale_review_snapshot(store, tmp_path, monkeypatch, drift):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is not None
+    if drift == "sqlite":
+        store.metadata_set("organizer-advice-drift", "yes")
+    elif drift == "binding":
+        monkeypatch.setattr(
+            store, "exact_profile_directory_binding", lambda _identity: ("wrong", True),
+        )
+    elif drift == "other_scope":
+        scope = review.admit_organizer_review(service)
+        assert scope is not None and scope is not result["review_anchor"].scope
+    else:
+        result = {k: v for k, v in result.items() if k != "review_anchor"}
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+
+
+def test_direct_keeper_advice_rejects_sql_change_during_confirmation(store, tmp_path, monkeypatch):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    original = review.preview_keeper_bulk
+
+    def changed_during_preview(*args, **kwargs):
+        selected = original(*args, **kwargs)
+        if kwargs.get("accept_all") is True:
+            store.metadata_set("organizer-confirmation-drift", "yes")
+        return selected
+
+    monkeypatch.setattr(review, "preview_keeper_bulk", changed_during_preview)
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+
+
+
+@pytest.mark.parametrize("drift", [
+    "candidate_missing", "candidate_modified", "keeper_modified", "candidate_alias",
+])
+def test_direct_keeper_selection_reverifies_physical_bytes(store, tmp_path, drift):
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, result = _run(service)
+    assert len(result["keeper_advice"].eligible) == 1
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is not None
+    candidate = Path(store.placement_get(pair[0].placement_id)["path"])
+    keeper = Path(store.placement_get(pair[1].placement_id)["path"])
+    before = rows(store)
+    if drift == "candidate_missing":
+        candidate.unlink()
+    elif drift == "candidate_modified":
+        candidate.write_bytes(b"modified")
+    elif drift == "keeper_modified":
+        keeper.write_bytes(b"modified")
+    else:
+        candidate.unlink()
+        candidate.symlink_to(keeper)
+    # SQLite and scope are unchanged; only a fresh physical keeper review
+    # detects the loss, including a symlink to the otherwise valid keeper.
+    assert review.sqlite_source_stamp(scope.database) == result["review_anchor"].stamp
+    assert review.select_organizer_keeper_advice(scope, result, confirmed=True) is None
+    assert rows(store) == before
+
+
+
 def test_page_continuation_invalidated_by_sql_or_identity_change(store, tmp_path):
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
@@ -181,3 +254,49 @@ def test_native_organizer_only_runs_on_click_and_rejects_stale_delivery(store, t
         accept.click()
         assert "1 sélectionnés" in detail.text and not accept.sensitive
         assert len(tasks) == 1 and not following.sensitive
+
+
+@pytest.mark.parametrize("unavailable", ["sqlite_connection", "profile_binding"])
+def test_keeper_confirmation_refuses_unavailable_storage_boundary(
+    store, tmp_path, monkeypatch, unavailable,
+):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, page = _run(service)
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is not None
+
+    def fails(*_args, **_kwargs):
+        raise OSError("synthetic unavailable database")
+
+    target = "_connect" if unavailable == "sqlite_connection" else "exact_profile_directory_binding"
+    monkeypatch.setattr(store, target, fails)
+    # This direct Core consumer previously raised before the try/except in
+    # select_organizer_keeper_advice. A refused observation cannot be selected.
+    assert scope.bound() is False
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
+    assert review.run_organizer_review(service, scope) is None
+
+
+def test_keeper_advice_rejects_unavailable_physical_recheck_without_exception(
+    store, tmp_path, monkeypatch,
+):
+    import sqlite3
+
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, page = _run(service)
+    before = rows(store)
+
+    def unavailable(*_args, **_kwargs):
+        raise sqlite3.OperationalError("synthetic unavailable keeper witness")
+
+    monkeypatch.setattr(review, "review_canonical_keeper", unavailable)
+    # The initial advice was valid. A later failed Core recheck is a veto,
+    # never an unhandled exception or authority to retire a copy.
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
+    assert rows(store) == before
+    assert all(Path(store.placement_get(p.placement_id)["path"]).exists() for p in pair)
