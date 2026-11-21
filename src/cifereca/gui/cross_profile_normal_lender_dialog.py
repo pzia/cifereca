@@ -164,10 +164,11 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
 
 
 def append_normal_lender_action(panel, *, item, rows, visible, service,
-                                identity, identity_id, account_epoch, source_epoch):
+                                identity, identity_id, account_epoch, source_epoch, route):
     """Attach an optional consent entry to the existing shared detail action bar."""
     window = panel.window
-    if (type(rows) is not tuple or not 1 <= len(rows) <= 64
+    if (getattr(window, "_route_display_token", None) is not route
+            or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or not callable(getattr(panel, "_actions", None))
             or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))):
         return False
@@ -184,6 +185,7 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
         try:
             return (not getattr(window, "_closed", False)
                     and not getattr(button, "_cifereca_action_context_revoked", False)
+                    and getattr(window, "_route_display_token", None) is route
                     and panel.get_mapped()
                     and panel._rendered_search_detail is visible
                     and window.service is service

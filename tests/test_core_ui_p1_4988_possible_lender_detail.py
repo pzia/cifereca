@@ -221,3 +221,81 @@ def test_mutated_exact_object_does_not_publish_possible_lender_summary(mutation)
     done(rows)
     group.assert_not_called()
     service.execute_cross_profile_borrow.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["route", "detail", "hidden", "identity", "none"])
+def test_group_render_revalidates_original_context_before_action(monkeypatch, change):
+    from cifereca.gui import cross_profile_normal_lender_dialog as dialog
+
+    w, candidate, service, panel, group, read = view()
+    original_route = panel.window._route_display_token
+    mapped = [True]
+    panel.get_mapped = lambda: mapped[0]
+
+    def during_group(*args):
+        if change == "route":
+            panel.window._route_display_token = object()
+            panel.window._route_display_token = object()
+        elif change == "detail":
+            panel._rendered_search_detail = (w.notice, object())
+        elif change == "hidden":
+            mapped[0] = False
+        elif change == "identity":
+            service.current_identity = NS(identity_id="bob")
+
+    group.side_effect = during_group
+    attach = Mock()
+    monkeypatch.setattr(dialog, "append_normal_lender_action", attach)
+    assert append(panel, w.notice)
+    deliver(panel)
+    group.assert_called_once()
+    if change == "none":
+        attach.assert_called_once()
+        assert attach.call_args.kwargs["route"] is original_route
+    else:
+        attach.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["before_attach", "after_attach", "unchanged"])
+def test_original_route_fences_retained_lender_button(monkeypatch, stage):
+    import sys
+    from cifereca.gui import cross_profile_normal_lender_dialog as dialog
+
+    w, candidate, service, panel, group, read = view()
+    window = panel.window
+    window._identity_context_generation = 1
+    window._account_context_generation = 2
+    service.execute_normal_lender_borrow_for_current_identity = Mock()
+    panel.get_mapped = lambda: True
+    panel._actions = Mock()
+    route = window._route_display_token
+    button = NS(connect=Mock())
+    monkeypatch.setitem(sys.modules, "gi", NS())
+    monkeypatch.setitem(sys.modules, "gi.repository", NS(Adw=NS()))
+    monkeypatch.setitem(sys.modules, "cifereca.gui.action_widgets",
+                        NS(action_button=lambda *args: button))
+    monkeypatch.setitem(sys.modules, "cifereca.gui.task_runner",
+                        NS(TaskPriority=NS()))
+    chooser = Mock(side_effect=lambda _panel, **kwargs: kwargs["current"]())
+    monkeypatch.setattr(dialog, "present_normal_lender_choice", chooser)
+
+    if stage == "before_attach":
+        window._route_display_token = object()
+    attached = dialog.append_normal_lender_action(
+        panel, item=w.notice, rows=(candidate,),
+        visible=panel._rendered_search_detail, service=service,
+        identity=service.current_identity, identity_id="bob",
+        account_epoch=3, source_epoch=5, route=route,
+    )
+    if stage == "before_attach":
+        assert not attached
+        panel._actions.assert_not_called()
+        return
+    assert attached
+    panel._actions.assert_called_once_with([button])
+    if stage == "after_attach":
+        window._route_display_token = object()
+        window._route_display_token = object()
+    callback = button.connect.call_args.args[1]
+    assert callback(button) is (stage == "unchanged")
+    service.execute_normal_lender_borrow_for_current_identity.assert_not_called()
