@@ -136,3 +136,84 @@ def test_completed_handoff_and_final_B_commit_use_full_durability(rig, monkeypat
         assert commit < restore
     assert service.calls == 1 and rows(storage) == (1, 1, 1, 1)
     assert journal(storage)[0][:2] == ("complete", "sha256:" + SHA)
+
+
+@pytest.mark.parametrize("case", ["no_publication", "wrong_provider_receipt", "missing_adept_proof"])
+def test_journal_cannot_claim_complete_without_exact_committed_B(rig, monkeypatch, case):
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+
+    service, account, source, snapshot, root, lock_path = rig
+    offer = _staged(rig, monkeypatch)
+    storage = service.storage
+    before = journal(storage)
+    assert rows(storage) == (0, 0, 0, 0)
+    if case != "no_publication":
+        path = root / "A" / "book.pdf"
+        publish_completed_acquisition(
+            storage, library_root=root, path=path, source=source,
+            snapshot=snapshot, final_sha256=SHA,
+            delivery_receipt_ref=(
+                "wrong-proof" if case == "wrong_provider_receipt"
+                else "synthetic-completed-delivery-" + source.right_id
+            ),
+        )
+        if case == "missing_adept_proof":
+            record = json.loads(before[0][2])
+            record["adept_receipt"] = "ADEPT-proof-not-published"
+            with storage._lock, storage._connect() as sql:
+                sql.execute(
+                    "UPDATE acquisition_ledger SET metadata_json=? "
+                    "WHERE acquisition_id LIKE 'canonical-intake:%'",
+                    (json.dumps(record),),
+                )
+            before = journal(storage)
+    with InterProcessLock(lock_path) as lock:
+        with pytest.raises(ValueError, match="canonical_intake_published_origin_unverified"):
+            recovery.mark_completed_delivery_published(
+                storage, source=source, offer_id=offer, artifact_id="sha256:" + SHA,
+                shared_lock=lock,
+            )
+    assert journal(storage) == before
+    assert (root / "A" / "book.pdf").read_bytes() == BYTES
+    if case == "no_publication":
+        assert rows(storage) == (0, 0, 0, 0)
+        assert run(service, account, snapshot, root, lock_path, {source},
+                   lambda *_: pytest.fail("persisted final receipt must avoid GET")
+                   )[0].status == "recovered"
+        assert journal(storage)[0][:2] == ("complete", "sha256:" + SHA)
+    else:
+        assert rows(storage)[-1] == 1
+
+
+def test_journal_terminal_requires_exact_provider_and_adept_origins(rig, monkeypatch):
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+
+    service, account, source, snapshot, root, lock_path = rig
+    offer = _staged(rig, monkeypatch)
+    db = service.storage
+    # The independent publisher consumes only a verified staged file and
+    # never invents the proof carried in the recovery journal.
+    document = json.loads(journal(db)[0][2])
+    document["adept_receipt"] = "synthetic-adept-final"
+    with db._lock, db._connect() as sql:
+        sql.execute("UPDATE acquisition_ledger SET metadata_json=? "
+                    "WHERE acquisition_id LIKE 'canonical-intake:%'",
+                    (json.dumps(document),))
+    publish_completed_acquisition(
+        db, library_root=root, path=root / "A" / "book.pdf",
+        source=source, snapshot=snapshot, final_sha256=SHA,
+        delivery_receipt_ref=document["receipt"],
+        adept_receipt_ref=document["adept_receipt"],
+    )
+    with InterProcessLock(lock_path) as lock:
+        recovery.mark_completed_delivery_published(
+            db, source=source, offer_id=offer,
+            artifact_id="sha256:" + SHA, shared_lock=lock,
+        )
+        # Status transition is idempotent; never duplicates B.
+        recovery.mark_completed_delivery_published(
+            db, source=source, offer_id=offer,
+            artifact_id="sha256:" + SHA, shared_lock=lock,
+        )
+    assert journal(db)[0][:2] == ("complete", "sha256:" + SHA)
+    assert rows(db) == (1, 1, 1, 2)
