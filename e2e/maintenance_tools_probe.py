@@ -361,6 +361,7 @@ def main():
             return (ResolvedPluginService(
                 "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
                 registry_generation=manager.registry_generation,
+                capabilities=("maintenance.group.organization",),
             ),) + tuple(original_services(category))
         return original_services(category)
     def fixture_service(key):
@@ -850,7 +851,7 @@ def main():
             # Find the exact plugin contribution, never another label with
             # coincidentally matching text from the host or another row.
             outer = row
-            while outer.get_parent() is not window[0]._tools_box:
+            while outer.get_parent().get_parent() is not window[0]._tools_box:
                 outer = outer.get_parent()
                 assert outer is not None
             assert not any(expected in node.get_text() for node in walk(outer)
