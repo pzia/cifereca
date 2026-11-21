@@ -210,6 +210,13 @@ def _observed_free_library_json(response, credential_id, page, *, documentary=Fa
             # on this same response is internally contradictory. Do not
             # turn it into a valid-looking partial list or a false zero.
             or payload['numOfBooks'] > payload['totalBooks']
+            # The observed route uses one-based pages of exactly 20 rows.
+            # A page beyond the remaining declared category total cannot
+            # contain positive rows. Do not project impossible cards as
+            # public notices merely because their individual URL is valid.
+            or (payload['numOfBooks'] > 0
+                and (page * FREE_JSON_PAGE_SIZE + payload['numOfBooks']
+                     > payload['totalBooks']))
             or type(payload.get('productData')) is not list
             or len(payload['productData']) != payload['numOfBooks']):
         raise ValueError('unverified_public_json')
