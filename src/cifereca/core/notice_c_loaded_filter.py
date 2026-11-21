@@ -58,7 +58,12 @@ def expand_filter_sources(rows, *, scope):
     wanted = str(scope or "all").casefold()
     for row in rows:
         hits = _sources(row)
-        if hits is None:
+        if not hits:
+            # An invalidated multi-source packet is NOT evidence that the
+            # primary C row vanished. Keep ordinary primary filtering, but
+            # never expand untrusted alternatives or grant their matches.
+            # _sources returns () for a stale/mutated group and None for an
+            # ungrouped row.
             expanded.append(row)
             continue
         marker = object()
