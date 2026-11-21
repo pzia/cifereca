@@ -109,3 +109,49 @@ def test_nested_historical_review_never_settles_caller_transaction(store, tmp_pa
             ("synthetic.historical-caller-pending",),
         ).fetchone() is None
     assert path.exists()
+
+
+@pytest.mark.parametrize("reader", ["physical", "candidate", "inventory", "inventory_row"])
+def test_other_historical_readers_do_not_settle_caller_transaction(
+    store, tmp_path, reader,
+):
+    """All ADEPT historical readers share the same no-nested-SQL guard."""
+    from types import SimpleNamespace as NS
+    from cifereca.core import adept_historical_evidence as evidence
+    from cifereca.core import adept_historical_diagnostic as diagnostic
+    from cifereca.core import adept_historical_inventory_join as inventory
+    from cifereca.core import adept_historical_inventory_operator as operator
+
+    source, path, _publication = _setup(store, tmp_path)
+    operations = {
+        "physical": lambda: evidence._snapshot(
+            store, source, "synthetic-placement", "synthetic-receipt",
+        ),
+        "candidate": lambda: diagnostic._candidate(store, source),
+        "inventory": lambda: inventory._recorded_binding(store, source),
+        "inventory_row": lambda: operator._record(
+            NS(storage=store, identity="A"), "synthetic-acquisition",
+        ),
+    }
+    with store._lock:
+        db = store._connect()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?)",
+                ("synthetic.historical-multi-reader", "uncommitted"),
+            )
+            with pytest.raises(RuntimeError, match="adept_historical_nested_transaction"):
+                operations[reader]()
+            assert db.in_transaction
+            assert db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                ("synthetic.historical-multi-reader",),
+            ).fetchone() == ("uncommitted",)
+        finally:
+            db.execute("ROLLBACK")
+        assert db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("synthetic.historical-multi-reader",),
+        ).fetchone() is None
+    assert path.exists()
