@@ -454,3 +454,24 @@ def test_retained_search_parser_upgrade_has_distinct_implementation(monkeypatch)
         public_client._parse_retained_search_input(previous)
     assert previous.parser_implementation_digest == old
     assert len(fake.requests) == 1
+
+
+def test_overlapping_unverified_layout_preserves_terminal_code(monkeypatch):
+    from cifereca.search_failures import search_failure_code, should_stop_search_variants
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+
+    def read():
+        return public_client.fetch_public_search("jefferson")
+
+    fake, first, second = _overlapping_readers(
+        monkeypatch, FakeResponse(body=b"<form>PRIVATE_LOGIN</form>"), read, read,
+    )
+    for result in first, second:
+        with pytest.raises(ProviderError) as error:
+            result.result()
+        assert str(error.value) == "Numilog : public_catalog_layout_unverified:unknown_search_layout"
+        assert search_failure_code(error.value) == "SearchProtocolUnverified"
+        assert should_stop_search_variants(error.value)
+        assert not public_service_unavailable(error.value)
+    assert len(fake.requests) == 1
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
