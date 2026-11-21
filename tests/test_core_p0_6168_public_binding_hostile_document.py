@@ -22,6 +22,8 @@ def test_native_document_type_precedes_public_plugin_binding_equality(tmp_path):
             row, identity_id="alice",
         )
         assert public_c_binding_revision(window, document, receipt) == 1
+        from cifereca.core.notice_c_live_revision import persisted_live_c_revision
+        assert persisted_live_c_revision(row, document) == 1
 
         class Hostile:
             def __eq__(self, other):
@@ -34,9 +36,29 @@ def test_native_document_type_precedes_public_plugin_binding_equality(tmp_path):
         assert public_c_binding_revision(
             window, document, replace(receipt, document=Hostile()),
         ) is None
+        assert persisted_live_c_revision(row, Hostile()) is None
+        # Even an exact dataclass instance may be tampered after creation.
+        # The Core witness must not compare its foreign nested members.
+        altered = replace(document)
+        object.__setattr__(altered, "artifact_id", Hostile())
+        assert persisted_live_c_revision(row, altered) is None
+        original_proof = row._core_persisted_c_revision_witness
+        original_ref = row._core_notice_canonical_cover_document_ref
+        try:
+            row._core_persisted_c_revision_witness = (
+                original_proof[0], original_proof[1], altered, original_proof[3],
+            )
+            assert persisted_live_c_revision(row, document) is None
+            row._core_persisted_c_revision_witness = original_proof
+            row._core_notice_canonical_cover_document_ref = altered
+            assert persisted_live_c_revision(row, document) is None
+        finally:
+            row._core_persisted_c_revision_witness = original_proof
+            row._core_notice_canonical_cover_document_ref = original_ref
         # Keep the actual original token usable; no one can mint a C revision
         # from an unrelated user object or lose a legitimate public notice.
         assert public_c_binding_revision(window, document, receipt) == 1
+        assert persisted_live_c_revision(row, document) == 1
         assert db.entitlements() == db.acquisitions() == db.placements() == []
     finally:
         db.close()
