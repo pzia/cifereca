@@ -108,6 +108,7 @@ def _documentary_product_coordinates(entry):
             candidate = urljoin(BASE, href)
             parts = urlsplit(candidate)
             if (_trusted_baen_url(candidate) and parts.netloc == "www.baen.com"
+                    and href in (candidate, parts.path)
                     and not parts.query and re.fullmatch(
                         r"/[A-Za-z0-9][A-Za-z0-9_-]*\.html", parts.path)):
                 url = candidate
