@@ -277,8 +277,9 @@ def _observed_free_library_json(response, credential_id, page, *, documentary=Fa
 def _baen_explicit_download_offer(html_text, detail_url):
     """Find a trusted download button and whether its EPUB format is proven.
 
-    A generic "Download" button remains eligible for the existing acquisition
-    flow, but does not attest EPUB availability in the read-only holdings view.
+    A generic "Download" button does not attest a public EPUB offer.
+    Browsing may report an unknown-format candidate, but delivery must have
+    an explicit EPUB signal before contacting any transfer endpoint.
     A PDF/MOBI link is evidence of a different format, not an EPUB offer.
     """
     links = re.findall(
@@ -639,10 +640,14 @@ class BaenSession(ProviderSession):
             raise ProviderError('Baen : fiche inaccessible')
         self._enrich_item_from_detail(item,r.text)
         # A PDF/MOBI button cannot qualify as a public EPUB offer.
-        candidate, _epub_attested = _baen_explicit_download_offer(
+        candidate, epub_attested = _baen_explicit_download_offer(
             r.text, item.friendly_url,
         )
-        if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
+        if not candidate or not epub_attested:
+            # The absence of a format proof in the HTML cannot be repaired
+            # by trying an arbitrary "Download" endpoint. A later user
+            # action after an independently observed EPUB offer is required.
+            raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
         if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
         d=Path(target_dir);d.mkdir(parents=True,exist_ok=True)
         dest=d/_public_epub_filename(item.title,item.friendly_url)
