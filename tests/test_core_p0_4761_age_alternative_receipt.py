@@ -64,3 +64,58 @@ def test_age_alternative_remains_in_exact_c_recommendation_receipt_after_restart
         assert known_public_c_binding_facts(candidate) is None
         assert known_public_c_alternative_hits(candidate) is None
         assert storage.entitlements() == storage.acquisitions() == storage.placements() == []
+
+
+
+def test_known_recommendation_filters_use_same_attested_source_as_search(tmp_path):
+    from copy import copy
+    from cifereca.core.notice_c_loaded_filter import matches_known_public_c_filters
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.document_filter import filter_loaded_with_documentary_proofs
+
+    filename = tmp_path / "source-filter.sqlite"
+    with closing(Storage(filename)) as storage:
+        sources = tuple(
+            persist(storage, project(public_row(
+                source_provider=provider, record_id=record,
+                metadata={"subjects": [subject]},
+            )))
+            for provider, record, subject in (
+                ("aaa-fixture", "a-subject", "Astronomie"),
+                ("zzz-fixture", "b-subject", "Cuisine"),
+            )
+        )
+        canonical = persist_attested_public_cover_group(
+            storage, canonical_edition_id="strong:filter-source-c",
+            sources=sources, relation_proof_id="strong:synthetic",
+        )
+        for source in sources:
+            assert evict_notice_cover(storage, source.document, expected_epoch=source.epoch)
+
+    with closing(Storage(filename)) as storage:
+        candidate, = known_public_notice_candidates(storage, "Même titre")
+        assert known_public_c_binding_facts(candidate) == (canonical.document, canonical.epoch)
+        rows = merge_public_notice_c_known_rows(
+            [], search_public_notice_c(storage, "Même titre", group_by_document=True),
+            identity_id="alice",
+        )
+        assert len(rows) == 1
+        for text, providers, expected in (
+            ("", (), True),
+            ("Cuisine", (), True),
+            ("Astronomie", ("aaa-fixture",), True),
+            ("Cuisine", ("zzz-fixture",), True),
+            ("Cuisine", ("aaa-fixture",), False),
+            ("Cuisine Astronomie", (), False),
+            ("Absent", (), False),
+        ):
+            kwargs = dict(field="subject", scope="all", providers=providers,
+                          content_types=(), languages=())
+            assert matches_known_public_c_filters(candidate, query=text, **kwargs) is expected
+            assert bool(filter_loaded_with_documentary_proofs(rows, text, **kwargs)) is expected
+        kwargs = dict(query="Cuisine", field="subject", scope="all", providers=(),
+                      content_types=(), languages=())
+        assert matches_known_public_c_filters(copy(candidate), **kwargs) is False
+        assert matches_known_public_c_filters(public_row(), **kwargs) is None
+        assert storage.entitlements() == storage.acquisitions() == storage.placements() == []
