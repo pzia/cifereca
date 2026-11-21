@@ -624,10 +624,27 @@ class NumilogPublicSession(ProviderSession):
         # Federated Core requests a foreign/ownerless session with the
         # conservative "catalog" scope. This session has NO private content:
         # its only supported upstream operation is an anonymous catalogue.
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or len(content_types) > 32
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Numilog public : unsupported_content_type")
+        requested = {value.casefold() for value in content_types} - {"all"}
         normalized_scope = "all" if scope == "catalog" else scope
         rows, complete = self._search_public_page(query, normalized_scope, field=field)
+        partial = bool(requested - {"ebook", "epub", "pdf"})
+        if requested and "ebook" not in requested:
+            # Only the independent singleton bibliographic format is
+            # attested here. Selected price/format is not a file receipt.
+            formats = requested & {"epub", "pdf"}
+            if formats and any(row.format is None for row in rows):
+                partial = True
+            rows = [row for row in rows if type(row.format) is str
+                    and row.format.casefold() in formats]
+            complete = False
         return ProviderSearchResponse(
-            results=list(rows), catalogue_complete=complete,
+            results=list(rows), partial=partial,
+            catalogue_complete=None if partial else complete,
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
         )
 
