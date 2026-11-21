@@ -118,15 +118,13 @@ def plan_existing_verified_presence(
 
     def database_stamp(db):
         # total_changes detects writes on this worker connection; data_version
-        # detects commits from other workers/processes. Any change is
-        # uncertainty, not absence or a permission to acquire.
+        # detects commits from other workers/processes. A change triggers
+        # scoped revalidation, not an automatic failure for unrelated writes.
         return (db.total_changes, db.execute("PRAGMA data_version").fetchone()[0])
 
-    with storage._lock:
-        db = storage._connect()
+    def read_evidence(db):
         if db.in_transaction:
             raise ValueError("canonical_presence_nested_transaction")
-        stamp = database_stamp(db)
         with db:
             # Owner, source receipts and physical placements must be observed in
             # one consistent SQLite read snapshot, even across other processes.
@@ -151,9 +149,6 @@ def plan_existing_verified_presence(
                 (owner_dir, scope.identity_id),
             ).fetchone() is not None:
                 owner_dir = ""
-            # _verified_copy checks the exact owner folder as the first path
-            # component, and only needs that owner's name in this membership set.
-            reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
             # Positive local B evidence may suppress a fresh GET. It must
             # therefore be tied not only to the exact borrower coordinates but
             # also to the one currently enabled provider connection. A migrated
@@ -208,6 +203,16 @@ def plan_existing_verified_presence(
             ).fetchall()
             if len(placements_raw) > _MAX_EVIDENCE_ROWS:
                 raise ValueError("canonical_presence_evidence_over_budget")
+            return owner_dir, bound, origins_raw, placements_raw
+
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("canonical_presence_nested_transaction")
+        stamp = database_stamp(db)
+        exact = read_evidence(db)
+    owner_dir, bound, origins_raw, placements_raw = exact
+    reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
 
     origins = []
     hashes: set[str] = set()
@@ -253,8 +258,15 @@ def plan_existing_verified_presence(
     # changed during that interval. Never settle a caller-owned transaction.
     with storage._lock:
         active = storage._connect()
-        if active is not db or active.in_transaction or database_stamp(active) != stamp:
+        if active is not db or active.in_transaction:
             raise ValueError("canonical_presence_snapshot_changed")
+        changed = database_stamp(active)
+        if changed != stamp:
+            # A journal/notice for another source must not prevent Sync.
+            # Re-read only the same bounded account/branch proof; if it
+            # changes again during the read, do not spin or infer absence.
+            if read_evidence(active) != exact or database_stamp(active) != changed:
+                raise ValueError("canonical_presence_snapshot_changed")
     # Deliberately no completed ProfileScan: this checks possible positive
     # satisfaction only, not exhaustive local absence or download permission.
     return plan_convergence(

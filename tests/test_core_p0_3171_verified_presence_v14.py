@@ -427,3 +427,19 @@ def test_presence_plan_rejects_sqlite_change_during_physical_proof(store, tmp_pa
     finally:
         if db.in_transaction:
             db.rollback()
+
+
+def test_unrelated_sqlite_commit_during_hash_does_not_block_exact_source(store, tmp_path, monkeypatch):
+    from cifereca.core import convergence_verified_presence as module
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    original = module._verified_copy
+    def physical(*args, **kwargs):
+        valid = original(*args, **kwargs)
+        store.metadata_set("synthetic.unrelated.presence", "new")
+        return valid
+    monkeypatch.setattr(module, "_verified_copy", physical)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied
+    assert path.read_bytes() == BYTES
