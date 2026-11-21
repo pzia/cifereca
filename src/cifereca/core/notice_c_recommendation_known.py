@@ -11,12 +11,45 @@ from hashlib import sha256
 from typing import Any
 
 from ..models import SearchResult
+from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _MAX_SOURCES, is_canonical_cover_document
 from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
 from .notice_c_known_projection import _series_metadata, _source_alternative
 
 _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
+
+
+def _native_canonical(document):
+    # Frozen CoverDocumentScope can still have foreign attributes injected.
+    # Refuse them before is_canonical_cover_document compares fields.
+    return (type(document) is CoverDocumentScope
+            and all(type(getattr(document, name)) is str
+                    and len(getattr(document, name)) <= 512
+                    and getattr(document, name).isprintable()
+                    for name in ("kind", "source_key", "provider_id",
+                                 "credential_id", "loan_id", "artifact_id",
+                                 "placement_id"))
+            and (document.identity_id is None
+                 or type(document.identity_id) is str)
+            and (document.account_id is None
+                 or type(document.account_id) is str)
+            and is_canonical_cover_document(document))
+
+
+def _same_native_snapshot(left, right, depth=0):
+    # The original DTO snapshot is bounded and contains only tuple/str/int/
+    # bool/None. Compare this known native tree against a possibly modified
+    # receipt without ever invoking foreign __eq__ on its inner members.
+    if depth > 24 or type(left) is not type(right):
+        return False
+    if type(left) is tuple:
+        return (len(left) == len(right)
+                and all(_same_native_snapshot(a, b, depth + 1)
+                        for a, b in zip(left, right)))
+    if type(left) in (str, int, bool, type(None)):
+        return left == right
+    return False
 
 
 def _snapshot(item):
@@ -127,14 +160,15 @@ def known_public_c_binding_facts(item: object):
     proof = getattr(item, "_core_known_public_c_projection", None)
     if (type(proof) is not tuple or len(proof) != 7
             or proof[0] is not _TOKEN or proof[1] != id(item)
-            or not is_canonical_cover_document(proof[2])
+            or not _native_canonical(proof[2])
             or type(proof[3]) is not int or not 1 <= proof[3] < 2**63
             or type(proof[4]) is not tuple):
         return None
-    # Compare only bounded native public fields. No callbacks, repr or
-    # provider-supplied coercion on GTK.
+    # Compare only bounded native public fields. The opaque packet's
+    # nested snapshot can be replaced independently of the SearchResult.
+    # Never execute equality from a foreign object inside that packet.
     try:
-        if _snapshot(item) != proof[4]:
+        if not _same_native_snapshot(_snapshot(item), proof[4]):
             return None
     except (ValueError, TypeError):
         return None
@@ -157,6 +191,15 @@ def known_public_c_alternative_hits(item: object):
     if (type(hits) is not tuple or len(hits) >= _MAX_SOURCES
             or type(alternatives) is not list or len(hits) != len(alternatives)
             or any(type(hit) is not PublicNoticeCHit
+                   or not _native_canonical(hit.document)
+                   or type(hit.epoch) is not int
+                   or any(value is not None and type(value) is not str
+                          for value in (
+                              hit.provider_id, hit.record_id, hit.docbase,
+                              hit.medium, hit.source_revision, hit.title,
+                              hit.author, hit.publisher, hit.published_at,
+                              hit.media_format, hit.description,
+                          ))
                    or (hit.document, hit.epoch) != binding for hit in hits)
             or [_source_alternative(hit) for hit in hits] != alternatives):
         return None
@@ -174,6 +217,13 @@ def known_public_c_primary_hit(item: object):
         return None
     hit = item._core_known_public_c_projection[6]
     if (type(hit) is not PublicNoticeCHit
+            or not _native_canonical(hit.document)
+            or type(hit.epoch) is not int
+            or any(value is not None and type(value) is not str for value in (
+                hit.provider_id, hit.record_id, hit.docbase, hit.medium,
+                hit.source_revision, hit.title, hit.author, hit.publisher,
+                hit.published_at, hit.media_format, hit.description,
+            ))
             or (hit.document, hit.epoch) != binding
             or (hit.provider_id, hit.record_id, hit.docbase, hit.medium,
                 hit.source_revision, hit.title, hit.author, hit.publisher,
