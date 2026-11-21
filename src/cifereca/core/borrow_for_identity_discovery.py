@@ -223,7 +223,12 @@ def discover_possible_borrow_lenders(
                         service._session_key(provider, credential)) is not session):
                 return ()  # ABA/rebind invalidates the *whole* list.
             lender = service.identity_by_id(account.identity_id)
-            label = _lender_label(getattr(lender, "label", None))
+            # Name the issuing library, not merely the lender profile.
+            # Use the already validated installed descriptor, never a
+            # supplier URL, credential, account ID or notice metadata.
+            profile_label = _lender_label(getattr(lender, "label", None))
+            library_label = _display_account_label(state["descriptor"].display_name)
+            label = f"{profile_label[:32].rstrip()} sur {library_label[:32].rstrip()}"
             result.append(PossibleBorrowLender(
                 label=label, lender_identity_id=account.identity_id,
                 _account=account, _notice=item,
