@@ -16,7 +16,11 @@ from ..storage import Storage
 
 def request_public_web_actions(host, panel, document, *, expected_epoch, current,
                                Gtk=None, Gio=None):
-    if not is_canonical_cover_document(document) or not current():
+    # Match the exact integer epoch contract of the Core click resolver.
+    # Python bool and float equality must not authorize a stale menu.
+    if (not is_canonical_cover_document(document)
+            or type(expected_epoch) is not int or not 1 <= expected_epoch < 2**63
+            or not current()):
         return False
     core = getattr(host, "service", None)
     storage = getattr(core, "storage", None)
@@ -71,7 +75,8 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
             return
         if (not active() or route_token() is not requested_route
                 or type(menu) is not PublicWebChoices
-                or menu.document != document or menu.epoch != expected_epoch
+                or menu.document != document or type(menu.epoch) is not int
+                or menu.epoch != expected_epoch
                 or not menu.choices):
             return
         root = None
