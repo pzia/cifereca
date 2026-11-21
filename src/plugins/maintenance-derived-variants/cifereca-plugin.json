@@ -20,7 +20,8 @@
       "enabled_by_default": true,
       "help_text": "Consultation des reçus, capacité et stock distincts ; vérification et simulation confirmée uniquement. Aucune reprise réelle, suppression ou restitution de quota.",
       "capabilities": [
-        "maintenance.derived-variants"
+        "maintenance.derived-variants",
+        "maintenance.group.recovery"
       ],
       "requires": [],
       "recommends": [],

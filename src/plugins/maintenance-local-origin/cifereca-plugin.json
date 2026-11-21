@@ -21,7 +21,8 @@
       "help_text": "Revue par lots sur cache public ; comparaison contextuelle et recherche de catalogue anonyme sur consentement explicite. Aucune attribution d’origine.",
       "capabilities": [
         "maintenance.local-origin",
-        "book.detail.review"
+        "book.detail.review",
+        "maintenance.group.provenance"
       ],
       "requires": [],
       "recommends": [],
