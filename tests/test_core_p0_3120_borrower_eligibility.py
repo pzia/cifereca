@@ -208,3 +208,23 @@ def test_incomplete_edition_and_wrong_medium_do_not_reuse_account_permission():
 def test_evidence_is_an_immutable_snapshot():
     with pytest.raises((AttributeError, TypeError)):
         proof().quota_state = "exhausted"
+
+
+@pytest.mark.parametrize("is_primary,borrower,expected", [
+    (True, "", "eligible"),
+    (False, "", "unverified"),
+    (False, "linked-reader", "eligible"),
+    ("yes", "linked-reader", "unverified"),
+    (None, "linked-reader", "unverified"),
+])
+def test_linked_borrower_requires_nonempty_stable_id_without_losing_primary_alias(
+    is_primary, borrower, expected,
+):
+    account_scope = replace(account(borrower=borrower), is_primary=is_primary)
+    candidate = proof(account_scope, notice())
+    result = decide(account_scope, notice(), candidate)
+    assert result.status == expected
+    if expected == "unverified":
+        assert result.reason_code == "scope_unverified"
+    else:
+        assert result.reason_code == "borrower_eligible_unconfirmed"
