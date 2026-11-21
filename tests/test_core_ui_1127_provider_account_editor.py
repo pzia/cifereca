@@ -539,3 +539,18 @@ def test_cleaned_account_editor_shows_only_current_option_but_keeps_legacy_confi
     # The initial snapshot is internal; it must never appear in page labels.
     assert all("PRIVATE-SYNTHETIC-DYNAMIC" not in str(row.title)
                for row in editor["group"].children)
+
+
+def test_fieldless_sso_is_an_account_not_an_anonymous_source():
+    sso, _, container, _ = _render(
+        "synthetic-sso", descriptor_fields=[], interactive=True,
+        data={"identity_id": "alice", "id": "sso-a", "enabled": True,
+              "credentials": {}, "options": {}},
+    )
+    assert container.children[0].children[0].title == "Compte activé"
+    assert sso["enabled"].active is True
+    public, _, container, _ = _render(
+        "synthetic-catalogue", descriptor_fields=[],
+    )
+    assert container.children[0].children[0].title == "Source activée"
+    assert public["enabled"].active is False
