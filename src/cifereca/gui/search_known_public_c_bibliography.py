@@ -210,7 +210,7 @@ def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=(
                     alternative, hits[index - 2] if hits else None, displayed_names,
                 ),
             ))
-        for name in ("series", "languages"):
+        for name in ("series", "languages", "youth_age_ranges"):
             fields.extend(proven.get(name, ()))
     if not fields:
         return None
