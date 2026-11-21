@@ -47,6 +47,14 @@ def test_primary_age_exact_and_provider_scoped_after_reopening_sqlite(tmp_path):
         assert known_public_c_binding_facts(item) == (
             canonical.document, canonical.epoch,
         )
+        # Recommendations uses the same partial/stale/cover-state
+        # descriptive contract as known public Search, never a rights hint.
+        assert item.metadata["notice_c_query_status"] == "partial"
+        assert item.metadata["notice_c_cover_state"] in (
+            "available", "missing", "pending",
+        )
+        assert item.metadata["notice_c_epoch"] == canonical.epoch
+        assert item.metadata["notice_c_stale"] is False
         primary = known_public_c_primary_hit(item)
         assert primary is not None and primary.provider_id == "aaa-fixture"
         assert primary.age_observation is not None
