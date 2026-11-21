@@ -89,10 +89,12 @@ def public_c_binding_revision(
     # The original live SearchResult is mutable. A new Core stamp, provider
     # coordinates, or owner/source generation cannot revive an old receipt.
     service = receipt.service
+    account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
     if (getattr(getattr(service, "current_identity", None), "identity_id", None)
             != receipt.identity_id
-            or getattr(service, "_account_context_epoch", None) != receipt.account_epoch
-            or getattr(service, "_source_context_epoch", None) != receipt.source_epoch
+            or type(account_epoch) is not int or account_epoch != receipt.account_epoch
+            or type(source_epoch) is not int or source_epoch != receipt.source_epoch
             or _binding_facts(receipt.source, receipt.identity_id)
                 != (document, receipt.epoch)):
         return None
