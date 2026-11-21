@@ -344,3 +344,36 @@ def test_direct_normal_executor_uses_explicit_requester_without_navigation(harne
     )["status"] == "confirmed"
     assert execute(Headless(), option, item, lambda: True)["status"] == "blocked"
     assert session.actions == 1
+
+
+@pytest.mark.parametrize("change", [
+    {"revision_id": "new-revision"},
+    {"scenario": "CATALOGUE"},
+    {"source_account_id": ""},
+    {"source_account_id": "other-borrower"},
+])
+def test_extra_notice_coordinates_are_revalidated_before_claim(harness, change):
+    service, account, session, item, option, scope = setup(harness)
+    original_key = borrow_claim_key(account, item)
+    for key, value in change.items():
+        setattr(item, key, value)
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert borrow_claim_key(account, item) == original_key
+    assert service.storage.loan_borrow_state(original_key) is None
+    assert session.actions == 0
+
+
+def test_revision_changed_after_claim_never_dispatches(harness, monkeypatch):
+    service, account, session, item, option, scope = setup(harness)
+    original_key = borrow_claim_key(account, item)
+    original = service.storage.loan_borrow_claim_once
+
+    def after_claim(key, op):
+        receipt = original(key, op)
+        item.revision_id = "new-revision"
+        return receipt
+
+    monkeypatch.setattr(service.storage, "loan_borrow_claim_once", after_claim)
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(original_key)["status"] == "blocked"
