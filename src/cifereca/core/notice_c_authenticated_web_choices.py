@@ -44,9 +44,13 @@ def _native_source_document(document):
                 "loan_id", "artifact_id", "placement_id",
             ))
             and (document.identity_id is None
-                 or type(document.identity_id) is str)
+                 or (type(document.identity_id) is str
+                     and 0 < len(document.identity_id) <= 512
+                     and document.identity_id.isprintable()))
             and (document.account_id is None
-                 or type(document.account_id) is str))
+                 or (type(document.account_id) is str
+                     and len(document.account_id) <= 512
+                     and document.account_id.isprintable())))
 
 
 def _native_reader_scope(scope, service):
