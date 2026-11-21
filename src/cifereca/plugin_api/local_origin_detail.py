@@ -80,6 +80,8 @@ class LocalOriginPrivateReport:
     fresh_network_verified: bool = False
     provider_access_performed: bool = False
     association_authorized: bool = False
+    page: int = 1
+    next_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -106,6 +108,8 @@ class LocalOriginDetailReadBroker(Protocol):
     The host supplies a revocable view guard. Page tokens only continue
     cache review. Separate public-choice tokens require explicit consent to
     send the verified OPF title to that anonymous catalogue, once per token.
+    Private comparisons may return a one-use next_token for the same cached
+    catalogue; each continuation requires a separate explicit confirmation.
     """
     def preview(self, *, identity_id: str, placement_id: str,
                 still_current: Callable[[], bool], confirmed: bool = False,
