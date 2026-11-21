@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca_kobo_adept_runtime import KoboAdeptRuntime
-from cifereca.plugin_api import AdeptFulfillmentNotSubmitted, AttentionRequired
+from cifereca.plugin_api import AdeptFulfillmentNotSubmitted, AttentionRequired, RuntimeDispatchNotSubmitted
 
 
 def caps(*, names, available=True):
@@ -96,3 +96,27 @@ def test_same_attention_code_from_download_command_has_no_non_submission_proof(t
         runtime.download_request(request(target))
     assert err.value is refusal
     assert calls == [["capabilities", "--json"], ["download", "request", "-", "--json"]]
+
+
+@pytest.mark.parametrize("before_dispatch", [True, False])
+def test_kobo_non_submission_proof_is_only_pre_command(tmp_path, before_dispatch):
+    target = tmp_path / "chosen.epub"
+    runtime, calls = rig(caps(names=[]), target)
+    local_refusal = AttentionRequired("synthetic backend unavailable",
+                                     code="kobo_kdrm_backend_unavailable")
+    def preflight(_payload):
+        if before_dispatch:
+            raise local_refusal
+    runtime._require_download = preflight
+    def command(argv, **kwargs):
+        calls.append(argv)
+        raise local_refusal
+    runtime.run_json = command
+    payload = {"schema_version": 2, "source": {"type": "kobo"},
+               "destination": str(target), "format": "epub"}
+    with pytest.raises(AttentionRequired) as err:
+        runtime.download_request(payload)
+    assert (type(err.value) is RuntimeDispatchNotSubmitted) is before_dispatch
+    assert err.value.code == local_refusal.code
+    assert calls == ([] if before_dispatch else [["download", "request", "-", "--json"]])
+    assert not target.exists()

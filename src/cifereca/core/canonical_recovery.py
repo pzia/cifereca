@@ -21,6 +21,7 @@ from ..paths import acquisition_lock_file
 from .canonical_publication import _physical_target, _same_file, _stable
 from .source_convergence import SourceKey
 from .canonical_adept_attempt import release_completed_attempt_in_transaction
+from .canonical_runtime_attempt import release_runtime_attempt_in_transaction
 
 _SCHEMA = "canonical.completed-delivery.v1"
 # The generic opening recovery rewrites *every* status='acquiring' ledger
@@ -154,6 +155,8 @@ def record_completed_delivery_for_recovery(
             or len(completed.receipt_ref) > 1024
             or type(completed.adept_receipt_ref) is not str
             or len(completed.adept_receipt_ref) > 1024
+            or type(completed.runtime_attempt_id) is not str
+            or (completed.runtime_attempt_id and completed.adept_attempt_id)
             or type(completed.adept_attempt_id) is not str
             or (completed.adept_attempt_id and (
                 source.kind != "loan" or not completed.adept_receipt_ref))
@@ -224,6 +227,10 @@ def record_completed_delivery_for_recovery(
         release_completed_attempt_in_transaction(
             db, source=source, offer_id=offer_id,
             operation_id=completed.adept_attempt_id,
+        )
+        release_runtime_attempt_in_transaction(
+            db, source=source, offer_id=offer_id,
+            operation_id=completed.runtime_attempt_id,
         )
     return record_id
 

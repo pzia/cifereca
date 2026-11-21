@@ -28,6 +28,14 @@ class AdeptFulfillmentNotSubmitted(AttentionRequired):
     """
 
 
+class RuntimeDispatchNotSubmitted(AttentionRequired):
+    """An installed non-ACSM runtime refused before its delivery command.
+
+    Read-only preflight is allowed. A timeout, failure or response from
+    the delivery command itself never attests non-submission.
+    """
+
+
 class UnsupportedOperation(PluginApiError):
     pass
 
@@ -67,7 +75,7 @@ class BorrowRequestNotSubmitted(PluginApiError):
 
 
 __all__ = [
-    "PluginApiError", "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "UnsupportedOperation",
+    "PluginApiError", "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "RuntimeDispatchNotSubmitted", "UnsupportedOperation",
     "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable",
     "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted",
 ]

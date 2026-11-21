@@ -48,7 +48,7 @@ from .lending_actions import (
     LendingActionAdmission, assess_lending_action, LendingActionStatus,
     LendingActionOutcome,
 )
-from .errors import (AdeptFulfillmentNotSubmitted, AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled, BorrowRequestNotSubmitted)
+from .errors import (AdeptFulfillmentNotSubmitted, RuntimeDispatchNotSubmitted, AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled, BorrowRequestNotSubmitted)
 from .models import (
     AcquisitionOffer, AcquisitionPreferences, AcquisitionOfferSet,
     normalize_acquisition_format, acquisition_offer_formats, acquisition_offer_preferred_format, acquisition_offers_metadata,
@@ -146,7 +146,7 @@ __all__ = [
     "DeliveryCandidate", "RetryableContentDownload", "ContentTransferUnavailable", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
     "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
-    "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
+    "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "RuntimeDispatchNotSubmitted", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "USB_STAGE_CAPABILITY", "UsbStorageStageWriter", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",

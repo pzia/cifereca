@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from cifereca.core.sync_coordination import synchronize_account_source
+from cifereca.plugin_api.errors import RuntimeDispatchNotSubmitted
 from cifereca.plugin_api.downloadable_resources import (
     DeliveryCandidate, DownloadCapability,
 )
@@ -64,7 +65,12 @@ def test_eight_kdrm_runtime_candidates_retry_one_failed_and_then_zero_get(source
             assert request["destination"] == str(destination)
             if resource_id == "kdrm-item-03" and resource_id not in failed_once:
                 failed_once.add(resource_id)
-                raise RuntimeError("synthetic interrupted DRM execution")
+                # This fixture attests refusal BEFORE the simulated command.
+                # Actual opaque runtime interruptions are covered separately
+                # by the durable hold tests in selected_runtime_delivery.
+                raise RuntimeDispatchNotSubmitted(
+                    "synthetic read-only preflight refusal", code="synthetic_preflight",
+                )
             destination.write_bytes(payload)
             return {"ok": True, "artifact": {"path": str(destination)}}
 
