@@ -54,6 +54,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--scope", choices=["all", "physical", "digital", "unknown"], default="all")
     s.add_argument("--provider", default="all", help="Provider id (paris, gallica, kobo, ...)")
     s.add_argument("--field", choices=["all", "title", "author", "isbn", "subject"], default="all")
+    adept_diagnostic = sub.add_parser(
+        "adept-diagnostic", help="Diagnostic ADEPT multicomptes local, sans réseau ni mutation"
+    )
+    for name in ("identity", "provider", "credential", "account-id"):
+        adept_diagnostic.add_argument("--" + name, default=None)
+    adept_diagnostic.add_argument("--all", action="store_true")
+    adept_diagnostic.add_argument("--json", action="store_true")
     acquisition_audit = sub.add_parser(
         "acquisition-audit", help="Audit canonique hors réseau d'une source exacte"
     )
@@ -160,6 +167,44 @@ def main(argv: list[str] | None = None) -> int:
     packages = psub.add_parser("packages", help="Liste les packages/versions installés")
     deps_repair = psub.add_parser("deps-repair", help="Résout les dépendances Python des plugins actifs dans le venv Core")
     a = p.parse_args(argv)
+    if a.cmd == "adept-diagnostic":
+        from .core.adept_local_diagnostic import diagnose_local_adept, failed_report
+        filters = (a.identity, a.provider, a.credential, a.account_id)
+        if a.username is not None or a.account is not None or (
+            a.all and any(value is not None for value in filters)
+        ):
+            result = failed_report("invalid_scope")
+        else:
+            result = diagnose_local_adept(
+                identity=a.identity, provider=a.provider,
+                credential=a.credential, account_id=a.account_id,
+            )
+        if a.json:
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        else:
+            print("ADEPT — diagnostic local, lecture seule")
+            print("État :", result["status"])
+            if result["status"] == "complete":
+                from collections import Counter
+                for key, value in result["counts"].items():
+                    print(f"{key}: {value}")
+                for key in ("connection", "identity_binding", "borrower_grant"):
+                    states = Counter(record[key] for record in result["accounts"])
+                    for state, count in sorted(states.items()):
+                        print(f"{key}.{state}: {count}")
+                for key in ("origin_owner_mismatch", "origin_receipt_missing",
+                            "origin_multiple_records", "origin_artifact_unverified",
+                            "origin_without_same_identity_placement",
+                            "origin_without_same_identity_present_record",
+                            "legacy_loan_right_rows_without_reference",
+                            "legacy_loan_right_rows_unverified_coordinates",
+                            "historical_adept_rows_without_reference",
+                            "historical_adept_rows_unverified_coordinates"):
+                    print(f"{key}: {sum(record[key] for record in result['accounts'])}")
+                print("Inventaire runtime, provisioning et droits actuels : non vérifiés")
+            else:
+                print("Code :", result["code"])
+        return 0 if result["status"] == "complete" else 2
     if a.cmd == "identity-directory" and a.abort:
         try:
             result = CiferecaCore.abort_directory_migration()
