@@ -15,6 +15,7 @@ from contextvars import ContextVar
 
 from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
 from cifereca_kobo_adept_loan_envelope import attested_readonly_loans_list
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
     PluginContext, UserFacingError,
@@ -741,7 +742,6 @@ class KoboAdeptRuntime:
             if not is_acsm:
                 raise
             # Older Core versions still receive the historical error.
-            from cifereca import plugin_api
             refusal = getattr(plugin_api, "AdeptFulfillmentNotSubmitted", None)
             if refusal is None:
                 raise
