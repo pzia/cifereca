@@ -1970,19 +1970,19 @@ def test_sso_and_authenticated_sources_without_credential_fields_are_not_anonymo
     _config, values = editor
     descriptors = {
         "sso": ProviderDescriptor(
-            id="sso", display_name="SSO synthétique", description="test",
+            id="sso", display_name="SSO synthétique", description="test", state="ready",
             capabilities=ProviderCapabilities(authentication=True),
             interactive_authentication=True,
             credential_fields=(),
         ),
         "private-option": ProviderDescriptor(
-            id="private-option", display_name="Identité privée", description="test",
+            id="private-option", display_name="Identité privée", description="test", state="ready",
             capabilities=ProviderCapabilities(authentication=True),
             credential_fields=(),
         ),
         "local-public": ProviderDescriptor(
             id="local-public", display_name="Source anonyme historique",
-            description="test", capabilities=ProviderCapabilities(),
+            description="test", state="ready", capabilities=ProviderCapabilities(),
             credential_fields=(),
         ),
     }
