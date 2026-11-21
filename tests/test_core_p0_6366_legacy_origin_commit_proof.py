@@ -76,3 +76,36 @@ def test_direct_origin_writer_cannot_publish_without_actual_graph(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("evict", [False, True])
+def test_retained_competing_edition_still_vetoes_origin_group(tmp_path, evict):
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+
+    filename = tmp_path / "retained-conflict.sqlite"
+    db = Storage(filename)
+    try:
+        _origins(db, tmp_path)
+        a, b = _pair(db)
+        other = persist(db, witnessed(public_row(
+            source_provider="seller-a", record_id="edition-a",
+            revision_id="competing-edition", title="L'ouvrage commun",
+            thumbnail_url=A_URL,
+        )), at=101)
+        assert other.document != a.document
+        retained = index.persist_exact_public_search_cover(db, other)
+        if evict:
+            assert evict_notice_cover(db, other.document, expected_epoch=other.epoch)
+        assert origin.reconcile_origin_linked_public_c(db, a) is None
+        with pytest.raises(ValueError, match="notice_origin_relation_changed"):
+            index.persist_origin_linked_public_cover_group(db, sources=(a, b))
+    finally:
+        db.close()
+
+    db = Storage(filename)
+    try:
+        assert index.read_consolidated_notice_cover(db, retained.document) == retained
+        assert origin.reconcile_origin_linked_public_c(db, b) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

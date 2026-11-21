@@ -37,7 +37,8 @@ def _host():
     # The test executes extracted MainWindow adapter methods without GTK;
     # its legacy guards deliberately use synthetic NS rather than SearchResult.
     # The exact-cover publisher has independent contract tests and is inert here.
-    env = {"result_row": lambda item, **_kwargs: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3), "detail_callback_is_current": detail_callback_is_current,
+    env = {"__name__": "cifereca.gui.search_details", "__package__": "cifereca.gui",
+           "result_row": lambda item, **_kwargs: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3), "detail_callback_is_current": detail_callback_is_current,
            "_publish_search_detail_cover": lambda *_args: None}
     exec(compile(compiled, str(MAIN), "exec"), env)
 
