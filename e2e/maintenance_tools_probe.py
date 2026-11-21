@@ -952,6 +952,28 @@ def main():
                     report["checks"]["P0_7100_real_guided_page_two_" + key] = True
                     if args.guided_only == "origin" and key == "origin_preview":
                         cancel_and_restart()
+                    elif args.guided_only == "organizer" and key == "organizer_preview":
+                        cancel, = (node for node in walk(outer)
+                                   if isinstance(node, Gtk.Button)
+                                   and node.get_label() == "Annuler")
+                        assert cancel.get_sensitive()
+                        cancel.emit("clicked")
+                        assert not following.get_sensitive() and not cancel.get_sensitive()
+                        assert any("Revue annulée. Relancer explicitement." in node.get_text()
+                                   for node in walk(outer)
+                                   if isinstance(node, Gtk.Label) and node.get_visible())
+                        assert durable_counts() == before and fixture_evidence() == evidence
+                        report["checks"]["P0_3176_native_organizer_cancel"] = True
+                        button.emit("clicked")
+                        assert not button.get_sensitive()
+
+                        def restarted():
+                            assert page_visible(1) and not page_visible(2)
+                            report["checks"]["P0_3176_native_organizer_restart"] = True
+                            step(index + 1)
+
+                        until(lambda: button.get_sensitive() and page_visible(1),
+                              restarted)
                     else:
                         step(index + 1)
 

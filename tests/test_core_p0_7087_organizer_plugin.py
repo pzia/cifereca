@@ -113,3 +113,123 @@ def test_selection_uses_worker_and_never_writes(store, tmp_path):
     assert controller.page.selected == 1 and not controller.page.mutation_authorized
     assert "1 sélectionnés" in module.display(controller.page)
     assert not controller.request("select") and rows(store) == before
+
+
+@pytest.mark.parametrize("action", ["preview", "next", "select"])
+@pytest.mark.parametrize("phase", ["before_worker", "after_worker"])
+def test_cancel_revokes_organizer_selection_and_late_worker_result(
+    store, tmp_path, action, phase,
+):
+    if action == "select":
+        root, _ = setup_copies(store, tmp_path, (
+            "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+        ))
+    else:
+        root = tmp_path / "library"
+        register(store, "A", "seller", "card-A")
+        for i in range(5):
+            _put_epub(store, root, f"Acquisitions/cancel-{i}.epub",
+                      metadata=META.replace("Roman commun", f"Roman cancel {i}"))
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    c = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    if action != "preview":
+        assert c.request("preview")
+        _finish(tasks)
+        if action == "next":
+            assert c.page.has_more
+        else:
+            assert c.page.eligible
+    old = c.page
+    assert c.request(action)
+    work, done = tasks[-1]
+    value = work() if phase == "after_worker" else None
+    assert c.cancel() and not c.cancel()
+    assert not c.request("preview"), "cancel does not detach a running worker"
+    assert work() is None if phase == "before_worker" else True
+    done(value)
+    done(value)
+    assert c.page is None and not c.busy and c.stop is None
+    assert not any(page is not None for page, busy in renders[-2:])
+    if old is not None:
+        assert plugin.broker.next_page(token=old.token, confirmed=True) is None
+    if value is not None:
+        assert plugin.broker.next_page(token=value.token, confirmed=True) is None
+    assert c.request("preview")
+    _finish(tasks)
+    assert c.page.page == 1 and rows(store) == before
+
+
+@pytest.mark.parametrize("failure", ["broker_error", "enqueue_false", "enqueue_error", "bad_page"])
+def test_organizer_failure_discards_exact_token_and_can_restart(
+    store, tmp_path, monkeypatch, failure,
+):
+    from dataclasses import replace
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    for i in range(5):
+        _put_epub(store, root, f"Acquisitions/error-{i}.epub",
+                  metadata=META.replace("Roman commun", f"Roman error {i}"))
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    c = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert c.request("preview")
+    _finish(tasks)
+    old = c.page
+    assert old.has_more
+    original = plugin.broker.next_page
+    submit = host.submit
+    if failure == "broker_error":
+        def fail(**_kw):
+            raise RuntimeError("PRIVATE_ORGANIZER_EXCEPTION")
+        monkeypatch.setattr(plugin.broker, "next_page", fail)
+    elif failure == "bad_page":
+        monkeypatch.setattr(plugin.broker, "next_page", lambda **_kw:
+                            replace(old, mutation_authorized=True))
+    elif failure == "enqueue_false":
+        host.submit = lambda *_: False
+    else:
+        def reject(*_args):
+            raise RuntimeError("PRIVATE_ORGANIZER_EXCEPTION")
+        host.submit = reject
+    admitted = c.request("next")
+    if failure in ("enqueue_false", "enqueue_error"):
+        assert not admitted
+    else:
+        assert admitted
+        _finish(tasks)
+    assert not c.busy and c.page is None
+    # Restore the real broker before checking that the abandoned token
+    # was actually revoked; a poisoned stub is not a valid safety witness.
+    monkeypatch.setattr(plugin.broker, "next_page", original)
+    host.submit = submit
+    assert plugin.broker.next_page(token=old.token, confirmed=True) is None
+    assert "PRIVATE_ORGANIZER_EXCEPTION" not in repr(renders)
+    assert c.request("preview")
+    _finish(tasks)
+    assert c.page.page == 1 and rows(store) == before
+
+
+def test_idle_organizer_cancel_revokes_preselected_keeper_advice(store, tmp_path):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    c = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert c.request("preview")
+    _finish(tasks)
+    assert c.request("select")
+    _finish(tasks)
+    old = c.page
+    assert old.selected == 1 and old.mutation_authorized is False
+    assert c.cancel() and not c.cancel()
+    assert c.page is None
+    assert plugin.broker.select_all_advice(token=old.token, confirmed=True) is None
+    assert c.request("preview")
+    _finish(tasks)
+    assert c.page.page == 1 and c.page.selected == 0
+    assert rows(store) == before
