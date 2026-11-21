@@ -349,3 +349,58 @@ def test_private_broker_continuation_is_one_use_and_revocable(private_rig, monke
                                   and not second.matches and second.next_token is None)
     assert broker.compare_private(token=token, confirmed=True) is None
     assert not calls
+
+
+
+@pytest.mark.parametrize("change", ["none", "sqlite", "view", "dispose"])
+def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, monkeypatch, change):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    before, data = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    issued = []
+    original_add = host.add_action
+
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        issued.append(key)
+        original_add(key, title, tooltip, action)
+
+    host.add_action = limited
+    assert actions["preview"][2]()
+    deliver(tasks)
+    first = actions["private-0"][2]
+    assert first()
+    deliver(tasks)
+    assert "Page', '1" in repr(groups[-1])
+    assert "Occurrence : loan-1" in repr(groups[-1])
+    assert "Suite prêts" in actions["private-0"][0]
+    following = actions["private-0"][2]
+    assert following is not first and not first()
+    assert len(tasks) == 2 and issued.count("private-0") == 2
+    assert following() and not following()
+    count = len(groups)
+    if change == "sqlite":
+        service.storage.metadata_set("test-private-ui-drift", "changed")
+    elif change == "view":
+        host.live = False
+    elif change == "dispose":
+        dispose()
+    deliver(tasks)
+    if change == "none":
+        assert len(groups) == count + 1 and "Page', '2" in repr(groups[-1])
+        assert "Occurrence : loan-3" in repr(groups[-1])
+        assert actions["private-0"][2] is following
+        assert following()
+        deliver(tasks)
+        assert "Page', '3" in repr(groups[-1])
+        assert "Occurrence : loan-5" in repr(groups[-1])
+        assert "private-0" not in actions
+    else:
+        assert len(groups) == count and not following()
+    assert issued.count("private-0") == 2 and not following()
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
