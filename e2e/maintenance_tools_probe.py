@@ -627,10 +627,16 @@ def main():
         group_names = ("Organiser la bibliothèque", "Vérifier l’intégrité",
                        "Qualité documentaire", "Origine et provenance",
                        "Reprise des opérations", "Stockage et entretien technique")
-        headings = [child.get_first_child().get_text()
-                    for child in walk(w._tools_box) if isinstance(child, Gtk.Box)
-                    and isinstance(child.get_first_child(), Gtk.Label)
-                    and child.get_first_child().get_text() in group_names]
+        # Only direct section containers belong to the taxonomy. Nested
+        # plugin widgets can have labels with the same text as headings.
+        headings = []
+        child = w._tools_box.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Box):
+                heading = child.get_first_child()
+                if isinstance(heading, Gtk.Label) and heading.get_text() in group_names:
+                    headings.append(heading.get_text())
+            child = child.get_next_sibling()
         assert tuple(headings) == group_names
         links = [node for node in walk(w._tools_box)
                  if isinstance(node, Gtk.Button)
