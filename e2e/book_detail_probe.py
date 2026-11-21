@@ -283,6 +283,19 @@ def main():
             try:
                 fn()
             except Exception as exc:
+                # Only a source-code assertion coordinate in this synthetic
+                # fallback helper. No traceback, filename or error text is
+                # exported; the separate exporter revalidates against AST.
+                if (type(exc) is AssertionError
+                        and report.get("local_c_stage") == "epub_qualified_fallback"):
+                    tb = exc.__traceback__
+                    while tb is not None:
+                        code = tb.tb_frame.f_code
+                        if (code.co_name in {"verify_qualified_fallback", "fallback_painted"}
+                                and Path(code.co_filename).resolve()
+                                == ROOT / "e2e/notice_c_local_views_contract.py"):
+                            report["local_c_fallback_assertion_line"] = tb.tb_lineno
+                        tb = tb.tb_next
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, run)
