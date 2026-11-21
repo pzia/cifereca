@@ -91,16 +91,17 @@ def _alternative_proven_fields(alternative, hit, index, provider):
         ) for number, value in enumerate(values, 1))
     age = hit.age_observation
     if age is not None:
+        from .search_known_public_c_age import _same_native
         raw_evidence = alternative.get("bibliography_evidence")
         supplied = alternative.get("youth_age_ranges")
         verified = age.filter_ranges()
         # The source's original bounded parser observation and its admitted
         # filter ranges must BOTH match. Never show an age inferred from a
         # different provider, conflicting alternatives or edited metadata.
-        if (verified and type(raw_evidence) is dict
-                and raw_evidence.get("youth_age") == age.wire()
-                and type(supplied) is list and supplied == verified
-                and len(verified) <= 16):
+        if (verified and len(verified) <= 16
+                and type(raw_evidence) is dict
+                and _same_native(raw_evidence.get("youth_age"), age.wire())
+                and _same_native(supplied, verified)):
             labels = {
                 "interest": "intérêt", "reading": "lecture",
                 "publisher": "éditeur", "recommended": "recommandé",
