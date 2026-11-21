@@ -181,8 +181,11 @@ class _Links(HTMLParser):
         values = dict(attrs)
         if len(values) != len(attrs):
             self.summary_refused = True
-        # A login form, book or linked result page contradicts a terminal zero.
-        if (tag == "input" and str(values.get("type", "")).casefold() == "password"
+        # A login form, book, linked results or automatic HTML redirect
+        # contradicts a terminal zero, even when the zero sentence is visible.
+        if (tag == "meta" and
+                str(values.get("http-equiv", "")).strip().casefold() == "refresh"
+                or tag == "input" and str(values.get("type", "")).casefold() == "password"
                 or tag == "form" and re.search(
                     r"login|logon|signin|connexion|authent", str(values.get("action", "")), re.I)
                 or tag == "a" and re.search(
