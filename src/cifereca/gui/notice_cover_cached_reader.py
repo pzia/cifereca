@@ -22,7 +22,9 @@ def cached_notice_cover_snapshot(
 ) -> CoverSourceSnapshot | None:
     """Resolve canonical C first, then legacy exact-source C, never provider I/O."""
     if (type(document) is not CoverDocumentScope
-            or any(type(getattr(document, name)) is not str for name in (
+            or any(type(getattr(document, name)) is not str
+                   or len(getattr(document, name)) > 512
+                   or not getattr(document, name).isprintable() for name in (
                 "kind", "source_key", "provider_id", "credential_id",
                 "loan_id", "artifact_id", "placement_id",
             ))
