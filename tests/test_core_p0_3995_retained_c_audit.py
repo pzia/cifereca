@@ -269,3 +269,61 @@ def test_single_language_declaration_is_not_multisource_concordance(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_retained_metadata_audit_exact_sources_and_no_value_selection(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from cifereca.plugin_api import MaintenanceContext
+    filename = tmp_path / "metadata-c.sqlite"
+    db = Storage(filename)
+    try:
+        a, _, path = _real_origins(db, tmp_path)
+        saved = []
+        for index, (provider, record, title, author, publisher, url) in enumerate((
+            ("seller-a", "edition-a", "Titre témoin A", "Auteur A", "Éditeur", A_URL),
+            ("seller-b", "edition-b", "Titre témoin B", None, "Éditeur", B_URL),
+        )):
+            row = verified_public(source_provider=provider, record_id=record, title=title,
+                                  author=author, publisher=publisher, thumbnail_url=url)
+            source = persist(db, row, at=100)
+            saved.append(source)
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:metadata-audit", source=source,
+                relation_proof_id=f"strong:fixture:metadata-{index}",
+            )
+        for source in saved:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    finally:
+        db.close()
+    db = Storage(filename)
+    try:
+        row, _ = _views(db, a.artifact_id, a.placement_id, path)
+        service = NS(storage=db, identity_by_id=lambda owner: object() if owner == "A" else None,
+                     _account_context_epoch=1, _source_context_epoch=1,
+                     library_entries=lambda **kwargs: [row])
+        broker = CatalogBrokerImpl(service)
+        result = broker.library_documentary_audit(identity_id="A", kind="metadata")
+        assert result["entries"] == result["divergent"] == 1
+        assert result["fields"]["title"]["divergent"] == 1
+        assert result["fields"]["author"]["complement"] == 1
+        assert result["fields"]["publisher"]["observed"] == 1
+        assert "Titre témoin" not in repr(result)
+        assert "_public_canonical_document_link" not in row
+        source_file = (Path(__file__).resolve().parents[1] / "src/plugins"
+                       / "maintenance-library-audit/cifereca_library_audits.py")
+        spec = importlib.util.spec_from_file_location("metadata_audit_fixture", source_file)
+        plugin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin)
+        tool = plugin.MetadataAuditTool().activate(NS(broker=lambda key: broker))
+        plan = tool.plan(MaintenanceContext(scope="library", identity_id="A"))
+        assert plan.facts == result and "Titre témoin" not in repr(plan)
+        control = NS(check_cancelled=lambda: None, report=lambda **kw: None)
+        accepted = tool.run(plan, control)
+        assert accepted.ok and accepted.changed == 0
+        row["_library_view_owner"] = "B"
+        assert broker.library_documentary_audit(identity_id="A", kind="metadata")["unknown"] == 1
+        assert broker.library_documentary_audit(identity_id="B", kind="metadata")["status"] == "unavailable"
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
