@@ -1088,6 +1088,14 @@ def main() -> int:
                     phase = report_data.get("notice_c_cover_stage")
                     if type(phase) is str and phase in stages:
                         print("NOTICE_C_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+                    private_phase = report_data.get("notice_c_private_web_phase")
+                    if (phase in ("cold_private_web", "offline_private_web")
+                            and type(private_phase) is str and private_phase in {
+                                "construct", "panel", "zero", "one", "many", "foreign",
+                                "check_widget", "popover", "click", "launch_check",
+                                "revoke", "worker_failed",
+                            }):
+                        print("NOTICE_C_PRIVATE_WEB_FAILURE_PHASE=" + private_phase, flush=True)
                 if (scenario.get("runner") == "gtk-reader-target-refresh"
                         and report_data.get("status") != "PASS"):
                     # Only the fixture probe's fixed public phase may reach
