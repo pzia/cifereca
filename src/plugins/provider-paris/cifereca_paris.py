@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urljoin, urlparse
 
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     Account, HistoryItem, ItemDetail, Loan, SearchResult,
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
-    acquisition_format_projection, normalize_acquisition_format, RetryableContentDownload,
+    acquisition_format_projection, normalize_acquisition_format,
 )
 from cifereca_paris_client import (
     AuthenticationError, ParisClient, ParisContentTransferUnavailable, ParisSummaryHTTPError,
@@ -2050,6 +2051,7 @@ class ParisProviderSession(ProviderSession):
             book_id, public_site(url),
         )
         current = url
+        retryable = getattr(plugin_api, "RetryableContentDownload", None)
         visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
@@ -2080,9 +2082,9 @@ class ParisProviderSession(ProviderSession):
                        if stream_admission_current is not None else {}),
                 )
             except ParisContentTransferUnavailable as error:
-                if selected_offer_only and callable(stream_admission_current):
+                if retryable is not None and selected_offer_only and callable(stream_admission_current):
                     ensure_scope()
-                    raise RetryableContentDownload(str(error)) from None
+                    raise retryable(str(error)) from None
                 raise
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
@@ -2110,10 +2112,10 @@ class ParisProviderSession(ProviderSession):
             # HTTPX messages include the full signed response URL. Preserve
             # only a closed numeric status in provider diagnostics.
             message = f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
-            if (selected_offer_only and callable(stream_admission_current)
-                    and response.status_code in {408, 429, 500, 502, 503, 504}):
+            if (retryable is not None and selected_offer_only
+                    and callable(stream_admission_current) and response.status_code in {408, 429, 500, 502, 503, 504}):
                 ensure_scope()
-                raise RetryableContentDownload(message) from None
+                raise retryable(message) from None
             raise ProviderConfigurationError(message) from None
         content = response.content
         content_type = response.headers.get("content-type", "")

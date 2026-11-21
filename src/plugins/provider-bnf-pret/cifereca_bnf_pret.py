@@ -7,12 +7,13 @@ import logging
 from datetime import datetime, timezone
 import threading
 from uuid import uuid4
+import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     Account, Loan, SearchResult, ItemDetail, CredentialField, AccountOptionField,
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ManualBorrowPolicy,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
-    ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted, RetryableContentDownload,
+    ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted,
     normalize_language_tag,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
@@ -674,6 +675,21 @@ class BnfProviderSession(ProviderSession):
             )
         )
 
+    def downloadable_selected_candidate_is_acsm(
+        self, account, *, edition_id, resource_id, kind, branch, selected_offer_id,
+    ):
+        """Classify the exact ACS4 action locally without reading the token."""
+        scope = self._downloadable_scope(account)
+        if (kind != "loan" or branch != "bnf_html"
+                or scope.provider_id != self.provider_id
+                or scope.credential_id != self.credential_id
+                or selected_offer_id != _reader_acs4_offer_id(
+                    scope.identity_id, scope.credential_id, scope.account_id,
+                    resource_id, edition_id,
+                )):
+            raise ProviderCapabilityError("bnf_selected_delivery_scope_mismatch")
+        return True
+
     def downloadable_selected_delivery_candidate(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
@@ -1029,9 +1045,11 @@ class BnfProviderSession(ProviderSession):
                 return path, ''
             except (ReaderHTTPError, WebParseError) as error:
                 code = self._report_failure('download', error)
-                if (type(error) is TemporaryLoanTokenError and expected_offer_id is not None
+                retryable = getattr(plugin_api, "RetryableContentDownload", None)
+                if (retryable is not None and type(error) is TemporaryLoanTokenError
+                        and expected_offer_id is not None
                         and callable(admission_current) and scope_current()):
-                    raise RetryableContentDownload(code) from None
+                    raise retryable(code) from None
                 raise ProviderError(code) from None
 
     def _catalog_error(self, phase, error):

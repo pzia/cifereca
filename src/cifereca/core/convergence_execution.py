@@ -20,7 +20,7 @@ from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.downloadable_resources import RetryableContentDownload
-from ..plugin_api.errors import Cancelled
+from ..plugin_api.errors import AdeptFulfillmentNotSubmitted, Cancelled
 from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsSnapshot,
 )
@@ -37,9 +37,11 @@ from .canonical_recovery import (
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 from .canonical_loan_retry_guard import historical_adept_retry_blocked
+from .adept_runtime_preflight import AdeptProfileUnavailable
 from .canonical_adept_attempt import describe_loan_adept_attempt
 from .loan_download_retry import (
-    clear_loan_download_retry, read_loan_download_retry, record_loan_download_failure,
+    clear_loan_download_retry, read_loan_download_retry, record_adept_intervention,
+    record_loan_download_failure,
 )
 
 _LOG = logging.getLogger("cifereca")
@@ -718,6 +720,15 @@ def execute_admitted_convergence(
                     "publication": "canonical_publication_failed",
                 }[phase]
             )
+            if (phase == "delivery"
+                    and type(error) in (AdeptProfileUnavailable, AdeptFulfillmentNotSubmitted)
+                    and not explicitly_confirmed_once and not cancelled()
+                    and current() and live_consent(key)):
+                reason = "canonical_adept_profile_attention"
+                try:
+                    record_adept_intervention(initial_storage, key, shared_lock=shared_lock)
+                except Exception:
+                    _LOG.warning("TRACE convergence code=download_intervention_record_failed")
             if (phase == "delivery" and type(error) is RetryableContentDownload
                     and not explicitly_confirmed_once and not cancelled()
                     and current() and live_consent(key)

@@ -13,7 +13,10 @@ from .canonical_adept_attempt import _key as _adept_key
 from .canonical_recovery import _exact_borrower_bound_in_db
 from .canonical_loan_retry_guard import historical_adept_ledger_hold
 from ..plugin_api.loan_inventory import LoanInventoryScope
-from .loan_download_retry import LoanDownloadRetry, _OWNED_KEY_PREFIX, _decode, _key
+from .loan_download_retry import (
+    LoanDownloadRetry, _INTERVENTION_PREFIX, _OWNED_KEY_PREFIX, _decode, _key,
+    read_adept_intervention,
+)
 from .notice_c_purchase_descriptive_read import _read_descriptive_txn
 from .source_context import source_context_epoch
 from .source_convergence import SourceKey
@@ -26,10 +29,11 @@ class LoanDownloadRetryRow:
     retry: LoanDownloadRetry
     adept_hold: bool
     inactive: bool
+    profile_refused_at: int = 0
 
     @property
     def can_reset(self) -> bool:
-        return self.retry.paused and not self.adept_hold and not self.inactive
+        return self.retry.paused and not (self.adept_hold or self.inactive or self.profile_refused_at)
 
 
 _MAX_SOURCES = 2048
@@ -115,10 +119,11 @@ def review_loan_download_retries(service, *, identity_id: str):
             "FROM source_references ref WHERE ref.identity_id=? "
             "AND ref.evidence_kind='provider_response' AND ref.evidence_ref<>'' "
             "AND (ref.reference_kind='loan' OR (ref.reference_kind='purchase' AND EXISTS ("
-            "SELECT 1 FROM metadata WHERE key=? || ref.source_reference_id))) "
+            "SELECT 1 FROM metadata WHERE key IN (? || ref.source_reference_id, "
+            "? || ref.source_reference_id)))) "
             "ORDER BY ref.provider_id,ref.credential_id,ref.account_id,ref.edition_id,"
             "ref.right_id,ref.branch_id,ref.reference_kind LIMIT ?",
-            (identity_id, _OWNED_KEY_PREFIX, _MAX_SOURCES + 1),
+            (identity_id, _OWNED_KEY_PREFIX, _INTERVENTION_PREFIX, _MAX_SOURCES + 1),
         ).fetchall()
         if len(sources) > _MAX_SOURCES:
             raise ValueError("loan_download_review_over_budget")
@@ -128,7 +133,8 @@ def review_loan_download_retries(service, *, identity_id: str):
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
             retry = _decode(raw[0] if raw is not None else None)
             hold = kind == "loan" and _has_adept_hold(db, source, scopes)
-            if not retry.failures and not hold:
+            refused_at = read_adept_intervention(db, source)
+            if not (retry.failures or hold or refused_at):
                 continue
             title = "Référence " + edition
             if kind == "loan":
@@ -146,7 +152,7 @@ def review_loan_download_retries(service, *, identity_id: str):
                         title = next((fact.value for fact in notice.facts
                                       if fact.field == "title"), title)
             result.append(LoanDownloadRetryRow(
-                source, title, retry, hold, state == "inactive",
+                source, title, retry, hold, state == "inactive", refused_at,
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")
@@ -183,6 +189,7 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
             if (len(refs) != 1 or refs[0][0] == "inactive"
                     or (source.kind == "loan" and _has_adept_hold(db, source, scopes))
+                    or read_adept_intervention(db, source)
                     or raw is None or _decode(raw[0]) != row.retry or not current()):
                 raise ValueError("loan_download_retry_reset_changed")
             db.execute("DELETE FROM metadata WHERE key=?", (_key(source),))
