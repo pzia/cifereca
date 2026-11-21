@@ -654,12 +654,50 @@ def main():
                              for table in ("artifacts", "placements", "origin_links",
                                            "acquisition_ledger", "entitlements"))
 
+        # A real corpus (not a fake page DTO): five distinct, unlinked
+        # registered PDFs in the runner's isolated library/profile. This
+        # exceeds both four-entry Core page limits without any provider call.
+        service = core.library
+        owner = service.current_identity
+        root = Path(service.config.get("library.directory")).expanduser()
+        assert root.is_absolute() and root.resolve().is_relative_to(Path.home().resolve())
+        assert storage.exact_profile_directory_binding(owner.identity_id) == (
+            owner.directory_name, True,
+        )
+        profile = root / owner.directory_name
+        corpus = profile / "Maintenance pagination fixture"
+        corpus.mkdir(parents=True, exist_ok=False)
+        witnesses = []
+        for index in range(5):
+            book = corpus / f"pagination-{index}.pdf"
+            content = f"%PDF-1.7\\nSynthetic maintenance page {index}\\n".encode("ascii")
+            book.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            artifact = "sha256:" + digest
+            storage.artifact_put({"artifact_id": artifact, "sha256": digest,
+                                  "size": len(content), "media_format": "pdf"})
+            pid = storage.placement_put({"artifact_id": artifact,
+                "identity_id": owner.identity_id, "path": str(book), "state": "present"})
+            storage.catalog_entry_put({"catalog_entry_id": "maintenance-pagination-" + pid,
+                "identity_id": owner.identity_id, "provider_id": "local",
+                "artifact_id": artifact, "placement_id": pid,
+                "title": f"Témoin de pagination {index}", "author": "Auteur témoin",
+                "media_format": "pdf", "local_state": "local"})
+            witnesses.append((book, content, pid, artifact))
+
+        def fixture_evidence():
+            return tuple((book.read_bytes(), storage.placement_get(pid), artifact)
+                         for book, _content, pid, artifact in witnesses)
+
         before = durable_counts()
+        evidence = fixture_evidence()
 
         def step(index=0):
             if index == len(checks):
                 assert durable_counts() == before, "Read-only guided actions changed inventory"
+                assert fixture_evidence() == evidence, "Guided review changed a fixture Placement or PDF"
                 assert tool.plan_calls == tool.run_calls == 0
+                report["checks"]["P0_7100_guided_fixture_bytes_and_placements_unchanged"] = True
                 report["checks"]["P0_7100_guided_actions_no_inventory_mutation"] = True
                 capture("00-guided-actions")
                 # Clear expanded text and restore the exact old XTEST layout.
@@ -694,7 +732,31 @@ def main():
 
             def received():
                 report["checks"]["P0_7100_real_guided_" + key] = True
-                step(index + 1)
+                if key not in ("organizer_preview", "origin_preview"):
+                    step(index + 1)
+                    return
+
+                def page_visible(number):
+                    return any(f"Page {number} ·" in node.get_text()
+                               for node in walk(outer) if isinstance(node, Gtk.Label)
+                               and node.get_visible())
+
+                assert page_visible(1) and not page_visible(2)
+                following, = (node for node in walk(outer)
+                              if isinstance(node, Gtk.Button)
+                              and node.get_label() == "Page suivante")
+                assert following.get_sensitive(), "Five registered candidates must allow a second page"
+                # Real GTK signal to the installed contribution, not pointer
+                # geometry. No implicit continuation while page 1 is displayed.
+                following.emit("clicked")
+                assert not following.get_sensitive()
+
+                def second_page():
+                    assert page_visible(2) and not page_visible(1)
+                    report["checks"]["P0_7100_real_guided_page_two_" + key] = True
+                    step(index + 1)
+
+                until(lambda: button.get_sensitive() and page_visible(2), second_page)
 
             until(observed, received)
 
