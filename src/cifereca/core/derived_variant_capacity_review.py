@@ -57,7 +57,7 @@ def _compact_snapshot(db):
             ).fetchone()
             if existing == (original,):
                 matched += 1
-            witnesses.append((key, _receipt_witness(raw)))
+            witnesses.append((key, journal._receipt_digest(raw)))
         if len(rows) != count:
             raise journal.DerivedJournalConflict("derived_compact_snapshot_changed")
         return tuple(witnesses), {
@@ -95,7 +95,7 @@ def _snapshot(scope):
                 raw = db.execute(
                     "SELECT value FROM metadata WHERE key=?", (key,),
                 ).fetchone()[0]
-                witnesses.append((key, journal._receipt_digest(raw)))
+                witnesses.append((key, _receipt_witness(raw)))
                 phase = "pending" if key.startswith(journal._PREFIX) else "committed"
                 counts[phase] += 1
                 try:
