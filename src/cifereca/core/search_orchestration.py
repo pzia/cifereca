@@ -456,6 +456,9 @@ def _mirror_live_search_results(
     c_already_ingested: bool = False,
 ) -> int:
     """Invoke the legacy mirror ABI while requiring a same-call C witness."""
+    if not c_already_ingested:
+        from .notice_c_private_search_web import persist_authenticated_search_rows
+        persist_authenticated_search_rows(service, rows, identity_id=identity_id)
     token = _CORE_LIVE_PUBLIC_C_WRITER.set(True)
     ingested = _CORE_PROGRESSIVE_C_WRITTEN.set(c_already_ingested)
     try:
@@ -983,6 +986,12 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             if attempt > 0 and primary_ok:
                 break
             try:
+                from .notice_c_private_search_web import (
+                    capture_authenticated_search_call, stamp_authenticated_search_rows,
+                )
+                private_call = (None if foreign_owner else capture_authenticated_search_call(
+                    self, session, getattr(identity, "identity_id", None),
+                ))
                 response_partial = False
                 if foreign_owner:
                     # Foreign sessions may only return an explicit, same-call
@@ -1011,6 +1020,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                             raise
                         session_rows = session.search(variant, effective_search_scope)
+                stamp_authenticated_search_rows(self, private_call, session_rows)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
                     key = _search_result_scope_key(row)
@@ -1365,6 +1375,12 @@ def _search_provider_session(
         if attempt > 0 and primary_ok:
             break
         try:
+            from .notice_c_private_search_web import (
+                capture_authenticated_search_call, stamp_authenticated_search_rows,
+            )
+            private_call = (None if public_only else capture_authenticated_search_call(
+                self, session, getattr(identity, "identity_id", None),
+            ))
             if public_only:
                 if not isinstance(session, ProviderSearchWithFacets):
                     session_rows = []
@@ -1408,6 +1424,7 @@ def _search_provider_session(
                     bool(getattr(source, "last_search_warnings", None))
                     for source in (session, concrete)
                 )
+            stamp_authenticated_search_rows(self, private_call, session_rows)
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
                 key = _search_result_scope_key(row)
@@ -1920,6 +1937,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     # Public C observations have no account/rights; the private
                     # catalogue mirror remains a final, admitted aggregate.
                     # Never publish a batch before its documentary producer.
+                    from .notice_c_private_search_web import persist_authenticated_search_rows
+                    persist_authenticated_search_rows(
+                        self, live_rows, identity_id=identity.identity_id,
+                    )
                     _clear_public_c_stamps(live_rows)
                     progressive_c_pairs.extend(_ingest_public_search_c(
                         self, live_rows, identity_id=identity.identity_id,
