@@ -200,11 +200,13 @@ def test_stale_public_selection_never_starts_holdings_or_acquisition():
     tree = ast.parse(owner.read_text())
     method = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                   and n.name == "_search_selected")
+    context_method = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                          and n.name == "_search_detail_request_context")
     namespace = {"result_row": result_row, "__name__": "cifereca.gui.search_details",
                  "__package__": "cifereca.gui"}
     module = ast.fix_missing_locations(ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
-        method,
+        method, context_method,
     ], type_ignores=[]))
     exec(compile(module, str(owner), "exec"), namespace)
     item = replace(_book("public-provider"), metadata={
@@ -213,6 +215,7 @@ def test_stale_public_selection_never_starts_holdings_or_acquisition():
     panel = NS(show_search=Mock(), empty=Mock())
     host = NS(
         _closed=False, _search_detail_request_generation=0,
+        _identity_context_generation=0, service=NS(current_identity=None),
         _cancel_cached_book_details=Mock(),
         _search_local_objects={},
         search_objects={"public-provider:stale": item},
@@ -222,6 +225,7 @@ def test_stale_public_selection_never_starts_holdings_or_acquisition():
         _request_cached_book_details=Mock(),
         _add_local_book_actions=Mock(),
     )
+    host._search_detail_request_context = namespace["_search_detail_request_context"].__get__(host)
     namespace["_search_selected"](host, NS(key="public-provider:stale"))
     panel.show_search.assert_called_once_with(item, loading=False)
     host.runner.submit.assert_not_called()
