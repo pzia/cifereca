@@ -288,20 +288,33 @@ def _matches_c_format(medium, media_format, content_types):
     ))
 
 
+def _matches_c_age(observation, age, age_kind):
+    if age is None:
+        return True
+    if observation is None:
+        return False
+    from .attested_age_filter import attested_age_status
+    return attested_age_status({
+        'provider_id': observation.provider_id, 'item_id': observation.record_id,
+        'metadata': {'youth_age_ranges': observation.filter_ranges()},
+    }, age, age_kind=age_kind) == 'match'
+
+
 def _matches_public_c(
     record: PublicNoticeCHit, *, wanted: set[str],
-    scope: str, field: str, needle: str, content_types=(),
+    scope: str, field: str, needle: str, content_types=(), age=None, age_kind=None,
 ) -> bool:
     if wanted and record.provider_id not in wanted:
         return False
     if scope != "all" and record.medium != scope:
         return False
-    return (_matches_c_format(record.medium, record.media_format, content_types)
+    return (_matches_c_age(record.age_observation, age, age_kind)
+            and _matches_c_format(record.medium, record.media_format, content_types)
             and _hit_score(record, field=field, query=needle) > 0)
 
 
 def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit,
-                              content_types=()):
+                              content_types=(), age=None, age_kind=None):
     """Prefilter with the very same matcher as the admitted source cursor.
 
     It is not a physical full-text index. All competing source claims still
@@ -312,10 +325,23 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
         f"json_extract({raw}, '$.public_bibliography.{name}')"
         for name in ("title", "author", "publisher", "description",
                      "medium", "media_format", "classification", "series_relation",
-                     "language_observation")
+                     "language_observation", "age_observation", "record_id", "docbase", "source_revision")
     ) + f", json_extract({raw}, '$.provider')"
     def score(title, author, publisher, description, medium, media_format,
-              raw_classification, raw_series, raw_language, provider):
+              raw_classification, raw_series, raw_language, raw_age, record_id,
+              docbase, revision, provider):
+        if age is not None:
+            if type(raw_age) is not str or len(raw_age) > _MAX_BIBLIOGRAPHY_BYTES:
+                return 0
+            try:
+                observation = decode_public_age_observation(
+                    json.loads(raw_age), provider_id=provider, record_id=record_id,
+                    docbase=docbase, medium=medium, source_revision=revision,
+                )
+            except (ValueError, TypeError, RecursionError):
+                return 0
+            if not _matches_c_age(observation, age, age_kind):
+                return 0
         if not _matches_c_format(medium, media_format, content_types):
             return 0
         classification = None
@@ -348,7 +374,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
                 language = fact
         return _public_text_score(needle, field, title, author, publisher, description,
                                   classification, series, language)
-    db.create_function("cifereca_c_search_match", 10, score, deterministic=True)
+    db.create_function("cifereca_c_search_match", 14, score, deterministic=True)
     try:
         rows = db.execute(
             "SELECT DISTINCT src.key FROM metadata AS m, "
@@ -365,7 +391,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
              json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        db.create_function("cifereca_c_search_match", 10, None)
+        db.create_function("cifereca_c_search_match", 14, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
 
 
@@ -375,6 +401,7 @@ def search_public_notice_c(
     page: int = 0, page_size: int = _MAX_MATCHES,
     max_scan: int = _MAX_SCAN, now: int | None = None,
     group_by_document: bool = False, content_types: tuple[str, ...] = (),
+    age: int | None = None, age_kind: str | None = None,
 ) -> PublicNoticeCPage:
     """Search durable public C source rows without a supplier or account GET.
 
@@ -392,6 +419,9 @@ def search_public_notice_c(
             or type(content_types) is not tuple or len(content_types) > 32
             or any(type(value) is not str or not 0 < len(value) <= 64
                    for value in content_types)
+            or (age is not None and (type(age) is not int or not 0 <= age < 18))
+            or (age_kind is not None and (type(age_kind) is not str or age_kind not in
+                ('interest', 'reading', 'publisher', 'recommended')))
             or type(group_by_document) is not bool
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= _MAX_MATCHES
@@ -442,6 +472,7 @@ def search_public_notice_c(
             if _matches_public_c(
                 record, wanted=wanted, scope=scope,
                 field=field, needle=needle, content_types=content_types,
+                age=age, age_kind=age_kind,
             ):
                 matches.append(record)
         cursor.close()  # Release the limited statement before registering a UDF.
@@ -456,6 +487,7 @@ def search_public_notice_c(
         refs, canonical_exceeded = _canonical_candidate_refs(
             db, prefix=_CANON_PREFIX, wanted=wanted, scope=scope, field=field,
             needle=needle, limit=max_scan, content_types=content_types,
+            age=age, age_kind=age_kind,
         )
         exceeded = exceeded or canonical_exceeded
         refs.update(hit.document.source_key for hit in matches)
@@ -615,6 +647,7 @@ def search_public_notice_c(
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
                 field=field, needle=needle, content_types=content_types,
+                age=age, age_kind=age_kind,
             ):
                 matches.append(hit)
 
