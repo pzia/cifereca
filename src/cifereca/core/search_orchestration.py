@@ -514,6 +514,16 @@ def _verified_public_web_reference(row: SearchResult) -> dict | None:
     return {"url": url, "evidence": evidence}
 
 
+def _terminal_anonymous_empty(response, session):
+    """Only the optional exact same-call empty receipt stops loose variants."""
+    return (type(response) is ProviderSearchResponse
+            and getattr(session, "credential_id", None) == "__public__"
+            and response.terminal_empty is True
+            and response.catalogue_complete is True and response.partial is False
+            and type(response.results) is list and not response.results
+            and type(response.public_notices) is tuple and not response.public_notices)
+
+
 def _public_rows_from_response(
     response: ProviderSearchResponse, session: ProviderSession,
 ) -> list[SearchResult]:
@@ -993,6 +1003,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     self, session, getattr(identity, "identity_id", None),
                 ))
                 response_partial = False
+                terminal_empty = False
                 if foreign_owner:
                     # Foreign sessions may only return an explicit, same-call
                     # public projection; no legacy list-only fallback.
@@ -1006,6 +1017,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         )
                         session_rows = _public_rows_from_response(response, session)
                         response_partial = response.partial is True
+                        terminal_empty = _terminal_anonymous_empty(response, session)
                         if response.catalogue_complete is False:
                             window_sources.add(session.provider_id)
                 else:
@@ -1041,6 +1053,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                         partial_failure = True
                 if partial_failure:
+                    break
+                if terminal_empty:
                     break
                 if attempt == 0 and provider_rows:
                     primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
@@ -1381,6 +1395,7 @@ def _search_provider_session(
             private_call = (None if public_only else capture_authenticated_search_call(
                 self, session, getattr(identity, "identity_id", None),
             ))
+            terminal_empty = False
             if public_only:
                 if not isinstance(session, ProviderSearchWithFacets):
                     session_rows = []
@@ -1394,6 +1409,7 @@ def _search_provider_session(
                         raise TypeError("Invalid provider search response")
                     session_rows = _public_rows_from_response(response, session)
                     partial_failure = response.partial is True
+                    terminal_empty = _terminal_anonymous_empty(response, session)
                     if response_windows is not None and response.catalogue_complete is False:
                         response_windows.append(True)
             elif attempt == 0 and response_facets is not None:
@@ -1405,6 +1421,7 @@ def _search_provider_session(
                     raise TypeError("Invalid provider search response")
                 session_rows = response.results
                 partial_failure = response.partial is True
+                terminal_empty = _terminal_anonymous_empty(response, session)
                 if response_windows is not None and response.catalogue_complete is False:
                     response_windows.append(True)
                 response_facets.extend(_validated_response_facets(response.facets))
@@ -1432,6 +1449,8 @@ def _search_provider_session(
                     provider_seen.add(key); provider_rows.append(row)
             if partial_failure:
                 warnings.append(f"{session.descriptor.display_name}: résultats partiels")
+                break
+            if terminal_empty:
                 break
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
