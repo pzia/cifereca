@@ -94,7 +94,7 @@ def test_discard_entire_page_if_evidence_changed_during_search(store, tmp_path, 
 
 @pytest.mark.parametrize("column,sql_value", [
     ("title", b"Roman commun"), ("author", b"Autrice"),
-    ("title", 42), ("author", 42),
+    ("title", b"42"), ("author", b"42"),
 ])
 def test_non_native_catalogue_text_never_dispatches_known_c(
     store, tmp_path, monkeypatch, column, sql_value,
