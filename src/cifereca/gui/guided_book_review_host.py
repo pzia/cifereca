@@ -19,12 +19,13 @@ def _text(value, maximum):
 class GuidedBookReviewLease:
     __slots__ = ("_lease", "_placement", "_ui_current", "_thread", "_action",
                  "_group", "_toast", "_buttons", "_ids", "_dispose",
-                 "_phase", "_pending", "_group_disposers", "_issued")
+                 "_phase", "_pending", "_group_disposers", "_issued", "_retire")
 
-    def __init__(self, lease, placement, ui_current, add_action, add_group, toast):
+    def __init__(self, lease, placement, ui_current, add_action, add_group, toast, retire=None):
         self._lease, self._placement = lease, placement
         self._ui_current, self._thread = ui_current, get_ident()
         self._action, self._group, self._toast = add_action, add_group, toast
+        self._retire = retire
         self._buttons, self._ids = {}, set()
         self._issued = 0
         self._dispose = None
@@ -128,9 +129,12 @@ class GuidedBookReviewLease:
         button = self._buttons.pop(action_id)
         self._ids.discard(action_id)
         button._cifereca_action_context_revoked = True
+        button._cifereca_review_action_retired = True
         hide = getattr(button, "set_visible", None)
         if callable(hide):
             hide(False)
+        if callable(self._retire):
+            self._retire(button)
         return True
 
     def _mount(self, contribute):
@@ -257,7 +261,8 @@ def admit_guided_book_review(window, detail, row, item, *, token, resolved):
 
         lease = GuidedBookReviewLease(
             GuidedMaintenanceHostLease(identity, valid, enqueue), placement,
-            ui_current, add_action, detail.add_review_group, window.toast)
+            ui_current, add_action, detail.add_review_group, window.toast,
+            retire=getattr(detail, "remove_review_action", None))
         return lease if lease._ui_live() else None
     except Exception:
         return None

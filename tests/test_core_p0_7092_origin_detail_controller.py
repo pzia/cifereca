@@ -145,14 +145,15 @@ def test_paged_host_exposes_all_bounded_choices_without_network(rig):
     host.add_action = limited
     assert actions["preview"][2]()
     deliver(tasks)
-    old = actions["catalogue-slot-1"][2]
+    old = actions["public-0"][2]
     seen = set()
     for _ in range(3):
-        seen.update(k for k in actions if k.startswith("catalogue-slot-"))
+        seen.update(k for k in actions if k.startswith(("public-", "private-")))
         more = [v[2] for k, v in actions.items() if k.startswith("catalogue-more-")]
         if more:
             assert more[0]()
             deliver(tasks)
-    assert seen == {f"catalogue-slot-{i}" for i in range(1, 25)}
+    assert seen == ({f"public-{i}" for i in range(8)}
+                    | {f"private-{i}" for i in range(16)})
     assert old() is False
     assert not calls and not toasts

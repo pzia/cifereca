@@ -96,6 +96,7 @@ class DetailController:
         self.used = set()
         self.choice_window = ()
         self.choice_actions = ()
+        self.choice_offset = None
         self.busy = self.finished = self.disposed = False
 
     def current(self):
@@ -203,18 +204,20 @@ class DetailController:
         count = 10 if len(choices) - offset > 11 else 11
         window = choices[offset:offset + count]
         self.choice_window = tuple(choice for _, choice in window)
+        self.choice_offset = offset + len(window)
         keys, accounts = [], []
         for index, (kind, choice) in enumerate(window, offset + 1):
             if not self.current():
                 return
-            key = "catalogue-slot-" + str(index)
+            key = ("public-" + str(index - 1) if kind == "public"
+                   else "private-" + str(index - 1 - len(original.public_choices)))
             if kind == "public":
                 title = "Envoyer le titre à " + choice.provider_id
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
                 action = lambda selected=choice: self.search(selected, original)
             else:
                 surface = "achats" if choice.kind == "purchase" else "prêts"
-                title = f"Comparer {surface} — choix {index}"
+                title = f"Comparer {surface} — compte {index - len(original.public_choices)}"
                 coordinates = ("Fournisseur : " + choice.provider_id
                                + " · Connexion : " + choice.credential_id
                                + " · Compte : " + (choice.account_id or "principal"))
@@ -232,13 +235,14 @@ class DetailController:
             )
             keys.append(key)
         self.choice_actions = tuple(keys)
-        if choices:
+        if accounts or len(choices) > 11:
             accounts.append(("Fenêtre", f"Choix {offset + 1} à {following} sur {len(choices)} connus. Découverte partielle ; aucune absence attestée."))
         if accounts:
             self.host.add_group("Catalogues à comparer explicitement", tuple(accounts))
 
     def _next_choice_window(self, original, offset):
-        if self.busy or not self.current() or self.page is not original:
+        if (self.busy or not self.current() or self.page is not original
+                or self.choice_offset != offset):
             return False
         return self._submit(
             lambda: original,
