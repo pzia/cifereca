@@ -76,6 +76,14 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 known_public_detail_metadata, known_public_alternative_section,
                 with_known_public_field_provenance,
             )
+            # The primary C age is a typed Core fact, not a free provider
+            # metadata dictionary. Keep the age's own source provenance;
+            # never borrow an alternative source's age for this primary row.
+            from .search_known_public_c_age import primary_known_public_c_ages
+            detail_metadata = known_public_detail_metadata(metadata)
+            primary_ages = primary_known_public_c_ages(item)
+            if primary_ages:
+                detail_metadata["youth_age_ranges"] = primary_ages
             presentation = book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
@@ -90,7 +98,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                     ("Disponibilité", "Non vérifiée"),
                     ("Couverture de recherche", "Partielle"),
                 )),),
-                metadata=known_public_detail_metadata(metadata),
+                metadata=detail_metadata,
             )
             from cifereca.gui.search_known_public_c_guard import (
                 known_public_c_cell_current,
