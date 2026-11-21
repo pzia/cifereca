@@ -58,6 +58,40 @@ _EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
 _LOG = logging.getLogger("cifereca.plugin.provider.gutenberg")
 
 
+def _documentary_subjects(entry):
+    """Literal direct subject declarations, not inferred bookshelf genres."""
+    exact_schemes = {
+        "http://www.gutenberg.org/2009/pgterms/LCSH",
+        "https://www.gutenberg.org/2009/pgterms/LCSH",
+    }
+    values = [
+        node.attrib.get("term")
+        for node in entry.findall(f"{{{ATOM}}}category")
+        if not len(node) and node.attrib.get("scheme") in exact_schemes
+    ]
+    values.extend(
+        node.text
+        for namespace in (DCTERMS, "http://purl.org/dc/elements/1.1/")
+        for node in entry.findall(f"{{{namespace}}}subject")
+        if not len(node) and not node.attrib
+    )
+    if len(values) > 32:
+        return []
+    result = []
+    for raw in values:
+        if type(raw) is not str:
+            continue
+        value = raw.strip()
+        if (not 0 < len(value) <= 240 or not value.isprintable()
+                or any(category(ch) in {"Cc", "Cf", "Cs"} for ch in value)
+                or re.search(r"(?i)https?://|@|(?:token|auth|cookie|signature|password|secret)\s*=|(?:bearer|basic)\s+\S+", value)
+                or re.match(r"(?i)^(?:[/\\]|~/|file:|[a-z]:[/\\])", value)):
+            continue
+        if value not in result:
+            result.append(value)
+    return result
+
+
 def _attested_date(value: str | None) -> str | None:
     """Accept a precise OPDS date, without inferring an edition publication.
 
@@ -527,6 +561,7 @@ class GutenbergSession(ProviderSession):
                 "language_proof": language_proof,
                 "rights": rights,
                 "subjects": subjects,
+                "documentary_subjects": _documentary_subjects(entry) if documentary else [],
                 "bookshelves": bookshelves,
                 "thumbnail": thumbnail or cover,
                 "cover_origin": "opds_thumbnail" if thumbnail else ("opds_image" if cover else "unavailable"),
@@ -619,8 +654,8 @@ class GutenbergSession(ProviderSession):
                 # inferred publisher. Keep only facts from this entry.
                 offer = rows[-1]
                 metadata = dict(row["language_proof"] or {})
-                if row["subjects"]:
-                    metadata["subjects"] = list(row["subjects"])
+                if row["documentary_subjects"]:
+                    metadata["subjects"] = list(row["documentary_subjects"])
                 web = row["observed_friendly"]
                 if web != f"https://www.gutenberg.org/ebooks/{ebook_no}":
                     web = None
