@@ -264,13 +264,13 @@ def diagnose_local_adept(*, identity=None, provider=None, credential=None,
         deadline = time.monotonic() + _SECONDS
         image = _private_image(path, deadline)
         if (not 100 <= len(image) <= _MAX_IMAGE
-                or image[:16] != b"SQLite format 3\\0"):
+                or image[:16] != b"SQLite format 3\0"):
             raise _Incomplete("local_evidence_unavailable")
         db = sqlite3.connect(":memory:")
         if not hasattr(db, "deserialize"):
             raise _Incomplete("snapshot_reader_unavailable")
         # Normalize only the private copy; a WAL header otherwise seeks sidecars.
-        db.deserialize(image[:18] + b"\\x01\\x01" + image[20:])
+        db.deserialize(image[:18] + b"\x01\x01" + image[20:])
         db.execute("PRAGMA query_only=ON")
         db.execute("PRAGMA trusted_schema=OFF")
         db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
