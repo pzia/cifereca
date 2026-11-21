@@ -39,6 +39,59 @@ pendant les sessions de terrain.
 | Pause de contenu sans perte de B et multi-fournisseur | #7324 : vrai Core/SQLite, deux fournisseurs, prêt/achat, troisième tentative, budget exact, reçu prioritaire malgré pause, puis zéro GET | Ne qualifie pas le rejeu d'une mutation ADEPT ambiguë (#7161/#7231) |
 | Ancienne archive/ledger | Les recettes BiblioAccess conservent le journal historique et refusent son adoption sans reçu B canonique | La compatibilité de tous les fichiers utilisateurs ne se déduit pas d'une fixture |
 
+
+## Protocole terrain minimal — première livraison La Rochelle
+
+**Précondition** : compte légitime déjà connecté, prêt numérique réellement
+actif et déjà emprunté, consentement Sync valide ; ne pas déclencher de
+`borrow` ni d'achat pour construire la recette. Conserver une copie locale
+sûre de la base et de la bibliothèque avant le test. Utiliser une version
+installée correspondant au HEAD/CI reçu et indiquer ce SHA dans le relevé.
+La première observation doit concerner un prêt sans B canonique locale
+préexistante ; une simple resynchronisation de copies présentes n'est pas
+une première livraison.
+
+| Contrôle | Première Sync | Deuxième Sync, **même compte/prêt** |
+| --- | --- | --- |
+| A et offre | Référence emprunteur/branche/édition/occurrence exactes, offre fraîche, consentement ON | Nouveau contrôle de portée, offre sans emprunt induit |
+| Transfert et traitement | Au plus un GET de contenu autorisé, ADEPT seulement si l'ACSM est attesté ; aucun `borrow` | **Zéro** nouveau GET/ADEPT du contenu déjà vérifié |
+| Journal | Reçu durable `canonical_receipt_staged` puis terminal `complete` après B | Aucun nouveau reçu d'acquisition pour cette occurrence |
+| Publication B | Artifact SHA final, SourceReference exacte, OriginLink(provider et ADEPT si reçu), Placement `present` **dans le profil** | Même identité/SHA/provenance, B toujours satisfaisant et physiquement présent |
+| Résultat | `downloaded` / `canonical_delivery_committed` ; absence de fichier partiel publié | `present_attested` / présence canonique constatée, sans nouvelle acquisition |
+
+**Preuves à garder localement.** Relever l'heure, le commit installé, les
+codes de résultat des deux Sync et les compteurs de GET, fulfillment, POST
+`borrow`, rollback et reprise ; vérifier l'Artifact/OriginLink/Placement
+avec les diagnostics locaux exacts et la preuve de SHA. Les statuts doivent
+être associés à **la même occurrence**, pas seulement au même titre ou SHA.
+Distinguer explicitement capture applicative, trace HTTP instrumentée et
+commandes exécutées par le sous-processus ADEPT : une trace HTTP Core ne
+compte pas les échanges internes du runtime. Noter chaque élément qui n'a
+pas été instrumenté comme « non vérifié », jamais comme « zéro ».
+
+**Confidentialité.** Ne joindre à GitHub que les états agrégés et un reçu
+de test *expurgé* : ni identifiant de compte, ni numéro de carte, ni chemin
+privé, ni licence/ACSM, ni URL signée, ni token/cookie, ni secret ADEPT.
+Garder la corrélation exacte en local et confirmer séparément qu'elle a
+été contrôlée. Une capture documentaire n'autorise aucun reset de marqueur
+v1 historique ; ce parcours reste sous #7244.
+
+**Refus de réception** : premier fichier déjà présent, URL déduite d'un
+titre/ISBN, GET répété sans qualification, second POST de prêt, journal
+`complete` sans preuve B, déplacement automatique du fichier, copie
+corrompue/symlink acceptée, compte ambigu, coupure non instrumentée ou
+retour d'une phase ADEPT incertaine. En cas d'incertitude, conserver octets,
+reçus et journal ; ne supprimer ni staging ni marqueur pour « faire passer »
+la recette.
+
+Le contrôle transactionnel de la transition vers `complete` a été renforcé
+par #7333 : SourceReference provider attestée, OriginLink reçu exact et
+Placement du profil doivent exister au même instant SQLite. #7349 ajoute
+la revalidation de B lors de la relecture idempotente du journal déjà
+complet (**à considérer livrée uniquement après CI et fusion**).
+Les scénarios synthétiques #7305/#7318 valident rollback et reprise, sans
+prétendre reproduire une panne de courant matérielle.
+
 ## Critères encore bloquants
 
 1. **Terrain La Rochelle :** capture d'une nouvelle livraison autorisée sur
@@ -46,9 +99,11 @@ pendant les sessions de terrain.
    reçu, SHA, origine et Placement exacts, puis une deuxième Sync sans GET.
    Les captures de simple réutilisation `present_attested` ne valent pas
    premier téléchargement.
-2. **Qualification des routes :** les formats et étapes Paris, Numilog,
-   Kobo et BiblioAccess restent soumis à #7231 ; seules les phases dont le
-   fournisseur/runtime atteste la rejouabilité peuvent alimenter #7161.
+2. **Qualification des routes :** #7231 est techniquement réceptionnée
+   (Paris, Numilog, Kobo, tests synthétiques et matrice) ; chaque fournisseur
+   reste soumis aux preuves de phase, compte, offre et consentement lors du
+   GET réel. L'absence de preuve de rejeu d'une mutation ADEPT ambiguë
+   interdit toujours la reprise automatique ; #7161 n'efface pas #7244.
 3. **Cas legacy résiduels :** observer les chemins effectivement invoqués,
    pas uniquement leurs signatures ; un fichier déjà valide ne doit pas
    être déplacé ou re-téléchargé par principe. Conserver les reçus et
