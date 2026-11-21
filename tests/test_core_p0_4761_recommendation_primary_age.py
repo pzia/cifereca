@@ -179,6 +179,11 @@ def test_recommendation_opaque_packet_rejects_hostile_nested_values_after_restar
 
             for forged in (
                 replace(packet[6], record_id=Hostile()),
+                replace(packet[6], observed_at=Hostile()),
+                replace(packet[6], last_seen_at=Hostile()),
+                replace(packet[6], stale=Hostile()),
+                replace(packet[6], cover_state=Hostile()),
+                replace(packet[6], edition_id=Hostile()),
                 replace(packet[6], age_observation=Hostile()),
                 replace(packet[6], age_observation=replace(
                     packet[6].age_observation,
