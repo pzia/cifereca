@@ -1,5 +1,6 @@
 """Provider externe Numilog 0.1.79, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
+from contextlib import contextmanager
 import hashlib
 import ipaddress
 import json
@@ -1811,6 +1812,41 @@ class NumilogSession(ProviderSession):
                 except (OSError, ValueError, ProviderCapabilityError):
                     return False
 
+            def route_refusal():
+                if owned_confirmation or attested_confirmation_redirect is not None:
+                    return 'confirmation_replay_unqualified'
+                return ('acsm_replay_unqualified' if selected_kind == 'acsm'
+                        else 'readbook_replay_unqualified')
+
+            def transfer_failed(attested, reason):
+                trace.fail('transport_unavailable')
+                if not (stage_acsm_only is True and callable(core_admission_current)
+                        and (attested or selected_readbook or owned_confirmation)
+                        and admitted()):
+                    return
+                if (retryable is not None and repeatable_offer and attested
+                        and selected_kind == 'epub_direct'
+                        and not owned_confirmation and attested_confirmation_redirect is None):
+                    raise retryable(reason) from None
+                raise ProviderCapabilityError(
+                    'numilog_candidate_transport_refused:' + route_refusal()
+                ) from None
+
+            @contextmanager
+            def stream_delivery(hop_url, headers, attested):
+                # The same-origin transport lacks the public-pinned
+                # transport's typed error. Qualify only closed transient
+                # exceptions from the GET stream while the exact scope is live.
+                # TLS/connect policy errors, local pool exhaustion, format
+                # refusals and unrelated exceptions are not a retry signal.
+                try:
+                    with self.client.stream('GET', hop_url, headers=headers) as response:
+                        yield response
+                except (httpx.ConnectTimeout, httpx.ReadTimeout,
+                        httpx.ReadError, httpx.RemoteProtocolError):
+                    transfer_failed(attested, 'transport_unavailable')
+                    raise
+
             for hop in range(12):
                 require_core()
                 trace.fail('adept_unconfirmed')
@@ -1876,19 +1912,7 @@ class NumilogSession(ProviderSession):
                         except ValueError as error:
                             if (type(error) is getattr(plugin_api, "ContentTransferUnavailable", None)
                                     and admitted()):
-                                trace.fail('transport_unavailable')
-                                if retryable is not None and repeatable_offer:
-                                    raise retryable(str(error)) from None
-                                # This is a transport failure, not a URL veto;
-                                # replay of the preceding selected action was
-                                # not qualified. Keep closed route evidence.
-                                reason = (
-                                    'acsm_replay_unqualified' if selected_kind == 'acsm'
-                                    else 'readbook_replay_unqualified'
-                                )
-                                raise ProviderCapabilityError(
-                                    'numilog_candidate_transport_refused:' + reason
-                                ) from None
+                                transfer_failed(attested_hop, 'transport_unavailable')
                             trace.fail('origin_rejected')
                             raise ProviderCapabilityError(
                                 'numilog_candidate_transport_refused'
@@ -1985,7 +2009,7 @@ class NumilogSession(ProviderSession):
                 if attested_hop and url_origin(url) != url_origin(self.library_url):
                     headers['Cookie'] = ''
                 require_core()
-                with self.client.stream('GET', url, headers=headers) as r:
+                with stream_delivery(url, headers, attested_hop) as r:
                     require_core()
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
                     # Validate Location before recording target evidence. A
@@ -2058,15 +2082,7 @@ class NumilogSession(ProviderSession):
                             and (attested_hop or selected_readbook or owned_confirmation)
                             and r.status_code in {408, 429, 500, 502, 503, 504}
                             and admitted()):
-                        if retryable is not None and repeatable_offer and attested_hop:
-                            raise retryable(public_http_code(r.status_code))
-                        reason = ('confirmation_replay_unqualified'
-                                  if owned_confirmation or attested_confirmation_redirect is not None
-                                  else 'acsm_replay_unqualified' if selected_kind == 'acsm'
-                                  else 'readbook_replay_unqualified')
-                        raise ProviderCapabilityError(
-                            'numilog_candidate_transport_refused:' + reason
-                        ) from None
+                        transfer_failed(attested_hop, public_http_code(r.status_code))
                     self._status(r)
                     trace.fail('mime_unexpected')
                     mime = r.headers.get('content-type','').split(';')[0].lower().strip()

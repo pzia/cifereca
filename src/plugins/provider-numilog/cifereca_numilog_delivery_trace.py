@@ -27,7 +27,7 @@ _PUBLIC_CODES = frozenset({
     "artifact_invalid", "xml_not_acsm", "adept_attention_required",
     "adept_unconfirmed", "epub_complete", "epub_candidate", "acsm_complete", "acsm_candidate",
     "html_oversize",
-    "unclassified_error",
+    "unclassified_error", "transport_unavailable",
 })
 
 
