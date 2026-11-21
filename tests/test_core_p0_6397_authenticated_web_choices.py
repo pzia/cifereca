@@ -166,7 +166,7 @@ def test_same_c_two_readers_and_multiple_choices_never_exposes_private_url(tmp_p
     {"url": HOST + "/search"}, {"url": HOST + "/download/book"},
     {"url": HOST + "/books/book.epub"}, {"url": "https://foreign.example.org/book"},
     {"url": HOST + "/resources/book?lang=fr"}, {"url": HOST + "/resources/%62ook"},
-    {"url": HOST + "/resources/book#section"}, {"evidence": "another.authenticated_search_record_identifier"},
+    {"evidence": "another.authenticated_search_record_identifier"},
     {"parser": "legacy"}, {"connection_epoch": True}, {"connection_epoch": 999},
 ])
 def test_unqualified_source_does_not_publish_choice(tmp_path, changes):
@@ -233,3 +233,15 @@ def test_unrelated_cannot_read_source_even_with_valid_account(tmp_path):
         first, _ = host.source(a)
         _, other = host.source(a, record="different", group="edition:other")
         assert host.menu(other, first.document).choices == ()
+
+
+@pytest.mark.parametrize("url", [HOST + "/resources/book#section", HOST + "/resources/book?token=unsafe"])
+def test_unsafe_url_is_refused_by_admission_before_any_c_write(tmp_path, url):
+    with closing(Storage(tmp_path / "admission.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+            host.source(account, url=url)
+        with db._lock, db._connect() as sql:
+            assert sql.execute("SELECT count(*) FROM metadata WHERE key LIKE 'notice.c.%'").fetchone()[0] == 0
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
