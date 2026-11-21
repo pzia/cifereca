@@ -234,3 +234,50 @@ def test_known_search_age_filter_reuses_exact_c_across_readers_and_restart(tmp_p
             assert evict_notice_cover(db, entry.document, expected_epoch=entry.epoch)
     with closing(Storage(filename)) as db:
         check(db)
+
+
+@pytest.mark.parametrize("change", ["unknown", "incompatible", "other_kind", "match"])
+def test_exact_live_lookup_outside_budget_reapplies_age_predicate(tmp_path, change):
+    from cifereca.core.notice_cover_repository import _opaque_key
+    filename = tmp_path / "exact-live-age.sqlite"
+    with closing(Storage(filename)) as db:
+        # Pick the key order deterministically; only the second source has
+        # retained C and is reached through the exact secondary lookup.
+        pairs = []
+        for record in ("first-age", "second-age"):
+            row = original()
+            row.record_id = record
+            row.metadata["bibliography_evidence"]["youth_age"]["record_id"] = record
+            pairs.append((persist(db, project(row)), row))
+        pairs.sort(key=lambda pair: _opaque_key(pair[0].document))
+        first, _ = pairs[0]
+        source, row = pairs[1]
+        canonical = persist_exact_public_search_cover(db, source)
+        if change == "unknown":
+            row.metadata = {}
+        elif change == "incompatible":
+            row.metadata["bibliography_evidence"]["youth_age"]["ranges"][0].update(
+                age_min=14, source_label="À partir de 14 ans")
+        elif change == "other_kind":
+            row.metadata["bibliography_evidence"]["youth_age"]["ranges"][0].update(
+                age_kind="reading")
+        else:
+            row.metadata["bibliography_evidence"]["youth_age"]["ranges"][0].update(
+                age_min=11, source_label="À partir de 11 ans")
+        current = persist(db, project(row), at=101)
+        assert current.document == source.document and current.epoch > source.epoch
+        assert read_consolidated_notice_cover(db, canonical.document) == canonical
+
+    with closing(Storage(filename)) as db:
+        page = search_public_notice_c(
+            db, row.title, age=12, age_kind="publisher", max_scan=1,
+            now=101, group_by_document=True,
+        )
+        assert page.status == "budget_exceeded" and page.scanned_sources == 1
+        expected = {first.document}
+        if change == "match":
+            expected.add(current.document)
+        assert {hit.document for hit in page.hits} == expected
+        assert page.known_matches == len(expected)
+        assert all(hit.age_observation is not None for hit in page.hits)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
