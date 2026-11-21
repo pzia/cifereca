@@ -42,9 +42,12 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             if entry["provider_id"] != primary["provider_id"]
         )
         other_provider, other_author = alternative["provider_id"], alternative["author"]
-        assert filter_loaded_with_documentary_proofs(
+        matched = filter_loaded_with_documentary_proofs(
             [primary], other_author, providers=(other_provider,),
-        ) == [primary]
+        )
+        assert len(matched) == 1
+        assert matched[0]["key"] == primary["key"]
+        assert matched[0]["_notice_c_matched_providers"] == (other_provider,)
 
         for corruption in ("epoch", "identity", "document", "packet"):
             row = {**primary, "metadata": deepcopy(primary["metadata"])}
@@ -66,4 +69,22 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             assert filter_loaded_with_documentary_proofs(
                 [row], other_author, providers=(other_provider,),
             ) == []
+        class Hostile:
+            def __eq__(self, other):
+                raise AssertionError("external equality on group selection")
+
+            def __ne__(self, other):
+                raise AssertionError("external inequality on group selection")
+
+        for key in ("source", "identity_id", "_cover_document_ref",
+                    "provider_id", "item_id"):
+            row = {**primary, "metadata": dict(primary["metadata"])}
+            row[key] = Hostile()
+            expanded, originals = expand_filter_sources([row], scope="all")
+            assert expanded == [row] and originals == {}
+        from cifereca.core.notice_c_loaded_filter import matching_source_label
+        assert matching_source_label({
+            "_notice_c_matched_providers": (other_provider,),
+            "provider_id": Hostile(),
+        }) == ""
         assert db.entitlements() == db.acquisitions() == db.placements() == []
