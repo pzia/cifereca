@@ -140,7 +140,12 @@ def catalogue_notice_url(row, *, base=None, provider=None):
         if (path.endswith(('.xml', '.atom', '.opds'))
                 or path in {'/feed', '/feed.php', '/fetch.php',
                             '/opds', '/opds/search', '/services/engine/search/opds',
-                            '/search', '/ebooks/search',
+                            # These are search/result endpoints, not a
+                            # per-book public HTML sheet, even when a
+                            # producer has a catalog URL and a series query.
+                            '/search', '/search.aspx', '/search.svc/search',
+                            '/index.php/search', '/index.php/search.aspx',
+                            '/ebooks/search',
                             '/index.php/feed', '/index.php/feed.php',
                             '/index.php/fetch', '/index.php/fetch.php',
                             '/index.php/opensearch.xml'}
