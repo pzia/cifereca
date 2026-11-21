@@ -7,6 +7,7 @@ collapsed back to the original primary presentation after ranking.
 from __future__ import annotations
 
 from .notice_c_public_search import PublicNoticeCHit
+from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _MAX_SOURCES
 from .notice_cover_repository import is_notice_cover_document
 
@@ -25,15 +26,20 @@ def attach_filter_sources(row, hits):
 
 
 def _sources(row):
-    if type(row) is not dict or row.get("source") != "notice_c_public":
+    if (type(row) is not dict or type(row.get("source")) is not str
+            or row["source"] != "notice_c_public"):
         return None
     if _FIELD not in row:
         return None
     packet = row[_FIELD]
     meta = row.get("metadata")
+    identity = row.get("identity_id")
+    document = row.get("_cover_document_ref")
     if (type(packet) is not tuple or len(packet) != 5 or packet[0] is not _TOKEN
-            or packet[1] != row.get("identity_id")
-            or packet[2] != row.get("_cover_document_ref")
+            or type(identity) is not str or packet[1] != identity
+            or type(document) is not CoverDocumentScope
+            or type(packet[2]) is not CoverDocumentScope
+            or packet[2] != document
             or not is_notice_cover_document(packet[2])
             or type(meta) is not dict
             or type(packet[3]) is not int
@@ -44,8 +50,10 @@ def _sources(row):
     hits = packet[4]
     if (any(type(hit) is not PublicNoticeCHit or hit.document != packet[2]
             or hit.epoch != packet[3] for hit in hits)
-            or hits[0].provider_id != row.get("provider_id")
-            or hits[0].record_id != row.get("item_id")):
+            or type(row.get("provider_id")) is not str
+            or type(row.get("item_id")) is not str
+            or hits[0].provider_id != row["provider_id"]
+            or hits[0].record_id != row["item_id"]):
         return ()
     return hits
 
@@ -110,10 +118,11 @@ def collapse_filter_sources(rows, originals):
 def matching_source_label(row):
     # This metadata is produced by collapse only; labels are descriptive.
     providers = row.get("_notice_c_matched_providers")
+    primary = row.get("provider_id")
     if (type(providers) is not tuple or not providers
-            or providers == (row.get("provider_id"),)):
-        return ""
-    if any(type(provider) is not str or not 1 <= len(provider) <= 64 for provider in providers):
+            or any(type(provider) is not str or not 1 <= len(provider) <= 64
+                   for provider in providers)
+            or type(primary) is not str or providers == (primary,)):
         return ""
     suffix = f" (+{len(providers) - 3})" if len(providers) > 3 else ""
     return " · Correspondance : " + ", ".join(providers[:3]) + suffix
