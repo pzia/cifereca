@@ -266,3 +266,53 @@ def test_actual_coverview_bind_restarts_on_gtk_main_with_new_origin_token(prepar
     assert host._generation == 2
     assert host._request.source_uri == ORIGIN
     assert host._request.still_current
+
+
+@pytest.mark.parametrize("cancel_detail", [False, True])
+def test_fallback_notifies_detail_before_its_late_n3_completion(prepared, monkeypatch, cancel_detail):
+    import cifereca.gui.document_cover_service as module
+
+    _, scope, embedded, origin, loader, svc = prepared
+    (epub_metadata.cover_cache_dir() / embedded.resource.cache_name).unlink(missing_ok=True)
+    _register(prepared, member="OPS/no-such-cover.png")
+    callbacks, paths, changed, checks = [], [], [], []
+    finished = Event()
+
+    def pending(_resource, *, source_path, callback, **kwargs):
+        callbacks.append(callback)
+        return NS(cancel=lambda: None)
+
+    def verifier(resource, *, source_path):
+        checks.append(resource)
+        return EpubCoverPhysicalAssessment(
+            resource, "definitive_unusable", "member_missing_or_ambiguous",
+        )
+
+    monkeypatch.setattr(loader, "load_exact_epub", pending)
+    monkeypatch.setattr(module, "qualify_failed_epub_cover", verifier)
+
+    # Subscribe detail first, but leave both N3 results pending.
+    detail = svc.get_cover(
+        scope, "detail", lambda path: paths.append(("detail", path)),
+        on_source_changed=lambda: changed.append("detail"),
+    )
+    listing = svc.get_cover(
+        scope, "list", lambda path: paths.append(("list", path)),
+        on_source_changed=lambda: changed.append("list"),
+    )
+    if cancel_detail:
+        detail.cancel()
+    callbacks[1](None)
+    # Join the qualifier without a sleep or a timing assumption. A sentinel
+    # queued on its single worker runs after the entire notification pass.
+    svc._qualify_pool.submit(finished.set)
+    assert finished.wait(10)
+    assert svc.decisions.peek(scope, revision=7).uri == ORIGIN
+    assert sorted(changed) == (["list"] if cancel_detail else ["detail", "list"])
+    assert not listing.still_current and not detail.still_current
+    callbacks[0](None)
+    assert paths == [("list", None)]
+    assert sorted(changed) == (["list"] if cancel_detail else ["detail", "list"])
+    assert len(checks) == 1
+    fresh = svc.get_cover(scope, "detail", lambda path: None)
+    assert fresh.source_uri == ORIGIN and fresh.still_current
