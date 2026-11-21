@@ -598,3 +598,80 @@ def test_hidden_book_cards_never_publish_public_notice_c_or_web_choice():
         assert len(calls) == 2
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("requested,count,partial", [
+    ((), 1, False),
+    (("ebook",), 1, False),
+    (("epub",), 0, True),
+    (("pdf",), 0, True),
+    (("mp3",), 0, True),
+    (("ebook", "epub"), 1, True),
+])
+def test_typed_search_does_not_infer_file_format_from_book_anchor(requested, count, partial):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={"location":
+                "/1409/Catalog/Search?query=roman&pageindex=0"})
+        assert request.url.path.endswith("/Catalog/Search")
+        return httpx.Response(200, headers={"content-type": "text/html"},
+            text='<a href="/1409/Catalog/Book/123/roman">Roman témoin</a>')
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman", content_types=requested)
+        assert len(response.results) == len(response.public_notices) == count
+        assert response.partial is partial
+        assert response.catalogue_complete is (None if partial else False)
+        assert response.terminal_empty is False
+        assert bool(session.last_search_warnings) is partial
+        assert len(calls) == 2
+        if count:
+            row, = response.results
+            assert response.public_notices[0].result is row
+            assert row.format is None and row.download_url is None
+            assert row.owned is row.downloadable is False
+        assert len(session.search("roman")) == 1
+        assert len(calls) == 4
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("requested,partial", [(("ebook",), False), (("epub",), True)])
+def test_format_filter_preserves_only_supported_terminal_empty(requested, partial):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+            text="<p>Aucun résultat pour la recherche roman</p>")
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman", content_types=requested)
+        assert response.results == [] and response.public_notices == ()
+        assert response.partial is partial
+        assert response.catalogue_complete is (None if partial else True)
+        assert response.terminal_empty is (not partial)
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("bad", ["epub", (False,), ("",), ("x" * 81,), ("epub",) * 33])
+def test_invalid_format_request_refused_before_catalogue_http(bad):
+    def handler(request):
+        raise AssertionError("invalid format request must not reach HTTP")
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        with pytest.raises(provider.ProviderCapabilityError, match="content_type_invalid"):
+            session.search_with_response_facets("roman", content_types=bad)
+    finally:
+        session.close()
