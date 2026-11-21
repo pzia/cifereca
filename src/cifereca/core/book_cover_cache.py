@@ -254,6 +254,17 @@ class CoverDecisionCache:
             self._slots.move_to_end(scope)
             return current.token
 
+    @staticmethod
+    def _validate_token(token: CoverCacheToken) -> None:
+        if type(token) is not CoverCacheToken:
+            raise TypeError("expected cover cache token")
+        # Dataclass equality otherwise aliases True/1 and 1.0/1.
+        # Validate before slot lookup or N1 resolution, not just on begin().
+        if (type(token.scope) is not CoverDocumentScope
+                or type(token.revision) is not int or token.revision < 0
+                or type(token.generation) is not int or token.generation < 1):
+            raise ValueError("invalid cover cache token")
+
     def resolve_and_publish(
         self, token: CoverCacheToken, candidates: Iterable[CoverCandidate], *,
         snapshot_complete: bool,
@@ -265,8 +276,7 @@ class CoverDecisionCache:
         N1 validates all candidate URLs and provenance before we cache them.
         This method does no I/O and never turns a partial result into missing.
         """
-        if type(token) is not CoverCacheToken:
-            raise TypeError("expected cover cache token")
+        self._validate_token(token)
         with self._lock:
             current = self._slots.get(token.scope)
             if current is None or current.token != token or current.published:
@@ -375,8 +385,7 @@ class CoverDecisionCache:
         stale or invalidated token returns False without notifying listeners.
         Does not re-run resolution, read EPUBs, fetch URLs or touch GTK.
         """
-        if type(token) is not CoverCacheToken:
-            raise TypeError("expected cover cache token")
+        self._validate_token(token)
         self._validate_resolved_decision(decision)
         if decision.scope != token.scope or decision.revision != token.revision:
             raise ValueError("cover decision scope or revision mismatch")
