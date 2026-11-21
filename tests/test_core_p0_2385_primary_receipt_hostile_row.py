@@ -4,6 +4,7 @@ Controlled public source, canonical retention and restart. No supplier HTTP,
 private rights, origin, artifact or placement.
 """
 from contextlib import closing
+from dataclasses import replace
 
 from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
 from cifereca.core.notice_c_known_projection import (
@@ -54,6 +55,15 @@ def test_hostile_row_fields_cannot_invoke_equality_or_mint_primary_c_provenance(
                 candidate["metadata"][key] = Hostile()
             else:
                 candidate[key] = Hostile()
+            assert known_public_primary_facts(candidate) is None
+            assert known_public_alternative_facts(candidate) == ()
+            assert with_known_public_field_provenance(presentation, candidate) is presentation
+        packet = row["_core_notice_c_primary_facts"]
+        for forged_packet in (
+            (packet[0], Hostile(), packet[2]),
+            (packet[0], packet[1], replace(packet[2], epoch=Hostile())),
+        ):
+            candidate = {**row, "_core_notice_c_primary_facts": forged_packet}
             assert known_public_primary_facts(candidate) is None
             assert known_public_alternative_facts(candidate) == ()
             assert with_known_public_field_provenance(presentation, candidate) is presentation
