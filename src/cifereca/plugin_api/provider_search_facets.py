@@ -58,6 +58,10 @@ class ProviderSearchResponse:
     # non-exhaustive catalogue window, True an attested complete response,
     # None no coverage declaration. No authority or pagination request.
     catalogue_complete: bool | None = None
+    # Explicit terminal empty for the exact query. Only a complete empty
+    # same-call anonymous response may suppress Core's loose text variants.
+    # Default preserves all existing providers' fallback behavior.
+    terminal_empty: bool = False
 
 
 @runtime_checkable
