@@ -147,6 +147,7 @@ class _QualifiedFallbackLease:
     url: str
     token: CoverCacheToken
     expires_at: float
+    failed_catalogue_urls: tuple[str, ...] = ()
 
 
 class CoverReadRequest:
@@ -158,6 +159,7 @@ class CoverReadRequest:
         self._child: CoverRequest | None = None
         # Authoritative N2 selected URI, never inferred from physical N3.
         self._source_uri: str | None = None
+        self._selection_token: CoverCacheToken | None = None
         # Recheck the EXACT N2 selection at GTK idle-paint time, not just
         # at the N3 worker callback (which may queue an idle beforehand).
         self._is_selected: Callable[[], bool] | None = None
@@ -552,6 +554,73 @@ class DocumentCoverService:
             )
             return fallback
 
+    def _qualify_failed_public_catalogue(
+        self, document, snapshot, token, uri, handle, source_changed,
+    ) -> None:
+        """Bounded N2 fallback on an exact direct N3 HTTP absence receipt.
+
+        Neither the cache's media HIT order nor a generic failure changes
+        the documentary source. Keep the original canonical C immutable.
+        """
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+
+        if (not is_canonical_cover_document(document)
+                or snapshot.attested_book_identity != document.source_key
+                or not snapshot.snapshot_complete or snapshot.embedded is not None
+                or len({item.source for item in snapshot.candidates}) < 2):
+            return
+        with self._lock:
+            if (self._closed or not handle.active
+                    or self._snapshots.get(document) is not snapshot
+                    or self.decisions.selected_token(
+                        document, revision=snapshot.revision, uri=uri,
+                    ) != token):
+                return
+            remaining = self.loader.definitive_http_missing_ttl(uri)
+            if remaining <= 0.0:
+                return
+            now = self._clock()
+            prior = self._qualified_fallback.get(document)
+            failed = ()
+            until = now + min(remaining, self._fallback_ttl)
+            if prior is not None:
+                if (prior.token != token or prior.revision != snapshot.revision
+                        or not prior.failed_catalogue_urls or prior.expires_at <= now):
+                    return
+                failed = prior.failed_catalogue_urls
+                until = min(until, prior.expires_at)
+            # At most the initial GET plus two qualified alternatives.
+            # One URL shared by several providers is still one media failure.
+            if uri in failed or len(failed) >= 2:
+                return
+            excluded = (*failed, uri)
+            fallback = self.decisions.resolve_n1(
+                document, tuple(item for item in snapshot.candidates if item.url not in excluded),
+                revision=snapshot.revision, snapshot_complete=True,
+                attested_book_identity=snapshot.attested_book_identity,
+            )
+            if (fallback.status != "selected" or fallback.tier != "catalog"
+                    or fallback.uri in excluded):
+                return
+            next_token = self.decisions.begin(document, revision=snapshot.revision)
+            if not self.decisions.publish_resolved(next_token, fallback):
+                return
+            self._qualified_fallback[document] = _QualifiedFallbackLease(
+                snapshot.revision, fallback.uri, next_token, until, excluded,
+            )
+            # Include a reader refused by the bounded subscription registry,
+            # and every other reader of the revoked token, even pending N3.
+            subscribers = {handle: source_changed}
+            for reader, callback in self._source_subscriptions.get(document, {}).values():
+                if reader._selection_token == token:
+                    subscribers[reader] = callback
+        for reader, callback in subscribers.items():
+            if reader.active:
+                try:
+                    callback()
+                except Exception:
+                    pass
+
     def _qualify_failed_embedded_in_worker(
         self,
         document: CoverDocumentScope,
@@ -597,14 +666,27 @@ class DocumentCoverService:
 
         def work() -> None:
             changed = False
+            subscribers = ()
             try:
                 assessment = qualify_failed_epub_cover(
                     snapshot.embedded.resource,
                     source_path=snapshot.verified_epub_path,
                 )
-                changed = self.apply_qualified_epub_fallback(
-                    document, assessment, expected_token=token,
-                ) is not None
+                with self._lock:
+                    changed = self.apply_qualified_epub_fallback(
+                        document, assessment, expected_token=token,
+                    ) is not None
+                    if changed:
+                        # A second variant can still be waiting for its N3
+                        # failure when the first has already revoked EPUB N2.
+                        # Its late delivery is correctly rejected as stale;
+                        # notify the exact old-token subscribers now instead.
+                        subscribers = tuple(
+                            (reader, callback)
+                            for reader, callback in
+                            self._source_subscriptions.get(document, {}).values()
+                            if reader._selection_token == token
+                        )
             except (OSError, TypeError, ValueError, RuntimeError):
                 # No private path, source URL or ZIP exception can become a
                 # GTK diagnostic. Treat any unexpected failure as retryable.
@@ -619,7 +701,11 @@ class DocumentCoverService:
                         while len(self._qualify_cooldown) > self._max_documents:
                             self._qualify_cooldown.popitem(last=False)
             if changed:
-                for waiting_handle, waiting_callback in waiters:
+                # A subscribed reader may also be in the qualifier's
+                # waiters. One notification per handle, outside the lock.
+                consumers = dict(subscribers)
+                consumers.update(waiters)
+                for waiting_handle, waiting_callback in consumers.items():
                     if not waiting_handle.active:
                         continue
                     try:
@@ -939,8 +1025,8 @@ class DocumentCoverService:
         A missing physical EPUB image never makes the already-attested
         embedded source lose its N1 preference to a cached catalogue URL.
         A failed N3 recovery is reported as unavailable, not invented
-        documentary 'missing'; bounded remote fallback remains a separate
-        policy to implement under #6168.
+        documentary 'missing'. For complete, attested public canonical C,
+        a direct exact HTTP 404/410 may qualify a bounded alternative.
         """
         if type(document) is not CoverDocumentScope:
             raise TypeError("expected exact DocumentRef")
@@ -1005,9 +1091,9 @@ class DocumentCoverService:
                             or live != lease.token):
                         self._qualified_fallback.pop(document, None)
                     elif self._clock() >= lease.expires_at:
-                        # Reconsider the original EPUB N1 priority after a
-                        # bounded lease. Repair of N3 can restore the image;
-                        # no public URL may permanently displace it.
+                        # Reconsider the original N1 priority after a bounded
+                        # lease. Repair of N3 can restore the image; no
+                        # temporary alternate may permanently displace it.
                         self._qualified_fallback.pop(document, None)
                         self.decisions.invalidate(
                             document, cause="materialization_requalified",
@@ -1047,6 +1133,10 @@ class DocumentCoverService:
                 if snapshot is not None and decision is not None
                 and decision.status == "selected" else None
             )
+            # Bind the token while registration and fallback CAS are
+            # serialized. Even a reader not yet dispatched to N3 belongs
+            # to the exact selection it must later be notified to rebind.
+            handle._selection_token = selected_token
             elapsed_ms = (perf_counter() - started) * 1000
             if math.isfinite(elapsed_ms) and elapsed_ms >= 0:
                 self._n2_recent[outcome].append(elapsed_ms)
@@ -1125,6 +1215,12 @@ class DocumentCoverService:
                     self._qualify_failed_embedded_in_worker(
                         document, snapshot, selected_token, handle,
                         on_source_changed,
+                    )
+                elif (path is None and decision.tier == "catalog"
+                      and on_source_changed is not None):
+                    self._qualify_failed_public_catalogue(
+                        document, snapshot, selected_token, decision.uri,
+                        handle, on_source_changed,
                     )
 
         if decision.tier == "embedded":

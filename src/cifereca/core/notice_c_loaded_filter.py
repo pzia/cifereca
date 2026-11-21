@@ -103,9 +103,77 @@ def _sources(row):
     return hits
 
 
+def _filter_source_row(hit, *, marker=None):
+    """The shared, purely descriptive projection of one retained source."""
+    from .notice_c_known_projection import _series_metadata
+
+    row = {
+        "source": "notice_c_public",
+        "provider_id": hit.provider_id,
+        "item_id": hit.record_id,
+        "title": hit.title, "author": hit.author,
+        "publisher": hit.publisher, "description": hit.description,
+        "medium": hit.medium, "media_format": hit.media_format,
+        "metadata": _series_metadata(hit),
+    }
+    if marker is not None:
+        row[_MARKER] = marker
+    return row
+
+
+def matches_known_public_c_filters(item, *, query, field, scope, providers,
+                                   content_types, languages):
+    """Filter a known recommendation with the same per-source Search rules.
+
+    None means an ordinary candidate; False means no admissible match.
+    Only the native, original Core receipt admits alternative sources.
+    No storage access, provider action, rank change or new receipt.
+    """
+    from ..models import SearchResult
+    from .notice_c_recommendation_known import (
+        known_public_c_primary_hit, known_public_c_alternative_hits,
+    )
+    from .document_filter import filter_loaded_with_documentary_proofs
+
+    if (type(item) is not SearchResult or type(item.scenario) is not str
+            or item.scenario != "notice_c_public"):
+        return None
+    if (type(query) is not str or len(query) > 2048 or not query.isprintable()
+            or type(field) is not str or field not in (
+                "all", "title", "author", "isbn", "subject", "series", "collection", "language")
+            or type(scope) is not str or scope not in (
+                "all", "digital", "physical", "unknown")):
+        return False
+    for values in (providers, content_types, languages):
+        if (type(values) is not tuple or len(values) > 128
+                or any(type(value) is not str or not value or len(value) > 120
+                       or value != value.strip() or not value.isprintable()
+                       for value in values)):
+            return False
+    primary = known_public_c_primary_hit(item)
+    alternatives = known_public_c_alternative_hits(item)
+    if primary is None or alternatives is None:
+        return False
+    # An expanded group has exactly the same medium prefilter and typed
+    # classification handling as the Search list. Do not mix metadata
+    # from one source with the selected catalogue of another.
+    if alternatives:
+        marker = object()
+        rows = [
+            _filter_source_row(hit, marker=marker)
+            for hit in (primary, *alternatives)
+            if scope == "all" or hit.medium == scope
+        ]
+    else:
+        rows = [_filter_source_row(primary)]
+    return bool(filter_loaded_with_documentary_proofs(
+        rows, query, field=field, scope=scope, providers=providers,
+        content_types=content_types, languages=languages,
+    ))
+
+
 def expand_filter_sources(rows, *, scope):
     """Expand only Core-projected groups, never loose alternative metadata."""
-    from .notice_c_known_projection import _series_metadata
 
     expanded, originals = [], {}
     wanted = str(scope or "all").casefold()
@@ -124,16 +192,7 @@ def expand_filter_sources(rows, *, scope):
         for hit in hits:
             if wanted in ("physical", "digital", "unknown") and hit.medium != wanted:
                 continue
-            expanded.append({
-                _MARKER: marker,
-                "source": "notice_c_public",
-                "provider_id": hit.provider_id,
-                "item_id": hit.record_id,
-                "title": hit.title, "author": hit.author,
-                "publisher": hit.publisher, "description": hit.description,
-                "medium": hit.medium, "media_format": hit.media_format,
-                "metadata": _series_metadata(hit),
-            })
+            expanded.append(_filter_source_row(hit, marker=marker))
     return expanded, originals
 
 
