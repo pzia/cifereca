@@ -245,3 +245,51 @@ def test_lender_label_uses_safe_installed_library_descriptor(harness, display, e
     assert choice.label == expected
     assert account.credential_id not in choice.label
     assert choice.executable is False and session.calls == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    {"revision_id": "new-revision"},
+    {"scenario": "CATALOGUE"},
+    {"source_account_id": ""},
+    {"source_account_id": "other-reader"},
+])
+def test_exact_notice_binding_revoked_without_rotating_claim(harness, mutation):
+    from cifereca.core.borrow_for_identity_discovery import possible_lender_matches
+    service, account, session = harness
+    notice = _candidate().notice
+    candidate, = _discover(service, notice)
+    key = borrow_claim_key(account, notice)
+    assert possible_lender_matches(candidate, notice, requesting_identity_id="default")
+    for name, value in mutation.items():
+        setattr(notice, name, value)
+    assert not possible_lender_matches(candidate, notice, requesting_identity_id="default")
+    assert borrow_claim_key(account, notice) == key
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_account_id": "foreign"},
+    {"source_account_id": False},
+    {"revision_id": True},
+    {"revision_id": ""},
+    {"revision_id": "x" * 1025},
+    {"scenario": None},
+])
+def test_unqualified_extra_scope_never_selects_a_lender(harness, changes):
+    service, _account, session = harness
+    assert _discover(service, replace(_candidate().notice, **changes)) == ()
+    assert session.calls == 0
+
+
+def test_conflicting_revisions_do_not_pick_first_candidate(harness):
+    service, account, session = harness
+    first = replace(_candidate().notice, revision_id="one")
+    second = replace(first, revision_id="two")
+    assert borrow_claim_key(account, first) == borrow_claim_key(account, second)
+    assert len(_discover(service, first, replace(first))) == 1
+    assert _discover(service, first, second) == ()
+    assert _discover(service, second, first) == ()
+    other = replace(first, record_id="independent")
+    candidate, = _discover(service, first, second, other)
+    assert candidate._notice is other
+    assert session.calls == 0
