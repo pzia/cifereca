@@ -69,6 +69,7 @@ class SafeE2EExportTests(unittest.TestCase):
             ("complete", "invalidated_n2_warm_n3"),
             ("complete", "epub_priority_cold"),
             ("complete", "epub_priority_warm"),
+            ("complete", "epub_qualified_fallback"),
         ):
             with self.subTest(cover=cover, local=local):
                 private.write_text(json.dumps({
