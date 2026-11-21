@@ -93,3 +93,57 @@ def test_symlink_profile_never_traversed(tmp_path):
         assert profile.is_symlink()
     finally:
         db.close()
+
+
+def test_sibling_and_unregistered_directories_are_not_excluded(tmp_path):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        stage = Path(intent.staged_path)
+        sibling = tmp_path / "sibling-profile"
+        sibling.mkdir()
+        other = tmp_path / "unregistered"
+        other.mkdir()
+        (sibling / "relative").symlink_to(os.path.relpath(stage, sibling))
+        (other / "directory").symlink_to(stage.parent, target_is_directory=True)
+        (other / "unresolved").symlink_to("/nonexistent/synthetic")
+        result = _review(db, tmp_path)
+        assert result["status"] == "observed"
+        assert result["lexical_stage_aliases"] == 2
+        assert result["unresolved_symlinks"] == 1
+        assert not result["retention_authorized"]
+        assert not result["quota_refund_authorized"]
+        assert not result["external_dependencies_verified"]
+        assert str(tmp_path) not in repr(result)
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_sibling_alias_added_after_first_walk_invalidates_report(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        sibling = tmp_path / "sibling-profile"
+        sibling.mkdir()
+        original = review._walk
+        calls = 0
+
+        def changed(*args, **kwargs):
+            nonlocal calls
+            result = original(*args, **kwargs)
+            calls += 1
+            if calls == 1:
+                (sibling / "late").symlink_to(intent.staged_path)
+            return result
+
+        monkeypatch.setattr(review, "_walk", changed)
+        result = _review(db, tmp_path)
+        assert result["status"] == "evidence_changed"
+        assert result["entries_observed"] == 0
+        assert not result["retention_authorized"]
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
