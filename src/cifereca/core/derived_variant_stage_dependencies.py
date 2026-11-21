@@ -26,6 +26,20 @@ _JSON_COLUMNS = (
     ("placements", "metadata_json"), ("entitlements", "metadata_json"),
     ("origin_links", "metadata_json"), ("source_references", "metadata_json"),
     ("device_placements", "metadata_json"), ("action_events", "facts_json"),
+    ("identities", "metadata_json"), ("provider_connections", "metadata_json"),
+    ("provider_accounts", "metadata_json"), ("device_bindings", "metadata_json"),
+    ("sync_runs", "detail_json"),
+)
+
+# Cache is JSON with arbitrary root types (including strings/arrays), and
+# even an expired row can still be read by a legacy or external consumer.
+# It is not a retention permission. Keep its keys in the same scan budget.
+_STRUCTURED_COLUMNS = (("cache", "payload"), ("identities", "reading_languages_json"))
+_TEXT_COLUMNS = (
+    ("placements", "path"), ("backup_items", "local_path"),
+    ("device_placements", "target_relative_path"), ("source_references", "evidence_ref"),
+    ("origin_links", "evidence_ref"), ("cache", "namespace"), ("cache", "cache_key"),
+    ("acquisition_ledger", "error_message"), ("backup_items", "error"),
 )
 
 
@@ -59,16 +73,18 @@ def _matches_stage(text, stage):
         # A non-local authority is not evidence of a different file.
     if not value or "\x00" in value:
         return False
-    suffix = ".cifereca-staging/variants/" + posixpath.basename(stage)
-    if not value.startswith("/") and posixpath.basename(stage) not in value:
+    basename = posixpath.basename(stage)
+    if not value.startswith("/") and basename not in value:
         return False
     normalized = posixpath.normpath(value)
     if normalized.startswith("//"):
         normalized = "/" + normalized.lstrip("/")
     if normalized == stage:
         return True
-    return (not normalized.startswith("/") and
-            (normalized == suffix or normalized.endswith("/" + suffix)))
+    # A relative reference may use the stage directory itself as its base.
+    # No source supplies an attested base, so even a bare basename or
+    # "variants/name" is a blocker. Distinct absolute paths stay distinct.
+    return not normalized.startswith("/") and posixpath.basename(normalized) == basename
 
 
 def scan_stage_references(db, selected):
@@ -106,10 +122,8 @@ def scan_stage_references(db, selected):
     # remaining global budget. A bound miss is never an absence witness.
     queries = [("metadata", "key", "value", "metadata")]
     queries.extend((table, "NULL", col, "json") for table, col in _JSON_COLUMNS)
-    queries.extend((table, "NULL", col, "path") for table, col in (
-        ("placements", "path"), ("backup_items", "local_path"),
-        ("device_placements", "target_relative_path"),
-    ))
+    queries.extend((table, "NULL", col, "structured") for table, col in _STRUCTURED_COLUMNS)
+    queries.extend((table, "NULL", col, "path") for table, col in _TEXT_COLUMNS)
     for table, key_col, column, kind in queries:
         size = f"length(CAST({column} AS BLOB))"
         if key_col != "NULL":
@@ -155,7 +169,7 @@ def scan_stage_references(db, selected):
                         for path in candidates:
                             if _matches_stage(text, path):
                                 status[path] = "referenced"
-                if kind == "json" or (kind == "metadata" and (
+                if kind in ("json", "structured") or (kind in ("metadata", "path") and (
                         raw.lstrip().startswith(("{", "[", '"')) or chr(92) in raw)):
                     parsed = json.loads(raw, object_pairs_hook=_unique_pairs)
                     if kind == "json" and type(parsed) is not dict:
