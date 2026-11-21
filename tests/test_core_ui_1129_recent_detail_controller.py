@@ -5,7 +5,10 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
+
 from cifereca.gui.recent_detail_controller import recent_selected
+from cifereca.gui.recent_rows import project_recent_rows
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -126,17 +129,17 @@ def test_recent_provider_label_failure_does_not_expose_private_exception():
     window.service = NS(provider_display_name=broken)
     recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
     details = events[1][1]
-    assert details["badges"] == ["Numilog", "Local"]
-    assert ("Provenance", "Numilog") in details["rows"]
+    assert details["badges"] == ["Source", "Local"]
+    assert ("Provenance", "Source") in details["rows"]
     assert "SECRET" not in repr(details)
 
 
-def test_recent_provider_label_missing_or_empty_keeps_original_ui_contract():
+def test_recent_provider_label_empty_uses_same_neutral_label_as_list():
     item = {"key": "a", "provider_id": "kobo"}
     window, events, stamp = _fake({"a": item})
     window.service = NS(provider_display_name=lambda _: "  ")
     recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
-    assert events[1][1]["badges"] == ["Kobo", "Local"]
+    assert events[1][1]["badges"] == ["Source", "Local"]
 
 
 def test_recent_standard_panel_receives_recovery_and_common_bibliography():
@@ -173,3 +176,44 @@ def test_recent_rejected_cover_packet_never_downgrades_to_url_on_standard_panel(
     assert events[1][0] == "presentation"
     assert events[1][1].thumbnail_url is None
     assert events[1][1].cover_document_ref is None
+
+
+@pytest.mark.parametrize("provider,value,expected", [
+    ("local", "Should not be used", "Local"),
+    ("paris", "Bibliothèques de Paris", "Bibliothèques de Paris"),
+    ("unknown", "", "Source"),
+    ("unknown", " private ", "Source"),
+    ("unknown", "x" * 81, "Source"),
+    ("unknown", "line\nsecret", "Source"),
+    ("unknown", None, "Source"),
+    ("unknown", 99, "Source"),
+    ("unknown", type("LabelSubclass", (str,), {})("untrusted"), "Source"),
+])
+@pytest.mark.parametrize("standard", [False, True])
+def test_recent_label_parity_for_list_and_detail(provider, value, expected, standard):
+    item = {"key": "a", "placement_id": "a", "provider_id": provider}
+    window, events, stamp = _fake({"a": item})
+    calls = []
+    def descriptor(key):
+        calls.append(key)
+        return value
+    window.service = NS(provider_display_name=descriptor)
+    rows, keyed = project_recent_rows(
+        [item], row_factory=lambda *args: args, provider_display_name=descriptor,
+    )
+    assert rows[0][4] == expected and keyed["a"] is item
+    if standard:
+        window.recent_page.detail.show_presentation = (
+            lambda model: events.append(("presentation", model))
+        )
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    model = events[1][1]
+    if standard:
+        assert model.badges[0] == expected
+        recovery = next(s for s in model.sections if s.title == "Récupération")
+        assert ("Provenance", expected) in [(f.label, f.value) for f in recovery.fields]
+    else:
+        assert model["badges"][0] == expected
+        assert ("Provenance", expected) in model["rows"]
+    assert calls == ([] if provider == "local" else [provider, provider])
+    assert [event[0] for event in events[2:]] == ["notice", "local", "facets"]
