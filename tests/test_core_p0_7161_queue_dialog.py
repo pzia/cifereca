@@ -130,7 +130,8 @@ def test_sync_retry_dialog_exact_three_attempts_and_safe_individual_action(
     )
     dlg, = dialogs
     assert dlg.presented and dlg.title == "Téléchargements à reprendre"
-    assert "1 téléchargement(s)" in dlg.body and "1 en pause" in dlg.body
+    expected_pause = 0 if case == "adept_hold" else 1
+    assert "1 téléchargement(s)" in dlg.body and f"{expected_pause} en pause" in dlg.body
     widgets = tuple(all_widgets(dlg))
     texts = [item.label for item in widgets if type(item.label) is str]
     assert any("3/3 échec(s)" in value and "En pause" in value for value in texts
