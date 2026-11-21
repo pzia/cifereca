@@ -139,6 +139,17 @@ def test_unavailable_detail_does_not_claim_available():
 
 
 @pytest.mark.parametrize("href", [
+    "/customer",
+    "/account",
+    "/checkout",
+    "/cart",
+    "/login",
+    "/sso",
+    "/admin",
+    "/oauth",
+    "/download/index",
+    "/CUSTOMER",
+    "/downloads/book.epub;session=DO_NOT_SEND",
     "/customer/account/login",
     "/customer/account/login.epub",
     "/account/profile.epub",
