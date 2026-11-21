@@ -31,7 +31,7 @@ def capacity_text(value):
                   f"{r['unrecorded_regular']} sans reçu, {r['ambiguous_entries']} entrées ambiguës, "
                   f"{r['unverified_regions']} zones non vérifiées, "
                   f"{r['unobserved_receipts']} reçus non observés. Aucun orphelin supprimable attesté.")
-    compact = "Traces compactes : capacité indéterminée."
+    compact = "Traces compactes : capacité indéterminée. Nouvelles réservations refusées tant que les témoins ne sont pas vérifiés."
     if value.compact_status in ("observed", "partial"):
         cc, limits = dict(value.compact_counts), dict(value.compact_capacity)
         compact = (f"Traces compactes : {cc['count']}/{limits['records']} témoins, "
@@ -40,6 +40,8 @@ def capacity_text(value):
                    "Capacité distincte, aucune retraite attestée.")
         if value.compact_saturation == "at_limit":
             compact += " Plafond atteint."
+        if cc["unpaired"]:
+            compact += " Nouvelles réservations refusées : reçu original non vérifié."
     prefix = "" if value.output_bytes_complete else "Au moins "
     return (f"Installation : {value.record_count}/{cap['records']} reçus "
             f"({c['pending']} actifs, {c['committed']} terminés) ; "
