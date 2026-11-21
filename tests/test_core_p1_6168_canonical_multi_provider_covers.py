@@ -140,6 +140,9 @@ def test_private_source_keeps_only_opaque_provenance_no_image_session_url(tmp_pa
             db, "paris", "https://private.example.org/cover.jpg",
             identity="john",
         )
+        assert private.attribute.candidates
+        assert is_notice_cover_document(private.document)
+        assert cached_notice_cover_snapshot(NS(storage=db), private.document) is None
         aggregate = persist_consolidated_cover_source(
             db, canonical_edition_id=EDITION, source=private,
             relation_proof_id="strong:private:provider",
