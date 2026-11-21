@@ -6,6 +6,7 @@ from ..core.notice_c_local_origin_projection import valid_local_public_c_link
 
 from .local_detail_cover import exact_recent_detail_cover
 from .detail_model import book_detail_presentation
+from .recent_rows import recent_provider_label
 
 
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
@@ -44,20 +45,10 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
         detail.empty("Profil modifié", "Rouvrez les livres récents pour ce profil.")
         return
     provider = str(item.get("provider_id") or "local")
-    # Récents has its own "Récupération" section, but should display the
-    # *same provider name* as the common Recherche/Bibliothèque detail views.
-    # Provider label lookup is presentation-only and must never trigger IO.
-    provenance = provider.capitalize()
+    # The recovery section uses exactly the same bounded source label as
+    # the list, including when a descriptor is absent or malformed.
     lookup = getattr(getattr(window, "service", None), "provider_display_name", None)
-    if callable(lookup):
-        try:
-            candidate = lookup(provider)
-        except Exception:
-            # Broken/removed provider labels are not allowed to break the
-            # details page, nor to surface exceptions carrying private data.
-            candidate = None
-        if isinstance(candidate, str) and candidate.strip():
-            provenance = candidate.strip()
+    provenance = recent_provider_label(provider, lookup)
     full_path = str(item.get("path") or "")
     file_name = Path(full_path).name if full_path else "—"
     acquired = format_recent_timestamp(item.get("acquired_at"), detailed=True)

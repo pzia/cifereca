@@ -14,6 +14,7 @@ def _method(name):
     fn = next(item for item in tree.body
               if isinstance(item, ast.FunctionDef) and item.name == name)
     scope = {
+        "__name__": "cifereca.gui.search_details", "__package__": "cifereca.gui",
         "TaskPriority": NS(USER_ACTION=10),
         "result_row": lambda item, **_kwargs: {"id": item.id},
     }
