@@ -262,12 +262,23 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 return
             phase("check_widget")
             root, = menus()
-            assert "Connexion requise" in root.get_label()
+            # AdaptiveActionBar replaces a plain Gtk.Button label with
+            # Adw.ButtonContent. Check the actual visible caption, not the
+            # obsolete Gtk.Button label property (which is then None).
             if len(expected) == 1:
                 assert isinstance(root, Gtk.Button)
+                caption = root.get_label()
+                if caption is None:
+                    child = root.get_child()
+                    from gi.repository import Adw
+                    assert isinstance(child, Adw.ButtonContent)
+                    caption = child.get_label()
+                assert "Connexion requise" in caption and ORIGIN not in caption
+                assert getattr(root, "_cifereca_action_label", caption) == caption
                 buttons = [root]
             else:
                 assert isinstance(root, Gtk.MenuButton)
+                assert "Connexion requise" in root.get_label()
                 phase("popover")
                 root.popup()
                 box = root.get_popover().get_child().get_child()
@@ -280,7 +291,8 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     child = child.get_next_sibling()
                 assert len(buttons) == len(expected)
                 assert all("Connexion requise" in b.get_label() for b in buttons)
-            assert all(ORIGIN not in b.get_label() for b in buttons)
+            if len(expected) > 1:
+                assert all(ORIGIN not in b.get_label() for b in buttons)
             start = len(launches)
 
             def click():
