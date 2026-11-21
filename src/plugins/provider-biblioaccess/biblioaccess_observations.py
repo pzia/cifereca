@@ -208,7 +208,8 @@ class _Links(HTMLParser):
             return
         if hidden and self._summary_text is not None:
             self._summary_text = None
-        if not hidden and tag in {"p", "div", "span", "h1", "h2", "h3", "h4", "li", "td"}:
+        if not hidden and (tag in {"p", "div", "h1", "h2", "h3", "h4", "li", "td"}
+                           or tag == "span" and self._summary_text is None):
             # Keep the innermost explicit message block, not arbitrary page text.
             self._summary_text = []
             self._summary_depth = len(self._summary_stack)
@@ -223,7 +224,7 @@ class _Links(HTMLParser):
         if (self._summary_text is not None
                 and self._summary_depth == len(self._summary_stack)):
             message = " ".join("".join(self._summary_text).split())
-            prefix = "Aucun résultat pour la recherche "
+            prefix = "Aucun r\u00e9sultat pour la recherche "
             if message.startswith(prefix):
                 if message == prefix + self.summary_query:
                     self.summary_zero = True
