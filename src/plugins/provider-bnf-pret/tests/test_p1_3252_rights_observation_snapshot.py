@@ -536,3 +536,52 @@ def test_bnf_incomplete_html_maintains_partial_on_both_legacy_and_v2():
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("pairs", [
+    (), (("edition-1", "loan-1"),),
+    (("edition-1", "loan-1"), ("edition-2", "loan-2")),
+])
+def test_4480_zero_remaining_quota_is_not_zero_active_loans(pairs):
+    # The banner wording was reported in #4480. This HTML is entirely
+    # synthetic; the banner does not attest the official empty-inventory DOM.
+    banner = "<p>Vous avez encore droit à 0 prêt</p>"
+    session, account, client = fixture(banner + activity(*pairs))
+    try:
+        inventory = session.loan_inventory_snapshot(account)
+        rights = session.rights_observation_snapshot(account)
+        assert [(loan.record_id, loan.id) for loan in inventory.loans] == list(pairs)
+        assert [(right.edition_id, right.right_id) for right in rights.rights] == list(pairs)
+        assert inventory.status == ("success" if pairs else "partial")
+        assert rights.coverage == ("complete" if pairs else "partial")
+        assert not rights.authorizes_mutation
+        assert not rights.authorizes_negative_reconciliation
+        assert client.calls == ["login", "activity", "activity"]
+    finally:
+        session.close()
+
+
+def test_4480_unqualified_empty_between_positive_observations_stays_partial():
+    pairs = (("edition-1", "loan-1"),)
+    session, account, client = fixture(activity(*pairs))
+    try:
+        first = session.rights_observation_snapshot(account)
+        assert first.coverage == "complete"
+        client.html = '<p>Vous avez encore droit à 0 prêt</p>' + activity()
+        empty = session.rights_observation_snapshot(account)
+        assert empty.scope == first.scope
+        assert empty.rights == ()
+        assert empty.status == "partial"
+        assert empty.coverage == "partial"
+        assert not empty.pagination_complete
+        assert not empty.claims_complete_branch
+        assert not empty.authorizes_negative_reconciliation
+        client.html = activity(*pairs)
+        again = session.rights_observation_snapshot(account)
+        assert again.scope == first.scope
+        assert again.coverage == "complete"
+        assert [(right.edition_id, right.right_id) for right in again.rights] == list(pairs)
+        assert not again.authorizes_mutation
+        assert client.calls == ["login", "activity", "activity", "activity"]
+    finally:
+        session.close()
