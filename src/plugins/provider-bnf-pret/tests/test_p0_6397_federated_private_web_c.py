@@ -217,7 +217,9 @@ def test_private_writer_rejects_nonadmitted_batch_even_with_valid_old_receipt(
 
 @pytest.mark.parametrize("damage", [
     "row_id", "key", "key_provider", "proof", "proof_member",
-    "call_scope", "call_binding", "call_observed", "identity",
+    "proof_oversized", "call_scope", "scope_identity", "scope_epoch",
+    "scope_service", "call_binding", "binding_descriptor",
+    "call_observed", "identity",
 ])
 def test_private_c_writer_refuses_modified_receipt_without_external_callbacks(
     harness, damage,
@@ -250,10 +252,32 @@ def test_private_c_writer_refuses_modified_receipt_without_external_callbacks(
         changed = replace(packet, proof=Hostile())
     elif damage == "proof_member":
         changed = replace(packet, proof=(Hostile(), *packet.proof[1:]))
+    elif damage == "proof_oversized":
+        changed = replace(packet, proof=("x" * 513, *packet.proof[1:]))
     elif damage == "call_scope":
         changed = replace(packet, call=replace(packet.call, scope=Hostile()))
+    elif damage == "scope_identity":
+        changed = replace(packet, call=replace(
+            packet.call,
+            scope=replace(packet.call.scope, identity_id=Hostile()),
+        ))
+    elif damage == "scope_epoch":
+        changed = replace(packet, call=replace(
+            packet.call,
+            scope=replace(packet.call.scope, source_epoch=Hostile()),
+        ))
+    elif damage == "scope_service":
+        changed = replace(packet, call=replace(
+            packet.call,
+            scope=replace(packet.call.scope, service=Hostile()),
+        ))
     elif damage == "call_binding":
         changed = replace(packet, call=replace(packet.call, binding=Hostile()))
+    elif damage == "binding_descriptor":
+        changed = replace(packet, call=replace(
+            packet.call,
+            binding=replace(packet.call.binding, descriptor=Hostile()),
+        ))
     elif damage == "call_observed":
         changed = replace(packet, call=replace(packet.call, observed_at=Hostile()))
     else:
