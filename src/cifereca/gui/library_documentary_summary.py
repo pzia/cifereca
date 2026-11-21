@@ -16,7 +16,7 @@ def documentary_summary(counts):
     if type(counts) is not dict:
         return ""
     base_keys = {key for key, _ in _LABELS}
-    refresh_keys = {"refresh_" + key for key in base_keys - {"available", "proof_unavailable"}}
+    refresh_keys = {"refresh_" + key for key in base_keys - {"available"}}
     if (set(counts) - base_keys - refresh_keys
             or any(type(n) is not int or not 1 <= n <= 10000 for n in counts.values())
             or sum(counts.get(key, 0) for key in base_keys) > 10000
