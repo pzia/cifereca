@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .derived_variant_region_paths import private_derived_path
+from .adept_acsm_plan import private_adept_stage_path
 
 
 # The reserved prefix is projected beneath EVERY registered identity. No
@@ -45,7 +46,8 @@ def ordinary_dedup_path_excluded(
         relative = candidate.relative_to(owner)
     except ValueError:
         return True
-    if not relative.parts or private_derived_path(relative):
+    if (not relative.parts or private_derived_path(relative)
+            or private_adept_stage_path(relative)):
         return True
 
     # Never authorize a plan through a symbolic parent or a renamed alias.
