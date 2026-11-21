@@ -1161,8 +1161,11 @@ class MainWindow(Adw.ApplicationWindow):
             return
         # ADEPT remains a bounded transitional adapter (#6777).
         add_adept_historical_maintenance_line(
-            self, sections["provenance"] if sections else box, Gtk=Gtk, Adw=Adw)
+            self, sections["provenance"] if sections else box, Gtk=Gtk, Adw=Adw,
+            mode="provenance" if sections is not None else "combined")
         if sections is not None:
+            add_adept_historical_maintenance_line(
+                self, sections["recovery"], Gtk=Gtk, Adw=Adw, mode="holds")
             from cifereca.gui.maintenance_sections import show_unavailable, finish_sections
             statuses = getattr(manager, "statuses", None)
             if callable(statuses):
