@@ -1,5 +1,5 @@
 """#4520: read-only exact canonical retention witness, not authorization."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -135,7 +135,15 @@ def test_recorded_inode_dependency_agrees_in_both_retention_reviews(tmp_path, re
                 if relation == "input_alias" else parent
             ),
         )
-        pending = journal.reserve_derived_publication(db, other)
+        # Model historical journal evidence containing an alias, not a new
+        # valid reservation: live reservation independently checks parent
+        # placement coordinates, which this synthetic witness changes.
+        pending_key = journal._slot(other)
+        pending_raw = journal._encode({
+            "schema": "derived.intent.v2", "nonce": "f" * 32,
+            "intent": asdict(other),
+        })
+        db.metadata_set(pending_key, pending_raw)
         before = journal.summarize_derived_journal(db)
         report = _review(db)
         _, _, owned = combined._snapshot(db, intent.identity_id)
@@ -149,7 +157,7 @@ def test_recorded_inode_dependency_agrees_in_both_retention_reviews(tmp_path, re
             # Broader dependency scanner may still be conservative.
             assert verdict in ("canonical", "known_dependency", "external_dependency_unverified")
         assert not report["retention_authorized"]
-        assert db.metadata_get(pending.key) is not None
+        assert db.metadata_get(pending_key) == pending_raw
         assert journal.summarize_derived_journal(db) == before
         assert Path(intent.staged_path).samefile(intent.candidate_path)
     finally:
