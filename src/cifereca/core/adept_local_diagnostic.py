@@ -112,7 +112,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
             "FROM origin_links WHERE origin_kind='adept'"):
         origins[ref].append((owner, receipt))
 
-    def historical_states(scope, refs):
+    def historical_states(scope, refs, grant):
         pairs = Counter((edition, right) for _, _, edition, right in refs)
         ledger_counts = Counter()
         right_counts = Counter()
@@ -121,6 +121,10 @@ def _snapshot(db, *, identity, provider, credential, account_id):
         # malformed data cannot prove that a matching loan is absent.
         grouped = {}
         for _, local_state, edition, right in refs:
+            if not _coordinate(edition) or not _coordinate(right):
+                ledger_counts["unverified_reference"] += 1
+                right_counts["unverified_reference"] += 1
+                continue
             if pairs[(edition, right)] != 1:
                 ledger_counts["ambiguous_reference"] += 1
                 right_counts["ambiguous_reference"] += 1
@@ -175,15 +179,8 @@ def _snapshot(db, *, identity, provider, credential, account_id):
             profile = binding["adept_profile_id"]
             # This compares references only. A current grant is not proof
             # of the historical transaction's activation or its Adobe owner.
-            key = scope[1:]
-            candidates = grants.get(key, [])
-            if len(candidates) == 1 and candidates[0][0] == scope[0]:
-                candidate = candidates[0]
-                borrower, pinned = candidate[1:3]
-                current = (pinned if binding_state(borrower) == "binding_recorded"
-                           and bindings.get(borrower) == [pinned] else None)
-            else:
-                current = None
+            current = (grants[scope[1:]][0][2]
+                       if grant == "explicit_grant_recorded" else None)
             if current is None:
                 binding_counts["current_explicit_grant_unverified"] += 1
             else:
@@ -251,7 +248,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                 label: sum(state == label for _ref, state, _edition, _right in refs)
                 for label in ("active", "inactive", "unknown")
             },
-            **historical_states(scope, refs),
+            **historical_states(scope, refs, grant),
             "provisioning": "unknown", "current_right": "unknown",
         })
     if account_id is None:
