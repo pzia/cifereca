@@ -568,3 +568,39 @@ def test_adept_planned_stage_is_independent_and_published_through_bridge(tmp_pat
     assert published == destination and published.read_bytes() == b"VALIDATED-DOWNLOAD"
     assert not staged.exists()
     assert not list(tmp_path.glob(".adept-publish-*"))
+
+
+def test_adept_source_alias_added_after_final_fsync_does_not_retire_stage(
+    tmp_path, monkeypatch,
+):
+    """A changed source after the last link/fsync witness cannot be unlinked."""
+    from cifereca.core import loan_direct_publication as direct
+
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    staged = stage_dir / "new.epub"
+    staged.write_bytes(b"PRIVATE-NEW-ARTIFACT")
+    final = tmp_path / "published.epub"
+    external = tmp_path / "new-external-owner.epub"
+    original = direct._source_current
+    calls = []
+
+    def alias_after_last_postlink_witness(fd, name, expected):
+        still_owned = original(fd, name, expected)
+        calls.append(still_owned)
+        if len(calls) == 4 and still_owned:
+            # The fourth call occurs after durable final fsync; a second
+            # hardlink changes ctime and single-link source ownership.
+            os.link(staged, external)
+        return still_owned
+
+    monkeypatch.setattr(direct, "_source_current", alias_after_last_postlink_witness)
+    with pytest.raises(ProviderConfigurationError, match="modifié"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            staged, final, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert len(calls) >= 5
+    assert staged.read_bytes() == external.read_bytes() == b"PRIVATE-NEW-ARTIFACT"
+    assert not final.exists()  # the uncommitted final link was withdrawn
+    assert not list(tmp_path.glob(".adept-publish-*"))
