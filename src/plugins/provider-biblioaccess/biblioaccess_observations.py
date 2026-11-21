@@ -255,7 +255,7 @@ class _Links(HTMLParser):
                 "svg", "textarea", "select", "button",
             } or "hidden" in values
             or str(values.get("aria-hidden", "")).strip().casefold() == "true"
-            or bool(re.search(r"display\\s*:\\s*none|visibility\\s*:\\s*hidden",
+            or bool(re.search(r"display\s*:\s*none|visibility\s*:\s*hidden",
                               str(values.get("style", "")), re.I))
             or bool(set(str(values.get("class", "")).casefold().split())
                     & {"hidden", "d-none", "sr-only", "visually-hidden"})
