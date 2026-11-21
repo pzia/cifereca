@@ -184,7 +184,10 @@ def _prepare(service, row, identity):
     observation = admit_source_notice(
         key=key, parser_id="core.search.authenticated-web", parser_version="1",
         observed_at=call.observed_at,
-        raw_fields={"cover": None, FIELD: {
+        raw_fields={"cover": None, "source_field": proof[2],
+                    "source_record": {"id": row.record_id, "docbase": row.docbase,
+                                      "medium": row.medium, "scenario": row.scenario,
+                                      "revision": row.revision_id}, FIELD: {
             "schema": 1, "connection_epoch": call.binding.connection_epoch,
             "links": [{"url": proof[0], "evidence": proof[1]}],
         }},
@@ -215,6 +218,8 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
     """Consume same-call receipts under the existing write fence, independently."""
     count = 0
     for row in rows:
+        if type(row) is not SearchResult or type(row.__dict__.get(_MARKER)) is not _Receipt:
+            continue
         try:
             with source_context_mutation(service):
                 prepared = _prepare(service, row, identity_id)
@@ -250,6 +255,9 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
 def read_authenticated_web_for_search(service, row, *, reader_scope):
     """Exact private self-C lookup, including cached rows; never trust row URL."""
     from .notice_c_authenticated_web_choices import read_authenticated_web_choices
+    from .search_orchestration import SearchReadScope
+    if type(reader_scope) is not SearchReadScope or not reader_scope.current(service):
+        return None
     key = _source_key(row, reader_scope.identity_id)
     if key is None:
         return None
