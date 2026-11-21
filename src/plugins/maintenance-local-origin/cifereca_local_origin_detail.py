@@ -61,6 +61,7 @@ def private_rows(report):
         ("Portée", "Compte sélectionné : " + report.provider_id + " · "
          + report.credential_id + " · " + (report.account_id or "principal")),
         ("Surface", "Achats connus" if report.kind == "purchase" else "Prêts connus"),
+        ("Page", str(getattr(report, "page", 1))),
         ("Couverture", "Fenêtre partielle en cache. Ni recherche réseau ni origine ou droit attestés."),
     ]
     for hit in report.matches:
@@ -94,6 +95,10 @@ class DetailController:
         self.identity, self.placement = host.identity_id, host.placement_id
         self.page = None
         self.used = set()
+        self.choice_window = ()
+        self.choice_actions = ()
+        self.choice_offset = None
+        self.private_next = {}
         self.busy = self.finished = self.disposed = False
 
     def current(self):
@@ -125,8 +130,15 @@ class DetailController:
         # First-page catalogue tokens expire as soon as pagination is requested.
         self.page = None
         self.used.clear()
+        self.private_next.clear()
 
         def display(value):
+            if previous is not None and callable(getattr(self.host, "retire_action", None)):
+                for key in self.choice_actions:
+                    self.host.retire_action(key)
+                self.choice_actions = ()
+                self.choice_window = ()
+                self.choice_offset = None
             if (type(value) is not LocalOriginDetailPage
                     or any(flag is not False for flag in (
                         value.coverage_complete, value.provider_access_performed,
@@ -138,6 +150,9 @@ class DetailController:
             self.finished = not value.can_continue
             self.host.add_group("Suggestions de provenance — lecture seule", known_rows(value))
             if value.page == 1 and value.metadata_evidence == "verified_epub_opf_description":
+                if callable(getattr(self.host, "retire_action", None)):
+                    self._show_choice_window(value, 0)
+                    return
                 public_choices = value.public_choices[:_MAX_CATALOGUE_ACTIONS]
                 for index, choice in enumerate(public_choices):
                     if not self.current():
@@ -182,12 +197,104 @@ class DetailController:
 
         return self._submit(work, display)
 
-    def compare_private(self, choice, original):
+    def _show_choice_window(self, original, offset):
+        """Page inert, already admitted choices without an extra provider query."""
+        if not self.current() or self.page is not original:
+            return
+        for key in self.choice_actions:
+            if self.host.retire_action(key) is not True:
+                self.choice_window = ()
+                return
+        self.choice_actions = ()
+        self.choice_window = ()
+        self.private_next.clear()
+        choices = tuple(("public", x) for x in original.public_choices) + tuple(
+            ("private", x) for x in original.private_choices)
+        # Ten choices + an optional continuation + the permanent preview.
+        count = 10 if len(choices) - offset > 11 else 11
+        window = choices[offset:offset + count]
+        self.choice_window = tuple(choice for _, choice in window)
+        self.choice_offset = offset + len(window)
+        keys, accounts = [], []
+        for index, (kind, choice) in enumerate(window, offset + 1):
+            if not self.current():
+                return
+            key = ("public-" + str(index - 1) if kind == "public"
+                   else "private-" + str(index - 1 - len(original.public_choices)))
+            if kind == "public":
+                title = "Envoyer le titre à " + choice.provider_id
+                tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
+                action = lambda selected=choice: self.search(selected, original)
+            else:
+                surface = "achats" if choice.kind == "purchase" else "prêts"
+                title = f"Comparer {surface} — compte {index - len(original.public_choices)}"
+                coordinates = ("Fournisseur : " + choice.provider_id
+                               + " · Connexion : " + choice.credential_id
+                               + " · Compte : " + (choice.account_id or "principal"))
+                tooltip = "Cache local, aucune transmission. " + coordinates
+                accounts.append((title, coordinates))
+                action = lambda selected=choice: self.compare_private(selected, original)
+            self.host.add_action(key, title, tooltip, action)
+            keys.append(key)
+        following = offset + len(window)
+        if following < len(choices):
+            key = "catalogue-more-" + str(following)
+            self.host.add_action(
+                key, "Autres catalogues", "Afficher les choix suivants sans recherche.",
+                lambda: self._next_choice_window(original, following),
+            )
+            keys.append(key)
+        self.choice_actions = tuple(keys)
+        if accounts or len(choices) > 11:
+            accounts.append(("Fenêtre", f"Choix {offset + 1} à {following} sur {len(choices)} connus. Découverte partielle ; aucune absence attestée."))
+        if accounts:
+            self.host.add_group("Catalogues à comparer explicitement", tuple(accounts))
+
+    def _next_choice_window(self, original, offset):
         if (self.busy or not self.current() or self.page is not original
-                or not any(item is choice for item in original.private_choices)
-                or choice.token in self.used):
+                or self.choice_offset != offset):
             return False
-        self.used.add(choice.token)
+        return self._submit(
+            lambda: original,
+            lambda value: self._show_choice_window(original, offset)
+            if value is original else None,
+        )
+
+    def _private_current(self, choice, original):
+        return (not self.busy and self.current() and self.page is original
+                and any(item is choice for item in original.private_choices)
+                and (not callable(getattr(self.host, "retire_action", None))
+                     or any(item is choice for item in self.choice_window)))
+
+    def _private_action_key(self, choice, original):
+        return next("private-" + str(index)
+                    for index, item in enumerate(original.private_choices)
+                    if item is choice)
+
+    def _retire_private(self, choice, original):
+        key = self._private_action_key(choice, original)
+        retire = getattr(self.host, "retire_action", None)
+        if key in self.choice_actions and callable(retire) and retire(key) is True:
+            self.choice_actions = tuple(item for item in self.choice_actions if item != key)
+            return True
+        return False
+
+    def compare_private(self, choice, original):
+        if not self._private_current(choice, original) or choice.token in self.used:
+            return False
+        return self._private_page(choice, original, choice.token, 1)
+
+    def next_private(self, choice, original):
+        if not self._private_current(choice, original):
+            return False
+        pending = self.private_next.pop(choice.token, None)
+        if pending is None or pending[0] in self.used:
+            return False
+        token, page = pending
+        return self._private_page(choice, original, token, page)
+
+    def _private_page(self, choice, original, token, page):
+        self.used.add(token)
 
         def display(value):
             if (type(value) is not LocalOriginPrivateReport or value.status != "partial"
@@ -195,17 +302,51 @@ class DetailController:
                     != (choice.provider_id, choice.credential_id, choice.account_id, choice.kind)
                     or any(flag is not False for flag in (
                         value.coverage_complete, value.fresh_network_verified,
-                        value.provider_access_performed, value.association_authorized))):
+                        value.provider_access_performed, value.association_authorized))
+                    or type(getattr(value, "page", 1)) is not int
+                    or getattr(value, "page", 1) != page):
+                self._retire_private(choice, original)
                 self.host.toast("Comparaison privée indisponible ; aucune absence attestée.")
                 return
+            following = getattr(value, "next_token", None)
+            if following is not None and (type(following) is not str
+                    or len(following) != 64 or any(c not in "0123456789abcdef" for c in following)
+                    or following in self.used or value.window_truncated is not True or page >= 32):
+                self._retire_private(choice, original)
+                self.host.toast("Continuation privée indisponible ; aucune absence attestée.")
+                return
             self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
+            if following is None:
+                if page > 1:
+                    self._retire_private(choice, original)
+                return
+            if page == 1:
+                # Replace this account's first action only once. Subsequent
+                # clicks consume the next live token from a stable action slot,
+                # even for a 32-page catalogue. No auto-draining of pages.
+                if not self._retire_private(choice, original):
+                    return
+                key = self._private_action_key(choice, original)
+                index = next(i for i, item in enumerate(original.private_choices, 1) if item is choice)
+                surface = "achats" if choice.kind == "purchase" else "prêts"
+                self.host.add_action(
+                    key, f"Suite {surface} — compte {index}",
+                    "Page suivante du même cache, sans transmission. Fournisseur : "
+                    + choice.provider_id + " · Connexion : " + choice.credential_id
+                    + " · Compte : " + (choice.account_id or "principal"),
+                    lambda: self.next_private(choice, original),
+                )
+                self.choice_actions = (*self.choice_actions, key)
+            self.private_next[choice.token] = (following, page + 1)
 
         return self._submit(
-            lambda: self.broker.compare_private(token=choice.token, confirmed=True), display)
+            lambda: self.broker.compare_private(token=token, confirmed=True), display)
 
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
                 or not any(item is choice for item in original.public_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
                 or choice.token in self.used):
             return False
         self.used.add(choice.token)
@@ -254,3 +395,4 @@ class DetailController:
         self.disposed = True
         self.page = None
         self.used.clear()
+        self.private_next.clear()

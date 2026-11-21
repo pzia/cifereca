@@ -204,3 +204,35 @@ def test_worker_checks_use_no_gtk_and_non_ui_delivery_cannot_render():
     worker.start()
     worker.join()
     assert not groups
+
+
+def test_retire_action_releases_slot_and_old_button_cannot_submit():
+    window, item, mount, tasks, buttons, groups, calls, disposed = rig()
+    plugin = window.plugin_manager.live
+
+    def contribute(host):
+        def next_action():
+            calls.append("new")
+        def finish(value):
+            assert host.retire_action("review") is True
+            assert host.retire_action("review") is False
+            host.add_action("review", "Next", "Read only", next_action)
+        host.add_action("review", "First", "Read only",
+                        lambda: host.submit("preview", lambda: 42, finish))
+        return lambda: None
+
+    plugin.contribute_book_review = contribute
+    host, = mount()
+    assert host.retire_action("review") is False
+    old, = buttons
+    old.click()
+    args, _ = tasks[0]
+    args[2](args[1]())
+    assert old._cifereca_action_context_revoked is True
+    old.click()
+    assert len(tasks) == 1 and not calls
+    buttons[-1].click()
+    assert calls == ["new"]
+    host.dispose()
+    buttons[-1].click()
+    assert calls == ["new"]
