@@ -147,6 +147,10 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
     from cifereca.gui.detail_panel import DetailPanel
     from cifereca.gui.notice_c_web_action_controller import request_authenticated_search_web_actions
 
+    def phase(name):
+        report["notice_c_private_web_phase"] = name
+
+    phase("construct")
     core = OfflineCore(db)
     label = "offline" if offline else "cold"
     gtk_thread = get_ident()
@@ -154,6 +158,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
     generation = [0]
     host = NS(service=core, runner=window.runner, toast=messages.append,
               _closed=False, _route_display_token=object())
+    phase("panel")
     panel = DetailPanel(window)
     probe = state["probe"] = Gtk.Window(transient_for=window, title="Notice C — fiches privées")
     probe.set_default_size(460, 340)
@@ -183,7 +188,8 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 self.completed += 1
 
             def checked_fail(error):
-                raise AssertionError("private web task failed") from error
+                phase("worker_failed")
+                guard(lambda: (_ for _ in ()).throw(AssertionError("private web task failed")))()
 
             window.runner.submit(title, checked_work, checked_done, checked_fail, **kw)
 
@@ -194,6 +200,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 if getattr(widget, "_cifereca_action_id", None) == "open-c-authenticated-web"]
 
     def run_case(index):
+        phase("foreign" if index == len(fixtures) else ("zero", "one", "many")[index])
         if index == len(fixtures):
             # A different reader has no reference to the original account.
             row, _ = fixtures[1]
@@ -246,6 +253,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 assert not menus() and not launches
                 run_case(index + 1)
                 return
+            phase("check_widget")
             root, = menus()
             assert "Connexion requise" in root.get_label()
             if len(expected) == 1:
@@ -253,6 +261,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 buttons = [root]
             else:
                 assert isinstance(root, Gtk.MenuButton)
+                phase("popover")
                 root.popup()
                 box = root.get_popover().get_child().get_child()
                 if isinstance(box, Gtk.Viewport):
@@ -272,6 +281,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     assert monotonic() < deadline, "private web popover timeout"
                     later(40, guard(click))
                     return
+                phase("click")
                 capture("00-notice-c-private-web-" + str(index) + "-" + label)
                 buttons[0].emit("clicked")
                 buttons[-1].emit("clicked")
@@ -282,6 +292,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     assert monotonic() < deadline, "private web click timeout"
                     later(40, guard(lambda: poll_launch(count)))
                     return
+                phase("launch_check")
                 assert launches[start:] == list(expected[:count]) and not messages
                 if count < len(expected):
                     buttons[count].emit("clicked")
@@ -289,6 +300,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     return
                 if len(expected) > 1:
                     root.popdown()
+                phase("revoke")
                 panel.empty("Sélection modifiée", "Menu révoqué")
                 assert root._cifereca_action_context_revoked
                 for button in buttons:
