@@ -201,10 +201,12 @@ def test_organizer_failure_discards_exact_token_and_can_restart(
         assert admitted
         _finish(tasks)
     assert not c.busy and c.page is None
-    assert plugin.broker.next_page(token=old.token, confirmed=True) is None
-    assert "PRIVATE_ORGANIZER_EXCEPTION" not in repr(renders)
+    # Restore the real broker before checking that the abandoned token
+    # was actually revoked; a poisoned stub is not a valid safety witness.
     monkeypatch.setattr(plugin.broker, "next_page", original)
     host.submit = submit
+    assert plugin.broker.next_page(token=old.token, confirmed=True) is None
+    assert "PRIVATE_ORGANIZER_EXCEPTION" not in repr(renders)
     assert c.request("preview")
     _finish(tasks)
     assert c.page.page == 1 and rows(store) == before
