@@ -200,3 +200,80 @@ def test_live_wal_is_read_without_writing_source_sidecars(tmp_path):
         assert "PRIVATE" not in json.dumps(report)
     finally:
         store.close()
+
+
+def test_historical_receipts_and_rights_stay_scoped_and_non_authoritative(tmp_path):
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    try:
+        with store._lock, store._connect() as db:
+            for i, branch_name, edition, right, state in (
+                (1, "branch", "PRIVATE_ED1", "PRIVATE_LOAN1", "active"),
+                (2, "branch", "PRIVATE_ED2", "PRIVATE_LOAN2", "inactive"),
+                (3, "branch", "PRIVATE_ED3", "PRIVATE_LOAN3", "unknown"),
+                (4, "branch", "PRIVATE_ED4", "PRIVATE_LOAN4", "active"),
+                (5, "other", "PRIVATE_ED4", "PRIVATE_LOAN4", "active"),
+            ):
+                db.execute(
+                    "INSERT INTO source_references(source_reference_id,identity_id,provider_id,"
+                    "credential_id,account_id,branch_id,edition_id,right_id,reference_kind,"
+                    "state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,1)",
+                    ("PRIVATE_REF" + str(i), "PRIVATE_A", "library1", "PRIVATE_C",
+                     "PRIVATE_ACCOUNT", branch_name, edition, right, "loan", state))
+            for i, state in ((1, "active"), (2, "active")):
+                db.execute(
+                    "INSERT INTO entitlements(entitlement_id,identity_id,provider_id,credential_id,"
+                    "account_id,item_id,loan_id,entitlement_type,state,discovered_at,updated_at)"
+                    " VALUES(?,?,?,?,?,?,?,'loan',?,1,1)",
+                    ("PRIVATE_RIGHT" + str(i), "PRIVATE_A", "library1", "PRIVATE_C",
+                     "PRIVATE_ACCOUNT", "PRIVATE_ED" + str(i), "PRIVATE_LOAN" + str(i), state))
+            for i, credential, profile, raw in (
+                (1, "PRIVATE_C", "PRIVATE_B_profile", None),
+                (2, "PRIVATE_C", "PRIVATE_OLD_PROFILE", None),
+                (3, "PRIVATE_C", None, '{"provider_loan_id":"a","provider_loan_id":"b"}'),
+                (4, "PRIVATE_C", "PRIVATE_B_profile", None),
+                (1, "PRIVATE_D", "PRIVATE_OTHER_PROFILE", None),
+            ):
+                metadata = raw if raw is not None else json.dumps({
+                    "provider_loan_id": "PRIVATE_LOAN" + str(i),
+                    "adept_binding": {"adept_profile_id": profile,
+                                      "adept_loan_id": "PRIVATE_ADOBE_LOAN"},
+                    "path": "/PRIVATE_PATH",
+                })
+                db.execute(
+                    "INSERT INTO acquisition_ledger(acquisition_id,identity_id,provider_id,"
+                    "credential_id,account_id,item_id,status,strategy,executor,metadata_json,"
+                    "created_at,updated_at) VALUES(?,?,?,?,?,?,'complete','loan_auto','kobo-adept',?,1,1)",
+                    ("PRIVATE_RECEIPT" + credential + str(i), "PRIVATE_A", "library1",
+                     credential, "PRIVATE_ACCOUNT", "PRIVATE_ED" + str(i), metadata))
+        store.close()
+        all_report = diagnostic.diagnose_local_adept(database_path=path)
+        assert all_report["recorded_identity_profile_states"] == {"binding_recorded": 2}
+        report = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", credential="PRIVATE_C")
+        record, = report["accounts"]
+        assert report["recorded_identity_profile_states"] is None
+        assert record["legacy_loan_right_records"] == {
+            "same_local_state": 1, "different_local_state": 1,
+            "not_recorded": 1, "ambiguous_reference": 2,
+        }
+        assert record["historical_transaction_records"] == {
+            "recorded": 2, "unverified": 1, "ambiguous_reference": 2,
+        }
+        assert record["historical_grant_profile_comparison"] == {
+            "same_profile_reference": 1, "different_profile_reference": 1,
+        }
+        assert report["authorization_attested"] is False
+        assert report["profile_inventory"] == "unknown"
+        assert record["current_right"] == "unknown"
+        assert "PRIVATE" not in json.dumps(report)
+        store.adept_profile_binding_set("identity", "PRIVATE_B", "PRIVATE_ROTATED")
+        store.adept_profile_binding_set("identity", "PRIVATE_B", "PRIVATE_B_profile")
+        store.close()
+        record, = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", credential="PRIVATE_C")["accounts"]
+        assert record["historical_grant_profile_comparison"] == {
+            "current_explicit_grant_unverified": 2,
+        }
+    finally:
+        store.close()
