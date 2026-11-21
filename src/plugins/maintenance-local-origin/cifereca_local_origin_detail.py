@@ -1,6 +1,6 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
 from cifereca.plugin_api.local_origin_detail import (
-    LocalOriginDetailPage, LocalOriginPublicReport,
+    LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
 )
 
 _LABELS = {
@@ -47,6 +47,27 @@ def public_rows(report):
         ) if x)))
     if not report.matches:
         lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))
+    return tuple(lines)
+
+
+def private_rows(report):
+    lines = [
+        ("Portée", "Compte sélectionné : " + report.provider_id + " · "
+         + report.credential_id + " · " + (report.account_id or "principal")),
+        ("Surface", "Achats connus" if report.kind == "purchase" else "Prêts connus"),
+        ("Couverture", "Fenêtre partielle en cache. Ni recherche réseau ni origine ou droit attestés."),
+    ]
+    for hit in report.matches:
+        lines.append((hit.title, " · ".join(x for x in (
+            hit.author, hit.edition_id,
+            _LABELS.get(hit.comparison, "Comparaison descriptive"),
+            "Description d’achat en cache" if hit.evidence == "cached_public_purchase_description"
+            else "Description de prêt en cache ; date inconnue",
+        ) if x)))
+    if report.window_truncated:
+        lines.append(("Limite", "Fenêtre limitée ; d’autres correspondances peuvent exister."))
+    if not report.matches:
+        lines.append(("Résultat", "Aucune correspondance connue ; absence non prouvée."))
     return tuple(lines)
 
 
@@ -109,7 +130,40 @@ class DetailController:
                         lambda selected=choice, original=value: self.search(selected, original),
                     )
 
+                for index, choice in enumerate(value.private_choices):
+                    if not self.current():
+                        return
+                    surface = "achats" if choice.kind == "purchase" else "prêts"
+                    self.host.add_action(
+                        "private-" + str(index),
+                        "Comparer " + surface + " : " + choice.provider_id + " · "
+                        + choice.credential_id + " · " + (choice.account_id or "principal"),
+                        "Consentement explicite pour ce compte uniquement. Cache local, aucune transmission.",
+                        lambda selected=choice, original=value: self.compare_private(selected, original),
+                    )
+
         return self._submit(work, display)
+
+    def compare_private(self, choice, original):
+        if (self.busy or not self.current() or self.page is not original
+                or not any(item is choice for item in original.private_choices)
+                or choice.token in self.used):
+            return False
+        self.used.add(choice.token)
+
+        def display(value):
+            if (type(value) is not LocalOriginPrivateReport or value.status != "partial"
+                    or (value.provider_id, value.credential_id, value.account_id, value.kind)
+                    != (choice.provider_id, choice.credential_id, choice.account_id, choice.kind)
+                    or any(flag is not False for flag in (
+                        value.coverage_complete, value.fresh_network_verified,
+                        value.provider_access_performed, value.association_authorized))):
+                self.host.toast("Comparaison privée indisponible ; aucune absence attestée.")
+                return
+            self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
+
+        return self._submit(
+            lambda: self.broker.compare_private(token=choice.token, confirmed=True), display)
 
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
