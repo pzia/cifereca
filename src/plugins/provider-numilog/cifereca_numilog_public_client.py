@@ -240,8 +240,11 @@ def _coalesced_public_search(url, timeout):
             flight = Future()
             _PUBLIC_SEARCH_FLIGHTS[key] = flight
     if flight is None:
-        # At capacity, retain the previous bounded per-session behavior.
-        return _fetch_public_search_page(url, timeout, None)
+        # Saturation must NOT turn a bounded shared public transport into an
+        # unbounded independent GET. The existing provider maps this fixed
+        # retryable busy result to partial/budget_busy, never a verified zero.
+        # A matching in-flight key above can still join even at capacity.
+        raise ProviderError("Numilog : public_catalog_request_in_progress")
     if not leader:
         return _await_public_search_flight(flight, timeout)
     try:
