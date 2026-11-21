@@ -76,7 +76,8 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
     This projection is reusable by a later versioned C writer, but cannot
     establish a source witness or authorize a write on its own.
     """
-    if type(raw) is not dict or len(raw) > 256:
+    if (type(raw) is not dict or len(raw) > 256
+            or any(type(name) is not str for name in raw)):
         return None
     projected = {}
     used = 2  # JSON object delimiters
@@ -124,7 +125,8 @@ class PublicClassification:
 
 
 def decode_public_classification(raw: object) -> PublicClassification | None:
-    if (type(raw) is not dict or not raw
+    if (type(raw) is not dict or not raw or len(raw) > 32
+            or any(type(name) is not str for name in raw)
             or set(raw) - _CLASSIFICATION_FIELDS):
         return None
     projected = _public_bibliographic_metadata(raw)
@@ -137,7 +139,8 @@ def decode_public_classification(raw: object) -> PublicClassification | None:
 
 
 def declared_public_classification(metadata: object) -> PublicClassification | None:
-    if type(metadata) is not dict or len(metadata) > 256:
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)):
         return None
     selected = _public_bibliographic_metadata({
         name: metadata[name] for name in _CLASSIFICATION_FIELDS if name in metadata
@@ -163,7 +166,9 @@ def decode_public_series_relation(
 ) -> PublicSeriesRelation | None:
     """Closed proof: an exact linked relation or explicit record field."""
     names = {"label", "source", "source_field", "scope", "confidence", "freshness"}
-    if type(raw) is not dict or set(raw) != names:
+    if (type(raw) is not dict or len(raw) > 16
+            or any(type(name) is not str for name in raw)
+            or set(raw) != names):
         return None
     if (not _public_bibliographic_text(raw["label"], required=True, limit=240)
             or type(provider_id) is not str or not provider_id
@@ -181,17 +186,22 @@ def decode_public_series_relation(
 def declared_public_series_relation(
     metadata: object, *, provider_id: str, scenario: str,
 ) -> PublicSeriesRelation | None:
-    if type(metadata) is not dict:
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)):
         return None
     evidence = metadata.get("bibliography_evidence")
     values = metadata.get("series")
-    if (type(evidence) is not dict or type(values) is not list
+    if (type(evidence) is not dict or len(evidence) > 32
+            or any(type(name) is not str for name in evidence)
+            or type(values) is not list
             or len(values) != 1):
         return None
     proof = evidence.get("series")
-    if type(proof) is not dict or set(proof) != {
-        "source", "source_field", "scope", "confidence", "freshness",
-    }:
+    if (type(proof) is not dict or len(proof) > 16
+            or any(type(name) is not str for name in proof)
+            or set(proof) != {
+                "source", "source_field", "scope", "confidence", "freshness",
+            }):
         return None
     return decode_public_series_relation(
         {"label": values[0], **proof}, provider_id=provider_id, scenario=scenario,
@@ -222,7 +232,9 @@ def decode_public_language_observation(
 
     labels = {"raw_tags", "languages"}
     fields = {"source", "source_field", "scope", "confidence", "freshness"}
-    if type(raw) is not dict or set(raw) != labels | fields:
+    if (type(raw) is not dict or len(raw) > 16
+            or any(type(name) is not str for name in raw)
+            or set(raw) != labels | fields):
         return None
     if (type(provider_id) is not str or not provider_id
             or any(type(raw[name]) is not str or re.fullmatch(
@@ -251,13 +263,19 @@ def decode_public_language_observation(
 def declared_public_language_observation(
     metadata: object, *, provider_id: str, scenario: str,
 ) -> PublicLanguageObservation | None:
-    if type(metadata) is not dict:
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)):
         return None
     evidence = metadata.get("bibliography_evidence")
-    proof = evidence.get("languages") if type(evidence) is dict else None
-    if type(proof) is not dict or set(proof) != {
-        "raw_tags", "source", "source_field", "scope", "confidence", "freshness",
-    }:
+    if (type(evidence) is not dict or len(evidence) > 32
+            or any(type(name) is not str for name in evidence)):
+        return None
+    proof = evidence.get("languages")
+    if (type(proof) is not dict or len(proof) > 16
+            or any(type(name) is not str for name in proof)
+            or set(proof) != {
+                "raw_tags", "source", "source_field", "scope", "confidence", "freshness",
+            }):
         return None
     return decode_public_language_observation(
         {**proof, "languages": metadata.get("languages")},

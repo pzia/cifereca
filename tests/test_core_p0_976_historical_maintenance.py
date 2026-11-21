@@ -317,3 +317,41 @@ def test_historical_hold_preview_aborts_if_marker_changes_during_physical_review
     assert store.metadata_get(_key(held)) == after
     assert path.read_bytes() == BYTES
 
+
+
+def test_historical_ledger_review_rejects_changed_branch_snapshot(
+    store, tmp_path, monkeypatch,
+):
+    """Other SQL evidence may change while the displayed ledger stays intact."""
+    service, _source, path, _publication = _setup(store, tmp_path)
+    request = review.admit_historical_review(service)
+    assert request is not None
+    assert review.run_historical_review(service, request)["rows"][0][
+        "canonical_status"
+    ] == "unique_source_record"
+    original = review._row
+    modified = []
+
+    def competing_branch(req, row, verify):
+        result = original(req, row, verify)
+        if not modified:
+            modified.append(True)
+            with store._lock, store._connect() as sql:
+                sql.execute(
+                    "INSERT INTO source_references (source_reference_id,identity_id,"
+                    "provider_id,credential_id,account_id,branch_id,edition_id,"
+                    "right_id,reference_kind,created_at,updated_at) VALUES "
+                    "('concurrent-branch','A','seller','card-A','buyer-A',"
+                    "'another-branch','edition','loan-1','loan',1,1)"
+                )
+        return result
+
+    monkeypatch.setattr(review, "_row", competing_branch)
+    # The repeated ledger page itself is unchanged: the independent
+    # source-reference evidence would be stale without a WAL stamp.
+    assert review.run_historical_review(service, request) is None
+    assert modified == [True]
+    assert path.read_bytes() == BYTES
+    monkeypatch.setattr(review, "_row", original)
+    row, = review.run_historical_review(service, request)["rows"]
+    assert row["canonical_status"] == "ambiguous_branch"

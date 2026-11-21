@@ -15,6 +15,16 @@ from .source_convergence import SourceKey
 from .canonical_adept_attempt import pending_loan_adept_attempt
 
 
+def _unique_legacy_adept_fields(pairs):
+    """Reject any duplicate key, including inside nested saved metadata."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("ambiguous_historical_adept_ledger")
+        result[key] = value
+    return result
+
+
 def historical_adept_retry_blocked(storage, account, session, source: SourceKey) -> bool:
     if source.kind != "loan":
         return False
@@ -69,7 +79,7 @@ def historical_adept_ledger_hold(db, scope: LoanInventoryScope, source: SourceKe
         if type(raw) is not str:
             return True
         try:
-            metadata = json.loads(raw)
+            metadata = json.loads(raw, object_pairs_hook=_unique_legacy_adept_fields)
         except (ValueError, TypeError, RecursionError):
             return True
         if blocked_automatic_adept_retry(
