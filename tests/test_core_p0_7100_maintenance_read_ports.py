@@ -124,6 +124,13 @@ def test_installed_contextual_contribution_uses_same_port_and_is_optional(store,
     from tests.test_core_p0_4030_suggestion_operator import _more_public
     window, panel, row, item, token, tasks, buttons, groups, toasts = _host(store, tmp_path)
     _more_public(store, 21)
+    # The new host tracks the exact producer-owned section and retires only
+    # that section on disable; unrelated detail rows must survive.
+    def review_group(title, lines):
+        entry = (title, lines)
+        groups.append(entry)
+        return lambda: groups.remove(entry) if entry in groups else None
+    panel.add_review_group = review_group
     window._identity_context_generation = 1
     spec = TOOLS[1]
     manager, _ = runtime(tmp_path, window.service, spec, LocalOriginBatchReadBroker)
@@ -147,7 +154,7 @@ def test_installed_contextual_contribution_uses_same_port_and_is_optional(store,
         dispose_guided_book_reviews(window)
         done(result)
         button.callback(button)
-        assert len(tasks) == 2 and len(groups) == 1
+        assert len(tasks) == 2 and not groups
         assert mount_guided_book_reviews(window, panel, row, item, token=token) == ()
         manager.set_enabled(spec[2], True)
         buttons.clear()

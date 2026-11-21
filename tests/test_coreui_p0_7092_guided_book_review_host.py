@@ -32,7 +32,10 @@ def rig():
     manager.services = lambda category: (resolved,) if manager.live is plugin else ()
     row, token = NS(key="book"), object()
     item = {"identity_id": "A", "placement_id": "placement", "local": True}
-    panel = NS(add_actions=buttons.extend, add_group=lambda *args: groups.append(args))
+    def add_review_group(*args):
+        groups.append(args)
+        return lambda: groups.remove(args) if args in groups else None
+    panel = NS(add_actions=buttons.extend, add_review_group=add_review_group)
     service = NS(current_identity=NS(identity_id="A"), storage=object(),
                  _source_context_epoch=4, _account_context_epoch=1)
     window = NS(service=service, plugin_manager=manager,
@@ -65,7 +68,7 @@ def test_generic_contribution_mount_is_inert_and_worker_delivers_once():
     host.dispose()
     host.dispose()
     button.click()
-    assert len(tasks) == 1 and disposed == [True]
+    assert len(tasks) == 1 and disposed == [True] and not groups
 
 
 @pytest.mark.parametrize("change", ["disable", "registry", "selection", "route", "row",
@@ -122,3 +125,82 @@ def test_unadmitted_item_never_mounts_contribution(change):
         window.plugin_manager.live = None
     assert mount() == ()
     assert not tasks and not buttons
+
+
+@pytest.mark.parametrize("failure", ["exception", "bad_disposer", "revocation"])
+def test_mount_cannot_submit_render_or_publish_failed_contribution(failure):
+    window, item, mount, tasks, buttons, groups, calls, disposed = rig()
+    plugin = window.plugin_manager.live
+
+    def contribute(host):
+        assert not host.submit("mount", lambda: pytest.fail("mount submitted"),
+                               lambda result: pytest.fail("mount delivered"))
+        host.add_group("Unexpected", (("Row", "Value"),))
+        host.add_action("first", "Preview", "Read only", lambda: None)
+        assert not tasks and not groups and not buttons
+        if failure == "exception":
+            raise RuntimeError("private supplier exception")
+        if failure == "bad_disposer":
+            return None
+        window._route_display_token = object()
+        return lambda: disposed.append(True)
+
+    plugin.contribute_book_review = contribute
+    assert mount() == ()
+    assert not tasks and not buttons and not groups
+    assert disposed == ([True] if failure == "revocation" else [])
+
+
+def test_delivery_cannot_submit_new_work_and_idle_host_cannot_render():
+    window, item, mount, tasks, buttons, groups, calls, disposed = rig()
+    plugin = window.plugin_manager.live
+    captured = []
+
+    def contribute(host):
+        captured.append(host)
+
+        def finish(value):
+            assert not host.submit("recursive", lambda: pytest.fail("recursive work"),
+                                   lambda result: None)
+            host.add_group("Result", (("Row", str(value)),))
+
+        def click():
+            assert host.submit("click", lambda: 42, finish)
+            assert not host.submit("second", lambda: pytest.fail("second work"),
+                                   lambda result: None)
+        host.add_action("first", "Review", "Read only", click)
+        return lambda: None
+
+    plugin.contribute_book_review = contribute
+    host, = mount()
+    assert captured == [host]
+    assert not host.submit("idle", lambda: pytest.fail("idle work"), lambda _: None)
+    host.add_group("Idle", (("Row", "Value"),))
+    buttons[0].click()
+    args, _ = tasks[0]
+    args[2](args[1]())
+    assert len(tasks) == 1 and groups == [("Result", [("Row", "42")])]
+
+
+def test_worker_checks_use_no_gtk_and_non_ui_delivery_cannot_render():
+    from threading import Thread, get_ident
+    window, item, mount, tasks, buttons, groups, calls, disposed = rig()
+    ui = get_ident()
+
+    def visible():
+        assert get_ident() == ui
+        return "library"
+
+    window.view_stack.get_visible_child_name = visible
+    host, = mount()
+    buttons[0].click()
+    args, _ = tasks[0]
+    results = []
+    worker = Thread(target=lambda: results.append(args[1]()))
+    worker.start()
+    worker.join()
+    assert results == [42] and calls == [True]
+    worker = Thread(target=lambda: args[2](results[0]))
+    worker.start()
+    worker.join()
+    assert not groups
