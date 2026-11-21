@@ -18,7 +18,8 @@ def _text(value, maximum):
 
 class GuidedBookReviewLease:
     __slots__ = ("_lease", "_placement", "_ui_current", "_thread", "_action",
-                 "_group", "_toast", "_buttons", "_ids", "_dispose")
+                 "_group", "_toast", "_buttons", "_ids", "_dispose",
+                 "_phase", "_pending")
 
     def __init__(self, lease, placement, ui_current, add_action, add_group, toast):
         self._lease, self._placement = lease, placement
@@ -26,6 +27,8 @@ class GuidedBookReviewLease:
         self._action, self._group, self._toast = add_action, add_group, toast
         self._buttons, self._ids = [], set()
         self._dispose = None
+        self._phase = None
+        self._pending = []
 
     @property
     def identity_id(self):
@@ -46,45 +49,105 @@ class GuidedBookReviewLease:
             return False
 
     def submit(self, label, work, done):
-        if not self._ui_live() or not callable(done):
+        if (self._phase != "action" or not self._ui_live()
+                or not callable(work) or not callable(done)):
             return False
-        return self._lease.submit(label, work,
-                                  lambda result: done(result) if self._ui_live() else None)
+        # At most one submission per explicit mapped click, even when a
+        # runner synchronously delivers a result or refuses admission.
+        self._phase = "submitted"
+
+        def deliver(result):
+            if not self._ui_live():
+                return
+            previous = self._phase
+            self._phase = "delivery"
+            try:
+                done(result)
+            finally:
+                self._phase = previous
+
+        return self._lease.submit(label, work, deliver)
 
     def add_group(self, title, rows):
-        if (self._ui_live() and _text(title, 160) and type(rows) is tuple
+        if (self._phase == "delivery" and self._ui_live() and _text(title, 160) and type(rows) is tuple
                 and 0 < len(rows) <= 64
                 and all(type(row) is tuple and len(row) == 2
                         and _text(row[0], 2048) and _text(row[1], 4096) for row in rows)):
             self._group(title, list(rows))
 
     def add_action(self, action_id, title, tooltip, invoke):
-        if (not self._ui_live() or not _text(action_id, 80)
+        if (self._phase not in ("mount", "delivery") or not self._ui_live()
+                or not _text(action_id, 80)
                 or not _text(title, 256) or not _text(tooltip, 1024)
                 or not callable(invoke) or action_id in self._ids or len(self._ids) >= 12):
             return
         self._ids.add(action_id)
 
         def clicked(button):
-            if (self._ui_live()
+            if (self._phase is None and self._ui_live()
                     and not getattr(button, "_cifereca_action_context_revoked", False)
                     and button.get_mapped()):
+                self._phase = "action"
                 try:
                     invoke()
                 except Exception:
                     self.toast("Revue indisponible.")
+                finally:
+                    self._phase = None
 
-        button = self._action(action_id, title, tooltip, clicked)
-        self._buttons.append(button)
+        args = (action_id, title, tooltip, clicked)
+        if self._phase == "mount":
+            self._pending.append(args)
+        else:
+            self._publish_action(args)
+
+    def _publish_action(self, args):
+        button = self._action(*args)
         if not self._ui_live():
             button._cifereca_action_context_revoked = True
+            hide = getattr(button, "set_visible", None)
+            if callable(hide):
+                hide(False)
+            return
+        self._buttons.append(button)
+
+    def _mount(self, contribute):
+        if self._phase is not None or self._dispose is not None or not self._ui_live():
+            return False
+        self._phase = "mount"
+        try:
+            disposer = contribute(self)
+            if callable(disposer):
+                self._dispose = disposer
+            if not callable(disposer) or not self._ui_live():
+                self.dispose()
+                return False
+            # Contributions are staged until successful mount. A failed
+            # plugin cannot leave a live button or launch a preview.
+            for args in tuple(self._pending):
+                if not self._ui_live():
+                    self.dispose()
+                    return False
+                self._publish_action(args)
+            if not self._ui_live():
+                self.dispose()
+                return False
+            return True
+        except Exception:
+            self.dispose()
+            return False
+        finally:
+            self._pending.clear()
+            self._phase = None
 
     def toast(self, message):
-        if self._ui_live() and _text(message, 512):
+        if (self._phase in ("action", "submitted", "delivery")
+                and self._ui_live() and _text(message, 512)):
             self._toast(message)
 
     def dispose(self):
         self._lease.dispose()
+        self._pending.clear()
         for button in self._buttons:
             button._cifereca_action_context_revoked = True
         self._buttons.clear()
@@ -182,12 +245,6 @@ def mount_guided_book_reviews(window, detail, row, item, *, token):
                                          token=token, resolved=resolved)
         if lease is None:
             continue
-        try:
-            lease._dispose = resolved.service.contribute_book_review(lease)
-            if not callable(lease._dispose) or not lease._ui_live():
-                lease.dispose()
-                continue
+        if lease._mount(resolved.service.contribute_book_review):
             mounted.append(lease)
-        except Exception:
-            lease.dispose()
     return tuple(mounted)
