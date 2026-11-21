@@ -65,7 +65,7 @@ def test_actual_federated_owner_search_admits_only_its_private_reference(harness
         assert not summary.cancelled and summary.result_count == 1
         row, = batches
     else:
-        summary, rows = service.search_progressive_for_scope(
+        summary, rows = service.search_progressive_result_for_scope(
             scope, "fiction", provider_id=session.provider_id, force=True,
         )
         assert not summary.cancelled and summary.result_count == 1
