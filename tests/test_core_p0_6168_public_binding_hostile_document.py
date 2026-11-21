@@ -41,6 +41,10 @@ def test_native_document_type_precedes_public_plugin_binding_equality(tmp_path):
         # The Core witness must not compare its foreign nested members.
         altered = replace(document)
         object.__setattr__(altered, "artifact_id", Hostile())
+        assert public_c_binding_revision(window, altered, receipt) is None
+        assert public_c_binding_revision(
+            window, document, replace(receipt, document=altered),
+        ) is None
         assert persisted_live_c_revision(row, altered) is None
         original_proof = row._core_persisted_c_revision_witness
         original_ref = row._core_notice_canonical_cover_document_ref
