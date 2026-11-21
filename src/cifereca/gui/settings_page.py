@@ -17,6 +17,7 @@ from .settings_ai_section import build_ai_settings_section
 from .settings_ai_actions import bind_settings_ai_callbacks
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_diagnostics_actions import bind_settings_diagnostics
+from .settings_capabilities_overview import append_settings_capability_overview
 from .settings_commit_actions import bind_settings_commit
 from .settings_destructive_cleanup import build_cleanup_settings
 from .settings_purchase_enrichment import build_purchase_enrichment_settings
@@ -148,6 +149,12 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         self, page_lifetime=page_lifetime, diagnostic_ui=diagnostic_ui,
         application_ui=application_ui, Gtk=Gtk, Adw=Adw, Gdk=Gdk,
         clear_box=clear_box,
+    )
+    # Snapshot only; no provider read or refresh loop. Pin the UI identity.
+    append_settings_capability_overview(
+        section=sections["diagnostic"], service=self.service,
+        Gtk=Gtk, Adw=Adw,
+        identity_id=getattr(getattr(self.service, "current_identity", None), "identity_id", None),
     )
     save_settings, save_and_reconnect = bind_settings_commit(
         self, page_lifetime=page_lifetime, settings_state=settings_state,
