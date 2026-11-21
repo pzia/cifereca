@@ -22,6 +22,10 @@ def test_native_document_type_precedes_public_plugin_binding_equality(tmp_path):
             row, identity_id="alice",
         )
         assert public_c_binding_revision(window, document, receipt) == 1
+        from types import SimpleNamespace as NS
+        from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+        cache_host = NS(storage=db)
+        assert cached_notice_cover_snapshot(cache_host, document) is not None
         from cifereca.core.notice_c_live_revision import persisted_live_c_revision
         assert persisted_live_c_revision(row, document) == 1
 
@@ -46,6 +50,11 @@ def test_native_document_type_precedes_public_plugin_binding_equality(tmp_path):
             window, document, replace(receipt, document=altered),
         ) is None
         assert persisted_live_c_revision(row, altered) is None
+        assert cached_notice_cover_snapshot(cache_host, altered) is None
+        for name in ("kind", "source_key"):
+            invalid = replace(document)
+            object.__setattr__(invalid, name, Hostile())
+            assert cached_notice_cover_snapshot(cache_host, invalid) is None
         original_proof = row._core_persisted_c_revision_witness
         original_ref = row._core_notice_canonical_cover_document_ref
         try:
