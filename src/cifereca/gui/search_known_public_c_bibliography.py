@@ -21,6 +21,14 @@ _ALTERNATIVE_FIELDS = (
     ("title", "Titre"), ("author", "Auteur"), ("publisher", "Éditeur"),
     ("published_at", "Publication"), *_FIELDS, ("description", "Résumé (extrait)"),
 )
+# DetailField labels are owned by book_detail_metadata, distinct from the
+# multi-source prose labels above (Sujets -> Sujet, Genres -> Genre, etc.).
+_CLASSIFICATION_DETAIL_LABELS = (
+    ("subjects", "Sujet"), ("subject", "Sujet"),
+    ("genres", "Genre"), ("genre", "Genre"),
+    ("keywords", "Mot-clé"), ("tags", "Mot-clé"),
+    ("themes", "Thème"),
+)
 
 
 def _native_mapping(value):
@@ -253,7 +261,7 @@ def with_known_public_field_provenance(presentation, item):
     # Protect independent fields from another field's late mutation.
     classified = set()
     classifications = hit.classification.wire() if hit.classification is not None else {}
-    for name, label in _FIELDS:
+    for name, label in _CLASSIFICATION_DETAIL_LABELS:
         if name in classifications and _same_native(
             metadata.get(name), classifications[name],
         ):
