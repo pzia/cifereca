@@ -96,3 +96,45 @@ def test_unattested_or_changed_primary_age_never_mints_trusted_detail_metadata(t
                 altered.pop("_core_notice_c_primary_facts")
             assert primary_known_public_c_ages(altered) == ()
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_copied_search_primary_receipt_never_hashes_foreign_age_bounds(tmp_path):
+    from dataclasses import replace
+
+    class Hostile:
+        def __hash__(self):
+            raise AssertionError("foreign age bound hash")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign age bound equality")
+
+    with closing(Storage(tmp_path / "hostile-primary-age.sqlite")) as db:
+        source = persist(db, project(original()), at=100)
+        persist_exact_public_search_cover(db, source)
+        item, = merge_public_notice_c_known_rows(
+            [], search_public_notice_c(db, "Même titre", now=100),
+            identity_id="alice",
+        )
+        assert len(primary_known_public_c_ages(item)) == 1
+        token, identity, hit = item["_core_notice_c_primary_facts"]
+        age = hit.age_observation
+        assert age is not None
+        malformed = (
+            replace(age, ranges=(replace(age.ranges[0], age_min=Hostile()),)),
+            replace(age, ranges=Hostile()),
+            replace(age, source_field=Hostile()),
+            replace(age, record_id="another-edition"),
+            replace(age, ranges=(replace(age.ranges[0], age_min=121),)),
+            replace(age, ranges=(replace(age.ranges[0], age_kind="inferred"),)),
+        )
+        for bad in malformed:
+            modified = {
+                **item,
+                "_core_notice_c_primary_facts": (
+                    token, identity, replace(hit, age_observation=bad),
+                ),
+            }
+            assert primary_known_public_c_ages(modified) == ()
+        assert len(primary_known_public_c_ages(item)) == 1
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
