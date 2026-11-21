@@ -1,6 +1,10 @@
 """#6366: fail-closed Library/Recent C conflicts and replayed N2 bindings."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+import pytest
+
 from cifereca.core.notice_c_cover_index import (
     persist_consolidated_cover_source, persist_exact_public_search_cover,
 )
@@ -75,5 +79,54 @@ def test_epub_n1_revokes_earlier_public_c_n2(tmp_path):
         project_local_origin_public_c(db, [library, recent], identity_id="A")
         assert "_public_canonical_cover_link" not in library
         assert "_public_canonical_cover_link" in recent
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("documentary_only", [False, True])
+def test_origin_placement_and_c_are_read_under_one_sqlite_snapshot(tmp_path, monkeypatch,
+                                                            documentary_only):
+    db = Storage(tmp_path / "snapshot.sqlite")
+    try:
+        result, path, _, _ = _ready(db, tmp_path)
+        library, recent = _views(db, result.artifact_id, result.placement_id, path)
+        original = db._connect
+        reads = []
+
+        @contextmanager
+        def traced():
+            statements = []
+            reads.append(statements)
+            with original() as sql:
+                sql.set_trace_callback(statements.append)
+                try:
+                    yield sql
+                finally:
+                    sql.set_trace_callback(None)
+
+        monkeypatch.setattr(db, "_connect", traced)
+        project_local_origin_public_c(db, [library, recent], identity_id="A",
+                                      documentary_only=documentary_only)
+        key = ("_public_canonical_document_link" if documentary_only
+               else "_public_canonical_cover_link")
+        assert library[key] == recent[key]
+        assert len(reads) == 1
+        statements = reads[0]
+        begin = next(i for i, s in enumerate(statements) if s == "BEGIN")
+        origins = next(i for i, s in enumerate(statements) if "JOIN origin_links" in s)
+        placements = next(i for i, s in enumerate(statements)
+                          if "SELECT artifact_id,placement_id FROM placements" in s)
+        canonical = next(i for i, s in enumerate(statements)
+                         if "SELECT m.key,m.value FROM metadata AS m" in s)
+        assert begin < origins < placements < canonical
+
+        # A subsequent reader must not retain a receipt from the old snapshot.
+        with original() as sql:
+            sql.execute("DELETE FROM origin_links WHERE identity_id=?", ("A",))
+        reads.clear()
+        project_local_origin_public_c(db, [library, recent], identity_id="A",
+                                      documentary_only=documentary_only)
+        assert key not in library and key not in recent
+        assert len(reads) == 1
     finally:
         db.close()
