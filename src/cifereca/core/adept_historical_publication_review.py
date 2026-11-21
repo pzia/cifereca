@@ -6,6 +6,7 @@ activation, physical bytes or permission to repair. No network or FS probe.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
 
 from .source_convergence import SourceKey
@@ -17,6 +18,18 @@ _MAX_ID = 1024
 def _id(value):
     return (type(value) is str and 0 < len(value) <= _MAX_ID
             and all(ord(ch) >= 32 and ord(ch) != 127 for ch in value))
+
+
+@contextmanager
+def _historical_snapshot(storage):
+    """Borrow only an idle SQLite connection, never settle the caller's work."""
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise RuntimeError("adept_historical_nested_transaction")
+        with db:
+            db.execute("BEGIN")
+            yield db
 
 
 def review_legacy_adept_publication(storage, *, source: SourceKey):
@@ -37,77 +50,69 @@ def review_legacy_adept_publication(storage, *, source: SourceKey):
         return result("scope_unverified")
     scope = source.scope
     try:
-        # Do not enter sqlite3.Connection's context manager when this thread
-        # already owns a caller transaction: even a failed BEGIN would make
-        # __exit__ roll back that unrelated work.
-        with storage._lock:
-            db = storage._connect()
-            if db.in_transaction:
-                return result("storage_unverified")
-            with db:
-                db.execute("BEGIN")
-                references = db.execute(
-                    "SELECT source_reference_id FROM source_references "
-                    "WHERE identity_id=? AND provider_id=? AND credential_id=? "
-                    "AND account_id=? AND branch_id=? AND edition_id=? "
-                    "AND right_id=? AND reference_kind='loan' LIMIT 2",
-                    (scope.identity_id, scope.provider_id, scope.credential_id,
-                     scope.account_id, source.branch, source.edition_id, source.right_id),
-                ).fetchall()
-                if not references:
-                    return result("not_recorded")
-                if len(references) != 1:
-                    return result("ambiguous_reference")
-                ref = references[0][0]
-                if not _id(ref):
-                    return result("reference_unverified")
-                origins = db.execute(
-                    "SELECT origin_kind, identity_id, artifact_id, "
-                    "CASE WHEN length(CAST(evidence_ref AS BLOB)) BETWEEN 1 AND ? "
-                    "THEN evidence_ref ELSE NULL END "
-                    "FROM origin_links WHERE source_reference_id=? "
-                    "AND origin_kind IN ('provider','adept') LIMIT ?",
-                    (_MAX_ID, ref, _MAX_ROWS + 1),
-                ).fetchall()
-                if len(origins) > _MAX_ROWS:
-                    return result("recorded", "budget_exceeded")
-                by_artifact = {}
-                for kind, identity, artifact, proof in origins:
-                    if identity != scope.identity_id or not _id(artifact) or not _id(proof):
-                        return result("recorded", "origin_unverified")
-                    by_artifact.setdefault(artifact, set()).add(kind)
-                if not by_artifact:
-                    return result("recorded", "not_recorded")
-                if len(by_artifact) != 1:
-                    return result("recorded", "ambiguous_artifacts")
-                artifact, kinds = next(iter(by_artifact.items()))
-                origin = {
-                    frozenset(("provider", "adept")): "provider_and_adept_recorded",
-                    frozenset(("provider",)): "provider_only_recorded",
-                    frozenset(("adept",)): "adept_only_recorded",
-                }[frozenset(kinds)]
-                row = db.execute(
-                    "SELECT sha256 FROM artifacts WHERE artifact_id=?", (artifact,)
-                ).fetchone()
-                if (row is None or type(row[0]) is not str or len(row[0]) != 64
-                        or any(ch not in "0123456789abcdef" for ch in row[0])
-                        or artifact != "sha256:" + row[0]):
-                    return result("recorded", "artifact_unverified")
-                states = db.execute(
-                    "SELECT state FROM placements WHERE artifact_id=? "
-                    "AND identity_id=? LIMIT ?",
-                    (artifact, scope.identity_id, _MAX_ROWS + 1),
-                ).fetchall()
-                if len(states) > _MAX_ROWS:
-                    return result("recorded", origin, "budget_exceeded")
-                if not states:
-                    return result("recorded", origin, "not_recorded_in_profile")
-                values = {state for (state,) in states}
-                allowed = {"present", "missing", "unverified", "dedup_cleanup_pending"}
-                if not values <= allowed:
-                    return result("recorded", origin, "state_unverified")
-                placement = (next(iter(values)) + "_recorded"
-                             if len(values) == 1 else "mixed_states_recorded")
-                return result("recorded", origin, placement)
+        with _historical_snapshot(storage) as db:
+            references = db.execute(
+                "SELECT source_reference_id FROM source_references "
+                "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+                "AND account_id=? AND branch_id=? AND edition_id=? "
+                "AND right_id=? AND reference_kind='loan' LIMIT 2",
+                (scope.identity_id, scope.provider_id, scope.credential_id,
+                 scope.account_id, source.branch, source.edition_id, source.right_id),
+            ).fetchall()
+            if not references:
+                return result("not_recorded")
+            if len(references) != 1:
+                return result("ambiguous_reference")
+            ref = references[0][0]
+            if not _id(ref):
+                return result("reference_unverified")
+            origins = db.execute(
+                "SELECT origin_kind, identity_id, artifact_id, "
+                "CASE WHEN length(CAST(evidence_ref AS BLOB)) BETWEEN 1 AND ? "
+                "THEN evidence_ref ELSE NULL END "
+                "FROM origin_links WHERE source_reference_id=? "
+                "AND origin_kind IN ('provider','adept') LIMIT ?",
+                (_MAX_ID, ref, _MAX_ROWS + 1),
+            ).fetchall()
+            if len(origins) > _MAX_ROWS:
+                return result("recorded", "budget_exceeded")
+            by_artifact = {}
+            for kind, identity, artifact, proof in origins:
+                if identity != scope.identity_id or not _id(artifact) or not _id(proof):
+                    return result("recorded", "origin_unverified")
+                by_artifact.setdefault(artifact, set()).add(kind)
+            if not by_artifact:
+                return result("recorded", "not_recorded")
+            if len(by_artifact) != 1:
+                return result("recorded", "ambiguous_artifacts")
+            artifact, kinds = next(iter(by_artifact.items()))
+            origin = {
+                frozenset(("provider", "adept")): "provider_and_adept_recorded",
+                frozenset(("provider",)): "provider_only_recorded",
+                frozenset(("adept",)): "adept_only_recorded",
+            }[frozenset(kinds)]
+            row = db.execute(
+                "SELECT sha256 FROM artifacts WHERE artifact_id=?", (artifact,)
+            ).fetchone()
+            if (row is None or type(row[0]) is not str or len(row[0]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in row[0])
+                    or artifact != "sha256:" + row[0]):
+                return result("recorded", "artifact_unverified")
+            states = db.execute(
+                "SELECT state FROM placements WHERE artifact_id=? "
+                "AND identity_id=? LIMIT ?",
+                (artifact, scope.identity_id, _MAX_ROWS + 1),
+            ).fetchall()
+            if len(states) > _MAX_ROWS:
+                return result("recorded", origin, "budget_exceeded")
+            if not states:
+                return result("recorded", origin, "not_recorded_in_profile")
+            values = {state for (state,) in states}
+            allowed = {"present", "missing", "unverified", "dedup_cleanup_pending"}
+            if not values <= allowed:
+                return result("recorded", origin, "state_unverified")
+            placement = (next(iter(values)) + "_recorded"
+                         if len(values) == 1 else "mixed_states_recorded")
+            return result("recorded", origin, placement)
     except (sqlite3.Error, ValueError, TypeError, RuntimeError):
         return result("storage_unverified")
