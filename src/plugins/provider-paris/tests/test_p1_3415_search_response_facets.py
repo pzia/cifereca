@@ -560,11 +560,12 @@ def test_exact_anonymous_series_reaches_durable_c_from_paris_parser(
         db.close()
 
 
+@pytest.mark.parametrize("mode", ["direct", "sync", "progressive", "headless"])
 @pytest.mark.parametrize("scenario,scope", [
     ("CATALOGUE", "physical"), ("EBOOKS", "digital"),
 ])
 def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
-    tmp_path, monkeypatch, scenario, scope,
+    tmp_path, monkeypatch, scenario, scope, mode,
 ):
     from dataclasses import replace
     from cifereca.config import Config
@@ -623,15 +624,43 @@ def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
     })
     try:
         assert capture_series_call(service, session, "bob") is None
-        call = capture_series_call(service, session, "alice")
-        assert call is not None
-        response = session.search_with_response_facets("Synthetic book", scope)
-        row, = response.results
+        assert service.current_identity.identity_id == "alice"
+        lease = capture_search_read_scope(service, "alice")
+        if mode == "direct":
+            call = capture_series_call(service, session, "alice")
+            assert call is not None
+            response = session.search_with_response_facets("Synthetic book", scope)
+            row, = response.results
+            assert response.public_notices[0].result is not row
+            stamp_series_rows(service, call, response.results)
+            assert persist_series_rows(service, [replace(row)], identity_id="alice") == 0
+            assert persist_series_rows(service, response.results, identity_id="alice") == 1
+        elif mode == "sync":
+            row, = service.search(
+                "Synthetic book", scope=scope, provider_id=session.provider_id, force=True,
+            )
+        elif mode == "progressive":
+            batches = []
+
+            def receive(batch):
+                actual, = batch.results
+                assert read_series_for_search(service, actual, reader_scope=lease).label == "Cycle astral"
+                batches.append(actual)
+
+            summary = service.search_progressive(
+                "Synthetic book", scope=scope, provider_id=session.provider_id,
+                force=True, on_batch=receive,
+            )
+            assert not summary.cancelled and summary.result_count == 1
+            row, = batches
+        else:
+            summary, rows = service.search_progressive_result_for_scope(
+                lease, "Synthetic book", scope=scope, provider_id=session.provider_id, force=True,
+            )
+            assert not summary.cancelled and summary.result_count == 1
+            row, = rows
         assert row.source_account_id is None
-        assert response.public_notices[0].result is not row
-        stamp_series_rows(service, call, response.results)
         assert persist_series_rows(service, [replace(row)], identity_id="alice") == 0
-        assert persist_series_rows(service, response.results, identity_id="alice") == 1
         key = _key(row, "alice")
         assert key.account_id is None and key.visibility == "private"
         document = notice_cover_document_ref(key)
@@ -646,7 +675,7 @@ def test_credential_catalogue_series_reaches_private_c_without_borrower_or_web(
             service, "bob",
         )) is None
         row.metadata["series"] = ["Other"]
-        assert persist_series_rows(service, response.results, identity_id="alice") == 0
+        assert persist_series_rows(service, [row], identity_id="alice") == 0
         assert read_series_for_search(service, row, reader_scope=lease).label == "Cycle astral"
         assert search_public_notice_c(db, "Cycle astral").hits == ()
         assert evict_notice_cover(db, document, expected_epoch=source.epoch)
