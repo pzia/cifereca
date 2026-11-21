@@ -204,7 +204,7 @@ def test_manual_supported_claim_does_not_masquerade_as_provider_observation():
     ("matrix", "provider_id", "PRIVATE_CREDENTIAL:token"),
     ("matrix", "observations", [1, 2]),
     ("evidence", "status", "supported"),
-    ("evidence", "source_kind", "account_observation"),
+    ("evidence", "source_kind", "forged_observation"),
     ("evidence", "operation", "loan.borrow\nPRIVATE_TOKEN"),
     ("evidence", "identity_id", "SECRET\nOTHER"),
     ("evidence", "schema_version", True),
