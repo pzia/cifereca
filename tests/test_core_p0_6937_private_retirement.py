@@ -135,8 +135,8 @@ def test_crash_after_unlink_resumes_from_durable_prepared_trace(rig, isolated_fe
             sql.execute("CREATE TRIGGER synthetic_retire_abort BEFORE UPDATE OF value ON metadata "
                         "WHEN NEW.key LIKE 'derived.publication.retirement.v1:%' "
                         "BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-        # The actual transaction adapter may propagate its own SQLite error.
-        with pytest.raises(Exception):
+        # The Core boundary translates the real SQLite trigger abort.
+        with pytest.raises(journal.DerivedJournalConflict):
             retire.retire_private_stage(db, **approved)
         with db._lock, db._connect() as sql:
             sql.execute("DROP TRIGGER synthetic_retire_abort")
