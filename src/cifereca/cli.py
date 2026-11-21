@@ -185,9 +185,21 @@ def main(argv: list[str] | None = None) -> int:
             print("ADEPT — diagnostic local, lecture seule")
             print("État :", result["status"])
             if result["status"] == "complete":
+                from collections import Counter
                 for key, value in result["counts"].items():
                     print(f"{key}: {value}")
-                print("Provisioning et droits actuels : non vérifiés")
+                for key in ("connection", "identity_binding", "borrower_grant"):
+                    states = Counter(record[key] for record in result["accounts"])
+                    for state, count in sorted(states.items()):
+                        print(f"{key}.{state}: {count}")
+                for key in ("origin_owner_mismatch", "origin_receipt_missing",
+                            "origin_multiple_records",
+                            "legacy_loan_right_rows_without_reference",
+                            "legacy_loan_right_rows_unverified_coordinates",
+                            "historical_adept_rows_without_reference",
+                            "historical_adept_rows_unverified_coordinates"):
+                    print(f"{key}: {sum(record[key] for record in result['accounts'])}")
+                print("Inventaire runtime, provisioning et droits actuels : non vérifiés")
             else:
                 print("Code :", result["code"])
         return 0 if result["status"] == "complete" else 2
