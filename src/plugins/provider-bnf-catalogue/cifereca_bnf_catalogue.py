@@ -338,8 +338,27 @@ class BnfCatalogueSession(ProviderSession):
             element.text.strip() if element.text is not None and len(element) == 0 else None
             for element in root.findall(f"{{{SRU}}}nextRecordPosition")
         )
-        rows = {}
+        # Count every recordData (including malformed/nested siblings), but
+        # each ARK only once per data node. An invalid duplicate must not
+        # make a valid sibling look uniquely attested by this SRU page.
+        ark_occurrences: dict[str, int] = {}
         for data in data_nodes:
+            observed = {
+                match.group(1).lower()
+                for node in data.iter(f"{{{DC}}}identifier")
+                if (match := ARK.fullmatch(_text(node).strip())) is not None
+            }
+            for candidate in observed:
+                ark_occurrences[candidate] = ark_occurrences.get(candidate, 0) + 1
+        rows = {}
+        # Only direct SRU record/recordData children attest an occurrence.
+        # A nested/orphan recordData still makes coverage partial, but must
+        # never mint a public record or poison a valid sibling's identity.
+        for record in records:
+            own_data = record.findall(f"{{{SRU}}}recordData")
+            if len(own_data) != 1:
+                continue
+            data = own_data[0]
             values: dict[str, list[str]] = {}
             for node in data.iter():
                 if node.tag.startswith("{" + DC + "}"):
@@ -358,6 +377,8 @@ class BnfCatalogueSession(ProviderSession):
             if not arks:
                 continue
             ark = next(iter(arks))
+            if ark_occurrences.get(ark) != 1:
+                continue
             formats = values.get("format", [])
             kinds = values.get("type", [])
             links = list(dict.fromkeys(link for value in values.get("relation", []) + identifiers if (link := _gallica_link(value))))
