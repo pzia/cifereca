@@ -54,6 +54,11 @@ def _display_holds(result):
             "marker_recorded": "Marqueur de tentative enregistré ; phase non attestée.",
             "historical_ledger": "Attention historique enregistrée ; rejeu non attesté.",
         }.get(row["hold_origin"], "État du verrou indéterminé.")
+        if row["hold_origin"] == "marker_recorded":
+            reason = {
+                "held_phase_unknown": "Marqueur v1 exact enregistré ; phase non attestée.",
+                "held_invalid": "Marqueur illisible ou non canonique ; conserver le verrou.",
+            }.get(row.get("marker_state"), "Marqueur non vérifiable ; conserver le verrou.")
         lines.extend((
             "",
             row["title"],

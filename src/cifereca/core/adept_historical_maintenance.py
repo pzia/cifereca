@@ -234,6 +234,7 @@ def run_historical_hold_review(service, request, *, offset=0):
                 "canonical_branch": source.branch,
                 "title": row.title,
                 "hold_origin": row.adept_hold_origin,
+                "marker_state": row.adept_marker_state,
                 "recorded_inactive": row.inactive,
                 "provider_loan_state": "not_checked",
                 "activation_attested": False,

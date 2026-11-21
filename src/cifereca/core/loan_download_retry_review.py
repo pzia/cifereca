@@ -9,7 +9,9 @@ from ..models import Account, Loan
 from ..paths import acquisition_lock_file
 from ..plugin_api.downloadable_resources import SourceReference
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
-from .canonical_adept_attempt import _key as _adept_key
+from .canonical_adept_attempt import (
+    _key as _adept_key, review_loan_adept_marker_in_transaction,
+)
 from .canonical_recovery import _exact_borrower_bound_in_db
 from .canonical_runtime_attempt import RUNTIME_ATTEMPT_PREFIX, read_runtime_attempt_in_db
 from .canonical_loan_retry_guard import historical_adept_ledger_hold
@@ -36,6 +38,7 @@ class LoanDownloadRetryRow:
     runtime_phase: str = ""
     local_state_invalid: bool = False
     adept_hold_origin: str = ""
+    adept_marker_state: str = ""
 
     @property
     def can_reset(self) -> bool:
@@ -168,6 +171,8 @@ def review_loan_download_retries(service, *, identity_id: str):
                 invalid = True
             hold_origin = _adept_hold_origin(db, source, scopes) if kind == "loan" else ""
             hold = bool(hold_origin)
+            marker_state = (review_loan_adept_marker_in_transaction(db, source).state
+                            if hold_origin == "marker_recorded" else "")
             try:
                 refused_at = read_adept_intervention(db, source)
             except ValueError:
@@ -197,6 +202,7 @@ def review_loan_download_retries(service, *, identity_id: str):
             result.append(LoanDownloadRetryRow(
                 source, title, retry, hold, state == "inactive", refused_at,
                 runtime_hold, runtime_started_at, runtime_phase, invalid, hold_origin,
+                marker_state,
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")

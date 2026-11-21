@@ -210,3 +210,36 @@ def test_hold_review_nested_transaction_preserves_caller(store, tmp_path):
     finally:
         if db.in_transaction:
             db.rollback()
+
+
+@pytest.mark.parametrize("kind", ["canonical", "padded", "blob", "oversized"])
+def test_hold_review_classifies_exact_marker_without_exporting_witness(store, tmp_path, kind):
+    import sqlite3
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.adept_historical_maintenance_line import _display_holds
+    service, _, path, _ = _setup(store, tmp_path)
+    pending, snapshot = new_source(kind="loan", branch="loans", right="blocked")
+    persist_attested_source_references(store, snapshot)
+    raw = _value("synthetic-offer", "f" * 32)
+    if kind == "padded":
+        raw += " "
+    elif kind == "oversized":
+        raw += " " * 8192
+    elif kind == "blob":
+        raw = sqlite3.Binary(raw.encode("ascii"))
+    with store._lock, store._connect() as sql:
+        sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (_key(pending), raw))
+    request = review.admit_historical_review(service)
+    page = review.run_historical_hold_review(service, request)
+    row, = page["rows"]
+    assert row["hold_origin"] == "marker_recorded"
+    assert row["marker_state"] == ("held_phase_unknown" if kind == "canonical" else "held_invalid")
+    expected = "phase non attestée" if kind == "canonical" else "conserver le verrou"
+    assert expected in _display_holds(page)
+    assert "fingerprint" not in repr(page) and "f" * 32 not in repr(page)
+    assert not row["unlock_authorized"] and not page["mutation_authorized"]
+    with store._lock, store._connect() as sql:
+        observed, = sql.execute("SELECT value FROM metadata WHERE key=?", (_key(pending),)).fetchone()
+    assert observed == (bytes(raw) if kind == "blob" else raw)
+    assert path.read_bytes() == BYTES

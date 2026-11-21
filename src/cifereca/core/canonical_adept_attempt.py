@@ -169,6 +169,18 @@ def review_loan_adept_marker(storage, source: SourceKey) -> LoanAdeptMarkerRevie
         return LoanAdeptMarkerReview("unreadable")
 
 
+def review_loan_adept_marker_in_transaction(db, source: SourceKey) -> LoanAdeptMarkerReview:
+    """Negative witness in an existing review snapshot, never write authority."""
+    if type(source) is not SourceKey or source.kind != "loan":
+        return LoanAdeptMarkerReview("invalid_source")
+    if not db.in_transaction:
+        return LoanAdeptMarkerReview("unreadable")
+    try:
+        return _marker_review(_marker_row(db, source), source)
+    except Exception:
+        return LoanAdeptMarkerReview("unreadable")
+
+
 def matches_reviewed_loan_adept_marker_in_transaction(db, *, source, review) -> bool:
     """Compare the reviewed negative fact within a caller-owned SQL snapshot.
 
