@@ -396,3 +396,26 @@ def test_expired_or_invalid_fresh_kobo_descriptor_refused_before_get(
         assert clients == [] and not list(tmp_path.iterdir())
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("status,retryable", [(503, True), (403, False)])
+def test_kobo_native_content_get_only_counts_transient_failures(
+    tmp_path, monkeypatch, status, retryable,
+):
+    from cifereca.plugin_api import RetryableContentDownload
+
+    session, _vault, _broker, account, _posts = setup()
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(status)
+    fake_public_client(monkeypatch, handler, [])
+    try:
+        offer = admitted(session, account)
+        with pytest.raises(ProviderCapabilityError) as error:
+            execute(session, account, offer, tmp_path, admission_current=lambda: True)
+        assert (type(error.value) is RetryableContentDownload) is retryable
+        assert [request.method for request in requests] == ["GET"]
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()

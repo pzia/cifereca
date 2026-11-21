@@ -12,12 +12,12 @@ from cifereca.plugin_api import (
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
     ManualBorrowPolicy,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
-    ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted,
+    ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted, RetryableContentDownload,
     normalize_language_tag,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
 )
-from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, ACTIVITY
+from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, TemporaryLoanTokenError, ACTIVITY
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
 from cifereca_bnf_pret_catalog import read_search, read_detail, MAX_SEARCH_PAGES, resource_url
 from cifereca_bnf_pret_signed_action import signed_acsm_action, reader_acs4_offer_pairs
@@ -1028,7 +1028,11 @@ class BnfProviderSession(ProviderSession):
                 # catalogue, diagnostics or acquisition hook.
                 return path, ''
             except (ReaderHTTPError, WebParseError) as error:
-                raise ProviderError(self._report_failure('download', error)) from None
+                code = self._report_failure('download', error)
+                if (type(error) is TemporaryLoanTokenError and expected_offer_id is not None
+                        and callable(admission_current) and scope_current()):
+                    raise RetryableContentDownload(code) from None
+                raise ProviderError(code) from None
 
     def _catalog_error(self, phase, error):
         code = self._report_failure(phase, error)

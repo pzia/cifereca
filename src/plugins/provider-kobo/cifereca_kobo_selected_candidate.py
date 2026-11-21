@@ -16,6 +16,7 @@ import zipfile
 import httpx
 from cifereca.plugin_api import (
     Account, HTTPX_TRANSPORT, ProviderCapabilityError, ProviderError,
+    ContentTransferUnavailable, RetryableContentDownload,
 )
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
@@ -387,6 +388,10 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             return receipt.path, ""
         except ValueError as exc:
             code = str(exc)
+            if (type(exc) is ContentTransferUnavailable
+                    and callable(admission_current)
+                    and bound() and stage_current() and core_current()):
+                raise RetryableContentDownload(code) from None
             # #4882: the public refusal deliberately groups multiple unsafe
             # URL/redirect forms. Preserve the exact *closed* transport code
             # locally for diagnosis without ever logging Location, signed URL,

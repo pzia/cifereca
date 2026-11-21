@@ -415,6 +415,14 @@ class TraceAsyncHTTPClient(httpx.AsyncClient):
                                        capture=self._trace_capture)
 
 
+class ContentTransferUnavailable(ValueError):
+    """A transient error observed by the attested HTTP content transport.
+
+    Only the caller knows whether the source operation can use a fresh
+    offer. This exception does not, by itself, qualify another attempt.
+    """
+
+
 class _HTTPXTransportService:
     """Core-owned construction service; clients keep independent cookies/pools."""
 

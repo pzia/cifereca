@@ -18,7 +18,8 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import (HTTPX_TRANSPORT, Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderSearchCapabilities, ProviderError,
-    ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
+    ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file,
+    ContentTransferUnavailable, RetryableContentDownload)
 from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
     html_response_kind, _attested_public_https, _readbook_coordinates)
@@ -1855,6 +1856,14 @@ class NumilogSession(ProviderSession):
                                 timeout=25, max_bytes=self.maximum,
                                 max_redirects=8,
                             )
+                        except ContentTransferUnavailable as error:
+                            if selected_link is not None and selected_kind == 'epub_direct' and admitted():
+                                trace.fail('transport_unavailable')
+                                raise RetryableContentDownload(str(error)) from None
+                            trace.fail('origin_rejected')
+                            raise ProviderCapabilityError(
+                                'numilog_candidate_transport_refused'
+                            ) from None
                         except ValueError:
                             trace.fail('origin_rejected')
                             raise ProviderCapabilityError(
@@ -2021,6 +2030,11 @@ class NumilogSession(ProviderSession):
                         )
                         trace.fail('redirect_limit')
                         continue
+                    if (stage_acsm_only is True and callable(core_admission_current)
+                            and url == selected_link and selected_kind == 'epub_direct'
+                            and r.status_code in {408, 429, 500, 502, 503, 504}):
+                        require_core()
+                        raise RetryableContentDownload(public_http_code(r.status_code))
                     self._status(r)
                     trace.fail('mime_unexpected')
                     mime = r.headers.get('content-type','').split(';')[0].lower().strip()

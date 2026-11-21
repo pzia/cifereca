@@ -21,9 +21,12 @@ from urllib.parse import unquote, urljoin, urlparse
 from cifereca.plugin_api import (
     Account, HistoryItem, ItemDetail, Loan, SearchResult,
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
-    acquisition_format_projection, normalize_acquisition_format,
+    acquisition_format_projection, normalize_acquisition_format, RetryableContentDownload,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError, ParisLoanListError, ParisError
+from cifereca_paris_client import (
+    AuthenticationError, ParisClient, ParisContentTransferUnavailable, ParisSummaryHTTPError,
+    ParisLoanListError, ParisError,
+)
 from cifereca_paris_trace import (
     public_book_id, public_content_type, public_http_status, public_site,
 )
@@ -2070,11 +2073,17 @@ class ParisProviderSession(ProviderSession):
                 raise ProviderConfigurationError("Boucle de redirections PNB détectée")
             visited_urls.add(current)
             hop_started = time.monotonic()
-            response = self.client._get_pnb_response(
-                current,
-                **({"admission_current": stream_admission_current}
-                   if stream_admission_current is not None else {}),
-            )
+            try:
+                response = self.client._get_pnb_response(
+                    current,
+                    **({"admission_current": stream_admission_current}
+                       if stream_admission_current is not None else {}),
+                )
+            except ParisContentTransferUnavailable as error:
+                if selected_offer_only and callable(stream_admission_current):
+                    ensure_scope()
+                    raise RetryableContentDownload(str(error)) from None
+                raise
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             if initial_offer_only and response.status_code in {301, 302, 303, 307, 308}:
@@ -2100,9 +2109,12 @@ class ParisProviderSession(ProviderSession):
         except httpx.HTTPStatusError:
             # HTTPX messages include the full signed response URL. Preserve
             # only a closed numeric status in provider diagnostics.
-            raise ProviderConfigurationError(
-                f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
-            ) from None
+            message = f"PNB HTTPS livraison HTTP {public_http_status(response.status_code)}"
+            if (selected_offer_only and callable(stream_admission_current)
+                    and response.status_code in {408, 429, 500, 502, 503, 504}):
+                ensure_scope()
+                raise RetryableContentDownload(message) from None
+            raise ProviderConfigurationError(message) from None
         content = response.content
         content_type = response.headers.get("content-type", "")
         fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')
