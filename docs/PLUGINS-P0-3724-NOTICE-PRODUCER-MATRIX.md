@@ -1,6 +1,6 @@
 # P0 Notices — #3724 : couverture des producteurs et intentions
 
-Inventaire statique du dépôt au 20 novembre 2026. Il décrit les manifestes
+Inventaire statique du dépôt au 20 novembre 2026, réceptions actualisées le 21 novembre 2026. Il décrit les manifestes
 `provider.library` distribués sous `src/plugins`, non les plugins effectivement
 activés sur une installation. Aucune requête fournisseur ni inspection de
 configuration privée. Les capacités de catalogue, prêt et téléchargement
@@ -20,19 +20,19 @@ ne sont pas des capacités d'enrichissement documentaire.
 
 | Provider | Observation / association disponible | Statut et reste à qualifier |
 | --- | --- | --- |
-| `provider.baen` | Recherche/détail et offre téléchargement, singleton public désactivé par défaut. | Non attesté : C durable et association exacte depuis catalogue ; aucun enrichissement auto. |
-| `provider.bnf-pret` | Recherche/détail, sync prêts, emprunt ; désactivé par défaut. | Non attesté : association prêt existant → édition publique, avec scope prêteur et réattestation. Un résultat de recherche ne constitue pas un prêt. |
+| `provider.baen` | Recherche/détail et offre téléchargement, singleton public désactivé par défaut. | Partiel : Free Library JSON anonyme → C durable, #7237 ; requête q partielle sans admission C, format EPUB non attesté, offre/action et enrichissement non reçus. |
+| `provider.bnf-pret` | Recherche/détail, sync prêts, emprunt ; désactivé par défaut. | Partiel : Search authentifié même appel → C self privée opaque, #7250 ; GTK contrôlée #7266. Association prêt existant → édition publique toujours non attestée. Un résultat de recherche ne constitue pas un prêt. |
 | `provider.biblioaccess.la-rochelle` | Sync prêts et téléchargement, désactivé par défaut. | Non attesté : lien exact prêt/notice catalogue entre les deux ports ; pas de rapprochement par titre seul. |
-| `provider.biblioaccess-catalogue.la-rochelle` | Catalogue singleton public, déclaration même appel depuis ancre titre/URL, #7049. | Partiel : recette C SQLite contrôlée ; preuve de lien avec prêt privé et port d'enrichissement non attestés. |
+| `provider.biblioaccess-catalogue.la-rochelle` | Catalogue singleton public, déclaration même appel depuis ancre titre/URL, #7049. | Partiel : recette C SQLite contrôlée ; zéro attesté propagé dans les trois parcours #7259/#7285. Lien avec prêt privé et port d'enrichissement non attestés. |
 | `provider.paris` | Recherche et détail Syracuse, emprunt et sync prêts ; carte requise. #7117 et #7118. | Partiel : séries et déclaration anonyme contrôlées, chemin anonyme non activé au runtime ; prêt→C et GetRecord non attestés. |
 | `provider.reference` | Téléchargement déclaré, désactivé par défaut. | Catalogue et sync non applicables selon manifeste ; enrichissement non attesté. |
 | `provider.numilog` | Inventaire privé, achat existant et association publique dans `purchase_enrichment_observation` ; recherche/détail. | Partiel : #1072, chemin achat A après commit et port spécialisé ; preuve terrain et admission générique à qualifier. |
-| `provider.numilog.catalog` | Catalogue anonyme singleton désactivé par défaut ; réponse typée exacte, détail public, cache de parsing. | Partiel : #1886 reçu, #1072 reste distinct ; ne pas déduire un achat ou activer le catalogue. |
+| `provider.numilog.catalog` | Catalogue anonyme singleton désactivé par défaut ; réponse typée exacte, détail public, cache de parsing. | Partiel : #1886 reçu, GET publics équivalents simultanés mutualisés #7262, layout Ra contrôlé hors réseau #7269/#7275/#7287, garde brSimple #7294. Refus terrain initiaux #7163 non individualisés ; #1072 reste distinct. |
 | `provider.bnf-catalogue` | Singleton public SRU ; déclaration même appel, preuve ISBN/âge et support bornée. | Partiel : recette source C contrôlée ; âge d'édition numérique exact #4530 non reçu, pas de port d'enrichissement générique attesté. |
-| `provider.ebooksgratuits` | Singleton public OPDS ; recherche/détail et téléchargement. | Non attesté : port documentaire anonyme exact sans effacer l'offre de téléchargement ; parsing/recettes #6590/#1917 ne prouvent pas cette admission. |
+| `provider.ebooksgratuits` | Singleton public OPDS ; recherche/détail et téléchargement. | Partiel : port documentaire OPDS canonique #7164 ; chemin numérique qualifié, offre legacy séparée. Pas de restauration d'action depuis C, UUID/alias et autres formats non attestés. |
 | `provider.kobo` | Recherche, détail, catalogue compte/vault et téléchargement ; déclaration publique distincte sous garde dans session privée. | Partiel : preuve bibliographique publique déclarative, pas de témoin anonyme C automatique ; port achat/association exacte et politique à qualifier, aucun accès Vault supplémentaire. |
-| `provider.gallica` | Recherche/détail et téléchargement, bundle audio déclaré. | Non attesté : port documentaire exact distinct de l'offre/bundle ; supporter les manifestations et ne pas convertir un audio/objet papier en EPUB par inférence. |
-| `provider.gutenberg` | Singleton public OPDS, contact requis, `search` liste ; langue dcterms et date issued explicites, offre EPUB distincte. | Non attesté : déclaration même appel durable ; ne pas écraser l'offre, attribuer la couverture d'une autre édition comme exacte ou confondre timestamps Atom et publication. |
+| `provider.gallica` | Recherche/détail et téléchargement, bundle audio déclaré. | Partiel : port documentaire OPDS anonyme #7144 ; EPUB/PDF exact ARK/MIME, offre legacy séparée ; audio SRU non qualifié pour C et pas de restauration d'action depuis C. |
+| `provider.gutenberg` | Singleton public OPDS, contact requis, `search` liste ; langue dcterms et date issued explicites, offre EPUB distincte. | Partiel : déclaration même appel anonyme #7130/#7139, format EPUB #7141, port legacy distinct ; action d'offre depuis C non reçue ; pas de couverture ou date d'une autre édition. |
 
 Sources internes : manifestes sous `src/plugins/*/cifereca-plugin.json` ;
 `provider-biblioaccess/cifereca_biblioaccess_catalogue.py`,
@@ -65,18 +65,40 @@ seule détruirait une offre historique ; copier seulement sa bibliographie
 dans une déclaration distincte ne donne pas le témoin durable. Il ne faut
 pas relâcher la garde Core existante pour faire passer ce résultat.
 
-Tranche suivante proposée, non encore implémentée : qualifier une occurrence
-documentaire anonyme distincte de l'offre, explicitement rattachée à
-l'observation exacte du même payload (coordonnées et version contrôlées).
-Réutiliser la projection et le writer qui existent ; une version du port
-facultatif doit préserver v1 et ne jamais faire passer l'URL d'offre dans C.
-Ce choix requiert la coordination des writers en vol #2385/#4552/#1023 ;
-aucune branche par nom de fournisseur dans Core. Commencer par Gutenberg
-avec un seul parsing et une fixture EPUB à vrai lien OPDS, puis second
-adaptateur indépendant. Tester que téléchargement reste disponible selon son
-contrat et que C reste purement descriptive après éviction/restart ;
-refuser un objet copié, un scope privé, une version contradictoire, un lien
-signé et une couverture d'édition non attestée.
+### Réceptions partielles au 21/11 : port documentaire distinct
+
+Les producteurs suivants réutilisent les parseurs et les ports existants.
+Le port documentaire retourne l'objet exact sans autorité de livraison ;
+le parcours legacy reste disponible dans le provider. Cette séparation
+ne prouve **pas** que la ligne C permet déjà de récupérer l'offre dans
+l'interface. Aucun nouveau GET au seul rendu, aucun accès nouveau,
+aucune généralisation du format ou de la couverture.
+
+| Admission contrôlée | PR fusionnée / commit squash | CI au HEAD exact |
+| --- | --- | --- |
+| Gutenberg OPDS, un ID Atom exact | [#7130](https://github.com/pzia/cifereca/pull/7130), `f247ef91` | [44801145285](https://github.com/pzia/cifereca/actions/runs/44801145285) success |
+| Gallica OPDS, ARK et lien MIME exact | [#7144](https://github.com/pzia/cifereca/pull/7144), `250d1d2d` | [44807735766](https://github.com/pzia/cifereca/actions/runs/44807735766) success |
+| EbooksGratuits OPDS canonique | [#7164](https://github.com/pzia/cifereca/pull/7164), `22b0b725` | [44817039919](https://github.com/pzia/cifereca/actions/runs/44817039919) success |
+| Baen Free Library JSON | [#7237](https://github.com/pzia/cifereca/pull/7237), `dd1cc345` | [44873194073](https://github.com/pzia/cifereca/actions/runs/44873194073) success |
+| BnF-Prêt privé, sans promotion publique | [#7250](https://github.com/pzia/cifereca/pull/7250), `6ae3bc38` | [44876027438](https://github.com/pzia/cifereca/actions/runs/44876027438), AST/install/E2E success |
+| BiblioAccess zéro terminal, pas un refus | [#7285](https://github.com/pzia/cifereca/pull/7285), `22f2838c` | [44884879715](https://github.com/pzia/cifereca/actions/runs/44884879715), AST/install/E2E success |
+| Numilog GET équivalents en vol | [#7262](https://github.com/pzia/cifereca/pull/7262), `35fc271f` | [44880414504](https://github.com/pzia/cifereca/actions/runs/44880414504) success |
+
+Recettes synthétiques avec transport contrôlé, Storage/SQLite, éviction
+et redémarrage selon le périmètre propre à chaque PR ; ne pas les présenter
+comme une observation réseau réelle. BnF-Prêt #7250 est **privé**, avec
+session/compte/révision et relation self ; aucune jointure forte entre
+producteurs n'est inférée. La recette GTK #7266 (squash `4eb696c8`,
+[CI](https://github.com/pzia/cifereca/actions/runs/44886360567) /
+[E2E](https://github.com/pzia/cifereca/actions/runs/44886360467) success)
+prouve le menu privé 0/1/N en données contrôlées, pas l'association à un
+prêt ni une preuve supplémentaire de fournisseur.
+
+Reste à recevoir : action contextuelle sur une C exacte sans inventer de
+droit (coordination #3685/#4988), relation forte multi-source effectivement
+attestée (#2385/#4552), qualification des producteurs partiels et
+enrichissement générique ci-dessous. Ne pas refaire les ports documentaires
+déjà reçus ni activer un fournisseur pour obtenir un PASS.
 
 ## Intentions génériques : garde par déclencheur
 
