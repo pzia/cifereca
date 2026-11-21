@@ -335,6 +335,11 @@ def _require_canonical_proof(db, intent, *, placement_id, origin_id, recipe_id):
             or recipe != (artifact_id, parent_id, intent.parent_sha256,
                           intent.transformer_id, intent.options_fingerprint)):
         raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
+    # Canonical provenance is a bounded JSON TEXT witness, never an arbitrary
+    # SQLite BLOB (which json.loads would otherwise silently accept).
+    if (type(origin[6]) is not str
+            or not 0 < len(origin[6].encode("utf-8")) <= _MAX_RECORD_BYTES):
+        raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
     try:
         metadata = json.loads(origin[6], object_pairs_hook=_unique_pairs)
     except (ValueError, TypeError, RecursionError):
