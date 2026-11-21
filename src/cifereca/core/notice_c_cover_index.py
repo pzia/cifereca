@@ -72,6 +72,7 @@ class ConsolidatedCoverSource:
     public_bibliography: ConsolidatedPublicBibliography | None = None
     public_web_references: tuple[CatalogueWebReference, ...] = ()
     public_detail_facts: tuple = ()  # bounded typed alternatives for this exact source
+    private_web_digest: str | None = None  # opaque private field integrity, never URL/scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +271,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
     for ref, item in sorted(parsed["sources"].items()):
         if (type(ref) is not str or not ref.startswith("notice-c:v1:")
                 or _HASH.fullmatch(ref[len("notice-c:v1:"):]) is None
-                or type(item) is not dict or (set(item) - {"public_detail_fields"}) not in (
+                or type(item) is not dict or (set(item) - {"public_detail_fields", "private_web_digest"}) not in (
                     {"provider", "source_revision", "observed_at",
                      "source_epoch", "proof", "state", "urls", "visibility"},
                     {"provider", "source_revision", "observed_at",
@@ -333,6 +334,12 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
                 )
             except ValueError:
                 raise ValueError("corrupt_canonical_cover") from None
+        private_digest = item.get("private_web_digest")
+        if "private_web_digest" in item and (
+            item["visibility"] != "private" or type(private_digest) is not str
+            or _HASH.fullmatch(private_digest) is None
+        ):
+            raise ValueError("corrupt_canonical_cover")
         detail_facts = ()
         if "public_detail_fields" in item:
             if biblio is None or not web_refs or item["visibility"] != "public":
@@ -349,7 +356,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
             relation_proof_id=proof, state=item["state"],
             urls=tuple(urls), visibility=item["visibility"],
             public_bibliography=biblio, public_web_references=web_refs,
-            public_detail_facts=detail_facts,
+            public_detail_facts=detail_facts, private_web_digest=private_digest,
         ))
     # Any admitted positive public cover can be displayed, while a complete
     # lack of candidates is NOT 'missing' if sources remain unresolved/private.
@@ -428,6 +435,10 @@ def _persist_consolidated_cover_source_txn(
     )
     if current is None or current != source:
         raise ValueError("stale_canonical_cover_source")
+    private_web_digest = None
+    if visibility == "private":
+        from .notice_c_authenticated_web_retention import retain_private_web_field_txn
+        private_web_digest = retain_private_web_field_txn(db, current, json.loads(original[0]))
     old = db.execute(
         "SELECT value FROM metadata WHERE key=?", (key,),
     ).fetchone()
@@ -461,6 +472,8 @@ def _persist_consolidated_cover_source_txn(
         "urls": urls,
         "visibility": visibility,
     }
+    if private_web_digest is not None:
+        incoming["private_web_digest"] = private_web_digest
     # Copy the already validated public bibliographic *source fact*
     # alongside its canonical cover record, in the same SQLite commit.
     # The short-lived provider row may later be purged independently.

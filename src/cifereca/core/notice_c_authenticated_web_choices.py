@@ -3,7 +3,7 @@
 First read-only tranche of the private C contract. A trusted Core producer
 must have admitted the exact private source observation and strong C relation.
 No public projection, provider call, locator resolution, login or acquisition.
-Retention of an evicted private source is deliberately not implemented here.
+A qualified eviction may retain a private reference under the same scope.
 """
 from __future__ import annotations
 
@@ -21,8 +21,9 @@ from .loan_action_scope import _inert_session_accounts, _inert_session_state
 from .notice_c_cover_index import _db_key, _decode, is_canonical_cover_document
 from .notice_cover_repository import _checked_source_state, _opaque_key
 from .search_orchestration import SearchReadScope
-
-FIELD = "authenticated_web_references"
+from .notice_c_authenticated_web_retention import (
+    FIELD, retained_private_web_field_txn, validated_private_web_field,
+)
 _TOKEN = object()
 _EPOCH_LIMIT = 2**63
 
@@ -157,26 +158,16 @@ def _source_links(source, binding):
             or key.visibility != "private" or key.branch_id != "search.authenticated.catalogue"
             or source.document != binding.document):
         return ()
-    raw = obs.fields_copy().get(FIELD)
-    if (type(raw) is not dict or set(raw) != {"schema", "connection_epoch", "links"}
-            or type(raw["schema"]) is not int or raw["schema"] != 1
-            or not _epoch(raw["connection_epoch"])
-            or raw["connection_epoch"] != binding.connection_epoch
-            or type(raw["links"]) is not list or not 1 <= len(raw["links"]) <= 8):
+    return _field_links(obs.fields_copy().get(FIELD), binding)
+
+
+def _field_links(raw, binding):
+    field = validated_private_web_field(raw, binding.document.provider_id)
+    if (field is None or field["connection_epoch"] != binding.connection_epoch
+            or any(not _stable_url(link["url"], binding.descriptor.homepage)
+                   for link in field["links"])):
         return ()
-    links = []
-    allowed_evidence = {
-        f"{key.provider_id}.authenticated_search_record_identifier",
-        f"{key.provider_id}.authenticated_search_product_card",
-    }
-    for link in raw["links"]:
-        if (type(link) is not dict or set(link) != {"url", "evidence"}
-                or type(link["evidence"]) is not str or link["evidence"] not in allowed_evidence
-                or not _stable_url(link["url"], binding.descriptor.homepage)
-                or link["url"] in links):
-            return ()
-        links.append(link["url"])
-    return tuple(sorted(links))
+    return tuple(sorted(link["url"] for link in field["links"]))
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,11 +207,15 @@ def _read(service, document, bindings):
                 continue
             try:
                 _, source, fence = _checked_source_state(db, doc, _opaque_key(doc))
-                if (source is None or fence is None
-                        or source.epoch != member.source_epoch
-                        or source.observation.source_revision != member.source_revision):
+                if source is None:
+                    links = _field_links(retained_private_web_field_txn(
+                        db, doc, member, fence,
+                    ), binding)
+                elif (fence is not None and source.epoch == member.source_epoch
+                        and source.observation.source_revision == member.source_revision):
+                    links = _source_links(source, binding)
+                else:
                     continue
-                links = _source_links(source, binding)
             except (ValueError, TypeError, KeyError, AttributeError):
                 continue
             for url in links:

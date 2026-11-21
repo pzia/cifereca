@@ -426,7 +426,24 @@ def _persist_notice_cover_txn(
         # an image. Keep the row absent (unknown) and advance ONLY freshness.
         # The digest also recognizes an exact replay of an originally pending
         # proof without adding a second source body or a schema field.
-        if not attribute.snapshot_complete and proof != fence["proof"]:
+        # A qualified authenticated reference observation is complete for
+        # its own field, even though its independent image inventory is
+        # pending. Allow a newer exact link proof to rehydrate that source
+        # after qualified eviction; never make a negative cover assertion.
+        complete_private_web = False
+        if (qualified and observation.key.visibility == "private"
+                and observation.key.branch_id == "search.authenticated.catalogue"
+                and observation.parser_id == "core.search.authenticated-web"
+                and observation.parser_version == "1"
+                and observation.status == "complete"
+                and field_path == ("cover",) and not cover_inventory_complete):
+            from .notice_c_authenticated_web_retention import (
+                FIELD, validated_private_web_field,
+            )
+            complete_private_web = validated_private_web_field(
+                observation.fields_copy().get(FIELD), observation.key.provider_id,
+            ) is not None
+        if not attribute.snapshot_complete and proof != fence["proof"] and not complete_private_web:
             if observation.observed_at > fence["last_seen_at"]:
                 _write_source_fence(
                     db, key, epoch=previous_epoch,
