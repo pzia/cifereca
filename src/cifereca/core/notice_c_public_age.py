@@ -107,7 +107,13 @@ def stamp_same_call_public_age(row, original):
     The raw structured proof is never copied wholesale into the public row
     or generic account mirror. Bind to the final object and exact coordinates.
     """
-    if type(row) is not SearchResult or type(original) is not SearchResult:
+    if type(row) is not SearchResult:
+        return
+    # A new same-call attempt replaces, never accumulates, the prior proof.
+    # A reused/cached DTO must not keep a previously qualified age when the
+    # current original has no age, malformed evidence, or different coordinates.
+    row.__dict__.pop("_core_same_call_public_age", None)
+    if type(original) is not SearchResult:
         return
     proof = original.metadata.get("bibliography_evidence") if type(original.metadata) is dict else None
     if type(proof) is not dict or len(proof) > 32 or _coords(row) != _coords(original):
