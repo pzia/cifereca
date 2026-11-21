@@ -57,6 +57,14 @@ def _public_baen_product_url(value):
                 'category', 'catalog', 'search', 'account', 'login',
                 'checkout', 'cart', 'index', 'page', 'filter',
             }
+        # Historical standalone Baen catalogue fixtures use a narrow
+        # /allbooks/free/<slug> product namespace. Preserve this exact
+        # path shape without admitting arbitrary /allbooks/<section>/...
+        # account, category or download endpoints.
+        if re.fullmatch(
+            r'/allbooks/free/[A-Za-z0-9][A-Za-z0-9._-]*', parts.path,
+        ):
+            return True
         return bool(re.fullmatch(
             r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path,
         ))
