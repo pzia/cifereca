@@ -42,7 +42,8 @@ def known_public_primary_facts(row):
     identity = row.get("identity_id")
     if (type(packet) is not tuple or len(packet) != 3
             or packet[0] is not _PRIMARY_FACT_TOKEN
-            or type(identity) is not str or packet[1] != identity
+            or type(identity) is not str or type(packet[1]) is not str
+            or packet[1] != identity
             or type(packet[2]) is not PublicNoticeCHit
             or type(meta) is not dict):
         return None
@@ -52,6 +53,7 @@ def known_public_primary_facts(row):
             or type(document) is not CoverDocumentScope
             or hit.document != document
             or not is_notice_cover_document(hit.document)
+            or type(hit.epoch) is not int
             or type(meta.get("notice_c_epoch")) is not int
             or hit.epoch != meta["notice_c_epoch"]):
         return None
