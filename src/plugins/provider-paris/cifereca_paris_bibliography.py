@@ -387,6 +387,9 @@ def public_search_subject_metadata(metadata: object, scenario: str) -> dict[str,
     if (claims["subjects"] != expected
             or any(type(value) is not str or not value
                    or _safe_facet_choice_text(value) != value
+                   or not value.isprintable()
+                   or re.match(r"(?i)^(?:file:|~/|[a-z]:/)", value)
+                   or re.search(r"(?i)(?:auth|cookie|password|secret)\s*=|(?:bearer|basic)\s+\S+", value)
                    for value in values)):
         return {}
     return {"subjects": list(values)}
