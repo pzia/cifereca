@@ -39,6 +39,7 @@ from .source_convergence import SourceKey
 from .canonical_loan_retry_guard import historical_adept_retry_blocked
 from .adept_runtime_preflight import AdeptProfileUnavailable
 from .canonical_adept_attempt import describe_loan_adept_attempt
+from .canonical_runtime_attempt import pending_runtime_attempt
 from .loan_download_retry import (
     clear_loan_download_retry, read_loan_download_retry, record_adept_intervention,
     record_loan_download_failure,
@@ -116,6 +117,7 @@ class CompletedDelivery:
     receipt_ref: str
     adept_receipt_ref: str = ""
     adept_attempt_id: str = ""  # ephemeral Core witness, not provider data
+    runtime_attempt_id: str = ""  # exact unqualified runtime dispatch witness
 
 
 OutcomeStatus = Literal[
@@ -548,6 +550,11 @@ def execute_admitted_convergence(
                         key, "blocked", "scope_or_consent_before_delivery",
                     ))
                     continue
+                if pending_runtime_attempt(initial_storage, key):
+                    results.append(ConvergenceOutcome(
+                        key, "blocked", "persisted_runtime_attention",
+                    ))
+                    continue
                 # Budget is only a negative gate. Recovery, exact B and the
                 # historical one-use ADEPT fence always take precedence.
                 if not explicitly_confirmed_once and read_loan_download_retry(initial_storage, key).paused:
@@ -729,7 +736,17 @@ def execute_admitted_convergence(
                     record_adept_intervention(initial_storage, key, shared_lock=shared_lock)
                 except Exception:
                     _LOG.warning("TRACE convergence code=download_intervention_record_failed")
+            runtime_held = False
+            if phase == "delivery":
+                try:
+                    runtime_held = pending_runtime_attempt(initial_storage, key)
+                except Exception:
+                    # A failed marker read is not evidence of repeatability.
+                    runtime_held = True
+                if runtime_held and reason == "canonical_delivery_failed":
+                    reason = "canonical_runtime_attention"
             if (phase == "delivery" and type(error) is RetryableContentDownload
+                    and not runtime_held
                     and not explicitly_confirmed_once and not cancelled()
                     and current() and live_consent(key)
                     and not historical_adept_retry_blocked(initial_storage, account, session, key)):

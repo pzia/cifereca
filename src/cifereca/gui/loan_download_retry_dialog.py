@@ -30,7 +30,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         elif not rows:
             body = "Aucun échec de téléchargement enregistré pour cette identité."
         else:
-            paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at)
+            paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at or row.runtime_hold)
                          for row in rows)
             body = f"{len(rows)} téléchargement(s) à vérifier, dont {paused} en pause."
         dialog = Adw.MessageDialog.new(window, "Téléchargements à reprendre", body)
@@ -54,10 +54,14 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
         title.add_css_class("heading")
         panel.append(title)
         state = ("Ressource inactive" if row.inactive else
+                 "Intervention runtime requise" if row.runtime_hold else
                  "Intervention ADEPT requise" if row.adept_hold or row.profile_refused_at else
                  "En pause" if row.retry.paused else "À retenter")
         failed_at = row.retry.last_failed_at
-        if row.adept_hold:
+        if row.runtime_hold:
+            reason = "Résultat du runtime incertain. Rejeu non qualifié ; vérifiez les diagnostics."
+            failed_at = row.runtime_started_at
+        elif row.adept_hold:
             reason = "Résultat du fulfillment ADEPT incertain. Vérifiez les diagnostics."
         elif row.profile_refused_at:
             reason = "Vérifiez le profil ADEPT dans les paramètres de l’identité."
@@ -131,13 +135,13 @@ def refresh_loan_download_retry_summary(window, scope, label):
             label.set_visible(True)
             return
         active = [row for row in rows if not row.inactive]
-        holds = sum(bool(row.adept_hold or row.profile_refused_at) for row in active)
-        paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at)
+        holds = sum(bool(row.adept_hold or row.profile_refused_at or row.runtime_hold) for row in active)
+        paused = sum(row.retry.paused and not (row.adept_hold or row.profile_refused_at or row.runtime_hold)
                      for row in active)
         retrying = len(active) - holds - paused
         label.set_label(
             f"Téléchargements : {paused} en pause · {retrying} à retenter · "
-            f"{holds} intervention(s) ADEPT requise(s)"
+            f"{holds} intervention(s) requise(s)"
         )
         label.set_visible(bool(active))
     window.runner.submit("État des téléchargements…", read, done,

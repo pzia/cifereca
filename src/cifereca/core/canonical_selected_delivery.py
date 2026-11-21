@@ -32,6 +32,9 @@ from ..plugin_api.errors import AdeptFulfillmentNotSubmitted
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
+from .canonical_runtime_attempt import (
+    begin_runtime_attempt, pending_runtime_attempt, release_unsubmitted_runtime_attempt,
+)
 from .canonical_adept_attempt import (
     begin_loan_adept_attempt, pending_loan_adept_attempt, release_unsubmitted_attempt,
 )
@@ -212,6 +215,8 @@ def complete_selected_delivery(
         raise ValueError("canonical_delivery_source_rebound")
     if pending_loan_adept_attempt(storage, source):
         raise ValueError("canonical_adept_attempt_pending")
+    if pending_runtime_attempt(storage, source):
+        raise ValueError("canonical_runtime_attempt_pending")
     # Authenticated A/consent do not authorize a different Adobe borrower.
     # Resolve before any candidate GET (including a first claimed ACSM).
     borrower_identity, borrower_current = (
@@ -321,6 +326,7 @@ def complete_selected_delivery(
     # as B. Legacy providers never see this callback.
     runtime_used = [False]
     adept_attempt_id = [""]
+    runtime_attempt_id = [""]
 
     def refresh_adept_profile(profile_name, profile_id):
         require_borrower()
@@ -409,6 +415,28 @@ def complete_selected_delivery(
         runtime_used[0] = True
         if expected_adept is not None:
             mark_adept_attempt(*expected_adept)
+        elif request["source"].get("type") != "acsm":
+            # A reciprocal provider/runtime binding qualifies dispatch, not
+            # idempotence of an ambiguous result. Pin the exact resource
+            # BEFORE entering the executor, independently of offer rotation.
+            operation = begin_runtime_attempt(
+                storage, source=source, offer_id=offer.delivery_offer_id,
+                shared_lock=shared_lock,
+            )
+            try:
+                require_borrower()
+                if not attempt_current() or not admission_current():
+                    raise ValueError("canonical_delivery_runtime_admission_changed")
+                if not _selected_runtime_recipe_source_admitted(
+                        service, request["source"], scope.provider_id):
+                    raise ValueError("canonical_delivery_runtime_recipe_invalid")
+            except Exception:
+                release_unsubmitted_runtime_attempt(
+                    storage, source=source, offer_id=offer.delivery_offer_id,
+                    operation_id=operation, shared_lock=shared_lock,
+                )
+                raise
+            runtime_attempt_id[0] = operation
         result = dispatch_acquisition(request)
         require_borrower()
         if expected_adept is not None:
@@ -581,6 +609,8 @@ def complete_selected_delivery(
         if received.stat().st_size <= 0:
             raise ValueError("canonical_delivery_candidate_empty")
         kind = detect_artifact_format(received)
+        if runtime_guarded and kind == "acsm":
+            raise ValueError("canonical_delivery_runtime_token_not_final")
         adept_receipt_ref = ""
 
         if kind == "acsm":
@@ -699,6 +729,7 @@ def complete_selected_delivery(
         return CompletedDelivery(
             source, offer.delivery_offer_id, final, digest, receipt, adept_receipt_ref,
             adept_attempt_id=adept_attempt_id[0],
+            runtime_attempt_id=runtime_attempt_id[0],
         )
     except BaseException:
         # Best effort, without masking the original provider/cancellation

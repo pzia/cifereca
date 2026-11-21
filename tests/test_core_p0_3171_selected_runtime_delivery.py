@@ -79,6 +79,8 @@ def test_generic_runtime_mints_final_receipt_and_is_idempotent(source):
     assert second["canonical_execution"]["present_attested"] == 1
     assert second["canonical_execution"]["downloaded"] == 0
     assert calls == ["offer", "runtime"]
+    from cifereca.core.canonical_runtime_attempt import pending_runtime_attempt
+    assert not pending_runtime_attempt(db, service.source)
     assert db.entitlements() == []
 
 
@@ -446,3 +448,60 @@ def test_canonical_runtime_admits_exact_installed_source_and_acsm_protocol():
     assert not _selected_runtime_recipe_source_admitted(
         service, {"type": True}, "seller-a",
     )
+
+
+@pytest.mark.parametrize("failure", ["timeout", "typed_retry", "bad_result"])
+def test_unqualified_runtime_result_holds_exact_resource_without_spending_budget(
+    source, failure, monkeypatch,
+):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_runtime_attempt import pending_runtime_attempt
+    from cifereca.core.loan_download_retry import read_loan_download_retry
+    from cifereca.core.loan_download_retry_review import review_loan_download_retries
+    from cifereca.plugin_api.downloadable_resources import RetryableContentDownload
+
+    service, db, root, calls, _broker = source
+    change(source, True)
+    service.current_identity = SimpleNamespace(identity_id=service.account.identity_id)
+    dispatched = []
+
+    def guarded(_account, *, admission_current, execute_runtime,
+                edition_id, resource_id, kind, branch, selected_offer_id,
+                target_dir, explicit_user_action):
+        def runtime(request):
+            dispatched.append(request["schema_version"])
+            assert pending_runtime_attempt(db, service.source)
+            if failure == "timeout":
+                raise TimeoutError("synthetic")
+            if failure == "typed_retry":
+                raise RetryableContentDownload("synthetic unqualified runtime")
+            return {"ok": False}
+        service.execute_acquisition_request = runtime
+        execute_runtime({
+            "schema_version": 2,
+            "source": {"type": service.account.provider_id},
+            "format": "pdf", "destination": str(target_dir / "runtime.pdf"),
+        })
+        pytest.fail("failed runtime cannot produce a candidate")
+
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = guarded
+    first = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert first["failed"] == 1 and first["downloaded"] == 0
+    assert pending_runtime_attempt(db, service.source)
+    assert read_loan_download_retry(db, service.source).failures == 0
+    row, = review_loan_download_retries(service, identity_id=service.account.identity_id)
+    assert row.runtime_hold and row.runtime_started_at > 0 and not row.can_reset
+    assert row.retry.failures == 0
+    original = service.session.downloadable_selected_offer_snapshot
+    from dataclasses import replace
+    def rotated(*args, **kwargs):
+        snapshot = original(*args, **kwargs)
+        item, = snapshot.resources
+        return replace(snapshot, resources=(replace(
+            item, capability=replace(item.capability, offer_id="fresh-rotated-offer"),
+        ),))
+    service.session.downloadable_selected_offer_snapshot = rotated
+    again = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert again["blocked"] == 1 and again["downloaded"] == 0
+    assert dispatched == [2]
+    assert db.placements() == [] and db.entitlements() == []
