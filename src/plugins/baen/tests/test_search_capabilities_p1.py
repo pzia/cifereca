@@ -51,7 +51,12 @@ def test_capabilities_disclose_general_only_search_and_page_scope():
     assert capability.fields == ("all",)
     assert capability.scopes == ("all", "digital")
     assert capability.pagination == "page"
-    assert capability.page_size == 50
+    # The installed route varies: observed category JSON uses 20, whereas
+    # the unqualified legacy free-text URL requests 50. Do not advertise a
+    # uniform provider page size or server-verified pagination.
+    assert capability.page_size is None
+    assert "20" in " ".join(capability.notes)
+    assert "50" in " ".join(capability.notes)
     assert capability.max_pages == 101
     assert capability.supports_field("all")
     assert not capability.supports_field("author")
