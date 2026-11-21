@@ -145,6 +145,10 @@ def discover_possible_borrow_lenders(
         return ()
 
     result: dict[tuple[str, ...], PossibleBorrowLender | None] = {}
+    # Compare each admitted session again after the entire inventory, not
+    # merely after its individual capability read. A later source can
+    # invalidate an earlier one without changing the navigation epoch.
+    admitted_sessions = {}
     for item in notices:
         try:
             if (item.medium != "digital"
@@ -229,6 +233,8 @@ def discover_possible_borrow_lenders(
                     or state.get("credential_id") != credential
                     or sum(a is account for a in session_accounts) != 1):
                 continue
+            session_generation = state.get('_epoch')
+            descriptor = state.get('descriptor')
             manager = service._plugin_manager
             plugin_id = service._provider_plugin_ids.get(provider)
             if type(plugin_id) is not str or not plugin_id or manager is None:
@@ -273,6 +279,7 @@ def discover_possible_borrow_lenders(
                 label=label, lender_identity_id=account.identity_id,
                 _account=account, _notice=item,
             )
+            admitted_sessions[route] = (session, session_generation, descriptor, lender)
         except Exception:
             # One malformed/offline provider cannot suppress unrelated lenders.
             continue
@@ -283,7 +290,38 @@ def discover_possible_borrow_lenders(
             return ()
     except Exception:
         return ()
-    return _label_lenders([row for row in result.values() if row is not None])
+    # One inert, bounded pass over the admitted set: no new provider or SQL
+    # call. Any change of an earlier source aborts this mixed snapshot.
+    try:
+        for route, row in result.items():
+            if row is None:
+                continue
+            session, generation, descriptor, lender = admitted_sessions[route]
+            account, notice = row._account, row._notice
+            state = _inert_session_state(session)
+            registered = _inert_session_accounts(session)
+            if (not possible_lender_matches(row, notice, requesting_identity_id=requesting_identity_id)
+                    or service.identity_by_id(row.lender_identity_id) is not lender
+                    or service._sessions.get(service._session_key(
+                        account.provider_id, account.credential_id)) is not session
+                    or state is None or registered is None
+                    or state.get('connected') is not True or state.get('_closed') is True
+                    or state.get('descriptor') is not descriptor
+                    or state.get('provider_id') != account.provider_id
+                    or state.get('credential_id') != account.credential_id
+                    or type(state.get('_epoch')) is not type(generation)
+                    or state.get('_epoch') != generation
+                    or sum(a is account for a in registered) != 1
+                    or sum(a is account for a in service.accounts) != 1):
+                return ()
+        visible = _label_lenders([row for row in result.values() if row is not None])
+        if (service.identity_by_id(requesting_identity_id) is not requester
+                or service._account_context_epoch != context_epoch
+                or service._source_context_epoch != source_epoch):
+            return ()
+        return visible
+    except Exception:
+        return ()
 
 
 def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLender, ...]:

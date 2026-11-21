@@ -293,3 +293,47 @@ def test_conflicting_revisions_do_not_pick_first_candidate(harness):
     candidate, = _discover(service, first, second, other)
     assert candidate._notice is other
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", ["rebind", "disconnect", "generation", "descriptor", "notice", "account"])
+def test_later_source_cannot_publish_obsolete_earlier_lender(harness, change):
+    service, account, first = harness
+    second_account = Account(
+        identity_id="alex", provider_id="paris",
+        credential_id="card-second", unique_id="",
+        display_name="Second", is_primary=True,
+    )
+    second = ParisOffline(second_account)
+    service.accounts.append(second_account)
+    service._sessions[service._session_key("paris", second_account.credential_id)] = second
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": "paris",
+        "credential_id": second_account.credential_id, "label": "Fictive",
+        "enabled": True, "metadata": {},
+    })
+    a, b = _candidate().notice, _candidate("card-second").notice
+    original = service._plugin_manager.status
+    calls = []
+
+    def status(plugin_id):
+        calls.append(plugin_id)
+        if len(calls) == 2:
+            if change == "rebind":
+                service._sessions[service._session_key("paris", account.credential_id)] = ParisOffline(account)
+            elif change == "disconnect":
+                first.connected = False
+            elif change == "generation":
+                first._epoch += 1
+            elif change == "descriptor":
+                first.descriptor = replace(first.descriptor, display_name="Changed")
+            elif change == "notice":
+                a.revision_id = "new-source-revision"
+            else:
+                account.unique_id = "different-borrower"
+        return original(plugin_id)
+
+    service._plugin_manager.status = status
+    assert _discover(service, a, b) == ()
+    assert len(calls) == 2
+    assert first.calls == second.calls == 0
+    assert service.current_identity.identity_id == "default"
