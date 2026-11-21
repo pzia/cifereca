@@ -25,6 +25,11 @@ def _same_native(actual, expected, depth=0):
                 and len(actual) <= 16
                 and all(_same_native(left, right, depth + 1)
                         for left, right in zip(actual, expected)))
+    # Exact matching object types are NOT enough: two identical hostile
+    # instances still execute plugin-defined __eq__. The proof wire format
+    # contains only these native scalar types, never arbitrary DTO objects.
+    if type(expected) not in (str, int, bool, float, type(None)):
+        return False
     return type(actual) is type(expected) and actual == expected
 
 
