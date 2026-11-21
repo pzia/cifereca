@@ -398,7 +398,7 @@ def test_changed_filter_is_not_next_page(target):
     "<html><head><title>Recherche</title></head><body>"
     "<p>Aucun r&eacute;sultat pour la recherche roman</p></body></html>",
     "<html><head><meta http-equiv='content-type' content='text/html'></head><body>"
-    "<p>Aucun r\\u00e9sultat pour la recherche roman</p></body></html>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p></body></html>",
 ])
 def test_explicit_summary_zero_same_call_no_retry(body):
     url = http_adapter.search_summary_url("roman")
@@ -443,10 +443,10 @@ def test_explicit_summary_zero_same_call_no_retry(body):
     "<p>Aucun r\u00e9sultat pour la recherche roman</p><a href='Search?pageindex=1'>Suite</a>",
     "<p>Aucun r\u00e9sultat pour la recherche roman</p><p>Aucun r\u00e9sultat pour la recherche autre</p>",
     "<p>Aucun r\u00e9sultat pour la recherche roman",
-    "<p>Aucun r\\u00e9sultat pour la recherche roman</p>"
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p>"
     "<meta http-equiv='refresh' content='0;url=/1409/Account/Login'>",
     "<html><head><meta HTTP-EQUIV=' REFRESH ' content='0; URL=/1409/Catalog/Search'></head>"
-    "<body><p>Aucun r\\u00e9sultat pour la recherche roman</p></body></html>",
+    "<body><p>Aucun r\u00e9sultat pour la recherche roman</p></body></html>",
 ])
 def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
     calls = []
