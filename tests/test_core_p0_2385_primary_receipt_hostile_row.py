@@ -59,6 +59,21 @@ def test_hostile_row_fields_cannot_invoke_equality_or_mint_primary_c_provenance(
             assert known_public_alternative_facts(candidate) == ()
             assert with_known_public_field_provenance(presentation, candidate) is presentation
         packet = row["_core_notice_c_primary_facts"]
+        for member in ("kind", "source_key", "provider_id",
+                       "credential_id", "identity_id", "account_id"):
+            corrupted = replace(packet[2].document)
+            object.__setattr__(corrupted, member, Hostile())
+            for position in ("view", "source"):
+                candidate = dict(row)
+                if position == "view":
+                    candidate["_cover_document_ref"] = corrupted
+                else:
+                    candidate["_core_notice_c_primary_facts"] = (
+                        packet[0], packet[1],
+                        replace(packet[2], document=corrupted),
+                    )
+                assert known_public_primary_facts(candidate) is None
+                assert with_known_public_field_provenance(presentation, candidate) is presentation
         for forged_packet in (
             (packet[0], Hostile(), packet[2]),
             (packet[0], packet[1], replace(packet[2], epoch=Hostile())),
