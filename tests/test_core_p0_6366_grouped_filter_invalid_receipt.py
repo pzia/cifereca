@@ -134,3 +134,34 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
         assert not is_expanded_source(foreign)
         assert collapse_filter_sources([foreign], {}) == [foreign]
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+def test_group_packet_creation_and_collapse_refuse_non_native_members():
+    from dataclasses import replace
+    from cifereca.core.notice_c_loaded_filter import (
+        attach_filter_sources, collapse_filter_sources, _FIELD, _MARKER,
+    )
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import verified_public
+
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign comparison in group packet")
+
+        def __hash__(self):
+            raise AssertionError("foreign hash in group packet")
+
+    for hits in ((), [], ("foreign",), (Hostile(),), (None, None)):
+        row = {"identity_id": "alice"}
+        attach_filter_sources(row, hits)
+        assert _FIELD not in row
+
+    marker = object()
+    primary = {"provider_id": "bnf", "title": "Primary"}
+    collapsed = collapse_filter_sources(
+        [{_MARKER: marker, "provider_id": Hostile()}],
+        {marker: primary},
+    )
+    assert len(collapsed) == 1
+    assert collapsed[0]["title"] == "Primary"
+    assert collapsed[0]["_notice_c_matched_providers"] == ()
