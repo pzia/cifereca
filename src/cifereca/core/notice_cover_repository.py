@@ -62,14 +62,42 @@ class PersistedNoticeCover:
 def _opaque_key(document: CoverDocumentScope) -> str | None:
     if type(document) is not CoverDocumentScope:
         raise TypeError("expected exact Notice C DocumentRef")
-    if (document.kind not in ("catalogue", "public_catalogue")
+    # CoverDocumentScope's constructor validates these invariants only once.
+    # Frozen objects can later be changed through object.__setattr__: check
+    # native scalar types BEFORE regex, equality or source-key lookup.
+    for name in ("kind", "source_key", "provider_id", "credential_id",
+                 "loan_id", "artifact_id", "placement_id"):
+        value = getattr(document, name)
+        if type(value) is not str or len(value) > 512 or not value.isprintable():
+            return None
+    if (type(document.account_id) not in (str, type(None))
+            or (document.account_id is not None
+                and (len(document.account_id) > 512
+                     or not document.account_id.isprintable()))
+            or any((document.loan_id, document.artifact_id, document.placement_id))
+            or not document.provider_id
             or _EXACT_SOURCE.fullmatch(document.source_key) is None):
+        return None
+    if document.kind == "public_catalogue":
+        if (document.identity_id is not None
+                or document.account_id is not None
+                or document.credential_id != "__public__"):
+            return None
+    elif document.kind == "catalogue":
+        if (type(document.identity_id) is not str
+                or not 0 < len(document.identity_id) <= 512
+                or not document.identity_id.isprintable()
+                or not document.credential_id):
+            return None
+    else:
         return None
     return _PREFIX + document.source_key[len("notice-c:v1:"):]
 
 
 def is_notice_cover_document(document: CoverDocumentScope) -> bool:
     """Pure eligibility for exact-source or explicit canonical C read-through."""
+    if type(document) is not CoverDocumentScope:
+        return False
     if _opaque_key(document) is not None:
         return True
     # The canonical index depends on this repository for source revalidation.
