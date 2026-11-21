@@ -561,3 +561,47 @@ def test_manual_pause_reset_is_full_durable_and_clean_b_read_is_non_writing(rig,
         assert read_loan_download_retry(other, source).failures == 0
     finally:
         other.close()
+
+
+def test_unknown_loan_source_cannot_reset_paused_content_budget(rig, monkeypatch):
+    """Unknown A is not active just because it is not explicitly inactive."""
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+
+    service, _account, source, snapshot, _root, lock_path = loan_snapshot(rig)
+    service.current_identity = SimpleNamespace(identity_id="A")
+    storage = service.storage
+    persist_attested_source_references(storage, snapshot)
+    monkeypatch.setattr(
+        "cifereca.core.loan_download_retry_review.acquisition_lock_file",
+        lambda: lock_path,
+    )
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(
+                storage, source, reason="canonical_delivery_failed", shared_lock=lease,
+            )
+    old, = review_loan_download_retries(service, identity_id="A")
+    assert old.can_reset and not old.inactive
+    with storage._lock, storage._connect() as sql:
+        sql.execute(
+            "UPDATE source_references SET state='unknown' "
+            "WHERE identity_id='A' AND provider_id=? AND edition_id=? AND right_id=?",
+            (source.scope.provider_id, source.edition_id, source.right_id),
+        )
+    current, = review_loan_download_retries(service, identity_id="A")
+    assert current.source == source and current.inactive and not current.can_reset
+    assert current.retry.paused
+    with pytest.raises(ValueError, match="reset_changed"):
+        reset_reviewed_loan_download_retry(service, identity_id="A", row=old)
+    assert read_loan_download_retry(storage, source).paused
+
+    # Fresh positive source evidence reactivates the *same* known resource.
+    persist_attested_source_references(storage, snapshot)
+    renewed, = review_loan_download_retries(service, identity_id="A")
+    assert renewed.can_reset and not renewed.inactive
+    reset_reviewed_loan_download_retry(service, identity_id="A", row=renewed)
+    assert read_loan_download_retry(storage, source).failures == 0
