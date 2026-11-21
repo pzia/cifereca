@@ -5,6 +5,7 @@ CoreUI consumes only the original, current opaque C receipt.
 """
 from contextlib import closing
 from dataclasses import replace
+from types import SimpleNamespace as NS
 
 from cifereca.brokers import CatalogBrokerImpl
 from cifereca.core.notice_c_cover_index import persist_attested_public_cover_group
@@ -39,7 +40,7 @@ def test_primary_age_exact_and_provider_scoped_after_reopening_sqlite(tmp_path):
             assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
 
     with closing(Storage(filename)) as db:
-        item, = CatalogBrokerImpl(type("Host", (), {"storage": db})()).known_public_notices(
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices(
             "Même titre",
         )
         assert known_public_c_binding_facts(item) == (
@@ -98,7 +99,7 @@ def test_age_from_alternative_does_not_become_primary_recommendation_age(tmp_pat
             db, canonical_edition_id="strong:secondary-age",
             sources=sources, relation_proof_id="strong:synthetic",
         )
-        item, = CatalogBrokerImpl(type("Host", (), {"storage": db})()).known_public_notices(
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices(
             "Même titre",
         )
         hit = known_public_c_primary_hit(item)
