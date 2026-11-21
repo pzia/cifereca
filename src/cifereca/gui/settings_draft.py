@@ -605,7 +605,14 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             'identity_id': account_identity_id,
             'label': label_text.strip() or descriptor.display_name,
             'enabled': editor['enabled'],
-            'anonymous': not bool(descriptor.credential_fields),
+            'anonymous': (
+                not bool(descriptor.credential_fields)
+                and getattr(descriptor, 'interactive_authentication', False) is False
+                and getattr(
+                    getattr(descriptor, 'capabilities', None),
+                    'authentication', False,
+                ) is False
+            ),
             'credentials': credentials, 'options': options,
         })
         saved_accounts.append(saved_account)
