@@ -279,8 +279,38 @@ class BnfCatalogueSession(ProviderSession):
 
     def search_with_response_facets(self, query, scope="all", *, field="all", content_types=()):
         """One same-call SRU page; no claim of exhaustive or private inventory."""
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or len(content_types) > 32
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("BnF : unsupported_content_type")
+        requested = {value.casefold() for value in content_types} - {"all"}
+        supported = {"epub", "pdf", "ebook", "physical", "unknown"}
         scope = "all" if scope == "catalog" else scope
         rows, partial, complete = self._search_page(query, scope, field=field)
+        if requested:
+            # A bibliographic MIME is descriptive, never an available
+            # file or an acquisition alternative. Do not infer "ebook"
+            # from digital support alone (e.g. a sound recording).
+            def matches(row):
+                kind = row.format.casefold() if type(row.format) is str else None
+                return (
+                    (kind in {"epub", "pdf"} and
+                     bool(requested & {kind, "ebook"}))
+                    or (row.medium == "physical" and "physical" in requested)
+                    or (row.medium == "unknown" and "unknown" in requested)
+                )
+            rows = [row for row in rows if matches(row)]
+            # The SRU request itself did not apply the Format facet. A
+            # filtered page never establishes exhaustive filtered coverage.
+            if complete is True:
+                complete = False
+            if requested - supported:
+                partial = True
+                complete = None
+                self.last_search_warnings.append(
+                    "partial_results : formats BnF demandés non qualifiés"
+                )
         # The legacy list API retains its page-local warning. The typed
         # envelope now carries that limitation in catalogue_complete, not
         # in last_search_warnings (which older Core treats as a failure).

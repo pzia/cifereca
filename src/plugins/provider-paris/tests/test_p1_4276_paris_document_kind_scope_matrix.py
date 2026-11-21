@@ -306,3 +306,30 @@ def test_later_duplicate_cannot_restore_refused_series_and_distinct_records_keep
     assert "series" not in row.metadata
     assert other.metadata["series"] == ["Cycle D"]
     assert other.metadata["bibliography_evidence"]["series"]["scope"] == "EBOOKS"
+
+
+@pytest.mark.parametrize("second,third,expected", [
+    ("Nature", None, ["Nature"]),
+    ("Science", None, None),
+    (None, None, None),
+    ("Science", "Nature", None),
+])
+def test_duplicate_search_routes_require_concordant_public_subjects(second, third, expected):
+    from cifereca_paris_bibliography import public_search_subject_metadata
+
+    a = _series_row("CATALOGUE", "Cycle A")
+    b = _series_row("EBOOKS", "Cycle A")
+    if second is None:
+        b.metadata.pop("subjects", None)
+    else:
+        b.metadata["subjects"] = [second]
+    rows = [b]
+    if third is not None:
+        c = _series_row("EBOOKS", "Cycle A")
+        c.metadata["subjects"] = [third]
+        rows.append(c)
+    client = client_with_rows({"CATALOGUE": [a], "EBOOKS": rows})
+    row, = client.search("synthetic", scope="all")
+    assert public_search_subject_metadata(row.metadata, row.scenario).get("subjects") == expected
+    assert row.metadata["subjects"] == ["Nature"]
+    assert "subjects" in a.metadata["bibliography_evidence"]
