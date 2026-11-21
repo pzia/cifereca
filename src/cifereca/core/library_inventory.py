@@ -22,6 +22,7 @@ from typing import Callable
 from ..epub_metadata import inspect_epub
 from .library_structure import inspect_stream_structure
 from .derived_variant_region_paths import private_derived_path, PRIVATE_DERIVED_REGION
+from .adept_acsm_plan import private_adept_stage_path
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,7 @@ def scan_identity_roots(
                 raise ValueError('invalid_inventory_roots')
             path = Path(path)
             if (not path.is_absolute() or path == Path('/') or '..' in path.parts
-                    or private_derived_path(path)):
+                    or private_derived_path(path) or private_adept_stage_path(path)):
                 raise ValueError('invalid_inventory_roots')
             if any(path.is_relative_to(other) or other.is_relative_to(path) for _, other in chosen):
                 raise ValueError('overlapping_inventory_roots')
@@ -417,7 +418,8 @@ def scan_identity_roots(
                     result.entries += 1
                     # This namespace is owned by the derived journal, not
                     # ordinary book discovery. Never open or hash its contents.
-                    if entry.name == PRIVATE_DERIVED_REGION:
+                    if (entry.name == PRIVATE_DERIVED_REGION
+                            or private_adept_stage_path(Path(entry.name))):
                         continue
                     is_directory = False
                     try:

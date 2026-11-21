@@ -37,3 +37,29 @@ def test_private_adept_stage_is_not_indexed_or_marked_missing(store, tmp_path, m
     options = dict(library_root=root, identity_id="A", owner_directory="A")
     assert ordinary_dedup_path_excluded(stage, **options)
     assert not ordinary_dedup_path_excluded(ordinary, **options)
+
+
+@pytest.mark.parametrize("prefix", [".adept-stage-", ".adept-publish-"])
+def test_physical_inventory_never_opens_private_adept_stage(tmp_path, monkeypatch, prefix):
+    from cifereca.core import library_inventory as inventory
+    root = tmp_path / "A"
+    root.mkdir()
+    stage = root / (prefix + "b" * 32 + ".pdf")
+    stage.write_bytes(BYTES)
+    ordinary = root / (prefix[1:] + "ordinary.pdf")
+    ordinary.write_bytes(BYTES)
+    private_dir = root / (prefix + "c" * 32)
+    private_dir.mkdir()
+    (private_dir / "book.pdf").write_bytes(BYTES)
+    original = inventory.os.open
+
+    def guarded(path, *args, **kwargs):
+        assert not Path(path).name.startswith(prefix)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(inventory.os, "open", guarded)
+    result = inventory.scan_identity_roots({"A": (root,)})
+    assert result.files_started == 1
+    assert {Path(row.path) for row in result.files} == {ordinary}
+    with pytest.raises(ValueError, match="invalid_inventory_roots"):
+        inventory.scan_identity_roots({"A": (private_dir,)})
