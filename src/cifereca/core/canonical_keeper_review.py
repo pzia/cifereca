@@ -9,16 +9,23 @@ ordinary cleanup is still suspended independently in canonical_dedup_supervisor.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 from .canonical_dedup_preview import preview_canonical_duplicate
+from .derived_variant_publication import _file_signature
+from .library_inventory import _open_root
 
 
 _MAX_ROWS = 4096
 _MAX_COPIES = 64
+# Same advisory physical budget as one Organizer group. A pair preview
+# hashes both files; charge the keeper once PER candidate, not once/group.
+_MAX_HASH_BYTES = 128 * 1024 * 1024
 _SHA_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _HEX_NAME = re.compile(r"(?:sha256[-_])?[0-9a-f]{64}\Z", re.I)
 _RECEIPT_SUFFIX = re.compile(r"[0-9a-f]{64}\Z")
@@ -128,9 +135,13 @@ def review_canonical_keeper(
                         "ORDER BY placement_id LIMIT ?",
                         (identity_id, artifact_id, _MAX_ROWS + 1),
                     ).fetchall()
-                    return owner_name, rows
+                    artifact = db.execute(
+                        "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
+                        (artifact_id,),
+                    ).fetchone()
+                    return owner_name, rows, artifact
 
-        owner_name, original_rows = snapshot()
+        owner_name, original_rows, artifact = snapshot()
         if len(original_rows) > _MAX_ROWS:
             return blocked("inventory_budget")
         owner = library_root / owner_name
@@ -188,6 +199,34 @@ def review_canonical_keeper(
                            eligible=len(eligible), excluded=excluded)
         keeper = preferred[0][0]
         candidates = tuple(item[0] for item in eligible if item[0] != keeper)
+        if (artifact is None or artifact[0] != artifact_id[7:]
+                or type(artifact[1]) is not int or artifact[1] <= 0):
+            return blocked("artifact_unverified", eligible=len(eligible), excluded=excluded)
+        if artifact[1] * 2 * len(candidates) > _MAX_HASH_BYTES:
+            return blocked("physical_budget", eligible=len(eligible), excluded=excluded)
+
+        def physical_stamps():
+            # Open every directory component nofollow. An already reviewed
+            # candidate must not disappear or change while a later pair is
+            # being hashed. This is still observation, not an FS lease.
+            stamps = []
+            for _pid, path, _rank_value in eligible:
+                fd = _open_root(path.parent)
+                try:
+                    directory = os.fstat(fd)
+                    named = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+                    if not stat.S_ISREG(named.st_mode) or named.st_size != artifact[1]:
+                        raise ValueError("keeper_physical_changed")
+                    stamps.append((directory.st_dev, directory.st_ino, _file_signature(named)))
+                finally:
+                    os.close(fd)
+            return tuple(stamps)
+
+        try:
+            before = physical_stamps()
+        except (OSError, ValueError):
+            return blocked("candidate_not_safe_for_retirement",
+                           eligible=len(eligible), excluded=excluded)
         for candidate in candidates:
             evidence = preview_canonical_duplicate(
                 storage, library_root=library_root,
@@ -202,8 +241,15 @@ def review_canonical_keeper(
         # Defend against an ordinary identity/placement edit during rehash.
         # Even a stable result is only a point-in-time observation, never
         # an authorization: physical ABA requires the supervisor's locks.
-        if snapshot() != (owner_name, original_rows):
+        if snapshot() != (owner_name, original_rows, artifact):
             return blocked("snapshot_changed", eligible=len(eligible),
+                           excluded=excluded)
+        try:
+            if physical_stamps() != before:
+                return blocked("physical_evidence_changed", eligible=len(eligible),
+                               excluded=excluded)
+        except (OSError, ValueError):
+            return blocked("physical_evidence_changed", eligible=len(eligible),
                            excluded=excluded)
         return CanonicalKeeperReview(
             "review_required", "aesthetic_preference_only",
