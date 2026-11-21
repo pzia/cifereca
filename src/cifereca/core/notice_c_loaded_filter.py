@@ -101,7 +101,9 @@ def collapse_filter_sources(rows, originals):
     out, groups = [], {}
     for row in rows:
         marker = row.get(_MARKER)
-        if marker not in originals:
+        # Only our object() sentinel can be a group key. A plugin-facing
+        # row must never execute an arbitrary __hash__/__eq__ in this dict.
+        if type(marker) is not object or marker not in originals:
             out.append(row)
             continue
         primary = groups.get(marker)
