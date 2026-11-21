@@ -1073,6 +1073,29 @@ def main() -> int:
                     stage = report_data.get("p1_4664_phase")
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
+                if (scenario.get("runner") == "gtk-detail"
+                        and report_data.get("status") != "PASS"):
+                    # Closed synthetic fixture stages only; never an exception
+                    # message, URL, account, widget text or private traceback.
+                    stages = frozenset({
+                        "tie_setup", "tie_first", "tie_second", "setup", "seed",
+                        "cold_texture", "offline_texture", "cold_web", "offline_web",
+                        "cold_web_choices", "offline_web_choices",
+                        "cold_private_web", "offline_private_web",
+                        "cold_search_list", "offline_search_list",
+                        "cold_search_detail", "offline_search_detail",
+                    })
+                    phase = report_data.get("notice_c_cover_stage")
+                    if type(phase) is str and phase in stages:
+                        print("NOTICE_C_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+                    private_phase = report_data.get("notice_c_private_web_phase")
+                    if (phase in ("cold_private_web", "offline_private_web")
+                            and type(private_phase) is str and private_phase in {
+                                "construct", "panel", "zero", "one", "many", "foreign",
+                                "check_widget", "popover", "click", "launch_check",
+                                "revoke", "worker_failed",
+                            }):
+                        print("NOTICE_C_PRIVATE_WEB_FAILURE_PHASE=" + private_phase, flush=True)
                 if (scenario.get("runner") == "gtk-reader-target-refresh"
                         and report_data.get("status") != "PASS"):
                     # Only the fixture probe's fixed public phase may reach

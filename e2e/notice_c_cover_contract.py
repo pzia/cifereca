@@ -106,7 +106,9 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             assert fact.catalogue_web_references[0].url == row.friendly_url
             from notice_c_web_menu_contract import seed_multiple_web_choices
             multi = seed_multiple_web_choices(db)
-            return doc, fact.epoch, row.thumbnail_url, row.friendly_url, multi
+            from notice_c_private_web_menu_contract import seed_private_web_choices
+            private = seed_private_web_choices(db)
+            return doc, fact.epoch, row.thumbnail_url, row.friendly_url, multi, private
         finally:
             db.close()
             session.close()
@@ -167,7 +169,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             later(40, guard(after_seed))
             return
         (state["document"], state["epoch"], state["url"], state["web_url"],
-         state["multiple_web"]) = seed_job.result()
+         state["multiple_web"], state["private_web"]) = seed_job.result()
         start_stage(False)
 
     def start_stage(offline):
@@ -341,13 +343,22 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 verify_multiple_web_choices(
                     window, db, state["multiple_web"], offline=offline,
                     later=later, guard=guard, capture=capture, report=report,
-                    complete=done, state=state,
+                    complete=lambda: verify_private_web(offline, db, done), state=state,
                 )
 
             later(40, guard(wait_launch))
 
         later(40, guard(wait_menu))
 
+
+    def verify_private_web(offline, db, done):
+        report["notice_c_cover_stage"] = "offline_private_web" if offline else "cold_private_web"
+        from notice_c_private_web_menu_contract import verify_private_web_choices
+        verify_private_web_choices(
+            window, db, state["private_web"], offline=offline,
+            later=later, guard=guard, capture=capture, report=report,
+            complete=done, state=state,
+        )
 
     def verify_mainwindow_search(offline, db, service, loader, reads):
         report["notice_c_cover_stage"] = "offline_search_list" if offline else "cold_search_list"
