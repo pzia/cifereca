@@ -421,6 +421,19 @@ def select_organizer_keeper_advice(scope, result, *, confirmed=False):
         original = preview_keeper_bulk(reviews, identity_id=scope.identity)
         if original != result.get("keeper_advice"):
             return None
+        # The SQLite/WAL stamp cannot attest unchanged filesystem bytes.
+        # Reverify every eligible keeper group at the Core selection boundary,
+        # including direct consumers that do not use the public broker.
+        eligible = {choice.artifact_id for choice in original.eligible}
+        for review in reviews:
+            if review.artifact_id in eligible:
+                if (not scope.bound()
+                        or sqlite_source_stamp(scope.database) != anchor.stamp
+                        or review_canonical_keeper(
+                            scope.storage, library_root=scope.root,
+                            identity_id=scope.identity, artifact_id=review.artifact_id,
+                        ) != review):
+                    return None
         selected = preview_keeper_bulk(reviews, identity_id=scope.identity, accept_all=True)
         return (selected if scope.bound()
                 and sqlite_source_stamp(scope.database) == anchor.stamp else None)
