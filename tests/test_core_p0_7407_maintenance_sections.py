@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.gui.maintenance_sections import GROUPS, presentation_group, build_sections, show_unavailable, finish_sections
+from cifereca.gui.maintenance_sections import GROUPS, presentation_group, build_sections, show_unavailable, finish_sections, add_section_links
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -70,3 +70,53 @@ def test_active_registry_contribution_not_duplicated():
            capabilities=("maintenance.group.integrity",))
     show_unavailable(sections, [NS(descriptor=d)], [NS(plugin_id=d.id)], Gtk=Gtk)
     assert len(sections["integrity"].children) == 1
+
+
+def test_closed_status_vocabulary_and_no_config_or_error_leak():
+    box = Widget()
+    sections = build_sections(box, Gtk=Gtk)
+    d = NS(type="maintenance.tool", id="audit.old", display_name="Audit historique",
+           capabilities=("maintenance.group.organization",))
+    show_unavailable(sections, [
+        NS(descriptor=d, reason_code="maintenance_safety_hold", enabled=False,
+           error="PRIVATE", reason_detail={"path": "SECRET"}),
+        NS(descriptor=d, reason_code="missing_broker", enabled=True),
+        NS(descriptor=d, reason_code="PRIVATE_UNKNOWN", enabled=False),
+    ], (), Gtk=Gtk)
+    labels = [w.kwargs["label"] for w in sections["organization"].children[1:]]
+    assert labels == [
+        "Audit historique — suspendu — garde de sécurité",
+        "Audit historique — indisponible — service requis absent",
+        "Audit historique — désactivé",
+    ]
+
+
+def test_declared_navigation_deduplicated_and_revocable():
+    class NavigationWidget(Widget):
+        root = object()
+        def set_focusable(self, value): self.focusable = value
+        def set_tooltip_text(self, value): self.tooltip = value
+        def connect(self, signal, callback): self.callback = callback
+        def get_root(self): return self.root
+        def grab_focus(self): self.focus_count = getattr(self, "focus_count", 0) + 1
+
+    gtk = NS(Box=NavigationWidget, Label=NavigationWidget, Button=NavigationWidget,
+             Orientation=NS(VERTICAL=1))
+    sections = build_sections(NavigationWidget(), Gtk=gtk)
+    row = NS(capabilities=("maintenance.group.organization", "maintenance.link.recovery",
+                           "maintenance.link.organization", "maintenance.link.fake"))
+    live = [True]
+    add_section_links(sections, [row, row], Gtk=gtk, current=lambda: live[0])
+    heading = sections["recovery"].children[0]
+    assert heading.focusable
+    button, = sections["organization"].children[1:]
+    assert button.kwargs["label"] == "Voir : Reprise des opérations"
+    button.callback(button)
+    assert heading.focus_count == 1
+    heading.root = object()
+    button.callback(button)
+    assert heading.focus_count == 1
+    heading.root = button.root
+    live[0] = False
+    button.callback(button)
+    assert heading.focus_count == 1
