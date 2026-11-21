@@ -28,6 +28,7 @@ from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightObservation
 from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
+from ..plugin_api.errors import AdeptFulfillmentNotSubmitted
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
@@ -344,8 +345,8 @@ def complete_selected_delivery(
         )
         try:
             # No external runtime call has been entered yet. This is the
-            # only place we may release our own newly created claim on a
-            # local refusal. Any exception from dispatch itself is ambiguous.
+            # point where Core can prove a local refusal independently of
+            # the installed runtime's explicit non-submission contract.
             require_adept_profile(profile_name, profile_id)
         except Exception:
             release_unsubmitted_attempt(
@@ -354,6 +355,18 @@ def complete_selected_delivery(
             )
             raise
         adept_attempt_id[0] = operation
+
+    def dispatch_acquisition(request):
+        try:
+            return service.execute_acquisition_request(request)
+        except AdeptFulfillmentNotSubmitted as error:
+            if type(error) is AdeptFulfillmentNotSubmitted and adept_attempt_id[0]:
+                release_unsubmitted_attempt(
+                    storage, source=source, offer_id=offer.delivery_offer_id,
+                    operation_id=adept_attempt_id[0], shared_lock=shared_lock,
+                )
+                adept_attempt_id[0] = ""
+            raise
 
     runtime_artifact_path: list[Path | None] = [None]
     runtime_artifact_digest: list[str | None] = [None]
@@ -393,7 +406,7 @@ def complete_selected_delivery(
         runtime_used[0] = True
         if expected_adept is not None:
             mark_adept_attempt(*expected_adept)
-        result = service.execute_acquisition_request(request)
+        result = dispatch_acquisition(request)
         require_borrower()
         if expected_adept is not None:
             require_adept_profile(*expected_adept)
@@ -570,7 +583,7 @@ def complete_selected_delivery(
             }
             require_adept_profile(profile, profile_id)
             mark_adept_attempt(profile, profile_id)
-            result = service.execute_acquisition_request(request)
+            result = dispatch_acquisition(request)
             require_adept_profile(profile, profile_id)
             if type(result) is not dict:
                 raise ValueError("canonical_delivery_adept_result_invalid")

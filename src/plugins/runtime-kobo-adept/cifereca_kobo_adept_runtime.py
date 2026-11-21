@@ -726,14 +726,27 @@ class KoboAdeptRuntime:
         raise AttentionRequired('Opération DRM non publiée par Kobo-Adept.',code='kobo_adept_drm_mutation_unsupported')
 
     def download_request(self, request):
-        if self.contract_version is None: self.contract()
         payload = dict(request)
         # Core 0.9.5 emits compatible schema-1 recipes; the v2 fields are identical here.
         payload['schema_version'] = 2
-        if (type(payload.get('source')) is dict
-                and payload['source'].get('type') == 'acsm'):
-            self.preflight_acsm_profile(payload.get('profile'))
-        self._require_download(payload)
+        is_acsm = (type(payload.get('source')) is dict
+                   and payload['source'].get('type') == 'acsm')
+        try:
+            if self.contract_version is None:
+                self.contract()
+            if is_acsm:
+                self.preflight_acsm_profile(payload.get('profile'))
+            self._require_download(payload)
+        except UserFacingError as error:
+            if not is_acsm:
+                raise
+            # Older Core versions still receive the historical error.
+            from cifereca import plugin_api
+            refusal = getattr(plugin_api, "AdeptFulfillmentNotSubmitted", None)
+            if refusal is None:
+                raise
+            raise refusal(error.user_message, code=error.code,
+                          technical_detail=error.technical_detail) from error
         value = self.run_json(['download','request','-','--json'],payload=payload,
             timeout=int(self.config.get('download_timeout_seconds') or 900))
         artifact = value.get('artifact')

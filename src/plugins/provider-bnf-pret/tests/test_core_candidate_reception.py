@@ -229,3 +229,40 @@ def test_bnf_uncertain_runtime_result_keeps_claim(adapter):
     with pytest.raises(ValueError, match="canonical_adept_attempt_pending"):
         a.complete()
     assert len(a.token_gets) == len(a.runtime_calls) == 1
+
+
+@pytest.mark.parametrize("proven", [False, True])
+def test_only_proven_runtime_refusal_releases_live_adept_claim(adapter, proven):
+    from types import MethodType
+
+    from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+    from cifereca.plugin_api import AdeptFulfillmentNotSubmitted, AttentionRequired
+    from cifereca.services import LibraryService
+
+    a = adapter
+    succeeding = a.service.execute_acquisition_request
+    lookup = a.service._required_plugin_service
+    refusal_type = AdeptFulfillmentNotSubmitted if proven else AttentionRequired
+
+    def refuse(request):
+        a.runtime_calls.append(request)
+        raise refusal_type("synthetic ADEPT profile refusal", code="adept_profile_required")
+
+    drm = SimpleNamespace(execute=refuse)
+    a.service._required_plugin_service = lambda pid: drm if pid == "drm.ade" else lookup(pid)
+    a.service.execute_acquisition_request = MethodType(
+        LibraryService.execute_acquisition_request, a.service,
+    )
+    with pytest.raises(refusal_type):
+        a.complete()
+    assert pending_loan_adept_attempt(a.db, a.source) == (not proven)
+    assert len(a.token_gets) == len(a.runtime_calls) == 1
+
+    drm.execute = succeeding
+    if proven:
+        assert a.complete().path.read_bytes() == PDF
+        assert len(a.token_gets) == len(a.runtime_calls) == 2
+    else:
+        with pytest.raises(ValueError, match="canonical_adept_attempt_pending"):
+            a.complete()
+        assert len(a.token_gets) == len(a.runtime_calls) == 1
