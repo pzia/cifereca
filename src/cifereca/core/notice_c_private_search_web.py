@@ -228,6 +228,11 @@ def _sql_binding_current(db, doc, epoch):
 
 def persist_authenticated_search_rows(service, rows, *, identity_id):
     """Consume same-call receipts under the existing write fence, independently."""
+    # The write port must accept exactly the stamped, bounded response shape.
+    # A generator/tuple can replay old receipts outside the call's batch;
+    # an oversized batch cannot bypass stamp's all-or-nothing admission.
+    if type(rows) is not list or len(rows) > 10000:
+        return 0
     count = 0
     for row in rows:
         if type(row) is not SearchResult or type(row.__dict__.get(_MARKER)) is not _Receipt:
