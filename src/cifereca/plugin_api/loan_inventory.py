@@ -225,6 +225,7 @@ def read_loan_inventory(
     session: object, account: Account, *,
     descriptor: ProviderDescriptor | None = None,
     scope_current=None,
+    typed_only: bool = False,
 ) -> LoanInventorySnapshot:
     """Explicit opt-in I/O read: no action, synchronization or mutation.
 
@@ -233,7 +234,10 @@ def read_loan_inventory(
     responses or exceptions. Core callers can supply an additional inert
     lease guard checked before accessing provider attributes and after I/O.
     Only a typed complete branch can furnish negative inventory evidence.
+    A dedicated review may prohibit the legacy fallback with typed_only.
     """
+    if type(typed_only) is not bool:
+        raise ValueError("invalid_loan_inventory_typed_only")
     scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
 
     def still_bound() -> bool:
@@ -302,6 +306,10 @@ def read_loan_inventory(
                 scope=scope, loans=result.loans, status=result.status,
                 branches=result.branches, observed_at=result.observed_at,
                 reason_code=result.reason_code,
+            )
+        if typed_only:
+            return LoanInventorySnapshot(
+                scope=scope, loans=(), status="failed", reason_code="unavailable",
             )
         reader_kind = "legacy"
         raw_legacy = getattr_static(session, "loans", None)
