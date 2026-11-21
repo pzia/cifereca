@@ -1095,7 +1095,7 @@ class BnfProviderSession(ProviderSession):
             account = self._accounts[0] if (
                 self.connected is True and len(self._accounts) == 1
                 and type(self._accounts[0]) is Account) else None
-            scope = ((account.identity_id, account.provider_id,
+            account_scope = ((account.identity_id, account.provider_id,
                       account.credential_id, account.unique_id)
                      if account is not None else None)
             try:
@@ -1115,21 +1115,21 @@ class BnfProviderSession(ProviderSession):
             # this connected read. It neither proves that the site always
             # requires login nor supplies any right or session credential.
             qualified = (
-                account is not None and scope is not None
+                account is not None and account_scope is not None
                 and all(type(value) is str and 0 < len(value) <= 160
-                        and value.isprintable() for value in scope)
-                and scope[1:] == (self.provider_id, self.credential_id, account.unique_id)
+                        and value.isprintable() for value in account_scope)
+                and account_scope[1:] == (self.provider_id, self.credential_id, account.unique_id)
                 and self.connected is True and len(self._accounts) == 1
                 and self._accounts[0] is account
                 and (account.identity_id, account.provider_id,
-                     account.credential_id, account.unique_id) == scope
+                     account.credential_id, account.unique_id) == account_scope
                 and not any(code in warnings for code in ("partial_search", "ambiguous_search"))
             )
             rows = []
             for record in records:
                 row = self._search_result(record)
                 if qualified and record.web_reference_evidence is True:
-                    row.source_account_id = scope[3]
+                    row.source_account_id = account_scope[3]
                     row.metadata["authenticated_web_evidence"] = {
                         "schema": 1, "provider_id": row.source_provider,
                         "record_id": row.record_id, "docbase": row.docbase,
