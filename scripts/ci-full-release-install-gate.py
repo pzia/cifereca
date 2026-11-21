@@ -100,6 +100,13 @@ def run_gate(source: Path) -> None:
             source_versions[package["id"]] = str(package["version"])
         for package_id in expected:
             check(package_id in packages, f"missing release package {package_id}")
+        # New source packages may not yet appear in the frozen publication
+        # snapshot. Check completeness in both directions before inspecting
+        # active versions, rather than accepting an installed subset.
+        missing_source = sorted(set(source_versions) - set(packages))
+        check(not missing_source, "missing source packages: " + ", ".join(missing_source))
+        print("All source packages installed: " + ", ".join(sorted(source_versions)),
+              flush=True)
         for package_id in packages:
             version = store.active_version(package_id)
             check(version is not None, f"inactive package after full install: {package_id}")
