@@ -509,3 +509,55 @@ def test_retry_write_refuses_nested_caller_without_modifying_transaction(rig):
             db.rollback()
         observer.close()
     assert read_loan_download_retry(service.storage, source).failures == 0
+
+
+def test_manual_pause_reset_is_full_durable_and_clean_b_read_is_non_writing(rig, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.loan_download_retry_review import (
+        review_loan_download_retries, reset_reviewed_loan_download_retry,
+    )
+
+    service, account, source, snapshot, root, lock_path = loan_snapshot(rig)
+    service.current_identity = SimpleNamespace(identity_id="A")
+    persist_attested_source_references(service.storage, snapshot)
+    monkeypatch.setattr(
+        "cifereca.core.loan_download_retry_review.acquisition_lock_file",
+        lambda: lock_path,
+    )
+    with InterProcessLock(lock_path) as lease:
+        for _ in range(FAILURE_LIMIT):
+            record_loan_download_failure(
+                service.storage, source, reason="canonical_delivery_failed",
+                shared_lock=lease,
+            )
+    row, = review_loan_download_retries(service, identity_id="A")
+    assert row.can_reset
+    db = service.storage._connect()
+    db.execute("PRAGMA synchronous=NORMAL")
+    trace = []
+    db.set_trace_callback(trace.append)
+    try:
+        reset_reviewed_loan_download_retry(service, identity_id="A", row=row)
+        assert db.execute("PRAGMA synchronous").fetchone() == (1,)
+        cutoff = len(trace)
+        with InterProcessLock(lock_path) as lease:
+            clear_loan_download_retry(service.storage, source, shared_lock=lease)
+        assert not any(entry == "BEGIN IMMEDIATE" for entry in trace[cutoff:])
+    finally:
+        db.set_trace_callback(None)
+    deletion = next(i for i, sql in enumerate(trace)
+                    if sql.startswith("DELETE FROM metadata WHERE key="))
+    full = max(i for i, sql in enumerate(trace[:deletion])
+               if sql == "PRAGMA synchronous=FULL")
+    begin = max(i for i, sql in enumerate(trace[:deletion])
+                if sql == "BEGIN IMMEDIATE")
+    commit = next(i for i in range(deletion, len(trace)) if trace[i] == "COMMIT")
+    restore = next(i for i in range(deletion, len(trace))
+                   if trace[i] == "PRAGMA synchronous=1")
+    assert full < begin < deletion < commit < restore
+    other = Storage(service.storage.path)
+    try:
+        assert read_loan_download_retry(other, source).failures == 0
+    finally:
+        other.close()
