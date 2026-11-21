@@ -70,6 +70,7 @@ def expand_filter_sources(rows, *, scope):
                 _MARKER: marker,
                 "source": "notice_c_public",
                 "provider_id": hit.provider_id,
+                "item_id": hit.record_id,
                 "title": hit.title, "author": hit.author,
                 "publisher": hit.publisher, "description": hit.description,
                 "medium": hit.medium, "media_format": hit.media_format,
