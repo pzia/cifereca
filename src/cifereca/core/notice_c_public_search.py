@@ -559,7 +559,8 @@ def search_public_notice_c(
                     continue
                 if _matches_public_c(current, wanted=wanted, scope=scope,
                                      field=field, needle=needle,
-                                     content_types=content_types):
+                                     content_types=content_types,
+                                     age=age, age_kind=age_kind):
                     matches.append(current)
 
         for source_ref, candidates in staged.items():
