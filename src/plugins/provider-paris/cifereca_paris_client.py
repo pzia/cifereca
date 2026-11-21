@@ -1155,6 +1155,16 @@ class ParisClient:
                         chunk = next(iterator)
                     except StopIteration:
                         break
+                    except httpx.RemoteProtocolError:
+                        # At this point an HTTP 200 response has already
+                        # been admitted and its body is being consumed.
+                        # This is not a malformed redirect/Location. Only
+                        # the selected delivery caller may qualify replay,
+                        # after rechecking its live Core and owner scope.
+                        require_admission()
+                        raise ParisContentTransferUnavailable(
+                            "Transport HTTPS PNB indisponible",
+                        ) from None
                     require_admission()
                     if len(chunks) + len(chunk) > _MAX_PNB_PUBLIC_BODY_BYTES:
                         raise ParisError("Réponse HTTPS PNB trop volumineuse")
