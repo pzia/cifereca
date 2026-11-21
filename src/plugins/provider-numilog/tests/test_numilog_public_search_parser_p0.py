@@ -266,3 +266,43 @@ def test_advanced_parser_receipt_does_not_enable_live_transport():
     from cifereca_numilog_public_client import fetch_public_search_url
     with pytest.raises(ProviderError):
         fetch_public_search_url(ADVANCED)
+
+
+def test_advanced_native_aspnet_counter_and_explicit_selected_format():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span class="BuySelectedFormat">ePub sans DRM</span></td>')
+    html = advanced_page(total=1, cards=cards).replace(
+        'id="lblNbLivres"', 'id="ctl02_CentrePage_ListeLivres1_lblNbLivres"')
+    item, = parse_public_search(html, ADVANCED).items
+    assert item.metadata['selected_format_label'] == 'ePub sans DRM'
+    assert item.metadata['drm_label'] == 'sans DRM'
+    assert item.metadata['isbn_digital'] is None and not item.owned
+
+
+def test_advanced_duplicate_counter_aliases_are_not_a_single_proof():
+    html = advanced_page(extra='<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">2</span>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(html, ADVANCED)
+
+
+def test_advanced_conflicting_explicit_selected_format_is_rejected():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span class="FormatLivre">PDF</span>'
+        '<span class="BuySelectedFormat">ePub sans DRM</span></td>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page(total=1, cards=cards), ADVANCED)
+
+
+def test_advanced_hidden_explicit_format_cannot_prove_drm():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span hidden class="BuySelectedFormat">ePub sans DRM</span></td>')
+    item, = parse_public_search(advanced_page(total=1, cards=cards), ADVANCED).items
+    assert item.metadata['drm_label'] is None
+
+
+def test_advanced_price_without_currency_is_not_monetary_proof():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<div class="ColPrice"><span class="LblPrice">9</span>'
+        '<span class="LblDecimal">99</span></div></td>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page(total=1, cards=cards), ADVANCED)

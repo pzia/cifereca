@@ -243,6 +243,10 @@ def _card(card, source_url, rank, page_index):
     if len(format_labels) > 10 or any(len(f) > 80 for f in format_labels):
         _fail('invalid_formats')
     selected = _optional(card, 'FormatLivre', 80)
+    explicit_selected = _optional(card, 'BuySelectedFormat', 80)
+    if selected and explicit_selected and selected != explicit_selected:
+        _fail('ambiguous_field')
+    selected = explicit_selected or selected
     if selected == 'Choix format':
         selected = None
     options = []
@@ -372,7 +376,7 @@ def parse_public_search(text, source_url):
         _fail('unqualified_total')
     if advanced:
         counters = [n for n in _visible_walk(root)
-                    if n.attrs.get('id') == 'lblNbLivres']
+                    if n.attrs.get('id') in {'lblNbLivres', GRID_ID.removesuffix('_GridView1') + '_lblNbLivres'}]
         if len(counters) != 1:
             _fail('unqualified_total')
         count = _selected_text(counters[0])
