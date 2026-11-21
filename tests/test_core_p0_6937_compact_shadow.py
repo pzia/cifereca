@@ -122,3 +122,51 @@ def test_fault_after_insert_rolls_back_then_exact_retry(committed, monkeypatch):
     args["scope_current"] = check
     assert shadow.write_compact_shadow(db, **args)["status"] == "shadow_written"
     assert Path(intent.staged_path).samefile(intent.candidate_path)
+
+
+@pytest.mark.parametrize("relation", ["output_inode", "input_inode", "shared_parent", "unrelated"])
+def test_shadow_and_retention_share_recorded_inode_dependency_veto(committed, relation):
+    from cifereca.core import derived_variant_retention_review as retention
+
+    db, intent, placement, key, raw, proof_key, proof, args = committed
+    distinct = (intent.output_stamp[0], intent.output_stamp[1] + 1000000,
+                *intent.output_stamp[2:])
+    parent = intent.parent_stamp
+    other = replace(
+        intent, options_fingerprint="synthetic-receipt-dependency",
+        parent_path=(
+            intent.parent_path if relation == "shared_parent" else
+            str(Path(intent.parent_path).with_name("foreign-input.epub"))
+        ),
+        staged_path=str(Path(intent.staged_path).with_name("foreign-stage.epub")),
+        candidate_path=str(Path(intent.candidate_path).with_name("foreign-target.epub")),
+        output_stamp=intent.output_stamp if relation == "output_inode" else distinct,
+        parent_stamp=(
+            (intent.output_stamp[0], intent.output_stamp[1], *parent[2:])
+            if relation == "input_inode" else parent
+        ),
+    )
+    other_key = journal._slot(other)
+    other_raw = journal._encode({
+        "schema": "derived.intent.v2", "nonce": "f" * 32,
+        "intent": asdict(other),
+    })
+    db.metadata_set(other_key, other_raw)
+    before = journal.summarize_derived_journal(db)
+    reviewed = retention.review_derived_receipt_retention(
+        db, identity_id="id1", explicitly_requested=True,
+    )
+    dependent = relation in ("output_inode", "input_inode")
+    assert reviewed["counts"]["dependent_receipt_or_staging_placement"] == int(dependent)
+    if dependent:
+        with pytest.raises(journal.DerivedJournalConflict, match="derived_shadow_ambiguous_receipt"):
+            shadow.write_compact_shadow(db, **args)
+        assert db.metadata_get(proof_key) is None
+    else:
+        result = shadow.write_compact_shadow(db, **args)
+        assert result["original_retained"] and not result["retention_authorized"]
+        assert db.metadata_get(proof_key) == proof
+    assert journal.summarize_derived_journal(db) == before
+    assert db.metadata_get(key) == raw and db.metadata_get(other_key) == other_raw
+    assert db.placement_get(placement)["path"] == intent.candidate_path
+    assert Path(intent.staged_path).samefile(intent.candidate_path)
