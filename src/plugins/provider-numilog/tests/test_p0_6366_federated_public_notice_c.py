@@ -11,6 +11,9 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import httpx
+import pytest
+
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.services import LibraryService
@@ -834,6 +837,59 @@ def test_real_partial_failure_is_not_cached_as_a_paginated_window(tmp_path, monk
         assert len(calls) == 4 and len(supplier_gets) == 1
         assert not any(ns["namespace"] == "search" and ns["entries"] > 0
                        for ns in service.storage.cache_namespace_stats())
+    finally:
+        service.close()
+        session.close()
+
+
+@pytest.mark.parametrize("mode", ["sync", "progressive", "headless"])
+def test_unverified_layout_stops_variants_without_stale_fallback(tmp_path, monkeypatch, mode):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    import cifereca_numilog_public_client as client
+
+    service, session, positive = build(tmp_path, monkeypatch)
+    attempts = []
+
+    def respond(request):
+        attempts.append(request.method)
+        return httpx.Response(
+            200, content=b"<form>PRIVATE_LOGIN</form>",
+            headers={"content-type": "text/html"}, request=request,
+        )
+
+    try:
+        # Seed an independently valid C notice, so a false offline fallback
+        # would have something to return after the malformed response.
+        assert service.search("loup", provider_id=session.provider_id, force=True)
+        assert len(positive) == 1
+        session._public_cache.clear()
+        monkeypatch.setattr(numilog, "fetch_public_search", client.fetch_public_search)
+        monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", lambda **_: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False,
+        ))
+        monkeypatch.setattr(service, "_search_query_variants",
+                            lambda _query: ["loup", "loup alternative", "autre variante"])
+        batches = []
+        if mode == "sync":
+            rows = service.search("loup", provider_id=session.provider_id, force=True)
+            assert rows == []
+            assert service.last_search_warnings
+        else:
+            options = dict(provider_id=session.provider_id, force=True, on_batch=batches.append)
+            if mode == "headless":
+                scope = capture_search_read_scope(service, "alice")
+                summary, rows = service.search_progressive_result_for_scope(scope, "loup", **options)
+                assert not rows
+            else:
+                summary = service.search_progressive("loup", **options)
+            assert not summary.cancelled and summary.result_count == 0
+            assert summary.providers_failed == 1
+            batch, = batches
+            assert batch.error_code == "SearchProtocolUnverified"
+            assert not batch.results
+        assert attempts == ["GET"]
+        assert "PRIVATE_LOGIN" not in repr(batches) + repr(service.last_search_warnings)
+        assert service.storage.entitlements() == service.storage.acquisitions() == []
     finally:
         service.close()
         session.close()

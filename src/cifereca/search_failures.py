@@ -17,6 +17,7 @@ def search_failure_code(error: BaseException) -> str | None:
     pending = [error]
     unavailable = False
     proxy_unavailable = False
+    protocol_unverified = False
     provider_refusal = None
     # Explicit and implicit exception links can both exist, even when
     # context display is suppressed. A 401/403 on either branch forbids
@@ -54,6 +55,10 @@ def search_failure_code(error: BaseException) -> str | None:
                 provider_refusal = provider_refusal or "SearchAccessDenied"
             elif provider_code == "search_temporarily_unavailable":
                 unavailable = True
+            elif provider_code == "search_protocol_unverified":
+                # Unknown response structure may be an authentication page.
+                # Stop query variants without authorizing an outage fallback.
+                protocol_unverified = True
         # An invalid Content-Encoding body is a protocol/data-read failure:
         # httpx.DecodingError derives from RequestError, not TransportError.
         # Distinguish it from redirect loops, which may mean login/auth.
@@ -71,10 +76,12 @@ def search_failure_code(error: BaseException) -> str | None:
     # An exhausted graph may hide an HTTP 401/403. A partial inspection
     # cannot authorize known-catalog stale fallback as if no refusal existed.
     if pending:
-        return provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
+        return (provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
+                or ("SearchProtocolUnverified" if protocol_unverified else None))
     # A closed, built-in provider refusal outranks a generic timeout marker,
     # but a concrete underlying HTTP 401/403 outranks both.
     return (provider_refusal or ("SearchProxyUnavailable" if proxy_unavailable else None)
+            or ("SearchProtocolUnverified" if protocol_unverified else None)
             or ("SearchTemporarilyUnavailable" if unavailable else None))
 
 
