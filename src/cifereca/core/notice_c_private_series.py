@@ -300,6 +300,11 @@ def read_series_for_search(service, row, *, reader_scope):
     if key is None:
         return None
     try:
+        # A durable enabled connection is necessary, but not sufficient:
+        # disabling the provider must also revoke offline presentation.
+        if service._provider_enabled_for_identity(key.provider_id, key.identity_id) is not True:
+            return None
+        scenario = row.scenario
         doc = notice_cover_document_ref(key)
         canonical = canonical_cover_document_ref(key.edition_id)
         storage = service.storage
@@ -342,8 +347,16 @@ def read_series_for_search(service, row, *, reader_scope):
                     or not _sql_current(db, doc, raw["connection_epoch"])):
                     return None
                 relation = decode_public_series_relation(
-                    raw[_FIELD], provider_id=doc.provider_id, scenario=row.scenario,
+                    raw[_FIELD], provider_id=doc.provider_id, scenario=scenario,
                 )
-        return relation if reader_scope.current(service) else None
+        # Recheck policy and scope after the snapshot. A row reused under
+        # another source/scenario must not inherit this result.
+        if (not reader_scope.current(service)
+                or service._provider_enabled_for_identity(key.provider_id, key.identity_id) is not True
+                or _key(row, reader_scope.identity_id) != key
+                or row.scenario != scenario
+                or not reader_scope.current(service)):
+            return None
+        return relation
     except (AttributeError, TypeError, ValueError, LookupError, RuntimeError, SQLiteError):
         return None

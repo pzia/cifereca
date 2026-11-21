@@ -84,3 +84,56 @@ def test_existing_positional_action_abi_defaults_to_available():
     assert button.sensitive
     assert button.tooltip == "Consulter"
     assert not button._cifereca_action_state_blocked
+
+
+class _HostileReason:
+    def __str__(self):
+        raise AssertionError("must not coerce plugin reason")
+
+    def __bool__(self):
+        raise AssertionError("must not evaluate plugin reason")
+
+
+class _ReasonSubclass(str):
+    def __str__(self):
+        raise AssertionError("must not coerce native-string impostor")
+
+
+@pytest.mark.parametrize("reason, expected", [
+    ("  Compte\n\t à reconnecter  ", "Compte à reconnecter"),
+    ("x" * 400, "x" * 280),
+    ("source\x00invalide", ""),
+    ("source\u202ereversed", ""),
+    (_HostileReason(), ""),
+    (_ReasonSubclass("faux"), ""),
+    (42, ""),
+])
+def test_reason_parity_direct_and_both_cache_collectors(reason, expected):
+    action = UiBookDetailAction("refresh", "Actualiser", state="busy",
+                                unavailable_reason=reason)
+    book = BookRef("book", "Livre")
+    payload = CachedBookDetail("book", "profile", actions=(action,))
+    variants = [action]
+    for collect in (_sanitize, _valid_result):
+        result = collect(payload, book, "profile", "source")
+        assert result is not None and len(result.actions) == 1
+        assert result.actions[0].unavailable_reason == expected
+        variants.append(result.actions[0])
+    for variant in variants:
+        button = FakeButton("Actualiser")
+        apply_detail_action_state(button, variant)
+        assert not button.sensitive
+        assert button._cifereca_action_state_blocked
+        assert button.tooltip == ("Actualiser · En cours" +
+                                  (f" · {expected}" if expected else ""))
+
+
+@pytest.mark.parametrize("collect", [_sanitize, _valid_result])
+def test_malformed_uri_rejected_before_truth_test(collect):
+    book = BookRef("book", "Livre")
+    action = UiBookDetailAction("bad", "Action", uri=_HostileReason())
+    good = UiBookDetailAction("good", "Actualiser", callback=lambda: None)
+    result = collect(CachedBookDetail("book", "profile", actions=(action, good)),
+                     book, "profile", "source")
+    assert result is not None and len(result.actions) == 1
+    assert result.actions[0].title == "Actualiser"
