@@ -1,19 +1,25 @@
 """Local ADEPT evidence inventory (#5843), not a readiness/rights resolver.
 
-No Core, Config, provider, runtime, subprocess or file-content inspection.
-Read the existing database in a single query-only snapshot. Report only
+No Core startup, Config, provider, ADEPT runtime or user-content inspection.
+Query one coherent private SQLite image in memory, never a source SQLite handle. Report only
 closed states, counts and report-local ordinals, never persisted coordinates.
 """
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
+import os
 import sqlite3
+import stat
+import time
 
 from ..paths import database_file
 from ..storage import CURRENT_SCHEMA_VERSION, Storage
+from .library_inventory import _fingerprint, _open_root
 
 _LIMIT = 100_000
+_MAX_IMAGE = 128 * 1024 * 1024
+_SECONDS = 10
 
 
 class _Incomplete(Exception):
@@ -176,6 +182,75 @@ def _snapshot(db, *, identity, provider, credential, account_id):
             "current_rights": "unknown"}
 
 
+def _private_image(path, deadline):
+    """Stable direct image or existing isolated read-only WAL capture.
+
+    mode=ro SQLite can create or update a source SHM. Never use it here.
+    Do not read immutable=1 against a live database or ignore a journal.
+    """
+    path = path.absolute()
+    if ".." in path.parts:
+        raise _Incomplete("local_evidence_unavailable")
+    parent = fd = -1
+    live = False
+    try:
+        parent = _open_root(path.parent)
+
+        def present(suffix):
+            try:
+                os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
+                return True
+            except FileNotFoundError:
+                return False
+
+        if present("-journal"):
+            raise _Incomplete("snapshot_live_journal")
+        live = present("-wal")
+        if not live:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                         | os.O_CLOEXEC, dir_fd=parent)
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or not 100 <= before.st_size <= _MAX_IMAGE:
+                raise _Incomplete("snapshot_byte_budget_or_invalid")
+            parts, remaining = [], before.st_size
+            while remaining:
+                if time.monotonic() >= deadline:
+                    raise _Incomplete("snapshot_time_budget")
+                chunk = os.read(fd, min(1024 * 1024, remaining))
+                if not chunk:
+                    raise _Incomplete("snapshot_changed")
+                parts.append(chunk)
+                remaining -= len(chunk)
+            if (present("-wal") or present("-journal")
+                    or _fingerprint(before) != _fingerprint(os.fstat(fd))
+                    or _fingerprint(before) != _fingerprint(
+                        os.stat(path.name, dir_fd=parent, follow_symlinks=False))):
+                raise _Incomplete("snapshot_changed")
+            current = _open_root(path.parent)
+            try:
+                old, new = os.fstat(parent), os.fstat(current)
+                if (old.st_dev, old.st_ino) != (new.st_dev, new.st_ino):
+                    raise _Incomplete("snapshot_changed")
+            finally:
+                os.close(current)
+            return b"".join(parts)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if parent >= 0:
+            os.close(parent)
+    # Reuse the already-qualified isolated local reader. Its child uses
+    # shared locks without SQLite source handles; it never contacts ADEPT.
+    from .library_wal_image import read_wal_image
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _Incomplete("snapshot_time_budget")
+    image, reason = read_wal_image(path, max_bytes=_MAX_IMAGE, seconds=remaining)
+    if reason or image is None:
+        raise _Incomplete("snapshot_live_unavailable")
+    return image
+
+
 def diagnose_local_adept(*, identity=None, provider=None, credential=None,
                          account_id=None, database_path=None):
     """No schema creation/migration. An incomplete snapshot is never success."""
@@ -186,8 +261,19 @@ def diagnose_local_adept(*, identity=None, provider=None, credential=None,
     db = None
     try:
         path = Path(database_path) if database_path is not None else database_file(create=False)
-        db = sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True, timeout=2)
+        deadline = time.monotonic() + _SECONDS
+        image = _private_image(path, deadline)
+        if (not 100 <= len(image) <= _MAX_IMAGE
+                or image[:16] != b"SQLite format 3\\0"):
+            raise _Incomplete("local_evidence_unavailable")
+        db = sqlite3.connect(":memory:")
+        if not hasattr(db, "deserialize"):
+            raise _Incomplete("snapshot_reader_unavailable")
+        # Normalize only the private copy; a WAL header otherwise seeks sidecars.
+        db.deserialize(image[:18] + b"\\x01\\x01" + image[20:])
         db.execute("PRAGMA query_only=ON")
+        db.execute("PRAGMA trusted_schema=OFF")
+        db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         db.execute("BEGIN")
         if Storage._read_schema_version(db) != CURRENT_SCHEMA_VERSION:
             return failed_report("schema_unsupported")
@@ -195,7 +281,7 @@ def diagnose_local_adept(*, identity=None, provider=None, credential=None,
                          credential=credential, account_id=account_id)
     except _Incomplete as exc:
         return failed_report(exc.args[0])
-    except (sqlite3.Error, OSError, ValueError, TypeError, OverflowError):
+    except (sqlite3.Error, OSError, ValueError, TypeError, OverflowError, AttributeError):
         return failed_report("local_evidence_unavailable")
     finally:
         if db is not None:
