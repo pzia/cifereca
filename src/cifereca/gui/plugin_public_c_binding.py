@@ -84,6 +84,11 @@ def public_c_binding_revision(
             or receipt.window is not window
             or getattr(window, "_closed", False)
             or receipt.service is not getattr(window, "service", None)
+            # The DocumentRef argument crosses a plugin presentation
+            # boundary. Validate its native type before dataclass equality:
+            # a foreign __eq__ must never be invoked on GTK.
+            or type(document) is not CoverDocumentScope
+            or type(receipt.document) is not CoverDocumentScope
             or receipt.document != document):
         return None
     # The original live SearchResult is mutable. A new Core stamp, provider
