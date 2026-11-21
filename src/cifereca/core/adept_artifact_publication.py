@@ -129,6 +129,10 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
             inspect_artifact, adept_acsm_plan, uuid, _TRACE_LOG, identity_id=None):
     trace_ref = loan_trace_ref(loan, identity_id if identity_id is not None else getattr(loan, "identity_id", None))
     artifact = result.get("artifact") if isinstance(result, dict) else None
+    # The delegated runtime is an untrusted boundary. A non-mapping artifact
+    # cannot be interpreted as an absent artifact or raise into the loan worker.
+    if artifact is not None and type(artifact) is not dict:
+        raise ProviderConfigurationError("Résultat ADEPT invalide")
     artifact_path = str((artifact or {}).get("path") or adept_destination)
     produced_path = Path(artifact_path)
     # #5225: never interpret a symlinked file or a swapped staging/profile
