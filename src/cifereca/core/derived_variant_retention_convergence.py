@@ -14,7 +14,9 @@ from .derived_variant_journal import (
     DerivedJournalConflict, _COMMITTED, _decode, _measure, _receipt_digest,
 )
 from .derived_variant_publication import DerivedPublicationConflict
-from .derived_variant_retention_review import _canonical, _directory
+from .derived_variant_retention_review import (
+    _canonical, _directory, _index_receipt_references, _other_receipt_dependency,
+)
 from .derived_variant_retention_physical import _directory_stamp, _observe
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _Incomplete, _receipt_alias_verdict, _walk
@@ -52,13 +54,12 @@ def _snapshot(storage, identity_id):
             db.execute("BEGIN")
             directory = _directory(db, identity_id)
             rows, _ = _measure(db)
-            records, paths = [], {}
+            records, paths, inodes = [], {}, {}
             for key, _size in rows:
                 raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
                 intent = _decode(key, raw)
                 records.append((key, _receipt_digest(raw), intent))
-                for path in (intent.parent_path, intent.staged_path, intent.candidate_path):
-                    paths.setdefault(path, set()).add(key)
+                _index_receipt_references(paths, inodes, key, intent)
             owned = []
             for key, digest, intent in records:
                 if not key.startswith(_COMMITTED) or intent.identity_id != identity_id:
@@ -69,8 +70,7 @@ def _snapshot(storage, identity_id):
                     verdict = "canonical_sql_unverified"
                 else:
                     verdict = ("known_dependency" if (
-                        any(paths[path] != {key} for path in (
-                            intent.staged_path, intent.candidate_path))
+                        _other_receipt_dependency(paths, inodes, key, intent)
                         or db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
                                       (intent.staged_path,)).fetchone() is not None
                     ) else "canonical")
