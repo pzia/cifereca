@@ -394,10 +394,13 @@ def test_changed_filter_is_not_next_page(target):
 @pytest.mark.parametrize("body", [
     "<p>Aucun résultat pour la recherche roman</p>",
     "<div>Aucun résultat pour la recherche <strong>roman</strong></div>",
+    "<p>Aucun résultat pour la recherche <span>roman</span></p>",
     "<html><head><title>Recherche</title></head><body>"
     "<p>Aucun r&eacute;sultat pour la recherche roman</p></body></html>",
 ])
 def test_explicit_summary_zero_same_call_no_retry(body):
+    url = http_adapter.search_summary_url("roman")
+    assert http_adapter.summary_attests_zero(url, body)
     calls = []
 
     def handler(request):
@@ -405,7 +408,8 @@ def test_explicit_summary_zero_same_call_no_retry(body):
         assert request.method == "GET"
         assert request.url.path == "/1409/Catalog/SearchResultSummary"
         assert request.url.params["query"] == "roman"
-        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                              content=body.encode("utf-8"))
 
     session, _ = _session(handler)
     try:
@@ -442,7 +446,8 @@ def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
 
     def handler(request):
         calls.append(str(request.url))
-        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                              content=body.encode("utf-8"))
 
     session, _ = _session(handler)
     try:
