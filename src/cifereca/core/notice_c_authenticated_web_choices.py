@@ -268,9 +268,28 @@ def read_authenticated_web_choices(service, document, *, reader_scope, source_do
 
 def resolve_authenticated_web_choice(service, menu, *, choice_id):
     """Explicit click revalidates the original scope, account, session and C."""
+    # The GTK-held menu may have been copied/mutated after Core issued it.
+    # Validate every native collection and member before calling .current()
+    # or comparing a supplied choice id. Foreign equality or callbacks must
+    # not be invoked from an invalid click receipt.
     if (type(menu) is not AuthenticatedWebChoices or menu._witness is not _TOKEN
+            or not is_canonical_cover_document(menu.document)
             or not _epoch(menu.epoch) or type(choice_id) is not str
             or re.fullmatch(r"[0-9a-f]{64}", choice_id) is None
+            or type(menu._scope) is not SearchReadScope
+            or type(menu._bindings) is not tuple
+            or not 1 <= len(menu._bindings) <= 32
+            or any(type(binding) is not _Binding for binding in menu._bindings)
+            or type(menu.choices) is not tuple
+            or not 1 <= len(menu.choices) <= 256
+            or any(type(choice) is not AuthenticatedWebChoice
+                   or type(choice.choice_id) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", choice.choice_id) is None
+                   or type(choice.provider_id) is not str
+                   or type(choice.label) is not str
+                   or type(choice.access_mode) is not str
+                   or choice.access_mode != "authenticated"
+                   for choice in menu.choices)
             or not menu._scope.current(service)
             or not all(b.current(service, menu._scope) for b in menu._bindings)
             or sum(c.choice_id == choice_id for c in menu.choices) != 1):
