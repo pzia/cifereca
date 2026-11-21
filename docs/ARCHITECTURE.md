@@ -119,3 +119,7 @@ Voir [SIMULATION.md](SIMULATION.md), [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md
 ## Données de profils : visibilité commune (décision 08/11/2026)
 
 Les données métier de tous les profils sont consultables par tous les utilisateurs de l'installation ; un profil est un contexte/filtres, pas une ACL de lecture. La provenance et la titularité exactes demeurent visibles ; les secrets d'authentification et les opérations mutatrices auprès des fournisseurs conservent leurs contrôles distincts. Contrat détaillé : [PROFILE-DATA-SHARING.md](PROFILE-DATA-SHARING.md) (#2385, #3104, #4761, #4662).
+
+## Origines locales et surfaces de catalogue (#4030)
+
+Le rapprochement documentaire C ne peut ni attribuer une origine provider/ADEPT ni faire autorité pour un droit/GET. Un fournisseur peut exposer plusieurs surfaces (public/achats/prêts), avec consentement, portée et couverture indépendants. Priorité publique à **preuve égale seulement** ; aucun rapprochement titre/ISBN/SHA ne remplace la provenance A/B exacte. Voir [contrat de taxonomie #4030](CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md).
