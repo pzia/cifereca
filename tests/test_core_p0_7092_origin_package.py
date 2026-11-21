@@ -147,3 +147,52 @@ def test_cancel_or_detach_revokes_exact_continuation_token(store, tmp_path, phas
         done(fresh)
         assert c.page is fresh and fresh.page == 1 and fresh.can_continue
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("failure", ["worker_exception", "enqueue_refused", "enqueue_exception", "invalid_result"])
+def test_failed_next_page_revokes_previous_token_and_recovers(store, tmp_path, monkeypatch, failure):
+    from dataclasses import replace
+    service, root, _ = _service(store, tmp_path)
+    for i in range(5):
+        _extra(store, root, f"error-token-{i}.pdf")
+    _, _, host, c, tasks, renders = rig(service)
+    before = rows(store)
+    assert c.request(restart=True)
+    work, done = tasks[-1]
+    page = work()
+    done(page)
+    assert page.can_continue
+    submit = host.submit
+    next_page = c.broker.next_page
+
+    def fail(**kwargs):
+        raise RuntimeError("SYNTHETIC_PRIVATE_ERROR")
+
+    if failure == "worker_exception":
+        monkeypatch.setattr(c.broker, "next_page", fail)
+    elif failure == "enqueue_refused":
+        host.submit = lambda *_: False
+    elif failure == "enqueue_exception":
+        def reject(*args):
+            raise RuntimeError("SYNTHETIC_PRIVATE_ERROR")
+        host.submit = reject
+    else:
+        monkeypatch.setattr(c.broker, "next_page", lambda **kw: replace(page, coverage_complete=True))
+    admitted = c.request(restart=False)
+    if failure in ("enqueue_refused", "enqueue_exception"):
+        assert not admitted
+    else:
+        assert admitted
+        work, done = tasks[-1]
+        done(work())
+    assert c.page is None and c.stop is None and renders[-1] == (None, "ready")
+    assert "SYNTHETIC_PRIVATE_ERROR" not in repr(renders)
+    monkeypatch.setattr(c.broker, "next_page", next_page)
+    host.submit = submit
+    assert c.broker.next_page(token=page.token, confirmed=True) is None
+    assert c.request(restart=True)
+    work, done = tasks[-1]
+    fresh = work()
+    done(fresh)
+    assert fresh.page == 1 and c.page is fresh and fresh.can_continue
+    assert rows(store) == before

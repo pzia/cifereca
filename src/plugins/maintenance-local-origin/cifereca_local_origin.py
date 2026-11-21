@@ -73,10 +73,16 @@ class BatchController:
             if cancelled():
                 discard(old)
                 return None
-            if restart:
-                result = self.broker.preview(identity_id=self.identity, confirmed=True, cancelled=cancelled)
-            else:
-                result = self.broker.next_page(token=old.token, confirmed=True, cancelled=cancelled)
+            try:
+                if restart:
+                    result = self.broker.preview(identity_id=self.identity, confirmed=True, cancelled=cancelled)
+                else:
+                    result = self.broker.next_page(token=old.token, confirmed=True, cancelled=cancelled)
+            except Exception:
+                # A failing activation adapter must never leave a usable
+                # continuation or expose arbitrary exception text.
+                discard(old)
+                return None
             if cancelled():
                 discard(result)
                 discard(old)
@@ -99,6 +105,9 @@ class BatchController:
                     and all(flag is False for flag in (result.coverage_complete,
                             result.provider_access_performed, result.association_authorized))):
                 self.page = result
+            else:
+                discard(result)
+                discard(old)
             self.render(self.page, "ready")
 
         try:
