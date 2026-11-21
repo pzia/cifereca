@@ -294,6 +294,12 @@ def _card(card, source_url, rank, page_index):
         key: {'source_url': source_url, 'source': selectors[key], 'kind': 'observed_public_html'}
         for key, value in values.items() if value
     }
+    if selected:
+        metadata['field_evidence']['selected_format_label'] = {
+            'source_url': source_url,
+            'source': '.BuySelectedFormat' if explicit_selected else '.FormatLivre',
+            'kind': 'observed_public_html',
+        }
     if price:
         metadata['field_evidence']['price'] = {
             'source_url': source_url, 'source': '.ColPrice', 'kind': 'observed_public_html',
@@ -349,6 +355,7 @@ def parse_public_search(text, source_url):
         cards = _nodes(grids[0] if grids else root, 'LivreDuThemeDetail')
         if (not cards or any(n.tag != 'tr' for n in cards)
                 or any(len(_nodes(n, 'LivreDuThemeDetail')) != 1 for n in cards)
+                or (not grids and any(len(_nodes(n, 'BestSalesItem')) != 1 for n in cards))
                 or len(_nodes(root, 'LivreDuThemeDetail')) != len(cards)):
             _fail('unknown_search_layout')
         empty_markers = [n for n in _visible_walk(root)
@@ -368,7 +375,20 @@ def parse_public_search(text, source_url):
     # The observed layout uses a numeric ResultatDetail and optionally
     # a separate literal "résultat(s)" label. Do not discard unknown
     # competing counters and then claim an exhaustive zero/one result.
-    total_labels = [_selected_text(n) for n in _nodes(root, 'ResultatDetail')]
+    total_nodes = _nodes(root, 'ResultatDetail')
+    # The native ASP.NET counter was also present in the simple-search
+    # loup receipt. Its exact ID can attest the number even without the
+    # styling class, but never a page without the qualified result grid.
+    native = [n for n in _visible_walk(root)
+              if n.attrs.get('id') == GRID_ID.removesuffix('_GridView1') + '_lblNbLivres']
+    if len(native) > 1:
+        _fail('unqualified_total')
+    if not advanced and native:
+        if native[0].tag != 'span' or not re.fullmatch(r'[0-9]{1,9}', _selected_text(native[0])):
+            _fail('unqualified_total')
+        if not any(node is native[0] for node in total_nodes):
+            total_nodes.append(native[0])
+    total_labels = [_selected_text(n) for n in total_nodes]
     totals = [value for value in total_labels if re.fullmatch(r'[0-9]{1,9}', value)]
     other_labels = [value for value in total_labels if not re.fullmatch(r'[0-9]{1,9}', value)]
     if (other_labels not in ([], ['résultat(s)'])
