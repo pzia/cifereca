@@ -83,7 +83,7 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
             expanded, originals = expand_filter_sources([row], scope="all")
             assert expanded == [row] and originals == {}
         from cifereca.core.notice_c_loaded_filter import (
-            matching_source_label, collapse_filter_sources, _MARKER,
+            matching_source_label, collapse_filter_sources, is_expanded_source, _MARKER,
         )
         assert matching_source_label({
             "_notice_c_matched_providers": (other_provider,),
@@ -97,5 +97,6 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
                 raise AssertionError("foreign equality in group collapse")
 
         foreign = {_MARKER: HostileHash(), "provider_id": other_provider}
+        assert not is_expanded_source(foreign)
         assert collapse_filter_sources([foreign], {}) == [foreign]
         assert db.entitlements() == db.acquisitions() == db.placements() == []
