@@ -215,7 +215,13 @@ def known_public_notice_candidates(
             scenario="notice_c_public", source_provider=hit.provider_id,
             source_credential="", source_collection="notice_c_public",
             revision_id=hit.source_revision, owned=None, downloadable=None,
+            # Share Search C's documentary status vocabulary. This is a
+            # partial *known-source* page, never a complete supplier query
+            # or an indication of purchase/borrowing rights.
             metadata={"notice_c_known": True, "notice_c_stale": hit.stale,
+                      "notice_c_query_status": page.status,
+                      "notice_c_cover_state": hit.cover_state,
+                      "notice_c_epoch": hit.epoch,
                       **_series_metadata(hit)},
         )
         alternative_hits = tuple(
