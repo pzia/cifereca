@@ -40,9 +40,10 @@ def _snapshot(item):
     def freeze(value, depth=0):
         nonlocal remaining, characters
         remaining -= 1
-        # Alternative bibliography evidence nests raw language tags one
-        # level deeper than the primary metadata (DTO depth seven).
-        if remaining < 0 or depth > (7 if count else 6):
+        # An alternative's structured age is deeper than a language tag:
+        # DTO -> metadata -> alternatives -> source -> evidence -> youth_age
+        # -> ranges -> range -> scalar. Keep node/string budgets unchanged.
+        if remaining < 0 or depth > (8 if count else 6):
             raise ValueError("known_c_snapshot_budget")
         kind = type(value)
         if kind is str:
