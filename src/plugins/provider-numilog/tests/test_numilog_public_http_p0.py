@@ -420,3 +420,37 @@ def test_full_public_flight_budget_still_joins_existing_exact_get(monkeypatch):
     assert len(result.items) == 20
     assert len(flights) == public_client._MAX_PUBLIC_SEARCH_FLIGHTS
     assert fake.requests == []
+
+
+def test_retained_search_parser_upgrade_has_distinct_implementation(monkeypatch):
+    from dataclasses import replace
+    from hashlib import sha256
+
+    old = sha256(b"numilog.public.search.html.v1").hexdigest()
+    family = sha256(b"numilog.public.search.html").hexdigest()
+    new = sha256(b"numilog.public.search.html.v2").hexdigest()
+    fake, _ = setup_public_client(monkeypatch)
+    retained = public_client.fetch_public_search("jefferson", _retain_input=True)
+    raw = retained.raw_input
+    assert raw is not None
+    assert raw.parser_family_digest == family
+    assert raw.parser_implementation_digest == new != old
+    assert raw.input_digest == sha256(HTML).hexdigest()
+    assert raw.transport_digest == public_client._transport_digest(raw._url)
+
+    # Receipt coordinates remain the original v1 coordinates on replay.
+    original = replace(raw, parser_implementation_digest=old)
+    assert public_client._parse_retained_search_input(original) == retained.page
+    assert original.parser_implementation_digest == old
+
+    # A v1 body now refused by the stricter parser is not a new zero,
+    # and replay does not re-fetch it or rewrite its original receipt.
+    inert = b"<textarea>" + HTML + b"</textarea>"
+    previous = replace(
+        public_client._retained_search_input(inert, raw._url),
+        parser_implementation_digest=old,
+    )
+    with pytest.raises(ProviderError, match="public_catalog_layout_unverified"):
+        public_client._parse_retained_search_input(previous)
+    assert previous.parser_implementation_digest == old
+    assert len(fake.requests) == 1
