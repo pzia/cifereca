@@ -327,3 +327,41 @@ def test_two_real_provider_entrypoints_share_only_anonymous_get(monkeypatch):
     finally:
         public.close()
         private.close()
+
+
+def test_full_public_flight_budget_refuses_seventeenth_distinct_get(monkeypatch):
+    from concurrent.futures import Future
+
+    fake, _parameters = setup_public_client(monkeypatch)
+    # These reservations are separate unrelated URLs, not cached search
+    # results. Saturation must not bypass the shared 16-flight limit.
+    flights = {("occupied", i): Future()
+               for i in range(public_client._MAX_PUBLIC_SEARCH_FLIGHTS)}
+    monkeypatch.setattr(public_client, "_PUBLIC_SEARCH_FLIGHTS", flights)
+    with pytest.raises(ProviderError, match="public_catalog_request_in_progress"):
+        public_client.fetch_public_search("jefferson")
+    assert fake.requests == []
+    assert len(flights) == public_client._MAX_PUBLIC_SEARCH_FLIGHTS
+
+    # After independent flights complete, the exact public GET still works.
+    flights.clear()
+    results = public_client.fetch_public_search("jefferson")
+    assert len(results.items) == 20 and len(fake.requests) == 1
+    assert not flights
+
+
+def test_full_public_flight_budget_still_joins_existing_exact_get(monkeypatch):
+    from concurrent.futures import Future
+
+    fake, _parameters = setup_public_client(monkeypatch)
+    url = public_client.public_search_url("jefferson")
+    matching = Future()
+    matching.set_result((public_client._parse_search_body(HTML, url), HTML))
+    flights = {(public_client._transport_digest(url), 15.0): matching}
+    flights.update({("occupied", i): Future()
+                    for i in range(public_client._MAX_PUBLIC_SEARCH_FLIGHTS - 1)})
+    monkeypatch.setattr(public_client, "_PUBLIC_SEARCH_FLIGHTS", flights)
+    result = public_client.fetch_public_search("jefferson")
+    assert len(result.items) == 20
+    assert len(flights) == public_client._MAX_PUBLIC_SEARCH_FLIGHTS
+    assert fake.requests == []
