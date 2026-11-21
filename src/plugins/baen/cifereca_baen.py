@@ -297,19 +297,22 @@ def _baen_explicit_download_offer(html_text, detail_url):
             # Malformed upstream HTML is not a public transfer offer.
             continue
         path = parts.path.casefold()
+        segments = path.split('/')
         # A label such as "Download EPUB" does not make an auth endpoint,
-        # owned-file route, signed link or encoded traversal public. The
-        # only captured /download/index/owned/ path redirected to login.
-        # Do not even hand these candidates to transport.http.
+        # owned-file route, signed link or encoded traversal public. Check
+        # the exact *first segment*, not only /customer/...; /customer and
+        # /download/index (without a trailing slash) are private too.
+        # The captured /download/index/owned/ path redirected to login.
         if (parts.query or parts.fragment or '%' in parts.path
-                or '\\' in parts.path or not path.startswith('/')
-                or path.startswith('//')
-                or any(part in ('.', '..') for part in path.split('/'))
-                or path.startswith((
-                    '/customer/', '/account/', '/checkout/', '/cart/',
-                    '/login/', '/sso/', '/admin/', '/oauth/',
-                    '/download/index/',
-                ))
+                or ';' in parts.path or '\\' in parts.path
+                or not path.startswith('/')
+                or any(not segment or segment in ('.', '..')
+                       for segment in segments[1:])
+                or segments[1] in (
+                    'customer', 'account', 'checkout', 'cart',
+                    'login', 'sso', 'admin', 'oauth',
+                )
+                or segments[1:3] == ['download', 'index']
                 or path.endswith(('.pdf', '.mobi', '.azw', '.azw3'))):
             continue
         epub_attested = 'epub' in text or path.endswith('.epub')
