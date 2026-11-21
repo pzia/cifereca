@@ -3,6 +3,8 @@
 The response is the sanitized user-provided Jefferson fixture; no live requests.
 """
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 
 import pytest
@@ -156,3 +158,172 @@ def test_public_catalogue_is_declared_separately_and_release_version_matches():
     assert manifest["package"]["version"] == VERSION
     assert manifest["plugins"][0]["version"] == VERSION
     assert "catalog.search" in manifest["plugins"][0]["capabilities"]
+
+
+def _overlapping_readers(monkeypatch, response, first, second):
+    """Both callers reach the same in-flight transport before it returns."""
+    fake, _ = setup_public_client(monkeypatch, response)
+    started, joined, release = Event(), Event(), Event()
+    original_wait = public_client._await_public_search_flight
+
+    @contextmanager
+    def stream(method, url):
+        fake.requests.append((method, url))
+        started.set()
+        assert release.wait(5)
+        yield response
+
+    def await_flight(future, timeout):
+        joined.set()
+        return original_wait(future, timeout)
+
+    monkeypatch.setattr(fake, "stream", stream)
+    monkeypatch.setattr(public_client, "_await_public_search_flight", await_flight)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        leader = workers.submit(first)
+        try:
+            assert started.wait(5)
+            follower = workers.submit(second)
+            assert joined.wait(5)
+        finally:
+            release.set()
+    return fake, leader, follower
+
+
+def test_overlapping_exact_public_get_parses_once_and_receipts_are_independent(monkeypatch):
+    original_parse = public_client.parse_public_search
+    parses = []
+
+    def parse(text, url):
+        parses.append(url)
+        return original_parse(text, url)
+
+    monkeypatch.setattr(public_client, "parse_public_search", parse)
+    def read():
+        return public_client.fetch_public_search("jefferson", _retain_input=True)
+    fake, first, second = _overlapping_readers(monkeypatch, FakeResponse(), read, read)
+    left, right = first.result(), second.result()
+    assert len(fake.requests) == len(parses) == 1
+    assert len(left.page.items) == len(right.page.items) == 20
+    assert left.page.items[0] is not right.page.items[0]
+    assert left.raw_input.token != right.raw_input.token
+    assert left.raw_input.transport_digest == right.raw_input.transport_digest
+    assert left.raw_input.input_digest == right.raw_input.input_digest
+    assert all(not row.owned and not row.downloadable for row in right.page.items)
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+
+
+def test_overlapping_public_error_is_shared_without_retry_or_false_zero(monkeypatch):
+    response = FakeResponse(status=429)
+    response.headers["retry-after"] = "120"
+    def read():
+        return public_client.fetch_public_search("jefferson")
+    fake, first, second = _overlapping_readers(monkeypatch, response, read, read)
+    for result in first, second:
+        with pytest.raises(public_client.PublicRateLimitError) as error:
+            result.result()
+        assert str(error.value) == "Numilog : public_catalog_rate_limited"
+        assert error.value.retry_after_seconds == 120
+    assert len(fake.requests) == 1
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+    # Not a second TTL cache: the independent ordinary transport call can
+    # run again; session-owned cooldown remains separately enforced.
+    with pytest.raises(public_client.PublicRateLimitError):
+        read()
+    assert len(fake.requests) == 2
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_different_page_or_explicit_refresh_never_joins_public_flight(monkeypatch, guarded):
+    response = FakeResponse()
+    fake, _ = setup_public_client(monkeypatch, response)
+    first_started, second_started, release = Event(), Event(), Event()
+    checked = []
+    original_url = public_client.public_search_url("jefferson")
+
+    @contextmanager
+    def stream(method, url):
+        fake.requests.append((method, url))
+        (first_started if len(fake.requests) == 1 else second_started).set()
+        assert release.wait(5)
+        yield response
+
+    monkeypatch.setattr(fake, "stream", stream)
+
+    def second():
+        if guarded:
+            return public_client.fetch_public_search_url(
+                original_url, _before_get=lambda: checked.append(True))
+        return public_client.fetch_public_search("jefferson", page=1)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        leader = workers.submit(public_client.fetch_public_search, "jefferson")
+        try:
+            assert first_started.wait(5)
+            follower = workers.submit(second)
+            assert second_started.wait(5)
+        finally:
+            release.set()
+    assert len(leader.result().items) == 20
+    if guarded:
+        assert len(follower.result().items) == 20
+        assert checked == [True]
+        assert fake.requests[0] == fake.requests[1]
+    else:
+        # Page-zero fixture is deliberately not valid evidence for page 1.
+        with pytest.raises(ProviderError, match="public_catalog_layout_unverified"):
+            follower.result()
+        assert fake.requests[0] != fake.requests[1]
+    assert len(fake.requests) == 2
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+
+
+def test_live_and_replay_layout_reason_is_closed_and_identical(monkeypatch):
+    body = b"<form>Login</form>"
+    url = public_client.public_search_url("jefferson")
+    fake, _ = setup_public_client(monkeypatch, FakeResponse(body=body))
+    raw = public_client._retained_search_input(body, url)
+    for read in (lambda: public_client.fetch_public_search("jefferson"),
+                 lambda: public_client._parse_retained_search_input(raw)):
+        with pytest.raises(ProviderError) as error:
+            read()
+        assert str(error.value) == "Numilog : public_catalog_layout_unverified:unknown_search_layout"
+    assert len(fake.requests) == 1
+
+    def hostile_reason(*_):
+        raise public_client.PublicSearchParseError("private-marker")
+    monkeypatch.setattr(public_client, "parse_public_search", hostile_reason)
+    with pytest.raises(ProviderError) as error:
+        public_client._parse_retained_search_input(raw)
+    assert str(error.value) == "Numilog : public_catalog_layout_unverified:unknown"
+
+
+def test_two_real_provider_entrypoints_share_only_anonymous_get(monkeypatch):
+    from cifereca_numilog_public_provider import NumilogPublicSession
+    private = NumilogSession(
+        credential_id="fictional-account", label="", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    public = NumilogPublicSession(
+        credential_id="__public__", label="", credentials={}, options={},
+    )
+    private._rows = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("private library read during public search"))
+    public.connect()
+    try:
+        fake, first, second = _overlapping_readers(
+            monkeypatch, FakeResponse(),
+            lambda: private.search("jefferson", scope="catalog"),
+            lambda: public.search("jefferson"),
+        )
+        left, right = first.result(), second.result()
+        assert len(left) == len(right) == 20
+        assert len(fake.requests) == 1
+        assert all(not row.owned and not row.downloadable
+                   and row.source_account_id is None for row in left + right)
+        assert left[0].source_provider == "numilog"
+        assert right[0].source_provider == "numilog-catalog"
+        assert left[0] is not right[0]
+    finally:
+        public.close()
+        private.close()

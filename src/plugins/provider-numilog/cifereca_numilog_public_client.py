@@ -6,6 +6,9 @@ private library URLs, fulfillment or downloads cross this boundary.
 from __future__ import annotations
 
 from email.utils import parsedate_to_datetime
+from concurrent.futures import Future, TimeoutError as FlightTimeout
+from copy import deepcopy
+from threading import Lock
 from dataclasses import dataclass, field
 from hashlib import sha256
 from uuid import uuid4
@@ -130,6 +133,29 @@ def _retained_search_input(body, url):
     )
 
 
+# Closed parser reasons already emitted by the shared deterministic parser.
+# Keep the coarse ProviderError prefix for compatibility; upstream text,
+# query strings and HTML are never included in the diagnostic reason.
+_LAYOUT_REASONS = frozenset({
+    "ambiguous_html_attribute", "hidden_field", "ambiguous_field", "invalid_field",
+    "invalid_search_url", "invalid_product_url", "ambiguous_price", "unqualified_price",
+    "ambiguous_product", "missing_title", "ambiguous_metadata", "invalid_authors",
+    "ambiguous_cover", "invalid_formats", "html_size", "html_structure",
+    "unknown_search_layout", "unqualified_total", "inconsistent_results",
+    "duplicate_product", "ambiguous_pagination", "inconsistent_pagination",
+    "inconsistent_page", "excessive_pagination", "pagination_query_changed",
+    "invalid_pagination", "invalid_facets", "ambiguous_sort", "invalid_sort",
+})
+
+
+def _parse_search_body(body, url):
+    try:
+        return parse_public_search(body.decode("utf-8-sig", errors="replace"), url)
+    except PublicSearchParseError as exc:
+        reason = exc.code if type(exc.code) is str and exc.code in _LAYOUT_REASONS else "unknown"
+        raise ProviderError("Numilog : public_catalog_layout_unverified:" + reason) from None
+
+
 def _parse_retained_search_input(raw):
     """Pure replay of the exact parser input; never a transport operation."""
     if (type(raw) is not _RetainedSearchInput
@@ -141,10 +167,7 @@ def _parse_retained_search_input(raw):
             or _transport_digest(raw._url) != raw.transport_digest
             or raw.parser_family_digest != _PARSER_FAMILY_DIGEST):
         raise ProviderError("Numilog : public_catalog_replay_invalid")
-    try:
-        return parse_public_search(raw._body.decode("utf-8-sig", errors="replace"), raw._url)
-    except PublicSearchParseError:
-        raise ProviderError("Numilog : public_catalog_layout_unverified") from None
+    return _parse_search_body(raw._body, raw._url)
 
 
 def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
@@ -160,6 +183,81 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
         return fetch_public_search_url(public_search_url(query, page), timeout=timeout,
                                        _retain_input=True)
     return fetch_public_search_url(public_search_url(query, page), timeout=timeout)
+
+
+# One in-flight read per exact anonymous transport, not another TTL cache.
+# Keep existing session-local budgets, epochs and replay receipts independent.
+# The digest describes the fixed GET producer/headers and the exact URL.
+_PUBLIC_SEARCH_FLIGHTS = {}
+_PUBLIC_SEARCH_FLIGHT_LOCK = Lock()
+_MAX_PUBLIC_SEARCH_FLIGHTS = 16
+
+
+@dataclass(frozen=True)
+class _SharedSearchFailure:
+    message: str
+    retry_after: float | None = None
+
+
+def _shareable_failure(exc):
+    if type(exc) is PublicRateLimitError:
+        return _SharedSearchFailure("Numilog : public_catalog_rate_limited", exc.retry_after_seconds)
+    if type(exc) is ProviderError:
+        message = str(exc)
+        prefix = "Numilog : public_catalog_"
+        if message in {prefix + suffix for suffix in (
+                "forbidden", "redirect_unverified", "unavailable", "unexpected_mime",
+                "response_too_large", "network_unavailable")}:
+            return _SharedSearchFailure(message)
+        layout = prefix + "layout_unverified:"
+        if message.startswith(layout) and message[len(layout):] in _LAYOUT_REASONS | {"unknown"}:
+            return _SharedSearchFailure(message)
+    return _SharedSearchFailure("Numilog : public_catalog_network_unavailable")
+
+
+def _await_public_search_flight(future, timeout):
+    try:
+        outcome = future.result(timeout=timeout)
+    except FlightTimeout:
+        # Never start another GET simply because one waiter ran out of budget.
+        raise ProviderError("Numilog : public_catalog_request_in_progress") from None
+    if type(outcome) is _SharedSearchFailure:
+        if outcome.retry_after is not None:
+            error = PublicRateLimitError(outcome.message, None)
+            error.retry_after_seconds = outcome.retry_after
+            raise error
+        raise ProviderError(outcome.message)
+    page, body = outcome
+    return deepcopy(page), body
+
+
+def _coalesced_public_search(url, timeout):
+    key = (_transport_digest(url), timeout)
+    with _PUBLIC_SEARCH_FLIGHT_LOCK:
+        flight = _PUBLIC_SEARCH_FLIGHTS.get(key)
+        leader = flight is None and len(_PUBLIC_SEARCH_FLIGHTS) < _MAX_PUBLIC_SEARCH_FLIGHTS
+        if leader:
+            flight = Future()
+            _PUBLIC_SEARCH_FLIGHTS[key] = flight
+    if flight is None:
+        # At capacity, retain the previous bounded per-session behavior.
+        return _fetch_public_search_page(url, timeout, None)
+    if not leader:
+        return _await_public_search_flight(flight, timeout)
+    try:
+        page, body = _fetch_public_search_page(url, timeout, None)
+        # No mutable SearchResult DTO, cache generation or retained token is
+        # shared between callers. The original parsed page stays with leader.
+        outcome = (deepcopy(page), body)
+    except BaseException as exc:
+        with _PUBLIC_SEARCH_FLIGHT_LOCK:
+            _PUBLIC_SEARCH_FLIGHTS.pop(key, None)
+            flight.set_result(_shareable_failure(exc))
+        raise
+    with _PUBLIC_SEARCH_FLIGHT_LOCK:
+        _PUBLIC_SEARCH_FLIGHTS.pop(key, None)
+        flight.set_result(outcome)
+    return page, body
 
 
 def fetch_public_search_url(url: str, *, timeout: float = 15.0,
@@ -179,6 +277,20 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0,
     # live requests must retain the narrower provider budget.
     public_search_url(parsed["query"], int(parsed.get("GRID_PAGE", "0")))
     timeout = _checked_timeout(timeout)
+    # An explicit refresh has its own late authority guard and must actually
+    # start its own transport; it cannot satisfy that guard with shared data.
+    if _before_get is None:
+        page, body = _coalesced_public_search(url, timeout)
+    else:
+        page, body = _fetch_public_search_page(url, timeout, _before_get)
+    # Replay receipts remain unique to each session even when one anonymous
+    # in-flight GET served multiple independent callers.
+    if _retain_input is True:
+        return _RetainedSearchPage(page, _retained_search_input(body, url))
+    return page
+
+
+def _fetch_public_search_page(url, timeout, _before_get):
     try:
         with HTTPX_TRANSPORT.client(
             producer="provider.numilog.public",
@@ -213,14 +325,8 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0,
     except httpx.HTTPError:
         raise ProviderError("Numilog : public_catalog_network_unavailable") from None
 
-    try:
-        body = b"".join(chunks)
-        page = parse_public_search(body.decode("utf-8-sig", errors="replace"), url)
-        if _retain_input is True:
-            return _RetainedSearchPage(page, _retained_search_input(body, url))
-        return page
-    except PublicSearchParseError:
-        raise ProviderError("Numilog : public_catalog_layout_unverified") from None
+    body = b"".join(chunks)
+    return _parse_search_body(body, url), body
 
 
 def fetch_public_detail(product_url: str, *, timeout: float = 15.0, _before_get=None):
