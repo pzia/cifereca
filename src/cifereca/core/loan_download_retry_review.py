@@ -15,6 +15,7 @@ from .canonical_loan_retry_guard import historical_adept_ledger_hold
 from ..plugin_api.loan_inventory import LoanInventoryScope
 from .loan_download_retry import (
     LoanDownloadRetry, _INTERVENTION_PREFIX, _OWNED_KEY_PREFIX, _decode, _key,
+    _retry_connection,
     read_adept_intervention,
 )
 from .notice_c_purchase_descriptive_read import _read_descriptive_txn
@@ -111,7 +112,7 @@ def review_loan_download_retries(service, *, identity_id: str):
     titles = _title_index(service, identity_id)
     scopes = _inventory_scopes(service, identity_id)
     result = []
-    with storage._lock, storage._connect() as db:
+    with _retry_connection(storage) as db:
         db.execute("BEGIN")
         sources = db.execute(
             "SELECT ref.provider_id,ref.credential_id,ref.account_id,ref.branch_id,"
@@ -173,8 +174,10 @@ def reset_reviewed_loan_download_retry(service, *, identity_id: str,
     source = row.source
     scope = source.scope
     scopes = _inventory_scopes(service, identity_id)
+    if storage._connect().in_transaction:
+        raise ValueError("loan_download_retry_nested_transaction")
     with InterProcessLock(acquisition_lock_file()):
-        with storage._lock, storage._connect() as db:
+        with _retry_connection(storage) as db:
             db.execute("BEGIN IMMEDIATE")
             if not current() or not _exact_borrower_bound_in_db(db, scope):
                 raise ValueError("loan_download_review_scope_changed")
