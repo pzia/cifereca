@@ -93,3 +93,26 @@ def test_two_independent_renames_to_one_vacant_target_are_held(store, tmp_path):
     assert len(renames) == 2
     assert {e.state for e in renames} == {"destination_conflict"}
     assert not plan.executable
+
+
+@pytest.mark.parametrize("selection", [0, 1, -1, 2, True, "0"])
+def test_single_group_selection_preserves_page_conflicts(store, tmp_path, selection):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    _put_epub(store, root, "Acquisitions/one.epub")
+    _put_epub(store, root, "Acquisitions/two.epub",
+              metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
+    scope, page = _run(_service(store, root))
+    before = rows(store)
+    selected = prepare_organizer_dry_run(scope, page, confirmed=True, group_index=selection)
+    if type(selection) is int and selection in (0, 1):
+        assert selected.group_index == selection and not selected.executable
+        entry, = selected.entries
+        assert entry.placement_id == page["groups"][selection]["files"][0]["placement"]
+        assert entry.state == "destination_conflict"
+        final = confirm_organizer_dry_run(scope, page, selected, confirmed=True)
+        assert final.confirmed and final.group_index == selection and final.entries == selected.entries
+        assert not final.executable
+    else:
+        assert selected is None
+    assert rows(store) == before
