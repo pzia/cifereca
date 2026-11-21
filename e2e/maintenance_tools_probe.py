@@ -342,7 +342,9 @@ def main():
         "derived": ("maintenance-derived-variants", "maintenance.library.derived-variants"),
     }
     selection = (guided_packages[args.guided_only],) if args.guided_only else tuple(guided_packages.values())
-    for folder in ("maintenance-page", *(folder for folder, _key in selection)):
+    if any(folder == "maintenance-derived-variants" for folder, _key in selection):
+        selection += (("maintenance-derived-variants", "maintenance.library.derived-capacity"),)
+    for folder in dict.fromkeys(("maintenance-page", *(folder for folder, _key in selection))):
         package = fixture_root / (folder + ".zip")
         with ZipFile(package, "w") as archive:
             for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
@@ -559,7 +561,8 @@ def main():
         report["checks"]["P0_7100_real_installed_page_contribution"] = True
         if args.guided_only:
             key = guided_packages[args.guided_only][1]
-            assert {r.plugin_id for r in manager.services("maintenance.tool")} == {key}
+            expected_ids = {selected for _, selected in selection}
+            assert {r.plugin_id for r in manager.services("maintenance.tool")} == expected_ids
             expected = {
                 "organizer": "Organiser la bibliothèque",
                 "origin": "Suggestions de provenance — par lots",
@@ -578,6 +581,15 @@ def main():
             manager.set_enabled(key, False)
             refresh_tools()
             assert manager.service(key) is None and title not in titles()
+            if args.guided_only == "derived":
+                capacity_key = "maintenance.library.derived-capacity"
+                assert titles().count("Capacité du journal des variantes") == 1
+                manager.set_enabled(capacity_key, False)
+                refresh_tools()
+                assert "Capacité du journal des variantes" not in titles()
+                manager.set_enabled(capacity_key, True)
+                refresh_tools()
+                assert titles().count("Capacité du journal des variantes") == 1
             assert w._plugin_page_widgets["tools"] is host
             manager.set_enabled(key, True)
             refresh_tools()
@@ -612,8 +624,9 @@ def main():
         assert "Lecture seule" in origin_rows[0].get_subtitle()
         assert {resolved.plugin_id for resolved in original_services("maintenance.tool")} == {
             "maintenance.library.organizer", "maintenance.library.local-origin",
-            "maintenance.library.derived-variants",
+            "maintenance.library.derived-variants", "maintenance.library.derived-capacity",
         }
+        # Historical result key retained for downstream CI summaries.
         report["checks"]["P0_7100_three_real_guided_contributions"] = True
         # Prove each installed contribution is individually optional in the
         # *actual* GTK host, not merely in a detached PluginManager.
@@ -621,6 +634,7 @@ def main():
             "maintenance.library.organizer": "Organiser la bibliothèque",
             "maintenance.library.local-origin": "Suggestions de provenance — par lots",
             "maintenance.library.derived-variants": "Publications dérivées interrompues",
+            "maintenance.library.derived-capacity": "Capacité du journal des variantes",
         }
         host_widget = w._plugin_page_widgets["tools"]
 
