@@ -148,14 +148,25 @@ def require_no_pending_derived_recipe(
         db = storage._connect()
         if db.in_transaction:
             raise DerivedJournalConflict("derived_journal_nested_transaction")
-        # Presence, even of a corrupt value, blocks a repeat of this recipe.
-        # No private payload, digest or path is returned to the caller.
-        if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
-            raise DerivedJournalConflict("derived_journal_slot_occupied")
+        # Use a single read snapshot for both the exact slot and the
+        # paired receipt invariant. Reserve repeats these checks atomically;
+        # this early veto avoids allocating expensive staging bytes.
+        with db:
+            db.execute("BEGIN")
+            if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
+                raise DerivedJournalConflict("derived_journal_slot_occupied")
+            from .derived_variant_compact_receipt import _measure_compact_in_transaction
+            _measure_compact_in_transaction(db, require_paired=True)
 
 
 def _decode(key, raw):
     try:
+        # SQLite's dynamic typing can return a BLOB even for TEXT columns.
+        # json.loads accepts bytes, but a receipt digest is defined on text.
+        # Such a row must fail with a closed journal code, not an AttributeError.
+        if (type(key) is not str or type(raw) is not str
+                or not 0 < len(raw.encode("utf-8")) <= _MAX_RECORD_BYTES):
+            raise ValueError()
         record = json.loads(raw, object_pairs_hook=_unique_pairs)
         if (type(record) is not dict or set(record) != {"schema", "nonce", "intent"}
                 or record["schema"] != "derived.intent.v2"

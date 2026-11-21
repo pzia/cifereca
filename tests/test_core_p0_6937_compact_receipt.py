@@ -158,3 +158,73 @@ def test_compact_shadow_cannot_refund_active_journal_admission(committed, monkey
         assert db.metadata_get(journal._slot(next_intent)) is None
     assert (db.metadata_get(key), db.metadata_get(proof_key)) == before
     assert Path(intent.staged_path).samefile(intent.candidate_path)
+
+
+@pytest.mark.parametrize("case", ["paired", "full_paired", "orphan", "corrupt", "changed_original"])
+def test_early_recipe_guard_checks_compact_pair_before_conversion(committed, monkeypatch, case):
+    db, intent, key, raw = committed
+    proof_key, proof = compact.encode_committed_witness(key, raw)
+    db.metadata_set(proof_key, proof if case != "corrupt" else "bad")
+    if case == "orphan":
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+    elif case == "changed_original":
+        db.metadata_set(key, raw + " ")
+    elif case == "full_paired":
+        monkeypatch.setattr(compact, "_MAX_PROOFS", 1)
+        monkeypatch.setattr(compact, "_MAX_PROOF_TOTAL", len(proof))
+    before = (db.metadata_get(key), db.metadata_get(proof_key))
+    def preflight():
+        return journal.require_no_pending_derived_recipe(
+            db, identity_id=intent.identity_id, placement_id=intent.parent_placement_id,
+            transformer_id=intent.transformer_id, profile_id=intent.profile_id,
+            options_fingerprint="new-recipe",
+        )
+    if case in ("paired", "full_paired"):
+        assert preflight() is None
+    else:
+        with pytest.raises(journal.DerivedJournalConflict, match="derived_compact_"):
+            preflight()
+    assert (db.metadata_get(key), db.metadata_get(proof_key)) == before
+    assert Path(intent.staged_path).samefile(intent.candidate_path)
+    assert not db._connect().in_transaction
+
+
+@pytest.mark.parametrize("key_kind", ["pending", "committed"])
+def test_blob_receipt_is_closed_corruption_not_unhandled_attribute_error(committed, key_kind):
+    db, intent, key, raw = committed
+    if key_kind == "pending":
+        key = journal._slot(intent)
+    with db._lock, db._connect() as sql:
+        sql.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)",
+                    (key, sqlite3.Binary(raw.encode("ascii"))))
+    with pytest.raises(journal.DerivedJournalConflict, match="derived_journal_corrupt"):
+        journal.summarize_derived_journal(db)
+    with pytest.raises(journal.DerivedJournalConflict, match="derived_journal_corrupt"):
+        journal.reserve_derived_publication(db, intent)
+    assert db._connect().execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone() == (raw.encode("ascii"),)
+    assert Path(intent.staged_path).samefile(intent.candidate_path)
+
+
+@pytest.mark.parametrize("durable", [True, False])
+def test_publication_connection_never_settles_caller_transaction(committed, durable):
+    from cifereca.core.derived_variant_publication import (
+        _publication_connection, DerivedPublicationConflict,
+    )
+    db, intent, key, raw = committed
+    sql = db._connect()
+    other = sqlite3.connect(db.path)
+    try:
+        sql.execute("BEGIN IMMEDIATE")
+        sql.execute("INSERT INTO metadata(key,value) VALUES('synthetic.publication.caller','pending')")
+        with pytest.raises(DerivedPublicationConflict, match="nested_transaction"):
+            with _publication_connection(db, durable=durable):
+                pytest.fail("caller transaction borrowed")
+        assert sql.in_transaction
+        assert sql.execute("SELECT value FROM metadata WHERE key='synthetic.publication.caller'").fetchone() == ("pending",)
+        assert other.execute("SELECT value FROM metadata WHERE key='synthetic.publication.caller'").fetchone() is None
+    finally:
+        if sql.in_transaction:
+            sql.rollback()
+        other.close()
+    assert db.metadata_get(key) == raw
