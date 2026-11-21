@@ -277,3 +277,56 @@ def test_historical_receipts_and_rights_stay_scoped_and_non_authoritative(tmp_pa
         }
     finally:
         store.close()
+
+
+def test_legacy_only_evidence_does_not_invent_accounts_or_references(tmp_path):
+    path = tmp_path / "evidence.sqlite"
+    store = seed(path)
+    try:
+        with store._lock, store._connect() as db:
+            for idx, credential, account, edition, right in (
+                (1, "PRIVATE_C", "PRIVATE_ACCOUNT", "PRIVATE_ED", "PRIVATE_LOAN"),
+                (2, "PRIVATE_C", "PRIVATE_ACCOUNT", "PRIVATE_BAD_ED", ""),
+                (3, "PRIVATE_D", "PRIVATE_ACCOUNT", "PRIVATE_OTHER_ED", "PRIVATE_OTHER_LOAN"),
+                (4, "PRIVATE_C", "PRIVATE_MISSING_ACCOUNT", "PRIVATE_ORPHAN_ED", "PRIVATE_ORPHAN_LOAN"),
+            ):
+                db.execute(
+                    "INSERT INTO entitlements(entitlement_id,identity_id,provider_id,credential_id,"
+                    "account_id,item_id,loan_id,entitlement_type,state,discovered_at,updated_at)"
+                    " VALUES(?,?,?,?,?,?,?,'loan','active',1,1)",
+                    (f"PRIVATE_RIGHT_{idx}", "PRIVATE_A", "library1", credential,
+                     account, edition, right))
+                db.execute(
+                    "INSERT INTO acquisition_ledger(acquisition_id,identity_id,provider_id,"
+                    "credential_id,account_id,item_id,status,strategy,executor,metadata_json,"
+                    "created_at,updated_at) VALUES(?,?,?,?,?,?,'complete','loan_auto','kobo-adept',?,1,1)",
+                    (f"PRIVATE_RECEIPT_{idx}", "PRIVATE_A", "library1", credential, account,
+                     edition, json.dumps({"provider_loan_id": right, "path": "/PRIVATE_PATH"})))
+        store.close()
+        report = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", provider="library1",
+            credential="PRIVATE_C")
+        assert report["status"] == "complete"
+        record, = report["accounts"]
+        assert record["loan_references"] == 0
+        assert record["legacy_loan_right_rows_without_reference"] == 1
+        assert record["legacy_loan_right_rows_unverified_coordinates"] == 1
+        assert record["historical_adept_rows_without_reference"] == 1
+        assert record["historical_adept_rows_unverified_coordinates"] == 1
+        assert report["counts"]["legacy_loan_right_rows_without_account"] == 1
+        assert report["counts"]["historical_adept_rows_without_account"] == 1
+        assert record["current_right"] == "unknown"
+        assert report["authorization_attested"] is False
+        assert "PRIVATE" not in json.dumps(report)
+        absent = diagnostic.diagnose_local_adept(
+            database_path=path, identity="PRIVATE_A", provider="library1",
+            credential="PRIVATE_C", account_id="PRIVATE_MISSING_ACCOUNT")
+        assert absent["accounts"] == []
+        assert absent["counts"]["historical_adept_rows_without_account"] == 0
+        assert absent["counts"]["legacy_loan_right_rows_without_account"] == 0
+        sibling, = diagnostic.diagnose_local_adept(
+            database_path=path, credential="PRIVATE_D")["accounts"]
+        assert sibling["historical_adept_rows_without_reference"] == 1
+        assert sibling["legacy_loan_right_rows_without_reference"] == 1
+    finally:
+        store.close()
