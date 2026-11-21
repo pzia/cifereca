@@ -254,3 +254,26 @@ def test_native_organizer_only_runs_on_click_and_rejects_stale_delivery(store, t
         accept.click()
         assert "1 sélectionnés" in detail.text and not accept.sensitive
         assert len(tasks) == 1 and not following.sensitive
+
+
+@pytest.mark.parametrize("unavailable", ["sqlite_connection", "profile_binding"])
+def test_keeper_confirmation_refuses_unavailable_storage_boundary(
+    store, tmp_path, monkeypatch, unavailable,
+):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    scope, page = _run(service)
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is not None
+
+    def fails(*_args, **_kwargs):
+        raise OSError("synthetic unavailable database")
+
+    target = "_connect" if unavailable == "sqlite_connection" else "exact_profile_directory_binding"
+    monkeypatch.setattr(store, target, fails)
+    # This direct Core consumer previously raised before the try/except in
+    # select_organizer_keeper_advice. A refused observation cannot be selected.
+    assert scope.bound() is False
+    assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
+    assert review.run_organizer_review(service, scope) is None
