@@ -304,3 +304,46 @@ def test_gutenberg_web_choice_requires_observed_alternate_after_restart(tmp_path
         assert len(calls) == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ('<category scheme="http://www.gutenberg.org/2009/pgterms/LCSH" term="Astronomie"/>', ["Astronomie"]),
+    ('<category scheme="https://foreign.example/LCSH" term="Astronomie"/>', None),
+    ('<category scheme="http://www.gutenberg.org/2009/pgterms/Bookshelf" term="Astronomie"/>', None),
+    ("<dcterms:subject>Astronomie</dcterms:subject>", ["Astronomie"]),
+    ("<dcterms:subject><b>Astronomie</b></dcterms:subject>", None),
+    ("<dcterms:subject>https://private.example/?token=secret</dcterms:subject>", None),
+    ("<dcterms:subject>file:/home/private</dcterms:subject>", None),
+    ('<category scheme="http://www.gutenberg.org/2009/pgterms/LCSH" term="Astronomie"/>'
+     "<dcterms:subject>Astronomie</dcterms:subject>", ["Astronomie"]),
+])
+def test_exact_subject_retained_after_eviction_and_restart(tmp_path, fields, expected):
+    from contextlib import closing
+
+    session, calls = make_session(ENTRY.replace("</entry>", fields + "</entry>"))
+    path = tmp_path / "gutenberg-subject.sqlite"
+    try:
+        response = session.search_with_response_facets("Exact OPDS book", "catalog")
+        raw, = response.results
+        assert response.public_notices[0].result is raw
+        assert raw.metadata.get("subjects") == expected
+        assert raw.owned is raw.downloadable is False and raw.download_url is None
+        with closing(Storage(path)) as db:
+            row, = _public_rows_from_response(response, session)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            canonical = row._core_notice_canonical_cover_document_ref
+            exact = row._core_notice_cover_document_ref
+            facts = read_consolidated_notice_cover(db, canonical).sources[0].public_bibliography
+            assert (facts.classification.wire() if facts.classification else None) == (
+                {"subjects": expected} if expected else None)
+            assert evict_notice_cover(db, exact, expected_epoch=read_notice_cover(db, exact).epoch)
+        with closing(Storage(path)) as db:
+            hits = search_public_notice_c(db, "astronomie", field="subject").hits
+            assert len(hits) == int(expected is not None)
+            if hits:
+                assert hits[0].document == canonical
+            assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert len(calls) == 1
+    finally:
+        session.close()

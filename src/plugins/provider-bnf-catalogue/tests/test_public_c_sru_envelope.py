@@ -392,3 +392,70 @@ def test_non_direct_sru_data_cannot_mint_a_public_record(monkeypatch, shape):
         assert len(calls) == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("mime,requested,count,partial,complete", [
+    ("application/epub+zip", ("epub",), 1, False, False),
+    ("application/pdf", ("epub",), 0, False, False),
+    ("application/pdf", ("ebook",), 1, False, False),
+    ("audio/mpeg", ("ebook",), 0, False, False),
+    ("1 vol. ; 20 cm", ("physical",), 1, False, False),
+    ("application/pdf", ("pdf", "mp3"), 1, True, None),
+    ("application/pdf", ("mp3",), 0, True, None),
+    ("application/pdf", (), 1, False, True),
+])
+def test_sru_format_filter_attests_only_a_loaded_documentary_window(
+    monkeypatch, mime, requested, count, partial, complete,
+):
+    body = BODY.replace(b"1 vol. ; 20 cm", mime.encode())
+    calls = []
+
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=body, request=request)
+
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        response = session.search_with_response_facets(
+            "Les loups", content_types=requested,
+        )
+        assert len(calls) == 1
+        assert len(response.results) == len(response.public_notices) == count
+        assert response.partial is partial
+        assert response.catalogue_complete is complete
+        assert bool(session.last_search_warnings) is partial
+        for row, notice in zip(response.results, response.public_notices):
+            assert notice.result is row
+            assert row.owned is row.downloadable is False
+            assert row.download_url is None
+        assert len(session.search("Les loups")) == 1
+        assert len(calls) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("bad", ["epub", (False,), ("",), ("x" * 81,), ("epub",) * 33])
+def test_invalid_sru_format_request_refused_before_http(monkeypatch, bad):
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    def fail(request):
+        raise AssertionError("invalid filter must not issue HTTP")
+
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(fail), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unsupported_content_type"):
+            session.search_with_response_facets("Les loups", content_types=bad)
+    finally:
+        session.close()

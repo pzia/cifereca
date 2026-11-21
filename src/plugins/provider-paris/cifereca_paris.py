@@ -1,6 +1,6 @@
 from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
-from cifereca_paris_bibliography import public_search_series_metadata
+from cifereca_paris_bibliography import public_search_series_metadata, public_search_subject_metadata
 
 import logging
 import hashlib
@@ -1410,8 +1410,10 @@ class ParisProviderSession(ProviderSession):
                 and type(self.credentials) is dict and not self.credentials
                 and type(self._accounts) is list and not self._accounts):
             result_rows = [
-                replace(notice.result, source_collection="public_catalog")
-                for notice in public_notices
+                replace(notice.result, source_collection="public_catalog",
+                        metadata={**notice.result.metadata,
+                                  **public_search_subject_metadata(item.metadata, item.scenario)})
+                for item, notice in zip(result_rows, public_notices)
             ]
             public_notices = tuple(PublicSearchNotice(row) for row in result_rows)
         return ProviderSearchResponse(
