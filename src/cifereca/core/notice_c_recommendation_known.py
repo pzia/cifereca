@@ -53,13 +53,17 @@ def _native_hit(hit, binding):
             or not _native_canonical(hit.document)
             or type(hit.epoch) is not int
             or type(hit.observed_at) is not int
+            or not 0 <= hit.observed_at < 2**63
             or type(hit.last_seen_at) is not int
+            or not hit.observed_at <= hit.last_seen_at < 2**63
             or type(hit.stale) is not bool
             or type(hit.cover_state) is not str
             or hit.cover_state not in ("available", "missing", "pending")
             or type(hit.edition_id) is not str
+            or len(hit.edition_id) > 512
             or (hit.document, hit.epoch) != binding
-            or any(value is not None and type(value) is not str
+            or any(value is not None and (
+                type(value) is not str or len(value) > 8192)
                    for value in (
                        hit.provider_id, hit.record_id, hit.docbase, hit.medium,
                        hit.source_revision, hit.title, hit.author, hit.publisher,
