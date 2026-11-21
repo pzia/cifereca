@@ -47,7 +47,12 @@ def _rows(db, sql):
     return rows
 
 
-def _snapshot(db, *, identity, provider, credential, account_id):
+def _snapshot(db, *, identity, provider, credential, account_id, deadline):
+    def check_time():
+        if time.monotonic() >= deadline:
+            raise _Incomplete("snapshot_time_budget")
+
+    check_time()
     identities = {r[0] for r in _rows(db, "SELECT identity_id FROM identities")}
     bindings = defaultdict(list)
     for scope, owner, profile in _rows(db,
@@ -124,16 +129,19 @@ def _snapshot(db, *, identity, provider, credential, account_id):
             "historical_adept_rows_unverified_coordinates": 0,
         }
         for (edition, right), count in rights_by_scope.get(scope, ()):
+            check_time()
             if not _coordinate(edition) or not _coordinate(right):
                 counts["legacy_loan_right_rows_unverified_coordinates"] += count
             elif (edition, right) not in pairs:
                 counts["legacy_loan_right_rows_without_reference"] += count
         for edition, values in historical_by_scope.get(scope, ()):
+            check_time()
             adept_rows = [raw for _, executor, raw in values if executor == "kobo-adept"]
             if not _coordinate(edition) or len(values) > 256:
                 counts["historical_adept_rows_unverified_coordinates"] += len(adept_rows)
                 continue
             for raw in adept_rows:
+                check_time()
                 try:
                     metadata = json.loads(raw, object_pairs_hook=_unique_checkpoint_fields)
                 except (ValueError, TypeError, RecursionError):
@@ -187,6 +195,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
         # malformed data cannot prove that a matching loan is absent.
         grouped = {}
         for _, local_state, edition, right in refs:
+            check_time()
             if not _coordinate(edition) or not _coordinate(right):
                 ledger_counts["unverified_reference"] += 1
                 right_counts["unverified_reference"] += 1
@@ -210,6 +219,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
                 valid = len(rows) <= 256
                 if valid:
                     for status, executor, raw in rows:
+                        check_time()
                         try:
                             metadata = json.loads(raw, object_pairs_hook=_unique_checkpoint_fields)
                         except (ValueError, TypeError, RecursionError):
@@ -275,6 +285,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
               "legacy_loan_right_rows_without_account": 0,
               "historical_adept_rows_without_account": 0}
     for index, scope in enumerate(selected_accounts, 1):
+        check_time()
         owner, source, cred, account = scope
         conn = connections[scope[:3]]
         accts = accounts[scope]
@@ -362,6 +373,7 @@ def _snapshot(db, *, identity, provider, credential, account_id):
         counts["identities_without_binding"] = sum(
             not bindings.get(owner) and (identity is None or owner == identity)
             for owner in identities)
+    check_time()
     return {"schema": 1, "status": "complete", "read_only": True,
             "runtime_checked": False, "provider_checked": False,
             "authorization_attested": False, "snapshot": "sqlite_only",
@@ -470,7 +482,7 @@ def diagnose_local_adept(*, identity=None, provider=None, credential=None,
         if Storage._read_schema_version(db) != CURRENT_SCHEMA_VERSION:
             return failed_report("schema_unsupported")
         return _snapshot(db, identity=identity, provider=provider,
-                         credential=credential, account_id=account_id)
+                         credential=credential, account_id=account_id, deadline=deadline)
     except _Incomplete as exc:
         return failed_report(exc.args[0])
     except (sqlite3.Error, OSError, ValueError, TypeError, OverflowError, AttributeError):
