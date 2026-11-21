@@ -785,10 +785,63 @@ def main():
                     if isinstance(node, Gtk.Label) and node.get_visible()
                 )
 
+            def cancel_and_restart():
+                # Isolated installed tool: signals in the same GTK turn,
+                # before result delivery. No fake broker or sleep.
+                cancel, = (node for node in walk(outer)
+                           if isinstance(node, Gtk.Button) and node.get_label() == "Annuler")
+                assert button.get_sensitive()
+                button.emit("clicked")
+                assert cancel.get_sensitive() and not button.get_sensitive()
+                cancel.emit("clicked")
+                assert not button.get_sensitive() and not cancel.get_sensitive()
+                cancelled_text = (
+                    "Revue annulée. Nouvelle sélection nécessaire" if key == "derived_list"
+                    else "Revue arrêtée ou preuves modifiées"
+                )
+                following, = (node for node in walk(outer)
+                              if isinstance(node, Gtk.Button) and node.get_label() == "Page suivante")
+
+                def cancelled_visible():
+                    return button.get_sensitive() and any(
+                        cancelled_text in node.get_text() for node in walk(outer)
+                        if isinstance(node, Gtk.Label) and node.get_visible()
+                    )
+
+                def cancelled():
+                    assert not following.get_sensitive()
+                    assert not cancel.get_sensitive()
+                    assert not any(expected in node.get_text() for node in walk(outer)
+                                   if isinstance(node, Gtk.Label) and node.get_visible())
+                    assert durable_counts() == before and fixture_evidence() == evidence
+                    report["checks"]["P0_7092_7093_native_cancel_" + key] = True
+                    button.emit("clicked")
+                    assert not button.get_sensitive()
+
+                    def restarted():
+                        if key == "origin_preview":
+                            assert following.get_sensitive()
+                            assert any("Page 1 ·" in node.get_text() for node in walk(outer)
+                                       if isinstance(node, Gtk.Label) and node.get_visible())
+                        else:
+                            simulation, = (node for node in walk(outer)
+                                           if isinstance(node, Gtk.Button)
+                                           and node.get_label() == "Confirmer la simulation sans écriture")
+                            assert not simulation.get_sensitive()
+                        report["checks"]["P0_7092_7093_native_restart_" + key] = True
+                        step(index + 1)
+
+                    until(observed, restarted)
+
+                until(cancelled_visible, cancelled)
+
             def received():
                 report["checks"]["P0_7100_real_guided_" + key] = True
                 if key not in ("organizer_preview", "origin_preview"):
-                    step(index + 1)
+                    if args.guided_only == "derived" and key == "derived_list":
+                        cancel_and_restart()
+                    else:
+                        step(index + 1)
                     return
 
                 def page_visible(number):
@@ -809,7 +862,10 @@ def main():
                 def second_page():
                     assert page_visible(2) and not page_visible(1)
                     report["checks"]["P0_7100_real_guided_page_two_" + key] = True
-                    step(index + 1)
+                    if args.guided_only == "origin" and key == "origin_preview":
+                        cancel_and_restart()
+                    else:
+                        step(index + 1)
 
                 until(lambda: button.get_sensitive() and page_visible(2), second_page)
 
