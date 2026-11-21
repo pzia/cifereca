@@ -76,9 +76,10 @@ def available_local_public_catalogues(service, request, *, evidence=None):
                 or not evidence.matches_scope(request)
                 or not request.current()):
             return ()
-        sessions = tuple(service._sessions.values())
-        if len(sessions) > 256:
+        registry = service._sessions
+        if type(registry) is not dict or len(registry) > 256:
             return ()
+        sessions = tuple(registry.values())
         ids = set()
         for session in sessions:
             state = _inert_search_source_state(session)
