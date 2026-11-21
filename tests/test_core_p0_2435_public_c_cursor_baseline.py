@@ -5,7 +5,10 @@ trace instrumentation; SQL statement counts measured on a separate pass.
 """
 from contextlib import closing
 import json
+import os
+import platform
 import resource
+import sqlite3
 from time import perf_counter_ns, process_time_ns
 
 import pytest
@@ -24,7 +27,11 @@ def test_public_c_cursor_cost_live_mixed_retained(tmp_path, capsys, size):
     filename = tmp_path / "cursor.sqlite"
     report = {"documents": size, "iterations": 9, "phases": {},
               "corpus": "synthetic_sqlite", "gtk_paint_measured": False,
-              "physical_io_measured": False}
+              "physical_io_measured": False,
+              "python": platform.python_version(), "sqlite": sqlite3.sqlite_version,
+              "runner": "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local",
+              "workflow_sha": os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_ACTIONS") == "true" else None,
+              "selective_retained": {}}
     expected = {f"book-{i}" for i in range(0, size, 2)}
 
     def search_all(db):
@@ -104,5 +111,46 @@ def test_public_c_cursor_cost_live_mixed_retained(tmp_path, capsys, size):
     with closing(Storage(filename)) as db:
         assert phase(db, "retained_after_restart") == live
         assert db.entitlements() == [] and db.acquisitions() == []
+        # Independent retained-only pass: unrelated canonical rows must not
+        # create matches or consume the budget reserved for matching sources.
+        # Separate from the historical pagination timings above.
+        for query, expected_count in (("absent documentaire", 0), ("loups", 1)):
+            expected_more = expected_count == 1 and len(expected) > 1
+            trace = {"statements": 0, "fence_reads": 0}
+            connection = db._connect()
+
+            def count_selective(statement):
+                trace["statements"] += 1
+                if statement.lstrip().upper().startswith("SELECT") and _FENCE_PREFIX in statement:
+                    trace["fence_reads"] += 1
+
+            def selective():
+                page = search_public_notice_c(
+                    db, query, max_scan=1, page_size=1, now=101,
+                    group_by_document=True,
+                )
+                assert page.status == ("budget_exceeded" if expected_more else "partial")
+                assert len(page.hits) == expected_count
+                assert page.has_more is expected_more
+                assert all(hit.record_id in expected for hit in page.hits)
+                return tuple((hit.record_id, hit.document) for hit in page.hits)
+
+            connection.set_trace_callback(count_selective)
+            try:
+                admitted = selective()
+            finally:
+                connection.set_trace_callback(None)
+            assert trace["fence_reads"] <= 2
+            elapsed = []
+            cpu = process_time_ns()
+            for _ in range(report["iterations"]):
+                start = perf_counter_ns()
+                assert selective() == admitted
+                elapsed.append((perf_counter_ns() - start) / 1e6)
+            report["selective_retained"]["no_match" if not expected_count else "bounded_match"] = {
+                "max_scan": 1, "hits": expected_count, "has_more": expected_more,
+                "latency": dist(elapsed), "process_cpu_ms_total": round((process_time_ns() - cpu) / 1e6, 3),
+                "sql_trace_one_pass": trace,
+            }
     with capsys.disabled():
         print("PUBLIC_C_CURSOR_BASELINE " + json.dumps(report, sort_keys=True), flush=True)

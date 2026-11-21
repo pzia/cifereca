@@ -192,3 +192,117 @@ def test_size_structure_and_card_count_are_bounded():
         parse_public_search('<div>' * 102, URL)
     with pytest.raises(PublicSearchParseError):
         parse_public_search(page_of(FIRST * 101, 101), URL)
+
+
+# Minimal synthetic transcription of the selector/coordinate receipt in
+# #7163; not the original private HTML or a new transport qualification.
+ADVANCED = ("https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx"
+            "?mode=Ra&RAAuthor=bordage&RAFormat=14&RAPublisher=1166")
+
+
+def advanced_card(record):
+    return (f'<tr class="LivreDuThemeDetail"><td class="BestSalesItem">'
+            f'<a class="TitleBook" href="../../{record}/fixture.ebook">Titre témoin</a>'
+            '<a class="Author">Pierre Bordage</a><div class="product_meta">'
+            '<span class="LabelInfos">Éditeur : Scrineo</span>'
+            '<span class="LabelInfos">Format(s) : ePub sans DRM</span></div>'
+            '</td></tr>')
+
+
+def advanced_page(total=2, cards=None, extra=''):
+    if cards is None:
+        cards = advanced_card("1792964") + advanced_card("1388901")
+    return (f'<span id="lblNbLivres">{total}</span><table>{cards}</table>' + extra)
+
+
+def test_advanced_positive_receipt_uses_same_card_parser_without_rights():
+    page = parse_public_search(advanced_page(), ADVANCED)
+    assert page.total_results == 2 and page.complete
+    assert page.next_url is None
+    assert [item.metadata['source_item_id'] for item in page.items] == ['1792964', '1388901']
+    assert all(item.format == 'EPUB' and item.publisher == 'Scrineo'
+               and item.metadata['isbn_digital'] is None and not item.owned
+               and not item.downloadable and item.download_url is None for item in page.items)
+    # RAFormat=14 is not a DRM proof.
+    assert all(item.metadata['drm_label'] is None for item in page.items)
+
+
+def test_advanced_partial_count_and_attested_price_facet():
+    facet = ('<a class="panel-sous-filtre" href="' +
+             ADVANCED.replace('&', '&amp;') + '&amp;fltrPrice=5">Prix</a>')
+    page = parse_public_search(advanced_page(total=3, extra=facet), ADVANCED)
+    assert not page.complete and page.next_url is None
+    assert page.facets[0]['parameter'] == 'fltrPrice'
+    assert page.facets[0]['value'] == '5'
+
+
+@pytest.mark.parametrize('url', [
+    ADVANCED + '&RAPublisher=1166', ADVANCED + '&auth=secret',
+    ADVANCED + '&GRID_PAGE=1', ADVANCED.replace('RAFormat=14', 'RAFormat=-1'),
+    ADVANCED + '&fltrPrice=99', ADVANCED.replace('mode=Ra', 'mode=brSimple'),
+])
+def test_advanced_unknown_coordinates_fail_closed(url):
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page(), url)
+
+
+@pytest.mark.parametrize('html', [
+    advanced_page(total=0, cards=''),
+    advanced_page(total=1),
+    advanced_page(extra='<span id="lblNbLivres">2</span>'),
+    advanced_page(extra='<span class="ResultatDetail">99</span>'),
+    advanced_page(extra='<div class="pagination">Suite</div>'),
+    advanced_page(cards=advanced_card("1792964") * 2),
+    advanced_page(extra='<a class="panel-sous-filtre" href="' +
+                  ADVANCED.replace('&RAPublisher=1166', '').replace('&', '&amp;') +
+                  '&amp;fltrPrice=5">Prix</a>'),
+])
+def test_advanced_unqualified_layout_or_navigation_is_not_admitted(html):
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(html, ADVANCED)
+
+
+def test_advanced_parser_receipt_does_not_enable_live_transport():
+    from cifereca_numilog_public_client import fetch_public_search_url
+    with pytest.raises(ProviderError):
+        fetch_public_search_url(ADVANCED)
+
+
+def test_advanced_native_aspnet_counter_and_explicit_selected_format():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span class="BuySelectedFormat">ePub sans DRM</span></td>')
+    html = advanced_page(total=1, cards=cards).replace(
+        'id="lblNbLivres"', 'id="ctl02_CentrePage_ListeLivres1_lblNbLivres"')
+    item, = parse_public_search(html, ADVANCED).items
+    assert item.metadata['selected_format_label'] == 'ePub sans DRM'
+    assert item.metadata['drm_label'] == 'sans DRM'
+    assert item.metadata['isbn_digital'] is None and not item.owned
+
+
+def test_advanced_duplicate_counter_aliases_are_not_a_single_proof():
+    html = advanced_page(extra='<span id="ctl02_CentrePage_ListeLivres1_lblNbLivres">2</span>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(html, ADVANCED)
+
+
+def test_advanced_conflicting_explicit_selected_format_is_rejected():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span class="FormatLivre">PDF</span>'
+        '<span class="BuySelectedFormat">ePub sans DRM</span></td>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page(total=1, cards=cards), ADVANCED)
+
+
+def test_advanced_hidden_explicit_format_cannot_prove_drm():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<span hidden class="BuySelectedFormat">ePub sans DRM</span></td>')
+    item, = parse_public_search(advanced_page(total=1, cards=cards), ADVANCED).items
+    assert item.metadata['drm_label'] is None
+
+
+def test_advanced_price_without_currency_is_not_monetary_proof():
+    cards = advanced_card("1792964").replace(
+        '</td>', '<div class="ColPrice"><span class="LblPrice">9</span>'
+        '<span class="LblDecimal">99</span></div></td>')
+    with pytest.raises(PublicSearchParseError):
+        parse_public_search(advanced_page(total=1, cards=cards), ADVANCED)
