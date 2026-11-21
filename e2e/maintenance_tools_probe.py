@@ -316,6 +316,7 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(920, 1024, 1280, 1366, 1600, 1728))
     parser.add_argument("--display-height", required=True, type=int, choices=(620, 768, 800, 895, 900, 1000))
+    parser.add_argument("--guided-only", choices=("organizer", "origin", "derived"))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     from tempfile import TemporaryDirectory
@@ -335,8 +336,13 @@ def main():
         state_store=PluginStateStore(fixture_root / "state.json"),
         brokers=core.brokers,
     )
-    for folder in ("maintenance-page", "maintenance-library-organizer",
-                   "maintenance-local-origin", "maintenance-derived-variants"):
+    guided_packages = {
+        "organizer": ("maintenance-library-organizer", "maintenance.library.organizer"),
+        "origin": ("maintenance-local-origin", "maintenance.library.local-origin"),
+        "derived": ("maintenance-derived-variants", "maintenance.library.derived-variants"),
+    }
+    selection = (guided_packages[args.guided_only],) if args.guided_only else tuple(guided_packages.values())
+    for folder in ("maintenance-page", *(folder for folder, _key in selection)):
         package = fixture_root / (folder + ".zip")
         with ZipFile(package, "w") as archive:
             for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
@@ -344,24 +350,27 @@ def main():
                     archive.write(source, source.name)
         manager.install(package)
     assert manager.service("ui.page.maintenance") is not None
-    for key in ("maintenance.library.organizer", "maintenance.library.local-origin",
-                "maintenance.library.derived-variants"):
+    for _folder, key in selection:
         assert manager.service(key) is not None
+    assert {r.plugin_id for r in manager.services("maintenance.tool")} == {
+        key for _folder, key in selection
+    }
     original_services, original_service = manager.services, manager.service
     def fixture_services(category):
-        if category == "maintenance.tool":
+        if category == "maintenance.tool" and not args.guided_only:
             return (ResolvedPluginService(
                 "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
                 registry_generation=manager.registry_generation,
             ),) + tuple(original_services(category))
         return original_services(category)
     def fixture_service(key):
-        return tool if key == "e2e.maintenance" else original_service(key)
+        return tool if not args.guided_only and key == "e2e.maintenance" else original_service(key)
     manager.services, manager.service = fixture_services, fixture_service
     core.library.attach_plugin_manager(manager)
     report = {
         "status": "RUNNING", "scenario": "maintenance-tools", "width": args.width,
-        "scope": "real GTK MainWindow/XTEST; simulated tool with zero destructive IO",
+        "scope": ("real installed single guided tool; GTK signals, no destructive IO"
+                  if args.guided_only else "real GTK MainWindow/XTEST; simulated tool with zero destructive IO"),
         "display_height": args.display_height,
         "checks": {}, "screenshots": [], "pointer_actions": [],
     }
@@ -548,6 +557,35 @@ def main():
         assert w._page_lifecycle_dispatcher.handles("tools")
         assert w._tools_box is not None
         report["checks"]["P0_7100_real_installed_page_contribution"] = True
+        if args.guided_only:
+            key = guided_packages[args.guided_only][1]
+            assert {r.plugin_id for r in manager.services("maintenance.tool")} == {key}
+            expected = {
+                "organizer": "Organiser la bibliothèque",
+                "origin": "Suggestions de provenance — par lots",
+                "derived": "Publications dérivées interrompues",
+            }
+            title = expected[args.guided_only]
+
+            def titles():
+                return [node.get_title() for node in walk(w._tools_box)
+                        if isinstance(node, Adw.ActionRow)]
+
+            host = w._plugin_page_widgets["tools"]
+            assert titles().count(title) == 1
+            assert not any(other in titles() for kind, other in expected.items()
+                           if kind != args.guided_only)
+            manager.set_enabled(key, False)
+            refresh_tools()
+            assert manager.service(key) is None and title not in titles()
+            assert w._plugin_page_widgets["tools"] is host
+            manager.set_enabled(key, True)
+            refresh_tools()
+            assert manager.service(key) is not None and titles().count(title) == 1
+            assert w._plugin_page_widgets["tools"] is host
+            report["checks"]["P0_7100_single_installed_tool_optional"] = True
+            until(lambda: not w.view_stack.get_transition_running(), guided_actions)
+            return
         review_rows = [node for node in walk(w._tools_box)
                        if isinstance(node, Adw.ActionRow)
                        and node.get_title() == "Publications dérivées interrompues"]
@@ -645,6 +683,14 @@ def main():
             ("Sélection des publications interrompues", "Lister…",
              "coordonnées non vérifiées. Aucune reprise ni suppression.", "derived_list"),
         )
+        if args.guided_only:
+            keys = {
+                "organizer": {"organizer_preview"},
+                "origin": {"origin_preview"},
+                "derived": {"derived_overview", "derived_capacity", "derived_list"},
+            }
+            checks = tuple(check for check in checks if check[3] in keys[args.guided_only])
+            assert checks
         storage = core.library.storage
 
         def durable_counts():
@@ -700,6 +746,15 @@ def main():
                 report["checks"]["P0_7100_guided_fixture_bytes_and_placements_unchanged"] = True
                 report["checks"]["P0_7100_guided_actions_no_inventory_mutation"] = True
                 capture("00-guided-actions")
+                if args.guided_only:
+                    # No other packages, no dummy legacy workflow and no
+                    # destructive cleanup opt-in for isolated tool scenarios.
+                    report["status"] = "PASS"
+                    result[0] = 0
+                    gtk_phase_2027("maint_done")
+                    save()
+                    app.quit()
+                    return
                 # Clear expanded text and restore the exact old XTEST layout.
                 refresh_tools()
                 preview_button[0] = next(b for b in walk(window[0]._tools_box)
