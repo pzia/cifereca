@@ -289,7 +289,11 @@ def _read_pending_reservation(db, reservation):
         "AND length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
         (reservation.key, _MAX_RECORD_BYTES),
     ).fetchone()
-    if row is None or _receipt_digest(row[0]) != reservation.receipt_sha256:
+    # TEXT affinity does not prevent a BLOB from being persisted in SQLite.
+    # The digest is defined only for Unicode text: fail closed rather than
+    # leaking AttributeError from bytes.encode at the recovery boundary.
+    if (row is None or type(row[0]) is not str
+            or _receipt_digest(row[0]) != reservation.receipt_sha256):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     return row[0], _decode(reservation.key, row[0])
 
