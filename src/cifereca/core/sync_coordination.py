@@ -919,9 +919,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         bound_profile = str(self.storage.adept_profile_binding_get("identity", identity.identity_id) or "").strip()
         if bound_profile:
             try:
-                scoped = self.adept_profiles_for_identity(
-                    identity.identity_id, profile_name=bound_profile,
-                )
+                from .diagnostic_adept import adept_read_caller
+                with adept_read_caller("dashboard_opening"):
+                    scoped = self.adept_profiles_for_identity(
+                        identity.identity_id, profile_name=bound_profile,
+                    )
                 profile = scoped[0] if type(scoped) is list and len(scoped) == 1 and type(scoped[0]) is dict else None
             except Exception:
                 profile = None
