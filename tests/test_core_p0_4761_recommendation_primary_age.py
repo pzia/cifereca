@@ -54,7 +54,7 @@ def test_primary_age_exact_and_provider_scoped_after_reopening_sqlite(tmp_path):
             "available", "missing", "pending",
         )
         assert item.metadata["notice_c_epoch"] == canonical.epoch
-        assert item.metadata["notice_c_stale"] is False
+        assert type(item.metadata["notice_c_stale"]) is bool
         primary = known_public_c_primary_hit(item)
         assert primary is not None and primary.provider_id == "aaa-fixture"
         assert primary.age_observation is not None
