@@ -200,7 +200,9 @@ class PublicBookMasterDetailView:
             panel.show_presentation(detail)
         buttons = []
         for action in getattr(detail, "actions", ()) or ():
-            raw_uri = str(getattr(action, "uri", "") or "")
+            raw_uri = getattr(action, "uri", "")
+            if type(raw_uri) is not str:
+                continue
             if raw_uri:
                 # Plugin actions share the same URL security boundary as
                 # document links. Drop invalid URI actions completely.
