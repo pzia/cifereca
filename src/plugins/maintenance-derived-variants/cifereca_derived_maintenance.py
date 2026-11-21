@@ -73,10 +73,10 @@ class DerivedController:
         if self.busy or not self.current():
             return False
         page = self.page
+        if action == "capacity":
+            return False
         if action == "overview":
             operation = lambda: self.broker.overview(identity_id=self.identity, confirmed=True)
-        elif action == "capacity":
-            operation = lambda: self.broker.capacity(identity_id=self.identity, confirmed=True)
         elif action == "list":
             operation = lambda: self.broker.list_receipts(identity_id=self.identity, confirmed=True)
         elif action == "next" and page is not None and page.has_more:
@@ -207,7 +207,7 @@ class DerivedPlugin:
     def describe(self):
         return MaintenanceToolInfo(
             id="maintenance.library.derived-variants", title="Publications dérivées interrompues",
-            description="Journal, capacité et simulation supervisée. Lecture seule.",
+            description="Journal et simulation supervisée. Lecture seule.",
             icon_name="system-search-symbolic", scope="identity", danger_level="read-only",
             supports_dry_run=True, cancellable=True,
         )
@@ -234,7 +234,6 @@ class DerivedPlugin:
         controls = []
         for title, subtitle, label, action in (
             ("Publications dérivées interrompues", "Revue des reçus du profil actif, en lecture seule.", "Examiner…", "overview"),
-            ("Capacité du journal des variantes", "Réservations et stock nommé distincts.", "Mesurer…", "capacity"),
             ("Sélection des publications interrompues", "Coordonnées non vérifiées ; aucune reprise.", "Lister…", "list"),
         ):
             row = Adw.ActionRow()
@@ -291,8 +290,6 @@ class DerivedPlugin:
                 detail.set_text("Revue en cours…")
             elif action == "overview":
                 detail.set_text(overview_text(value))
-            elif action == "capacity":
-                detail.set_text(capacity_text(value))
             elif action in ("list", "next"):
                 detail.set_text(f"{len(controller.page.choices)} reçu(s) ; coordonnées non vérifiées. "
                                 "Aucune reprise ni suppression." if controller.page else
@@ -313,4 +310,99 @@ class DerivedPlugin:
         return GuidedMaintenanceView(outer, controller.dispose)
 
 
+class CapacityController(DerivedController):
+    """Same lifecycle, with a deliberately disjoint action surface."""
+    def request(self, action, *, choice=None, confirmed=False):
+        if action != "capacity" or choice is not None or confirmed is not False:
+            return False
+        return self._request_capacity()
+
+    def _request_capacity(self):
+        if self.busy or not self.current():
+            return False
+        event = self.stop = Event()
+        self.busy = True
+        self.render(self, "capacity", "busy", None)
+        delivered = False
+
+        def cancelled():
+            return event.is_set() or not self.current()
+
+        def work():
+            if cancelled():
+                return None
+            try:
+                value = self.broker.capacity(identity_id=self.identity, confirmed=True)
+            except Exception:
+                return None
+            return None if cancelled() else value
+
+        def done(value):
+            nonlocal delivered
+            if delivered:
+                return
+            delivered = True
+            self.busy, self.stop = False, None
+            if self.current():
+                self.render(self, "capacity", "cancelled" if cancelled() else "ready",
+                            None if cancelled() else value)
+
+        try:
+            admitted = self.host.submit("Observation de capacité des variantes…", work, done)
+        except Exception:
+            admitted = False
+        if admitted is not True:
+            done(None)
+        return admitted is True
+
+
+class CapacityPlugin(DerivedPlugin):
+    def describe(self):
+        return MaintenanceToolInfo(
+            id="maintenance.library.derived-capacity", title="Capacité du journal des variantes",
+            description="Réservations déclarées, journal et stock nommé distincts. Lecture seule.",
+            icon_name="drive-harddisk-symbolic", scope="identity", danger_level="read-only",
+            supports_dry_run=True, cancellable=True,
+        )
+
+    def controller(self, host, render):
+        marker = self.activation
+        if marker is None or self.broker is None:
+            raise RuntimeError("derived_capacity_unavailable")
+        return CapacityController(self.broker, host, lambda: marker is self.activation, render)
+
+    def build_guided(self, host):
+        from cifereca.plugin_api.guided_maintenance import GuidedMaintenanceView
+        from gi.repository import Gtk, Adw
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        group, row = Adw.PreferencesGroup(), Adw.ActionRow()
+        row.set_title(self.describe().title)
+        row.set_subtitle(self.describe().description)
+        measure, cancel = Gtk.Button(label="Mesurer…"), Gtk.Button(label="Annuler")
+        cancel.set_sensitive(False)
+        row.add_suffix(measure)
+        row.add_suffix(cancel)
+        group.add(row)
+        outer.append(group)
+        detail = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        outer.append(detail)
+
+        def render(controller, action, state, value):
+            ready = state in ("ready", "cancelled")
+            measure.set_sensitive(ready)
+            cancel.set_sensitive(state == "busy")
+            if state == "ready":
+                detail.set_text(capacity_text(value))
+            elif state in ("cancelled", "cancelling"):
+                detail.set_text("Observation annulée. Aucun espace libre attesté.")
+            else:
+                detail.set_text("Observation en cours…")
+
+        controller = self.controller(host, render)
+        measure.connect("clicked", lambda _b: controller.request("capacity"))
+        cancel.connect("clicked", lambda _b: controller.cancel())
+        return GuidedMaintenanceView(outer, controller.dispose)
+
+
 PLUGIN = DerivedPlugin()
+CAPACITY_PLUGIN = CapacityPlugin()
