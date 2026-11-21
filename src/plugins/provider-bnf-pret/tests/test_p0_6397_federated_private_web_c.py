@@ -203,7 +203,10 @@ def test_private_commit_failure_never_counts_rolled_back_publication(harness, mo
             conn.rollback()
             raise OperationalError("controlled commit failure")
         finally:
-            conn.close()
+            # Storage._connect owns a reusable thread-local SQLite handle.
+            # Closing it here poisons the retry, rather than simulating
+            # a commit error; rollback above is the required failure.
+            pass
 
     with monkeypatch.context() as patch:
         patch.setattr(storage, "_connect", fail_at_transaction_exit)
