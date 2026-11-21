@@ -51,17 +51,21 @@ def test_additional_path_consumers_preserve_committed_receipt(tmp_path, source):
                 sql.execute("INSERT INTO cache(namespace,cache_key,payload,stored_at,expires_at) VALUES(?,?,?,?,?)",
                             (namespace, key, payload, 1, 2))
             elif source == "origin_evidence":
-                sql.execute("UPDATE origin_links SET evidence_ref=? WHERE origin_kind='derived'", (alias,))
+                # Immutable canonical coordinates must never be rewritten.
+                # Attach an independent manual OriginLink to the existing parent
+                # Artifact, with the stage as its external evidence reference.
+                sql.execute(
+                    "INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
+                    "artifact_id,evidence_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    ("fixture-consumer", "manual", intent.identity_id,
+                     "sha256:" + intent.parent_sha256, alias, 1, 1),
+                )
             else:
                 sql.execute("INSERT INTO metadata(key,value) VALUES('fixture.alias',?)", (raw,))
         before = journal.summarize_derived_journal(db)
         result = review(db, tmp_path)
-        # An altered canonical origin can fail its stronger canonical
-        # proof before the consumer scan; neither verdict releases bytes.
-        if source == "origin_evidence":
-            assert result["counts"]["known_dependency"] + result["counts"]["canonical_sql_unverified"] == 1
-        else:
-            assert result["counts"]["known_dependency"] == 1
+        assert result["counts"]["known_dependency"] == 1
+        assert result["counts"]["canonical_sql_unverified"] == 0
         assert result["counts"]["linked_pair_observed"] == 0
         assert not result["retention_authorized"] and not result["all_dependencies_verified"]
         assert journal.summarize_derived_journal(db) == before
