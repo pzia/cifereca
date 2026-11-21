@@ -342,3 +342,29 @@ def test_row_replacement_fallback_preserves_narrow_detail_for_the_retained_key(m
     assert page.selection.get_selected_item() is updated
     assert page._narrow_detail_visible
     assert navigation == []
+
+
+@pytest.mark.parametrize("open_detail", [True, False])
+@pytest.mark.parametrize("duplicate_before", [True, False])
+def test_ambiguous_selection_key_is_not_restored_on_refresh(open_detail, duplicate_before):
+    old = BookRow()
+    page, show, navigation = narrow_page_with(old, open_detail)
+    if duplicate_before:
+        page.store.append(BookRow(old.key, title="Autre source"))
+        replacement = [BookRow(old.key, title="Nouvelle notice")]
+    else:
+        replacement = [BookRow(old.key), BookRow(old.key, title="Autre source")]
+    show(page, replacement)
+    assert page.selection.get_selected_item() is None
+    assert page.store.items == replacement
+    assert navigation == (["list"] if open_detail else [])
+
+
+def test_select_key_refuses_duplicate_without_changing_selection():
+    _, _, select = production_methods("select_key")
+    initial = BookRow("current")
+    page, store, selection, *_ = page_with(initial)
+    store.append(BookRow("ambiguous"))
+    store.append(BookRow("ambiguous", title="Autre source"))
+    assert select(page, "ambiguous") is False
+    assert selection.get_selected_item() is initial
