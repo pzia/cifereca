@@ -295,7 +295,10 @@ def test_conflicting_revisions_do_not_pick_first_candidate(harness):
     assert session.calls == 0
 
 
-@pytest.mark.parametrize("change", ["rebind", "disconnect", "generation", "descriptor", "notice", "account"])
+@pytest.mark.parametrize("change", [
+    "rebind", "disconnect", "generation", "descriptor", "notice", "account",
+    "foreign_credential", "duplicate_primary", "duplicate_object", "oversized_inventory",
+])
 def test_later_source_cannot_publish_obsolete_earlier_lender(harness, change):
     service, account, first = harness
     second_account = Account(
@@ -328,8 +331,17 @@ def test_later_source_cannot_publish_obsolete_earlier_lender(harness, change):
                 first.descriptor = replace(first.descriptor, display_name="Changed")
             elif change == "notice":
                 a.revision_id = "new-source-revision"
-            else:
+            elif change == "account":
                 account.unique_id = "different-borrower"
+            elif change == "foreign_credential":
+                # The same session key is now registered to the requester.
+                service.accounts.append(replace(account, identity_id="default"))
+            elif change == "duplicate_primary":
+                service.accounts.append(replace(account, display_name="Duplicate"))
+            elif change == "duplicate_object":
+                service.accounts.append(account)
+            else:
+                service.accounts.extend([second_account] * 513)
         return original(plugin_id)
 
     service._plugin_manager.status = status
