@@ -239,6 +239,7 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
                 if len(rows) >= _MAX_RECORDS or total + size > _MAX_TOTAL_BYTES:
                     raise DerivedJournalConflict("derived_journal_capacity_exceeded")
                 reserved_output_bytes = 0
+                occupied = False
                 for existing_key, _ in rows:
                     existing = db.execute(
                         "SELECT value FROM metadata WHERE key=?", (existing_key,),
@@ -253,7 +254,12 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
                     if (prior.candidate_path == intent.candidate_path
                             or (existing_key.startswith(_PREFIX) and (
                                 existing_key == key or prior.staged_path == intent.staged_path))):
-                        raise DerivedJournalConflict("derived_journal_slot_occupied")
+                        occupied = True
+                # Decode all bounded receipts before reporting an occupied
+                # slot: a corrupt later row must remain a corruption veto,
+                # not be hidden by a valid historical target collision.
+                if occupied:
+                    raise DerivedJournalConflict("derived_journal_slot_occupied")
                 if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
                     raise DerivedJournalConflict("derived_journal_output_capacity_exceeded")
                 parent = db.execute(
