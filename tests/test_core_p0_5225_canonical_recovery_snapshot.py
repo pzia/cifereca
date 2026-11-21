@@ -112,7 +112,9 @@ def test_completed_handoff_and_final_B_commit_use_full_durability(rig, monkeypat
     seen = []
     db.set_trace_callback(seen.append)
     try:
+        original = force_failure_once(monkeypatch)
         _staged(rig, monkeypatch)
+        monkeypatch.setattr(execution, "publish_completed_acquisition", original)
         assert db.execute("PRAGMA synchronous").fetchone() == (1,)
         assert run(service, account, snapshot, root, lock_path, {source},
                    lambda *_: pytest.fail("completed receipt must avoid GET"))[0].status == "recovered"
