@@ -149,6 +149,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
 
     def phase(name):
         report["notice_c_private_web_phase"] = name
+        print("NOTICE_C_PRIVATE_WEB_PHASE=" + name, flush=True)
 
     phase("construct")
     core = OfflineCore(db)
@@ -165,6 +166,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
     probe.set_child(panel)
     probe.present()
     deadline = monotonic() + 15
+    phase("mapped_request_setup")
 
     def launch(uri, _context):
         assert get_ident() == gtk_thread
@@ -184,8 +186,10 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
 
             def checked_done(value):
                 assert get_ident() == gtk_thread
-                done(value)
-                self.completed += 1
+                def publish():
+                    done(value)
+                    self.completed += 1
+                guard(publish)()
 
             def checked_fail(error):
                 phase("worker_failed")
@@ -196,7 +200,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
     runner = host.runner = Runner()
 
     def menus():
-        return [widget for widget in panel._action_buttons
+        return [widget for widget in getattr(panel, "_action_buttons", ())
                 if getattr(widget, "_cifereca_action_id", None) == "open-c-authenticated-web"]
 
     def run_case(index):
@@ -235,8 +239,10 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
         row, expected = fixtures[index]
         generation[0] += 1
         lease = generation[0]
+        phase("reset_" + str(index))
         panel.empty("Notice privée témoin", "Référence exacte")
         wanted = runner.completed + 1
+        phase("submit_" + str(index))
         assert request_authenticated_search_web_actions(
             host, panel, row, reader_scope=capture_search_read_scope(core, OWNER),
             current=lambda: generation[0] == lease, Gtk=Gtk, Gio=gio,
@@ -248,6 +254,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                 assert monotonic() < deadline, "private web menu timeout"
                 later(40, guard(poll))
                 return
+            phase("received_" + str(index))
             stats[str(index)] = len(expected)
             if not expected:
                 assert not menus() and not launches
@@ -312,4 +319,14 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
 
         later(40, guard(poll))
 
-    run_case(0)
+    # Wait for the actual mapped GTK widget before enqueuing the first read.
+    # Otherwise a fast local worker can complete before the new transient
+    # is mapped, and the controller correctly discards its callback.
+    def start_mapped():
+        if not panel.get_mapped():
+            assert monotonic() < deadline, "private web panel map timeout"
+            later(40, guard(start_mapped))
+            return
+        run_case(0)
+
+    later(40, guard(start_mapped))
