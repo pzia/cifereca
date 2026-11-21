@@ -467,3 +467,43 @@ def test_modified_private_click_receipt_never_runs_hostile_equality_or_scope(
             host, menu, choice_id=original.choice_id,
         ) == URL
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+
+@pytest.mark.parametrize("field", ["source_key", "provider_id", "kind", "artifact_id"])
+def test_private_source_documents_reject_mutated_scalar_before_hash_or_click(
+    tmp_path, field,
+):
+    class Hostile:
+        def __hash__(self):
+            raise AssertionError("foreign DocumentRef hash executed")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign DocumentRef equality executed")
+
+    with closing(Storage(tmp_path / "scope-hash.sqlite")) as db:
+        host = Host(db)
+        account = host.account("alice")
+        source, canonical = host.source(account)
+        menu = host.menu(canonical, source.document)
+        choice, = menu.choices
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        mutated = replace(source.document)
+        object.__setattr__(mutated, field, Hostile())
+        assert read_authenticated_web_choices(
+            host, canonical.document,
+            reader_scope=capture_search_read_scope(host, "alice"),
+            source_documents=(mutated,),
+        ) is None
+        changed = replace(menu, _bindings=(
+            replace(menu._bindings[0], document=mutated),
+        ))
+        assert resolve_authenticated_web_choice(
+            host, changed, choice_id=choice.choice_id,
+        ) is None
+        assert resolve_authenticated_web_choice(
+            host, menu, choice_id=choice.choice_id,
+        ) == URL
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
