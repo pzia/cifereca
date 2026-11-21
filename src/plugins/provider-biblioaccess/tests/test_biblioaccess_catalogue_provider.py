@@ -392,9 +392,9 @@ def test_changed_filter_is_not_next_page(target):
 # Synthetic markup: only the wording is reported by the #7162 field receipt.
 # Do not treat these cases as a copy of the original remote HTML.
 @pytest.mark.parametrize("body", [
-    "<p>Aucun résultat pour la recherche roman</p>",
-    "<div>Aucun résultat pour la recherche <strong>roman</strong></div>",
-    "<p>Aucun résultat pour la recherche <span>roman</span></p>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p>",
+    "<div>Aucun r\u00e9sultat pour la recherche <strong>roman</strong></div>",
+    "<p>Aucun r\u00e9sultat pour la recherche <span>roman</span></p>",
     "<html><head><title>Recherche</title></head><body>"
     "<p>Aucun r&eacute;sultat pour la recherche roman</p></body></html>",
 ])
@@ -429,17 +429,17 @@ def test_explicit_summary_zero_same_call_no_retry(body):
 
 
 @pytest.mark.parametrize("body", [
-    "<p>Aucun résultat pour la recherche autre</p>",
-    "<p>Aucun résultat pour la recherche roman policier</p>",
-    "<script>var message='<p>Aucun résultat pour la recherche roman</p>';</script>",
-    "<div hidden><p>Aucun résultat pour la recherche roman</p></div>",
-    "<template><p>Aucun résultat pour la recherche roman</p></template>",
-    "<p>Aucun résultat pour la recherche roman</p><input type='password'>",
-    "<p>Aucun résultat pour la recherche roman</p><form action='/Account/Login'></form>",
-    "<p>Aucun résultat pour la recherche roman</p><a href='Book/123'>Livre</a>",
-    "<p>Aucun résultat pour la recherche roman</p><a href='Search?pageindex=1'>Suite</a>",
-    "<p>Aucun résultat pour la recherche roman</p><p>Aucun résultat pour la recherche autre</p>",
-    "<p>Aucun résultat pour la recherche roman",
+    "<p>Aucun r\u00e9sultat pour la recherche autre</p>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman policier</p>",
+    "<script>var message='<p>Aucun r\u00e9sultat pour la recherche roman</p>';</script>",
+    "<div hidden><p>Aucun r\u00e9sultat pour la recherche roman</p></div>",
+    "<template><p>Aucun r\u00e9sultat pour la recherche roman</p></template>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p><input type='password'>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p><form action='/Account/Login'></form>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p><a href='Book/123'>Livre</a>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p><a href='Search?pageindex=1'>Suite</a>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman</p><p>Aucun r\u00e9sultat pour la recherche autre</p>",
+    "<p>Aucun r\u00e9sultat pour la recherche roman",
 ])
 def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
     calls = []
@@ -469,4 +469,4 @@ def test_summary_zero_refuses_ambiguous_or_unqualified_html(body):
 ])
 def test_summary_zero_requires_exact_tenant_query_and_route(path):
     assert not http_adapter.summary_attests_zero(
-        path, "<p>Aucun résultat pour la recherche roman</p>")
+        path, "<p>Aucun r\u00e9sultat pour la recherche roman</p>")
