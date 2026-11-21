@@ -392,6 +392,9 @@ def run_organizer_review(service, scope, *, cursor=None):
         return {"groups": tuple(reports), "inventory_status": inventory.status,
                 "placement_count": inventory.placement_count, "group_count": len(inventory.groups),
                 "page": offset//_PAGE+1,
+                # Private proof: advice selection must refer to the exact
+                # scope and SQLite snapshot that were reviewed.
+                "review_anchor": OrganizerCursor(scope, stamp, offset),
                 "next_cursor": OrganizerCursor(scope, stamp, following)
                 if following < len(inventory.groups) else None,
                 "keeper_advice": advice, "keeper_reviews": tuple(reviews),
@@ -404,10 +407,14 @@ def run_organizer_review(service, scope, *, cursor=None):
 def select_organizer_keeper_advice(scope, result, *, confirmed=False):
     """Explicit selection of reviewed ADVICE only; never a mutation plan."""
     if (confirmed is not True or type(scope) is not OrganizerScope
-            or not scope.current() or type(result) is not dict
+            or not scope.bound() or type(result) is not dict
             or result.get("mutation_authorized") is not False):
         return None
     try:
+        anchor = result.get("review_anchor")
+        if (type(anchor) is not OrganizerCursor or anchor.scope is not scope
+                or sqlite_source_stamp(scope.database) != anchor.stamp):
+            return None
         reviews = result["keeper_reviews"]
         if type(reviews) is not tuple or len(reviews) > _PAGE:
             return None
@@ -415,6 +422,7 @@ def select_organizer_keeper_advice(scope, result, *, confirmed=False):
         if original != result.get("keeper_advice"):
             return None
         selected = preview_keeper_bulk(reviews, identity_id=scope.identity, accept_all=True)
-        return selected if scope.current() else None
+        return (selected if scope.bound()
+                and sqlite_source_stamp(scope.database) == anchor.stamp else None)
     except (ValueError, TypeError, KeyError):
         return None
