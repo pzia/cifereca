@@ -1,7 +1,7 @@
 """Tenant 1409 catalogue HTTP read adapter (issue #3691).
 
 Uses only Core's HTTPX_TRANSPORT; never opens a browser or writes a library
-entitlement. SearchResultSummary may redirect to Search. A summary HTTP 200 is
+entitlement. SearchResultSummary may redirect to Search. A summary HTTP 200 alone is
 *not* proof of zero results, and an empty Search page is not an exhaustive
 catalogue assertion. No session or profile is implicitly shared.
 """
@@ -17,6 +17,7 @@ from biblioaccess_metadata import BibliographicNotice, parse_book_metadata
 from biblioaccess_observations import (
     MAX_HTML_BYTES, MAX_PAGE_INDEX, _SUMMARY_PATH, _parts, _search_coordinates,
     classify_search_response, extract_catalogue_links, search_summary_url,
+    summary_attests_zero,
 )
 
 MAX_PAGES = 3  # Legacy bounded multi-page diagnostic.
@@ -143,7 +144,10 @@ class BiblioAccessCatalogueHTTP:
                     request_url=summary, status=response.status_code,
                     location=response.headers.get("location", ""))
                 if status == "html_unparsed":
-                    _read_html(response)
+                    html = _read_html(response)
+                    if summary_attests_zero(str(response.request.url), html) and str(response.request.url) == summary:
+                        return CatalogueSearchObservation(
+                            (), 0, "summary_zero_attested", completeness="complete")
                     return CatalogueSearchObservation(
                         (), 0, "summary_html_unverified")
                 if status != "search_redirect":
