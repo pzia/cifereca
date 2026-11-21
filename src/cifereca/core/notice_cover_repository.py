@@ -277,6 +277,22 @@ def _checked_source_state(db, document, key):
     return row, previous, fence
 
 
+def read_current_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNoticeCover | None:
+    """Admit exact-source N2 evidence under one read snapshot.
+
+    Unlike the raw retained-row reader, this rejects a contradictory
+    durable fence. A historical source without a fence remains readable.
+    No writes, migration, supplier I/O or canonical fallback.
+    """
+    key = _opaque_key(document)
+    if key is None:
+        return None
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        _, previous, _ = _checked_source_state(db, document, key)
+        return previous
+
+
 def _qualified_write_epoch(previous, fence):
     if previous is not None:
         return previous.epoch
