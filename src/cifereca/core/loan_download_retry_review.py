@@ -42,7 +42,9 @@ class LoanDownloadRetryRow:
         )
 
 
-_MAX_SOURCES = 2048
+_MAX_SOURCES = 2048  # actual review rows, not the historical library
+_MAX_SCANNED_SOURCES = 100_000
+_SCAN_BATCH = 128
 
 
 def _context(service, identity_id):
@@ -130,11 +132,24 @@ def review_loan_download_retries(service, *, identity_id: str):
             "ORDER BY ref.provider_id,ref.credential_id,ref.account_id,ref.edition_id,"
             "ref.right_id,ref.branch_id,ref.reference_kind LIMIT ?",
             (identity_id, _OWNED_KEY_PREFIX, _INTERVENTION_PREFIX,
-             RUNTIME_ATTEMPT_PREFIX, _MAX_SOURCES + 1),
-        ).fetchall()
-        if len(sources) > _MAX_SOURCES:
-            raise ValueError("loan_download_review_over_budget")
-        for provider, credential, account, branch, edition, right, state, kind in sources:
+             RUNTIME_ATTEMPT_PREFIX, _MAX_SCANNED_SOURCES + 1),
+        )
+        # Legacy loan marker keys use a different hash than SourceReference.
+        # Stream exact rows in the same snapshot, instead of materializing
+        # the entire history or truncating the first 2048 observations.
+        scanned = 0
+        def observed_sources():
+            nonlocal scanned
+            while True:
+                batch = sources.fetchmany(_SCAN_BATCH)
+                if not batch:
+                    return
+                for coordinates in batch:
+                    scanned += 1
+                    if scanned > _MAX_SCANNED_SOURCES:
+                        raise ValueError("loan_download_review_scan_over_budget")
+                    yield coordinates
+        for provider, credential, account, branch, edition, right, state, kind in observed_sources():
             source = SourceKey(ProviderRightsScope(identity_id, provider, credential, account),
                                edition, right, kind, branch)
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (_key(source),)).fetchone()
@@ -144,6 +159,8 @@ def review_loan_download_retries(service, *, identity_id: str):
             runtime_hold, runtime_started_at, runtime_phase = read_runtime_attempt_in_db(db, source)
             if not (retry.failures or hold or refused_at or runtime_hold):
                 continue
+            if len(result) >= _MAX_SOURCES:
+                raise ValueError("loan_download_review_over_budget")
             title = "Référence " + edition
             if kind == "loan":
                 possible = titles.get((provider, credential, account, edition, right), ())

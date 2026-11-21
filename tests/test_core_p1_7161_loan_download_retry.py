@@ -347,3 +347,63 @@ def test_retry_operations_never_settle_caller_transaction(rig, monkeypatch, oper
     assert storage.metadata_get("synthetic.retry.pending") is None
     assert read_loan_download_retry(storage, source) == row.retry
     assert review_loan_download_retries(service, identity_id=source.scope.identity_id) == (row,)
+
+
+@pytest.mark.parametrize("case", ["paused", "runtime", "legacy", "empty", "scan_overflow", "incident_overflow"])
+def test_review_capacity_counts_incidents_not_healthy_historic_loans(rig, monkeypatch, case):
+    from types import SimpleNamespace
+    from cifereca.core import loan_download_retry_review as review
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.canonical_runtime_attempt import begin_runtime_attempt
+
+    service, account, source, snap, root, lock_path = loan_snapshot(rig)
+    storage = service.storage
+    service.current_identity = SimpleNamespace(identity_id=source.scope.identity_id)
+    # The failed loan sorts after a long healthy history, across batches.
+    healthy = tuple(replace(snap.rights[0], edition_id=f"a-{n:04d}", right_id=f"a-{n:04d}")
+                    for n in range(9))
+    last = replace(snap.rights[0], edition_id="z-final", right_id="z-final")
+    focused = replace(source, edition_id=last.edition_id, right_id=last.right_id)
+    persist_attested_source_references(storage, replace(snap, rights=(*healthy, last)))
+    monkeypatch.setattr(review, "_MAX_SOURCES", 1)
+    monkeypatch.setattr(review, "_SCAN_BATCH", 2)
+    monkeypatch.setattr(review, "acquisition_lock_file", lambda: lock_path)
+    with InterProcessLock(lock_path) as lease:
+        if case in ("paused", "incident_overflow"):
+            for _ in range(FAILURE_LIMIT):
+                record_loan_download_failure(storage, focused, reason="canonical_delivery_failed", shared_lock=lease)
+            if case == "incident_overflow":
+                another = replace(source, edition_id=healthy[0].edition_id, right_id=healthy[0].right_id)
+                record_loan_download_failure(storage, another, reason="canonical_delivery_failed", shared_lock=lease)
+        elif case == "runtime":
+            begin_runtime_attempt(storage, source=focused, offer_id="synthetic", shared_lock=lease)
+        elif case == "legacy":
+            storage.acquisition_put({
+                "acquisition_id": "synthetic-last-historical",
+                "identity_id": focused.scope.identity_id,
+                "provider_id": focused.scope.provider_id,
+                "credential_id": focused.scope.credential_id,
+                "account_id": focused.scope.account_id,
+                "item_id": focused.edition_id,
+                "status": "attention_required", "strategy": "loan_auto",
+                "executor": "kobo-adept", "metadata": {"provider_loan_id": focused.right_id},
+            })
+    if case == "scan_overflow":
+        monkeypatch.setattr(review, "_MAX_SCANNED_SOURCES", 8)
+        with pytest.raises(ValueError, match="scan_over_budget"):
+            review.review_loan_download_retries(service, identity_id="A")
+    elif case == "incident_overflow":
+        with pytest.raises(ValueError, match="review_over_budget"):
+            review.review_loan_download_retries(service, identity_id="A")
+    elif case == "empty":
+        assert review.review_loan_download_retries(service, identity_id="A") == ()
+    else:
+        row, = review.review_loan_download_retries(service, identity_id="A")
+        assert row.source == focused
+        assert row.can_reset is (case == "paused")
+        assert row.runtime_hold is (case == "runtime")
+        assert row.adept_hold is (case == "legacy")
+        if case == "paused":
+            review.reset_reviewed_loan_download_retry(service, identity_id="A", row=row)
+            assert review.review_loan_download_retries(service, identity_id="A") == ()
+    assert service.calls == 0
