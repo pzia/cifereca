@@ -134,6 +134,41 @@ def test_copy_or_late_edit_does_not_mint_same_call_age(tmp_path):
         assert "age_observation" not in snapshot.observation.fields_copy()["search_result"]["public_bibliography"]
 
 
+@pytest.mark.parametrize("invalid", ["no_evidence", "wrong_record", "bad_range", "foreign_type"])
+def test_reused_public_row_cannot_replay_prior_age_after_failed_restamp(tmp_path, invalid):
+    from cifereca.core.notice_c_public_age import (
+        stamp_same_call_public_age, verified_same_call_public_age,
+    )
+
+    row = project(original())
+    old = verified_same_call_public_age(row)
+    assert old is not None and old.ranges[0].age_min == 12
+    candidate = original()
+    if invalid == "no_evidence":
+        candidate.metadata = {}
+    elif invalid == "wrong_record":
+        candidate.record_id = "unrelated"
+    elif invalid == "bad_range":
+        candidate.metadata["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = True
+    else:
+        candidate = object()
+    # Reused SearchResult object must never retain its previous exact-call
+    # proof when the latest attempt does not qualify; the negative result
+    # must survive the subsequent Core C writer, not merely the filter.
+    stamp_same_call_public_age(row, candidate)
+    assert verified_same_call_public_age(row) is None
+    with closing(Storage(tmp_path / (invalid + ".sqlite"))) as db:
+        source = persist(db, row)
+        bibliography = source.observation.fields_copy()["search_result"]["public_bibliography"]
+        assert "age_observation" not in bibliography
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+    # Fresh, independently qualified exact evidence can stamp again.
+    stamp_same_call_public_age(row, original())
+    renewed = verified_same_call_public_age(row)
+    assert renewed is not None and renewed.ranges == old.ranges
+
+
 def test_grouped_filter_keeps_age_on_its_own_source_only(tmp_path):
     with closing(Storage(tmp_path / "group.sqlite")) as db:
         a = project(original())
