@@ -256,6 +256,19 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 if (candidate.comparison == "isbn_title_author_concordant"
                     and any(len(by_isbn[isbn]) > 1 for isbn in candidate.isbns))
                 else candidate for candidate in candidates)
+            # Explicit evidence order only within this one public window.
+            # Keep supplier order for ties and all ambiguous editions; no
+            # ranking here proves source, acquisition, licence or freshness.
+            evidence_rank = {
+                "isbn_title_author_concordant": 0,
+                "title_author_concordant": 1,
+                "isbn_claim_ambiguous": 2,
+                "title_concordant_author_unverified": 3,
+                "title_related": 4,
+                "isbn_claim_divergent": 5,
+            }
+            candidates = tuple(sorted(
+                candidates, key=lambda item: evidence_rank.get(item.comparison, 6)))
             result = report("partial", candidates)
         return result if live() else report("scope_changed")
     except Exception:
