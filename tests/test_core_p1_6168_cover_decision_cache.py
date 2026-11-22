@@ -472,3 +472,58 @@ def test_read_leases_cannot_mutate_stored_n2_cas_token():
     assert cache.stats()["scopes"] == 1
     cache.invalidate(scope, cause="loan_changed")
     assert cache.peek(scope, revision=2) is None
+
+
+def test_mutated_admitted_n1_decision_cannot_rewrite_n2_evidence():
+    """A valid producer mutation must not change the selected N2 URI/scope."""
+    cache = CoverDecisionCache()
+    scope = loan()
+    producer = cache.begin(scope, revision=3)
+    decision = cache.resolve_n1(
+        scope, [candidate()], revision=3, snapshot_complete=True,
+    )
+    events = []
+    cache.subscribe(scope, events.append)
+    assert cache.publish_resolved(producer, decision)
+    object.__setattr__(decision, "uri", ALT)
+    object.__setattr__(decision.scope, "loan_id", "another-valid-loan")
+    hit = cache.peek(scope, revision=3)
+    assert hit.uri == URL and hit.scope == scope
+    assert cache.selected_token(scope, revision=3, uri=URL) == producer
+    assert cache.selected_token(scope, revision=3, uri=ALT) is None
+    assert events[-1].decision.uri == URL
+    assert events[-1].decision.scope == scope
+    assert cache.stats()["scopes"] == 1
+
+
+def test_n2_reader_and_notification_cannot_mutate_other_reader_decisions():
+    """Every read/event lease is value-equal but independently owned."""
+    cache = CoverDecisionCache()
+    scope = loan()
+    later_events = []
+
+    def hostile_listener(event):
+        if event.decision is not None:
+            object.__setattr__(event.decision, "uri", ALT)
+            object.__setattr__(event.decision.scope, "loan_id", "other-valid-loan")
+
+    cache.subscribe(scope, hostile_listener)
+    cache.subscribe(scope, later_events.append)
+    completed(cache, scope, revision=6)
+    assert later_events[-1].decision.uri == URL
+    assert later_events[-1].decision.scope == scope
+
+    first = cache.peek(scope, revision=6)
+    second = cache.peek(scope, revision=6)
+    assert first == second and first is not second
+    assert first.scope is not second.scope
+    object.__setattr__(first, "uri", ALT)
+    object.__setattr__(first.scope, "loan_id", "other-valid-loan")
+    observed_token, observed = cache.observe(scope, revision=6)
+    assert observed.uri == URL and observed.scope == scope
+    object.__setattr__(observed, "uri", ALT)
+    object.__setattr__(observed.scope, "loan_id", "third-valid-loan")
+    assert cache.peek(scope, revision=6).uri == URL
+    assert cache.selected_token(scope, revision=6, uri=URL) == observed_token
+    assert cache.selected_token(scope, revision=6, uri=ALT) is None
+    assert cache.stats()["scopes"] == 1
