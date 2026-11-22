@@ -247,3 +247,52 @@ def test_native_dialog_is_revoked_and_closed_on_organizer_disposal(
     if closure == "late_apply":
         dialog.respond("apply")
     assert not runner.queue and not calls
+
+
+@pytest.mark.parametrize("phase", ["observe", "open", "response", "worker"])
+def test_native_confirmation_handles_activation_lease_exception_without_core_work(
+    monkeypatch, phase,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    failure = [phase == "observe"]
+    messages = []
+
+    def current():
+        if failure[0]:
+            raise RuntimeError("activation lease already disposed")
+        return True
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Revoked native review cannot admit Core execution")
+
+    monkeypatch.setattr(execution, "admit_native_reviewed_rename", forbidden)
+    lease = NS(identity_id="A", is_current=current)
+    window = NS(service=object(), plugin_manager=object(),
+                runner=runner, toast=messages.append)
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    if phase == "observe":
+        assert not ui.button.visible and not ui.open(NS(MessageDialog=Dialog))
+    elif phase == "open":
+        failure[0] = True
+        assert not ui.open(NS(MessageDialog=Dialog))
+    else:
+        assert ui.open(NS(MessageDialog=Dialog))
+        dialog, = Dialog.dialogs
+        if phase == "response":
+            failure[0] = True
+        dialog.respond("apply")
+        if phase == "worker":
+            assert len(runner.queue) == 1
+            failure[0] = True
+            runner.run()
+    assert not runner.queue and not messages
+    assert ui._used is (page if phase == "worker" else None)
+    assert not ui._lease_current()

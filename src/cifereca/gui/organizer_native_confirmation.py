@@ -39,8 +39,16 @@ class NativeOrganizerConfirmation:
         self.button.set_sensitive(False)
         self.button.connect("clicked", self._clicked)
 
+    def _lease_current(self):
+        # Revocation is a negative-only guard. A disposed activation may
+        # raise while GTK delivers a late response or worker completion.
+        try:
+            return self.lease.is_current() is True
+        except Exception:
+            return False
+
     def _current(self, page):
-        return self._page is page and self.lease.is_current()
+        return self._page is page and self._lease_current()
 
     @staticmethod
     def _displayable_path(value):
@@ -62,7 +70,7 @@ class NativeOrganizerConfirmation:
                  and self._displayable_path(entries[0].current)
                  and self._displayable_path(entries[0].proposed)
                  and callable(getattr(execution, "admit_native_reviewed_rename", None))
-                 and self.lease.is_current())
+                 and self._lease_current())
         self._page = value if valid else None
         self.button.set_visible(valid)
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
@@ -131,7 +139,7 @@ class NativeOrganizerConfirmation:
             if response_id != "apply" or not self._current(page):
                 self.button.set_sensitive(self._page is not None
                                           and self._page is not self._used
-                                          and self.lease.is_current())
+                                          and self._lease_current())
                 return
             self._used = page
 
