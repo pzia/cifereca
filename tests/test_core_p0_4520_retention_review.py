@@ -168,6 +168,7 @@ def test_recorded_inode_dependency_agrees_in_both_retention_reviews(tmp_path, re
     "profile\nunsafe", "profile\x7funsafe", "x" * 257,
     "profile\x85unsafe", "profile\u202eunsafe",
     "profile\u2028unsafe", "profile\u200dunsafe",
+    "profile\u2066unsafe", "profile\x1bunsafe",
 ])
 def test_retention_scope_rejects_malformed_profile_directory(tmp_path, directory):
     service, intent, reservation = _prepared_publication(tmp_path)
