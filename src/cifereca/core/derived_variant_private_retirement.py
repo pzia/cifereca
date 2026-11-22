@@ -24,6 +24,7 @@ from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_link import _regular, _require_named
 from .derived_variant_retention_review import _canonical
 from .derived_variant_retirement_preparation import _inspect_epub_final
+from .derived_variant_pdf_reader import pdf_reader_observed
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _walk, _receipt_alias_verdict
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -122,7 +123,7 @@ def _read_content(fd, intent, *, deadline, still_current):
     """Stream exact SHA, then the same bounded spine/CRC proof as preflight."""
     def live():
         return still_current() is True and monotonic() < deadline
-    _require(intent.media_format in ("epub", "kepub")
+    _require(intent.media_format in ("epub", "kepub", "pdf")
              and 0 < intent.output_size <= _MAX_CONTENT and live(),
              "derived_retirement_reader_unverified")
     os.lseek(fd, 0, os.SEEK_SET)
@@ -137,9 +138,14 @@ def _read_content(fd, intent, *, deadline, still_current):
     _require(live() and not os.read(fd, 1)
              and digest.hexdigest() == intent.output_sha256,
              "derived_retirement_reader_unverified")
-    _inspect_epub_final(
-        fd, intent.output_size, media_format=intent.media_format,
-        max_bytes=_MAX_EXPANDED, deadline=deadline, still_current=live)
+    if intent.media_format == "pdf":
+        _require(pdf_reader_observed(fd, intent.output_size, deadline=deadline,
+                                     still_current=live),
+                 "derived_retirement_reader_unverified")
+    else:
+        _inspect_epub_final(
+            fd, intent.output_size, media_format=intent.media_format,
+            max_bytes=_MAX_EXPANDED, deadline=deadline, still_current=live)
 
 
 @contextmanager
