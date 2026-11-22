@@ -223,3 +223,32 @@ def test_invalid_brotli_bytes_are_counted_as_transport_refusal(tmp_path):
     assert result["counts"]["eligible_public_get"] == 1
     assert result["reasons"] == {"encoding_unavailable_or_invalid": 1}
     assert result["counts"].get("parser_qualified", 0) == 0
+
+
+@pytest.mark.parametrize("place,header", [
+    ("request", ["X-User-Identity\u200b", "private"]),
+    ("request", ["X-Other Bad", "private"]),
+    ("request", ["X-Test", "PRIVATE\r\nAuthorization: bearer"]),
+    ("response", ["X-Other\nHeader", "private"]),
+    ("response", ["X-Test", "bad\x00byte"]),
+])
+def test_invalid_http_header_fields_are_not_qualified_as_public_capture(
+    tmp_path, place, header,
+):
+    entry = _entry("a", HTML)
+    entry[place]["headers"].append(header)
+    result = analyse_capture(_archive(tmp_path / "invalid-headers.zip", [entry]))
+    assert result["status"] == "reviewed"
+    assert result["counts"].get("parser_qualified", 0) == 0
+    if place == "request":
+        assert result["counts"]["unqualified"] == 1
+        assert result["counts"].get("eligible_public_get", 0) == 0
+    else:
+        assert result["reasons"] == {"invalid_receipt": 1}
+
+
+def test_replay_accepts_normal_ascii_header_tokens(tmp_path):
+    entry = _entry("a", HTML)
+    entry["request"]["headers"].append(["X-Trace_ID", "trace-safe"])
+    result = analyse_capture(_archive(tmp_path / "valid-headers.zip", [entry]))
+    assert result["counts"]["parser_qualified"] == 1
