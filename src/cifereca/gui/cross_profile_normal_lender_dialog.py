@@ -148,6 +148,12 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             menu.add_response("cancel", "Annuler")
             menu.add_response("borrow", "Emprunter sur ce profil")
             menu.connect("response", lambda _dialog, value: confirmed(candidate, value))
+            # Constructing/connecting a native GTK dialog can re-enter the
+            # detail route and even rewrite a lender in place. Never paint
+            # confirmation for a revoked account/edition.
+            if not dialog_current() or not lender_current(candidate):
+                release()
+                return False
             menu.present()
             return True
         except Exception:
@@ -171,7 +177,12 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         for response, row in choices.items():
             menu.add_response(response, labels[id(row)])
         menu.connect("response", selected)
-        if not dialog_current():
+        # Do not display an obsolete N-way choice if GTK construction
+        # changed the original borrower, provider claim or source notice.
+        if (not dialog_current()
+                or not possible_lender_claims_distinct(
+                    rows, item, requesting_identity_id=identity_id)
+                or any(not lender_current(row) for row in rows)):
             release()
             return False
         menu.present()
