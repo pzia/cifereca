@@ -899,18 +899,42 @@ def main():
         for index in range(5):
             book = corpus / f"pagination-{index}.pdf"
             content = f"%PDF-1.7\\nSynthetic maintenance page {index}\\n".encode("ascii")
-            book.write_bytes(content)
+            fmt, title, author = "pdf", f"Témoin de pagination {index}", "Auteur témoin"
+            scope = {}
+            if args.guided_only == "organizer" and index == 4:
+                # One exact rename candidate among four non-qualified PDFs.
+                # Actual registered EPUB, no synthetic broker return.
+                book = corpus / "rename-opaque.epub"
+                fmt, title, author = "epub", "Roman témoin", "Autrice témoin"
+                from zipfile import ZIP_STORED
+                with ZipFile(book, "w") as archive:
+                    archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
+                    archive.writestr("META-INF/container.xml",
+                        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                        '<rootfiles><rootfile full-path="OPS/content.opf"/></rootfiles></container>')
+                    archive.writestr("OPS/content.opf",
+                        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                        '<dc:title>Roman témoin</dc:title><dc:creator>Autrice témoin</dc:creator>'
+                        '</metadata><manifest><item id="p" href="page.xhtml" media-type="application/xhtml+xml"/>'
+                        '</manifest><spine><itemref idref="p"/></spine></package>')
+                    archive.writestr("OPS/page.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><body>Fixture</body></html>')
+                content = book.read_bytes()
+                scope = {"provider_id": "local", "source_item_id": "native-rename-fixture"}
+            else:
+                book.write_bytes(content)
             digest = hashlib.sha256(content).hexdigest()
             artifact = "sha256:" + digest
             storage.artifact_put({"artifact_id": artifact, "sha256": digest,
-                                  "size": len(content), "media_format": "pdf"})
+                                  "size": len(content), "media_format": fmt})
             pid = storage.placement_put({"artifact_id": artifact,
-                "identity_id": owner.identity_id, "path": str(book), "state": "present"})
+                "identity_id": owner.identity_id, "path": str(book), "state": "present", **scope})
             storage.catalog_entry_put({"catalog_entry_id": "maintenance-pagination-" + pid,
                 "identity_id": owner.identity_id, "provider_id": "local",
                 "artifact_id": artifact, "placement_id": pid,
-                "title": f"Témoin de pagination {index}", "author": "Auteur témoin",
-                "media_format": "pdf", "local_state": "local"})
+                "title": title, "author": author,
+                "media_format": fmt, "local_state": "local",
+                **({"item_id": scope["source_item_id"]} if scope else {})})
             witnesses.append((book, content, pid, artifact))
 
         # Only the isolated derived package gets genuine interrupted
@@ -1152,7 +1176,85 @@ def main():
                         def restarted():
                             assert page_visible(1) and not page_visible(2)
                             report["checks"]["P0_3176_native_organizer_restart"] = True
-                            step(index + 1)
+                            native_dialog_receipt()
+
+                        def native_dialog_receipt():
+                            # Exercise the installed contribution, host, native
+                            # confirmation and production refusal end-to-end.
+                            # Neither a fixture fence nor a fake writer is used.
+                            prepare, = (node for node in walk(outer)
+                                        if isinstance(node, Gtk.Button)
+                                        and node.get_label() == "Préparer le plan à blanc")
+                            selector, = (node for node in walk(outer)
+                                          if isinstance(node, Gtk.ComboBoxText))
+                            native, = (node for node in walk(outer)
+                                       if isinstance(node, Gtk.Button)
+                                       and node.get_label() == "Confirmer le renommage…")
+                            assert not native.get_visible()
+
+                            def find_candidate():
+                                if not prepare.get_sensitive():
+                                    assert following.get_sensitive()
+                                    following.emit("clicked")
+                                    until(lambda: button.get_sensitive() and page_visible(2), prepare_candidate)
+                                else:
+                                    prepare_candidate()
+
+                            def prepare_candidate():
+                                assert prepare.get_sensitive()
+                                assert selector.set_active_id("rename-only")
+                                prepare.emit("clicked")
+                                until(lambda: prepare.get_sensitive()
+                                      and prepare.get_label() == "Confirmer la simulation",
+                                      confirm_simulation)
+
+                            def confirm_simulation():
+                                assert not native.get_visible()
+                                prepare.emit("clicked")
+                                until(lambda: native.get_visible() and native.get_sensitive(), open_dialog)
+
+                            def open_dialog():
+                                native.emit("clicked")
+                                until(lambda: modal() is not None, cancel_dialog)
+
+                            def cancel_dialog():
+                                dialog = modal()
+                                assert dialog.get_heading() == "Confirmer le renommage ?"
+                                assert dialog.get_default_response() == "cancel"
+                                assert "rename-opaque.epub" in dialog.get_body()
+                                assert service.preview_library_filename(title="Roman témoin",
+                                    author="Autrice témoin", extension="epub") in dialog.get_body()
+                                assert fixture_evidence() == evidence
+                                dialog.response("cancel")
+                                until(lambda: modal() is None and native.get_sensitive(), reopen)
+
+                            def reopen():
+                                report["checks"]["P0_3176_real_native_rename_cancel"] = True
+                                native.emit("clicked")
+                                until(lambda: modal() is not None, apply_dialog)
+
+                            def apply_dialog():
+                                dialog = modal()
+                                assert dialog.get_heading() == "Confirmer le renommage ?"
+                                # Capture the actual worker result in GTK. This
+                                # only observes presentation, not admission.
+                                notices = []
+                                original_toast = w.toast
+                                def toast(message, *args, **kwargs):
+                                    notices.append(message)
+                                    return original_toast(message, *args, **kwargs)
+                                w.toast = toast
+                                dialog.response("apply")
+                                def refused():
+                                    w.toast = original_toast
+                                    assert any("Renommage indisponible ou refusé" in x for x in notices)
+                                    assert not native.get_sensitive()
+                                    assert fixture_evidence() == evidence and durable_counts() == before
+                                    report["checks"]["P0_3176_real_native_rename_production_hold"] = True
+                                    step(index + 1)
+                                until(lambda: bool(notices), refused)
+
+                            find_candidate()
 
                         until(lambda: button.get_sensitive() and page_visible(1),
                               restarted)
