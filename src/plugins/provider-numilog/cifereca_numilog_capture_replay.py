@@ -8,7 +8,8 @@ copied or uploaded. No authentication headers, URLs, bodies or file paths escape
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
@@ -84,6 +85,7 @@ def analyse_capture(path):
     counts = Counter()
     reasons = Counter()
     transport_keys = set()
+    observed_intervals = defaultdict(list)
     try:
         with ZipFile(path) as archive:
             index = archive.getinfo("http/index.json")
@@ -128,7 +130,20 @@ def analyse_capture(path):
                 counts["eligible_public_get"] += 1
                 # Exact transport equivalence, not normalization of query,
                 # session, endpoint, charset, or differing request headers.
-                transport_keys.add((url, headers))
+                transport_key = (url, headers)
+                transport_keys.add(transport_key)
+                started = entry.get("started_at")
+                duration = entry.get("duration_ms")
+                if (type(started) is str and type(duration) in (int, float)
+                        and not isinstance(duration, bool) and 0 <= duration <= 60000):
+                    try:
+                        instant = datetime.fromisoformat(started)
+                        if instant.tzinfo is not None:
+                            start = instant.timestamp()
+                            observed_intervals[transport_key].append(
+                                (start, start + duration / 1000.0))
+                    except (ValueError, OverflowError, OSError):
+                        pass
                 response = entry.get("response")
                 info = entry.get("response_body")
                 if type(response) is not dict or type(info) is not dict:
@@ -185,8 +200,16 @@ def analyse_capture(path):
                     else:
                         reasons["parser_refused"] += 1
             counts["distinct_exact_public_get"] = len(transport_keys)
-            counts["redundant_exact_public_get"] = (
+            counts["repeated_exact_public_get_observed"] = (
                 counts["eligible_public_get"] - len(transport_keys))
+            overlaps = 0
+            for intervals in observed_intervals.values():
+                active_end = float("-inf")
+                for start, end in sorted(intervals):
+                    if start < active_end:
+                        overlaps += 1
+                    active_end = max(active_end, end)
+            counts["overlapping_exact_public_get_observed"] = overlaps
     except (OSError, BadZipFile, KeyError, ValueError, TypeError,
             UnicodeError, json.JSONDecodeError):
         return {"status": "invalid_capture"}
