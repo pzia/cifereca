@@ -12,7 +12,7 @@ the asynchronously scheduled query and the identity/generation lease.
 from __future__ import annotations
 
 from typing import Any
-from dataclasses import asdict
+from dataclasses import asdict, fields
 
 from .notice_c_public_search import PublicNoticeCPage, PublicNoticeCHit
 from .book_cover_projection import CoverDocumentScope
@@ -37,6 +37,67 @@ _PRIMARY_DOCUMENT_SEAL_NAMES = (
     "kind", "identity_id", "source_key", "provider_id", "credential_id",
     "account_id", "loan_id", "artifact_id", "placement_id",
 )
+
+
+def _source_evidence_snapshot(hit):
+    """Bounded native receipt for one source's genre, language, series and age.
+
+    Frozen bibliography evidence dataclasses can be mutated in place. No
+    provider callback, source join, rights inference or serialization is used.
+    """
+    from .public_search_projection import (
+        PublicClassification, PublicSeriesRelation, PublicLanguageObservation,
+    )
+    from .notice_c_public_age import PublicAgeObservation, PublicAgeRange
+
+    known = (
+        PublicClassification, PublicSeriesRelation, PublicLanguageObservation,
+        PublicAgeObservation, PublicAgeRange,
+    )
+    remaining = [512]
+
+    def freeze(value, depth=0):
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 8:
+            raise ValueError("invalid_public_source_evidence_budget")
+        kind = type(value)
+        if kind in (str, int, bool, type(None)):
+            if kind is str and len(value) > 8192:
+                raise ValueError("invalid_public_source_evidence_text")
+            return kind.__name__, value
+        if kind is tuple:
+            if len(value) > 64:
+                raise ValueError("invalid_public_source_evidence_tuple")
+            return "tuple", tuple(freeze(member, depth + 1) for member in value)
+        if kind in known:
+            return kind.__name__, tuple(
+                freeze(getattr(value, field.name), depth + 1)
+                for field in fields(kind)
+            )
+        raise ValueError("invalid_public_source_evidence_type")
+
+    if type(hit) is not PublicNoticeCHit:
+        return None
+    try:
+        return tuple(freeze(getattr(hit, name)) for name in (
+            "classification", "language_observation", "series_relation",
+            "age_observation",
+        ))
+    except (AttributeError, ValueError, TypeError, RecursionError):
+        return None
+
+
+def _same_source_evidence_snapshot(left, right, depth=0):
+    """Compare only exact native snapshot scalars, never foreign equality."""
+    if depth > 12 or type(left) is not type(right):
+        return False
+    if type(left) is tuple:
+        return (len(left) == len(right)
+                and all(_same_source_evidence_snapshot(a, b, depth + 1)
+                        for a, b in zip(left, right)))
+    if type(left) in (str, int, bool, type(None)):
+        return left == right
+    return False
 
 
 def _native_c_source_ref(document):
@@ -100,7 +161,7 @@ def known_public_primary_facts(row):
     # Frozen dataclass fields can still be replaced using object.__setattr__.
     # The original scalar receipt is independent from the mutable view row;
     # inspect native types before comparing to avoid hostile __eq__.
-    if (type(seal) is not tuple or len(seal) != 4
+    if (type(seal) is not tuple or len(seal) != 5
             or seal[0] is not _PRIMARY_FACT_TOKEN
             or type(seal[1]) is not int or seal[1] != id(hit)
             or type(seal[2]) is not tuple
@@ -113,6 +174,7 @@ def known_public_primary_facts(row):
             or any(type(original) not in (str, type(None))
                    or (type(original) is str and len(original) > 512)
                    for original in seal[3])
+            or type(seal[4]) is not tuple
             or type(hit.document) is not CoverDocumentScope):
         return None
     for name, original in zip(_PRIMARY_HIT_SEAL_NAMES, seal[2]):
@@ -123,6 +185,8 @@ def known_public_primary_facts(row):
         current = getattr(hit.document, name)
         if type(current) is not type(original) or current != original:
             return None
+    if not _same_source_evidence_snapshot(_source_evidence_snapshot(hit), seal[4]):
+        return None
     document = row.get("_cover_document_ref")
     if (not _native_c_source_ref(hit.document)
             or not _native_c_source_ref(document)
@@ -309,7 +373,9 @@ def merge_public_notice_c_known_rows(
     by_document: dict[str, dict[str, Any]] = {}
     source_groups: dict[str, list[PublicNoticeCHit]] = {}
     for hit in hits:
-        if (type(hit) is not PublicNoticeCHit
+        evidence_snapshot = _source_evidence_snapshot(hit)
+        if (evidence_snapshot is None
+                or type(hit) is not PublicNoticeCHit
                 or hit.document.kind != "public_catalogue"
                 or hit.document.identity_id is not None
                 or not is_notice_cover_document(hit.document)):
@@ -362,6 +428,7 @@ def merge_public_notice_c_known_rows(
             _PRIMARY_FACT_TOKEN, id(hit),
             tuple(getattr(hit, name) for name in _PRIMARY_HIT_SEAL_NAMES),
             tuple(getattr(hit.document, name) for name in _PRIMARY_DOCUMENT_SEAL_NAMES),
+            evidence_snapshot,
         )
         by_document[hit.document.source_key] = rows[-1]
     from .notice_c_loaded_filter import attach_filter_sources

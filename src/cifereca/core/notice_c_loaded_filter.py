@@ -62,7 +62,13 @@ def attach_filter_sources(row, hits):
            and type(hit.record_id) is str
            and hit.document == first.document and hit.epoch == first.epoch
            for hit in hits):
-        row[_FIELD] = (_TOKEN, row["identity_id"], first.document, first.epoch, hits)
+        from .notice_c_known_projection import _source_evidence_snapshot
+        proofs = tuple(_source_evidence_snapshot(hit) for hit in hits)
+        if any(proof is None for proof in proofs):
+            return
+        row[_FIELD] = (
+            _TOKEN, row["identity_id"], first.document, first.epoch, hits, proofs,
+        )
 
 
 def _sources(row):
@@ -75,7 +81,7 @@ def _sources(row):
     meta = row.get("metadata")
     identity = row.get("identity_id")
     document = row.get("_cover_document_ref")
-    if (type(packet) is not tuple or len(packet) != 5 or packet[0] is not _TOKEN
+    if (type(packet) is not tuple or len(packet) != 6 or packet[0] is not _TOKEN
             or type(identity) is not str or type(packet[1]) is not str
             or packet[1] != identity
             or not _native_group_document(packet[2])
@@ -85,9 +91,17 @@ def _sources(row):
             or type(packet[3]) is not int
             or type(meta.get("notice_c_epoch")) is not int
             or packet[3] != meta["notice_c_epoch"]
-            or type(packet[4]) is not tuple or not 2 <= len(packet[4]) <= _MAX_SOURCES):
+            or type(packet[4]) is not tuple or not 2 <= len(packet[4]) <= _MAX_SOURCES
+            or type(packet[5]) is not tuple or len(packet[5]) != len(packet[4])):
         return ()
     hits = packet[4]
+    from .notice_c_known_projection import (
+        _source_evidence_snapshot, _same_source_evidence_snapshot,
+    )
+    if any(not _same_source_evidence_snapshot(
+            _source_evidence_snapshot(hit), evidence)
+            for hit, evidence in zip(hits, packet[5])):
+        return ()
     if (any(type(hit) is not PublicNoticeCHit
             or not _native_group_document(hit.document)
             or type(hit.epoch) is not int
