@@ -5,6 +5,7 @@ from threading import Lock
 
 from ..core.borrow_for_identity_discovery import (
     possible_lender_matches, possible_lender_session_matches,
+    possible_lender_claims_distinct,
 )
 
 
@@ -24,6 +25,8 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     if (not callable(execute) or not current()
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or len({id(row) for row in rows}) != len(rows)
+            or not possible_lender_claims_distinct(
+                rows, item, requesting_identity_id=identity_id)
             or any(not lender_current(row) for row in rows)
             or getattr(window, "_cross_profile_borrow_pending", None) is not None):
         return False
@@ -185,6 +188,8 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
     if (getattr(window, "_route_display_token", None) is not route
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or len({id(row) for row in rows}) != len(rows)
+            or not possible_lender_claims_distinct(
+                rows, item, requesting_identity_id=identity_id)
             or not callable(getattr(panel, "_actions", None))
             or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))
             or any(not possible_lender_matches(
