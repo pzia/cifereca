@@ -110,7 +110,7 @@ def test_exact_inventory_absence_is_not_absence_of_right(store, tmp_path):
     assert result["may_reacquire"] is False and result["may_rebind_or_return"] is False
 
 
-@pytest.mark.parametrize("count", [257, 1024])
+@pytest.mark.parametrize("count", [257, 258, 1024])
 def test_historical_runtime_inventory_discovery_fails_closed_on_oversized_registry(
     store, tmp_path, count,
 ):
