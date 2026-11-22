@@ -71,7 +71,18 @@ class NativeOrganizerConfirmation:
                  and self._displayable_path(entries[0].proposed)
                  and callable(getattr(execution, "admit_native_reviewed_rename", None))
                  and self._lease_current())
+        # A newly displayed or revoked DTO supersedes the exact consent
+        # shown in a mounted native dialog. Dismiss it now, not only on
+        # disposal: an old Apply signal can never target the new review.
+        old_dialog = self._dialog if self._dialog is not None and (
+            self._page is not value or not valid) else None
         self._page = value if valid else None
+        if old_dialog is not None:
+            self._dialog = None
+            try:
+                old_dialog.close()
+            except Exception:
+                pass
         self.button.set_visible(valid)
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
 
