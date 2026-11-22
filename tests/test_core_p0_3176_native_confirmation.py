@@ -124,3 +124,41 @@ def test_native_dialog_gtk_launch_failure_does_not_consume_review_or_queue_mutat
     assert ui.open(NS(MessageDialog=Dialog)) is True
     Dialog.dialogs[-1].respond("cancel")
     assert ui.button.sensitive and ui._used is None and not runner.queue
+
+
+@pytest.mark.parametrize("phase", [
+    "new", "set_body_use_markup", "add_response",
+    "set_default_response", "set_close_response",
+])
+def test_native_dialog_builder_failure_is_retryable_without_worker(
+    monkeypatch, phase,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("No result without user consent"))
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(
+            OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only"),
+        ),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("PRIVATE_DIALOG_BUILD_FAILURE")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Dialog, phase, classmethod(broken) if phase == "new" else broken)
+        assert ui.open(NS(MessageDialog=Dialog)) is False
+        assert ui._dialog is None and ui._page is page and ui._used is None
+        assert ui.button.sensitive and not runner.queue
+        if Dialog.dialogs:
+            assert "response" not in Dialog.dialogs[-1].signals
+
+    assert ui.open(NS(MessageDialog=Dialog)) is True
+    Dialog.dialogs[-1].respond("cancel")
+    assert ui._used is None and ui.button.sensitive and not runner.queue

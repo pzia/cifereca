@@ -72,19 +72,32 @@ class NativeOrganizerConfirmation:
                 or not self._current(page)):
             return False
         entry, = page.dry_run_entries
-        dialog = Adw.MessageDialog.new(
-            self.window, "Confirmer le renommage ?",
-            "Profil : " + self.lease.identity_id + "\n"
-            "Chemin actuel : " + entry.current + "\n"
-            "Nom proposé : " + entry.proposed + "\n\n"
-            "Un seul renommage, sans suppression de doublon ni changement de droit. "
-            "La confirmation ne lève pas les gardes Core ; si elles ne sont pas "
-            "qualifiées, aucune modification ne sera exécutée.")
-        dialog.set_body_use_markup(False)
-        dialog.add_response("cancel", "Annuler")
-        dialog.add_response("apply", "Confirmer")
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
+        dialog = None
+        try:
+            dialog = Adw.MessageDialog.new(
+                self.window, "Confirmer le renommage ?",
+                "Profil : " + self.lease.identity_id + "\n"
+                "Chemin actuel : " + entry.current + "\n"
+                "Nom proposé : " + entry.proposed + "\n\n"
+                "Un seul renommage, sans suppression de doublon ni changement de droit. "
+                "La confirmation ne lève pas les gardes Core ; si elles ne sont pas "
+                "qualifiées, aucune modification ne sera exécutée.")
+            dialog.set_body_use_markup(False)
+            dialog.add_response("cancel", "Annuler")
+            dialog.add_response("apply", "Confirmer")
+            dialog.set_default_response("cancel")
+            dialog.set_close_response("cancel")
+        except Exception:
+            # Factory/response setup runs before the response handler exists.
+            # Do not consume the plan or leave an incomplete native dialog.
+            if dialog is not None:
+                try:
+                    close = getattr(dialog, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
+            return False
         self._dialog = dialog
         self.button.set_sensitive(False)
         answered = False
