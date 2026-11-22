@@ -326,6 +326,8 @@ class HistoricalHoldSelection:
         """
         if self.final_receipt_evidence == "verified_final_receipt_observed":
             return "final_receipt_precedence"
+        if self.final_receipt_evidence == "verified_other_offer_receipt_observed":
+            return "other_offer_receipt_precedence"
         if self.copy_evidence == "verified_local_copy_observed":
             return "local_copy_precedence"
         if self.recorded_inactive is True:

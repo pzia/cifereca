@@ -103,6 +103,7 @@ def _selected_hold_summary(value):
     source = value.source
     reason = {
         "final_receipt_precedence": "Un reçu final et ses octets ont été vérifiés pour l’offre historique exacte ; privilégier la reprise canonique sans GET.",
+        "other_offer_receipt_precedence": "Un reçu final du même prêt exact mais d’une autre offre a été vérifié ; examiner la reprise canonique sans GET. Il ne qualifie pas la tentative historique.",
         "local_copy_precedence": "Une copie locale vérifiée a été observée ; privilégier la récupération locale.",
         "recorded_loan_inactive": "Prêt enregistré inactif ; aucune offre actuelle qualifiée.",
         "marker_unverified": "Marqueur historique illisible, manquant ou non vérifiable.",
