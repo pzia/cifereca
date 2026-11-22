@@ -567,3 +567,54 @@ def test_private_menu_and_click_reject_tampered_canonical_or_reader_scope(
             host, menu, choice_id=choice.choice_id,
         ) == URL
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+def test_native_multi_account_search_keeps_exact_web_links_separate(tmp_path):
+    from cifereca.models import SearchResult
+    from cifereca.core.notice_c_private_search_web import (
+        capture_authenticated_search_call, stamp_authenticated_search_rows,
+        persist_authenticated_search_rows, read_authenticated_web_for_search,
+    )
+    with closing(Storage(tmp_path / "multi-account.sqlite")) as db:
+        host = Host(db)
+        first = host.account("alice")
+        second = replace(first, unique_id="reader-second", is_primary=False)
+        host.accounts.append(second)
+        session = host._sessions[(first.provider_id, first.credential_id)]
+        session._accounts.append(second)
+        connection, = db.provider_connections(identity_id="alice")
+        db.provider_account_put({
+            "identity_id": "alice", "provider_id": first.provider_id,
+            "credential_id": first.credential_id, "connection_id": connection["connection_id"],
+            "account_id": second.unique_id, "is_primary": False,
+        })
+        def native(account, suffix):
+            return SearchResult(
+                id="record-" + suffix, record_id="same-record", docbase="fixture",
+                medium="digital", title="Livre", author=None, type=None, format=None,
+                publisher=None, published_at=None, description=None, thumbnail_url=None,
+                friendly_url=HOST + "/resources/" + suffix, scenario="fixture",
+                source_provider=account.provider_id, source_credential=account.credential_id,
+                source_account_id=account.unique_id, metadata={"authenticated_web_evidence": {
+                    "schema": 1, "provider_id": account.provider_id, "record_id": "same-record",
+                    "docbase": "fixture", "medium": "digital", "source_revision": None,
+                    "scenario": "fixture", "access_mode": "authenticated",
+                    "evidence": account.provider_id + ".authenticated_search_record_identifier",
+                    "source_field": "Search.record",
+                }},
+            )
+        call = capture_authenticated_search_call(host, session, "alice")
+        assert call is not None
+        a, b = native(first, "first"), native(second, "second")
+        unknown = replace(a, source_account_id="unregistered")
+        rows = [a, b, unknown]
+        stamp_authenticated_search_rows(host, call, rows)
+        assert persist_authenticated_search_rows(host, rows, identity_id="alice") == 2
+        scope = capture_search_read_scope(host, "alice")
+        menus = [read_authenticated_web_for_search(host, row, reader_scope=scope) for row in (a, b)]
+        assert menus[0].document != menus[1].document
+        for row, menu in zip((a, b), menus):
+            choice, = menu.choices
+            assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == row.friendly_url
+        assert read_authenticated_web_for_search(host, unknown, reader_scope=scope) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
