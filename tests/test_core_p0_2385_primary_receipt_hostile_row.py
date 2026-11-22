@@ -242,7 +242,7 @@ def test_primary_c_document_rejects_in_place_valid_canonical_rebinding(tmp_path)
         object.__setattr__(document, "source_key", replacement)
         assert known_public_primary_facts(row) is None
         assert known_public_alternative_facts(row) == ()
-        assert _sources(row) == ()
+        assert not _sources(row)
         object.__setattr__(document, "source_key", initial)
         assert known_public_primary_facts(row) is hit
         assert db.entitlements() == db.acquisitions() == db.placements() == []
