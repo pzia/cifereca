@@ -73,6 +73,7 @@ class PossibleBorrowLender:
     _captured_notice_binding: tuple[object, ...] = field(
         init=False, repr=False, compare=False,
     )
+    _captured_label: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Future UI callers must never reinterpret a locally found account
@@ -92,6 +93,7 @@ class PossibleBorrowLender:
             raise ValueError("invalid_possible_borrow_lender")
         object.__setattr__(self, "_captured_fields", _fields(account, notice))
         object.__setattr__(self, "_captured_notice_binding", _notice_binding(account, notice))
+        object.__setattr__(self, "_captured_label", self.label)
 
 
 
@@ -106,6 +108,10 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             or candidate._notice is not notice
             or candidate.executable is not False
             or candidate.supplier_eligibility != "not_verified"
+            # Frozen dataclasses can be rewritten via object.__setattr__.
+            # A changed label could misattribute the exact lender at consent.
+            or type(candidate.label) is not str
+            or candidate.label != candidate._captured_label
             or type(requesting_identity_id) is not str or not requesting_identity_id):
         return False
     account = candidate._account
