@@ -573,3 +573,52 @@ def test_historical_ledger_display_preserves_readable_identifiers_and_empty_acco
     assert "Horodatage historique (Unix) : 1234" in shown
     assert "Source : seller / card-A / (vide enregistré)" in shown
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("field", [
+    "acquisition_id", "ledger_status", "provider_id", "credential_id",
+    "account_id", "edition_id", "provider_loan_id", "recorded_adept_profile_id",
+    "recorded_adept_loan_id", "historical_license_state", "canonical_branch",
+    "canonical_status",
+])
+@pytest.mark.parametrize("unsafe", [
+    "visible\nFORGED", "visible\x85FORGED", "visible\u202eFORGED",
+    "visible\u2028FORGED", "visible\u200dFORGED", "x" * 1025 + "FORGED",
+])
+def test_legacy_adept_ledger_display_cannot_print_invisible_spoofing(
+    field, unsafe,
+):
+    # This is a pure UI projection: the ledger's exact stored keys remain
+    # private and untouched, including legacy Unicode that Core can read.
+    row = {
+        "acquisition_id": "receipt", "ledger_status": "complete",
+        "provider_id": "seller", "credential_id": "card",
+        "account_id": "", "edition_id": "edition",
+        "provider_loan_id": "loan", "recorded_adept_profile_id": "adobe",
+        "recorded_adept_loan_id": "adobe-loan",
+        "historical_license_state": "returned_recorded",
+        "canonical_branch": "loans", "canonical_status": "unique_source_record",
+        "publication": None, "local_bytes": None, "inventory_checked_at": 1234,
+    }
+    row[field] = unsafe
+    rendered = _display({"rows": (row,)})
+    assert "(valeur non affichable)" in rendered
+    assert "FORGED" not in rendered
+    assert "Horodatage historique (Unix) : 1234" in rendered
+    assert "Aucun retour, rattachement, acquisition ou suppression autorisé." in rendered
+    assert row[field] == unsafe
+
+
+def test_legacy_adept_ledger_display_preserves_benign_account_empty_and_date():
+    text = _display({"rows": ({
+        "account_id": "", "provider_id": "seller",
+        "credential_id": "credential", "edition_id": "edition",
+        "provider_loan_id": "loan", "recorded_adept_profile_id": None,
+        "recorded_adept_loan_id": "adobe-loan",
+        "inventory_checked_at": 1234,
+        "publication": None, "local_bytes": None,
+    },)})
+    assert "(vide enregistré)" in text
+    assert "inconnu" in text
+    assert "Horodatage historique (Unix) : 1234" in text
+    assert "Source : seller / credential / (vide enregistré)" in text
