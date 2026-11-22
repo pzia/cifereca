@@ -236,3 +236,32 @@ def test_remote_occurrence_ambiguity_survives_descriptive_filter(case, twin):
     matches, truncated = remote._matches(report, choice, "Roman commun", ("Autrice",))
     assert matches == () and not truncated
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_remote_loan_evidence_priority_preserves_ties_and_window_limit(
+    case, monkeypatch,
+):
+    service, request, account, session, path, calls, choice, observed = case
+    scope = LoanInventoryScope.for_account(account)
+    snapshot = LoanInventorySnapshot(scope, (
+        replace(observed, id="divergent", author="Other author"),
+        replace(observed, id="exact-a", author="Autrice"),
+        replace(observed, id="unknown", author=None),
+        replace(observed, id="exact-b", author="Autrice"),
+    ))
+    before, raw = rows(service.storage), path.read_bytes()
+    matches, truncated = remote._matches(snapshot, choice, "Roman commun", ("Autrice",))
+    assert [(item.loan_id, item.comparison) for item in matches] == [
+        ("exact-a", "title_author_concordant"),
+        ("exact-b", "title_author_concordant"),
+        ("unknown", "title_concordant_author_unknown"),
+        ("divergent", "title_concordant_author_divergent"),
+    ]
+    assert not truncated
+    # Rank before the bounded window cap: weak evidence must not hide exact
+    # matches when a supplier places a divergent description first.
+    monkeypatch.setattr(remote, "_MAX_MATCHES", 2)
+    limited, truncated = remote._matches(snapshot, choice, "Roman commun", ("Autrice",))
+    assert [item.loan_id for item in limited] == ["exact-a", "exact-b"]
+    assert truncated
+    assert not calls and rows(service.storage) == before and path.read_bytes() == raw
