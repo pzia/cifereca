@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
+    LocalOriginRemoteLoanReport, LocalOriginDeclarationAdvice,
+    LocalOriginPurchaseDeclarationAdvice,
 )
 
 # The generic book-review host accepts 12 actions including preview.
@@ -90,6 +92,28 @@ def private_rows(report):
     return tuple(lines)
 
 
+def remote_loan_rows(report):
+    lines = [
+        ("Portée", "Compte sélectionné : " + report.provider_id + " · "
+         + report.credential_id + " · " + (report.account_id or "principal")),
+        ("Surface", "Inventaire de prêts explicitement relu ; titre et fichier locaux non transmis."),
+        ("Couverture", "Partielle ; fraîcheur réseau non vérifiée. Aucune origine ni droit attestés."),
+        ("Date de l’inventaire", report.observed_at or "Non renseignée"),
+    ]
+    for hit in report.matches:
+        lines.append((hit.title, " · ".join(x for x in (
+            hit.author, "Édition : " + hit.edition_id if hit.edition_id else "Édition non renseignée",
+            "Occurrence : " + hit.loan_id,
+            "Branche canonique non attestée",
+            _LABELS.get(hit.comparison, "Comparaison descriptive"),
+        ) if x)))
+    if report.window_truncated:
+        lines.append(("Limite", "Résultats limités ; d’autres correspondances peuvent exister."))
+    if not report.matches:
+        lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))
+    return tuple(lines)
+
+
 class DetailController:
     def __init__(self, broker, host, active):
         self.broker, self.host, self.active = broker, host, active
@@ -100,6 +124,7 @@ class DetailController:
         self.choice_actions = ()
         self.choice_offset = None
         self.private_next = {}
+        self.declaration_view = None
         self.busy = self.finished = self.disposed = False
 
     def current(self):
@@ -132,6 +157,7 @@ class DetailController:
         self.page = None
         self.used.clear()
         self.private_next.clear()
+        self.declaration_view = None
 
         def display(value):
             if previous is not None and callable(getattr(self.host, "retire_action", None)):
@@ -184,11 +210,26 @@ class DetailController:
                         "Cache local, aucune transmission. " + coordinates,
                         lambda selected=choice, original=value: self.compare_private(selected, original),
                     )
-                if value.private_choices:
+                remote_choices = value.remote_loan_choices[:remaining - len(private_choices)]
+                for index, choice in enumerate(remote_choices):
+                    if not self.current():
+                        return
+                    label = f"Relire les prêts — compte {index + 1}"
+                    coordinates = ("Fournisseur : " + choice.provider_id
+                                   + " · Connexion : " + choice.credential_id
+                                   + " · Compte : " + (choice.account_id or "principal"))
+                    accounts.append((label, coordinates))
+                    self.host.add_action(
+                        "remote-loan-" + str(index), label,
+                        "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates,
+                        lambda selected=choice, original=value: self.compare_remote_loan(selected, original),
+                    )
+                if value.private_choices or value.remote_loan_choices:
                     accounts.append(("Couverture",
                         "Choix partiels ; d’autres comptes ou surfaces peuvent exister."))
                 hidden = (len(value.public_choices) - len(public_choices)
-                          + len(value.private_choices) - len(private_choices))
+                          + len(value.private_choices) - len(private_choices)
+                          + len(value.remote_loan_choices) - len(remote_choices))
                 if hidden:
                     accounts.append(("Limite de la fiche",
                         f"{hidden} choix supplémentaires connus ne sont pas affichés "
@@ -209,8 +250,10 @@ class DetailController:
         self.choice_actions = ()
         self.choice_window = ()
         self.private_next.clear()
-        choices = tuple(("public", x) for x in original.public_choices) + tuple(
-            ("private", x) for x in original.private_choices)
+        self.declaration_view = None
+        choices = (tuple(("public", x) for x in original.public_choices)
+                   + tuple(("private", x) for x in original.private_choices)
+                   + tuple(("remote-loan", x) for x in original.remote_loan_choices))
         # Ten choices + an optional continuation + the permanent preview.
         count = 10 if len(choices) - offset > 11 else 11
         window = choices[offset:offset + count]
@@ -221,12 +264,14 @@ class DetailController:
             if not self.current():
                 return
             key = ("public-" + str(index - 1) if kind == "public"
-                   else "private-" + str(index - 1 - len(original.public_choices)))
+                   else "private-" + str(index - 1 - len(original.public_choices))
+                   if kind == "private" else "remote-loan-" + str(
+                       index - 1 - len(original.public_choices) - len(original.private_choices)))
             if kind == "public":
                 title = "Envoyer le titre à " + choice.provider_id
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
                 action = lambda selected=choice: self.search(selected, original)
-            else:
+            elif kind == "private":
                 surface = "achats" if choice.kind == "purchase" else "prêts"
                 title = f"Comparer {surface} — compte {index - len(original.public_choices)}"
                 coordinates = ("Fournisseur : " + choice.provider_id
@@ -235,6 +280,15 @@ class DetailController:
                 tooltip = "Cache local, aucune transmission. " + coordinates
                 accounts.append((title, coordinates))
                 action = lambda selected=choice: self.compare_private(selected, original)
+            else:
+                ordinal = index - len(original.public_choices) - len(original.private_choices)
+                title = f"Relire les prêts — compte {ordinal}"
+                coordinates = ("Fournisseur : " + choice.provider_id
+                               + " · Connexion : " + choice.credential_id
+                               + " · Compte : " + (choice.account_id or "principal"))
+                tooltip = "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates
+                accounts.append((title, coordinates))
+                action = lambda selected=choice: self.compare_remote_loan(selected, original)
             self.host.add_action(key, title, tooltip, action)
             keys.append(key)
         following = offset + len(window)
@@ -317,6 +371,13 @@ class DetailController:
                 self.host.toast("Continuation privée indisponible ; aucune absence attestée.")
                 return
             self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
+            if (choice.kind in ("loan", "purchase")
+                    and callable(getattr(self.host, "retire_action", None))
+                    and callable(getattr(self.broker, "preview_" + choice.kind + "_declaration", None))
+                    and (any(getattr(hit, "declaration_choice", None) for hit in value.matches)
+                         or "declare-next-page" in self.choice_actions)):
+                self._show_declaration_window(original, choice, value, 0)
+                return
             if following is None:
                 if page > 1:
                     self._retire_private(choice, original)
@@ -342,6 +403,147 @@ class DetailController:
 
         return self._submit(
             lambda: self.broker.compare_private(token=token, confirmed=True), display)
+
+    def _show_declaration_window(self, original, choice, report, offset):
+        """Display the exact selections within the host's existing action budget.
+
+        Each partial cache page can be examined. Its continuation is explicit
+        and revokes the preceding page's candidate callbacks.
+        """
+        if not self.current() or self.page is not original:
+            return
+        self.declaration_view = None
+        for key in self.choice_actions:
+            if self.host.retire_action(key) is not True:
+                return
+        self.choice_actions = ()
+        self.choice_window = ()
+        self.choice_offset = None
+        matches = tuple(hit for hit in report.matches
+                        if type(hit.declaration_choice) is str
+                        and len(hit.declaration_choice) == 64
+                        and all(c in "0123456789abcdef" for c in hit.declaration_choice))
+        window = matches[offset:offset + (8 if report.next_token is not None else 9)]
+        lease = object()
+        self.declaration_view = lease
+
+        def current():
+            return (not self.busy and self.current() and self.page is original
+                    and self.declaration_view is lease)
+
+        keys, rows = [], []
+        for index, hit in enumerate(window, offset + 1):
+            key = "declare-preview-" + str(index)
+            label = f"Examiner la déclaration {index}"
+            rows.append((label, "Édition : " + hit.edition_id + " · Branche : "
+                         + (hit.branch or "non renseignée") + " · "
+                         + ("Prêt" if choice.kind == "loan" else "Achat") + " : "
+                         + (hit.resource_id or "non renseigné")))
+            self.host.add_action(
+                key, label, "Aperçu seulement, sans association ni droit créé.",
+                lambda selected=hit: self._preview_declaration(
+                    original, choice, selected, current))
+            keys.append(key)
+
+        def more():
+            if not current():
+                return False
+            self.declaration_view = None
+            return self._submit(lambda: report,
+                lambda value: self._show_declaration_window(
+                    original, choice, report, offset + len(window)) if value is report else None)
+
+        if offset + len(window) < len(matches):
+            self.host.add_action("declare-more", "Autres occurrences",
+                                 "Afficher les choix suivants sans requête.", more)
+            keys.append("declare-more")
+
+        if report.next_token is not None:
+            def advance():
+                if not current() or report.next_token in self.used:
+                    return False
+                self.declaration_view = None
+                return self._private_page(choice, original, report.next_token, report.page + 1)
+            self.host.add_action("declare-next-page", "Suite du cache privé",
+                                 "Page suivante du même cache ; les anciens choix expirent.", advance)
+            keys.append("declare-next-page")
+
+        def back():
+            if not current():
+                return False
+            self.declaration_view = None
+            return self._submit(lambda: original,
+                lambda value: self._show_choice_window(original, 0) if value is original else None)
+
+        self.host.add_action("declare-back", "Revenir aux catalogues",
+                             "Abandonner la sélection de déclaration.", back)
+        keys.append("declare-back")
+        self.choice_actions = tuple(keys)
+        if rows:
+            self.host.add_group("Occurrence à examiner", tuple(rows))
+
+    def _preview_declaration(self, original, choice, selected, current):
+        if (not current() or selected.declaration_choice in self.used
+                or choice.kind not in ("loan", "purchase")):
+            return False
+        operation = getattr(self.broker, "preview_" + choice.kind + "_declaration", None)
+        if not callable(operation):
+            return False
+        expected = (LocalOriginDeclarationAdvice if choice.kind == "loan"
+                    else LocalOriginPurchaseDeclarationAdvice)
+        resource_field = "loan_id" if choice.kind == "loan" else "purchase_id"
+        resource_label = "Prêt" if choice.kind == "loan" else "Achat"
+        token = selected.declaration_choice
+        self.used.add(token)
+        self.declaration_view = None
+
+        def display(value):
+            if (type(value) is not expected
+                    or value.trust != "user_declaration"
+                    or value.association_authorized is not False
+                    or (value.provider_id, value.credential_id, value.account_id,
+                        value.edition_id, getattr(value, resource_field)) != (
+                            choice.provider_id, choice.credential_id, choice.account_id,
+                            selected.edition_id, selected.resource_id)):
+                self.host.toast("Déclaration indisponible ; aucune association créée.")
+            else:
+                self.host.add_group("Aperçu de déclaration utilisateur", (
+                    ("Compte", value.provider_id + " · " + value.credential_id
+                     + " · " + (value.account_id or "principal")),
+                    ("Édition", value.edition_id), (resource_label, getattr(value, resource_field)),
+                    ("Effet", "Déclaration utilisateur uniquement. Aucune origine attestée, "
+                     "aucune modification de droit, de fichier ou de placement."),
+                    ("Disponibilité", "Confirmation native non raccordée ; aucune écriture."),
+                ))
+            self._show_choice_window(original, 0)
+
+        return self._submit(
+            lambda: operation(token=token, confirmed=True), display)
+
+    def compare_remote_loan(self, choice, original):
+        if (self.busy or not self.current() or self.page is not original
+                or not any(item is choice for item in original.remote_loan_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
+                or choice.token in self.used
+                or not callable(getattr(self.broker, "compare_remote_loan", None))):
+            return False
+        self.used.add(choice.token)
+
+        def display(value):
+            if (type(value) is not LocalOriginRemoteLoanReport or value.status != "partial"
+                    or (value.provider_id, value.credential_id, value.account_id)
+                    != (choice.provider_id, choice.credential_id, choice.account_id)
+                    or value.provider_read_requested is not True
+                    or any(flag is not False for flag in (
+                        value.coverage_complete, value.fresh_network_verified,
+                        value.association_authorized, value.local_description_transmitted))):
+                self.host.toast("Inventaire privé indisponible ; aucune absence attestée.")
+                return
+            self.host.add_group("Inventaire privé de prêts — lecture seule", remote_loan_rows(value))
+
+        return self._submit(
+            lambda: self.broker.compare_remote_loan(token=choice.token, confirmed=True), display)
 
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
@@ -397,3 +599,4 @@ class DetailController:
         self.page = None
         self.used.clear()
         self.private_next.clear()
+        self.declaration_view = None

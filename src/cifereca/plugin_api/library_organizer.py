@@ -51,6 +51,8 @@ class OrganizerPageAdvice:
     dry_run_entries: tuple[OrganizerDryRunAdvice, ...] = ()
     # Ordinal on this page, never a global placement identifier.
     dry_run_group: int | None = None
+    dry_run_rename_only: bool = False
+    dry_run_excluded: int = 0
 
 
 @runtime_checkable
@@ -60,6 +62,13 @@ class LibraryOrganizerReadBroker(Protocol):
     def next_page(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def select_all_advice(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def prepare_dry_run(self, *, token: str, confirmed: bool = False,
-                        group_index: int | None = None) -> OrganizerPageAdvice | None: ...
+                        group_index: int | None = None,
+                        rename_only: bool = False) -> OrganizerPageAdvice | None: ...
     def confirm_dry_run(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...
     def cancel(self, *, token: str) -> None: ...
+
+
+@runtime_checkable
+class LibraryOrganizerRevisionBroker(LibraryOrganizerReadBroker, Protocol):
+    """Optional exact-page revision; old plans and confirmations are revoked."""
+    def revise_dry_run(self, *, token: str, confirmed: bool = False) -> OrganizerPageAdvice | None: ...

@@ -59,7 +59,8 @@ def local_public_c_detail_current(
             return False
         objects = getattr(window, "_library_objects", None)
     elif view == "recent":
-        if getattr(row, "_recent_ambiguous_key", False) is True:
+        if (getattr(row, "_recent_ambiguous_key", False) is True
+                or key in getattr(window, "_recent_ambiguous_keys", ())):
             return False
         objects = getattr(window, "_recent_objects", None)
     else:

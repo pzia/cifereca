@@ -23,11 +23,20 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     window._cross_profile_borrow_pending = token
     stage = "choose"
     route = getattr(window, "_route_display_token", None)
+    visible = getattr(panel, "_rendered_search_detail", None)
+    from collections import Counter
+    counts = Counter(row.label for row in rows)
+    labels = {
+        id(row): (f"{row.label} · choix {index + 1}/{len(rows)}"
+                  if counts[row.label] > 1 else row.label)
+        for index, row in enumerate(rows)
+    }
 
     def route_current():
         # This generation is plain owner state; no GTK read on the worker.
         return (not getattr(window, "_closed", False)
                 and window.service is service
+                and getattr(panel, "_rendered_search_detail", None) is visible
                 and getattr(window, "_route_display_token", None) is route)
 
     def dialog_current():
@@ -123,7 +132,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         try:
             menu = Adw.MessageDialog.new(
                 window, "Confirmer l'emprunt sur le profil prêteur ?",
-                f"{candidate.label} — offre et quota non vérifiés. "
+                f"{labels[id(candidate)]} — offre et quota non vérifiés. "
                 "Le prêt sera enregistré sur ce compte si le fournisseur l'accepte. "
                 "Aucune copie n'est autorisée par cette confirmation.",
             )
@@ -151,7 +160,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         )
         menu.add_response("cancel", "Annuler")
         for response, row in choices.items():
-            menu.add_response(response, row.label)
+            menu.add_response(response, labels[id(row)])
         menu.connect("response", selected)
         if not dialog_current():
             release()

@@ -265,9 +265,45 @@ def test_exact_lookup_survives_large_catalogue_and_per_source_overflow(tmp_path,
         result = lookup.exact_public_source_c_many(db, [key])
         assert result[key].document == wanted.document
         assert seen == [wanted.document]
+        seen.clear()
         result = lookup.exact_public_source_c_many(db, [key, noisy_key])
+        assert len(seen) <= lookup._MAX_RESULTS + 2
         assert set(result) == {key}
         assert result[key].document == wanted.document
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_corrupt_competing_claim_cannot_make_exact_relation_unique(tmp_path):
+    import json
+    from cifereca.core.notice_c_cover_index import _db_key
+    from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c_many
+    db = Storage(tmp_path / "corrupt-exact-claim.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "paris", "edition-b")
+        c = make(db, "other-provider", "edition-c")
+        independent = persist_exact_public_search_cover(db, c)
+        persist_exact_public_search_cover(db, a)
+        for member in (a, b):
+            competing = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:competing-corrupt",
+                source=member, relation_proof_id="strong:fixture:competing",
+            )
+        assert find(db, a).document == competing.document
+        with db._lock, db._connect() as sql:
+            raw, = sql.execute("SELECT value FROM metadata WHERE key=?",
+                               (_db_key(competing.document),)).fetchone()
+            wire = json.loads(raw)
+            wire["epoch"] = False
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (json.dumps(wire), _db_key(competing.document)))
+        keys = [("bnf", "edition-a", "digital-books", "digital", None),
+                ("other-provider", "edition-c", "digital-books", "digital", None)]
+        result = exact_public_source_c_many(db, keys)
+        assert set(result) == {keys[1]}
+        assert result[keys[1]].document == independent.document
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()

@@ -162,3 +162,35 @@ def test_search_detail_port_exposes_route_generation_read_only():
         port._route_display_token = object()
     host._route_display_token = object()
     assert port._route_display_token is not original
+
+
+def test_multi_source_web_menu_uses_installed_names_without_merging_choices(tmp_path):
+    with closing(Storage(tmp_path / "library-names.sqlite")) as db:
+        a = source(db, "seller-a", "same", [link("seller-a", URL)])
+        b = source(db, "seller-b", "same", [link("seller-b", OTHER)])
+        target = a.observation.key.edition_id
+        publish(db, target, a)
+        c = publish(db, target, b)
+        context = NS(mapped=True)
+        pending, actions, launches, _, _ = request(db, c, context=context)
+        calls = []
+        def name(provider):
+            calls.append(provider)
+            return "Bibliothèque commune"
+        context.host.service.provider_display_name = name
+        deliver(pending)
+        buttons = actions[0].popover.child.child.children
+        assert len(buttons) == 2
+        assert len({button.label for button in buttons}) == 2
+        assert all(button.label.startswith("Bibliothèque commune") for button in buttons)
+        assert sorted(calls) == ["seller-a", "seller-b"]
+        for button in buttons:
+            button.callback(button)
+            deliver(pending)
+        assert set(launches) == {URL, OTHER}
+        pending, actions, launches, _, _ = request(db, c, context=context)
+        context.host.service.provider_display_name = lambda _: "https://private.example/?token=SECRET"
+        deliver(pending)
+        buttons = actions[0].popover.child.child.children
+        assert all("SECRET" not in button.label for button in buttons)
+        assert db.entitlements() == [] and db.acquisitions() == []

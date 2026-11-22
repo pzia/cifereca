@@ -1,5 +1,5 @@
 """#7092 public contextual known-C review; no rights, private paths or requests."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Protocol, runtime_checkable
 
 
@@ -65,6 +65,7 @@ class LocalOriginPrivateMatch:
     observed_at: int | None
     branch: str = ""
     resource_id: str = ""
+    declaration_choice: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -85,6 +86,39 @@ class LocalOriginPrivateReport:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemoteLoanChoice:
+    token: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemoteLoanMatch:
+    edition_id: str | None
+    loan_id: str
+    title: str
+    author: str | None
+    comparison: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemoteLoanReport:
+    status: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    matches: tuple[LocalOriginRemoteLoanMatch, ...]
+    window_truncated: bool
+    observed_at: str | None
+    provider_read_requested: bool
+    coverage_complete: bool = False
+    fresh_network_verified: bool = False
+    association_authorized: bool = False
+    local_description_transmitted: bool = False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class LocalOriginDetailPage:
     token: str
     page: int
@@ -99,6 +133,7 @@ class LocalOriginDetailPage:
     association_authorized: bool = False
     public_choices: tuple[LocalOriginPublicChoice, ...] = ()
     private_choices: tuple[LocalOriginPrivateChoice, ...] = ()
+    remote_loan_choices: tuple[LocalOriginRemoteLoanChoice, ...] = ()
 
 
 @runtime_checkable
@@ -118,3 +153,45 @@ class LocalOriginDetailReadBroker(Protocol):
     def search_public(self, *, token: str, confirmed: bool = False) -> LocalOriginPublicReport | None: ...
     def compare_private(self, *, token: str, confirmed: bool = False) -> LocalOriginPrivateReport | None: ...
     def cancel(self, *, token: str) -> None: ...
+
+
+@runtime_checkable
+class LocalOriginRemoteLoanReadBroker(LocalOriginDetailReadBroker, Protocol):
+    """Optional typed private inventory comparison; no local title upload."""
+    def compare_remote_loan(self, *, token: str,
+                            confirmed: bool = False) -> LocalOriginRemoteLoanReport | None: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginDeclarationAdvice:
+    """Preview only; no command, raw path, writer token or rights authority."""
+    provider_id: str
+    credential_id: str
+    account_id: str
+    edition_id: str
+    loan_id: str
+    trust: str = "user_declaration"
+    association_authorized: bool = False
+
+
+@runtime_checkable
+class LocalOriginDeclarationReviewBroker(LocalOriginDetailReadBroker, Protocol):
+    def preview_loan_declaration(self, *, token: str,
+                                 confirmed: bool = False) -> LocalOriginDeclarationAdvice | None: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPurchaseDeclarationAdvice:
+    provider_id: str
+    credential_id: str
+    account_id: str
+    edition_id: str
+    purchase_id: str
+    trust: str = "user_declaration"
+    association_authorized: bool = False
+
+
+@runtime_checkable
+class LocalOriginPurchaseDeclarationReviewBroker(LocalOriginDetailReadBroker, Protocol):
+    def preview_purchase_declaration(self, *, token: str,
+                                     confirmed: bool = False) -> LocalOriginPurchaseDeclarationAdvice | None: ...

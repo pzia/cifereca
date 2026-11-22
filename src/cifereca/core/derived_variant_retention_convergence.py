@@ -11,6 +11,7 @@ import sqlite3
 from time import monotonic
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, _COMMITTED, _decode, _digest, _measure, _receipt_digest,
 )
 from .derived_variant_publication import DerivedPublicationConflict
@@ -56,7 +57,7 @@ def _snapshot(storage, identity_id, *, exact_digest=None):
             rows, _ = _measure(db)
             records, paths, inodes = [], {}, {}
             for key, _size in rows:
-                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 records.append((key, _receipt_digest(raw), intent))
                 _index_receipt_references(paths, inodes, key, intent)

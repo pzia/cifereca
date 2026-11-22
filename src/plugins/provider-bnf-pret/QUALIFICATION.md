@@ -8,6 +8,28 @@ API/OPDS historiques ne sont pas consommés par l'adaptateur Web.
 
 ---
 
+## Réception #4283 — historique des prêts terminés (22/11/2026)
+
+Les preuves reçues et recensées dans #6875 attestent des GET activité et
+prêt actif, mais **aucune réponse d'historique de prêts terminés**. La
+piste documentaire `GET /v1/loans.json` reste distincte du portail Web
+lecteur : clé API, identité `member_id`, pagination, exhaustivité et
+sémantique des dates de fin/retour ne sont pas qualifiées pour le compte
+lecteur. L'échéance d'un actif et un fichier ADEPT local ne sont pas des
+preuves de prêt terminé.
+
+**Réception technique limitée : unsupported, pas empty.** Le descripteur
+installable BnF conserve `history=False` ; aucune capacité historique
+n'est déclarée dans le manifeste et le runtime hérite du refus explicite
+`ProviderSession.history`. La régression synthétique associée vérifie
+qu'un appel à l'historique n'interroge même pas le client activité et ne
+retourne pas une liste vide fabriquée. Aucun nouveau GET réel, aucun
+appel mutateur, aucune demande de capture utilisateur. Le ticket #4283
+reste ouvert pour une qualification positive ou une preuve explicite
+d'indisponibilité du service.
+
+---
+
 # BnF — Prêt numérique : qualification préalable
 
 **19 octobre 2026 — accès lecteur API non qualifié.** Rôle pilote : Plugins, #2054 ; intégration dépendante #2055.
@@ -168,3 +190,57 @@ ou une acquisition numérique effectivement fonctionnels.**
 - Mode d'emploi : https://www.bnf.fr/fr/centre-d-aide/bnf-pret-numerique-mode-demploi
 - Exploration GitHub : https://github.com/xlcnd/isbnlib-bnf (Catalogue général) et https://github.com/Kryzo/mcp-bibliotheque_nationale_de_France (Gallica). Aucun de ces clients ne démontre les permissions de prêt via API v1.
 - Références projet : src/plugins/provider-bnf-catalogue (SRU public), src/plugins/provider-paris (PNB) ; #976, #982, #984, #1063.
+
+
+## #4283 — surface Web Historique reçue le 22/11/2026
+
+La sauvegarde HTML privée fournie au Backlog (commentaire #4283 du 22/11)
+atteste une page lecteur connectée, distincte de /my_profile/activity :
+`/my_profile/history`, avec liens de langue fr/en. Aucun GET direct par
+le client HTTPX n'a été exécuté pour cette réception. Le contrat Basic v1
+n'est ni nécessaire à cette tranche ni réhabilité.
+
+Structure expurgée observée : body#members.profile_history,
+data-coffee-cup Members#ProfileHistory, #main, navigation active vers
+history, titre Historique et compteur .list-header__page strong.
+Les deux lignes observées contiennent un lien /resources/{id catalogue}
+(24 caractères hexadécimaux), h2.line-desc-title avec sous-titre Prêt,
+et .line-desc-supinfo time[datetime] précédé de Emprunté le.
+Les images de la sauvegarde avaient des chemins locaux, pas des URL
+distantes attestées. Aucun ID individuel de prêt, auteur, ISBN, date de
+retour/échéance ou état terminé explicite n'était disponible.
+
+Le parseur hors réseau `parse_history_events` réutilise ProfileScope :
+l'appelant doit prouver l'identité de session indépendamment du DOM.
+Il conserve les coordonnées d'événements et les dates d'emprunt
+normalisées UTC, distingue les réemprunts et signale les collisions,
+dates absentes, compteurs incohérents et pages ambiguës. Le résultat
+`observed` signifie seulement des lignes localement cohérentes ;
+`exhaustive=False` dans tous les cas. Les cas zéro et pagination sont
+des fixtures hypothétiques, non des comportements terrain attestés.
+Le parseur ne suit aucun lien et n'extrait aucune couverture locale,
+ne retourne ni login ni jeton et ne construit aucun ID de prêt.
+
+**Reste avant activation :** lecture GET autorisée via la session
+existante, scope/reconnexion, qualification de la présence ou exclusion
+des prêts actifs et, si nécessaire, de la pagination réelle. La simple
+date d'emprunt ou l'identifiant catalogue ne prouve pas la fin d'un cycle.
+Normalisation vers HistoryItem et cache existant uniquement après
+qualification de cette sémantique, avec provenance exacte. Jusqu'alors
+`history=False` est conservé, unsupported distinct d'un historique vide.
+Aucune demande de nouvelle capture redondante, aucune mutation fournisseur,
+aucune archive ni donnée personnelle publiée.
+
+### Tranche transport de qualification (MockTransport uniquement)
+
+`ReaderHTTPClient.history_events_page()` limite la lecture à un GET
+sur `/my_profile/history?l=fr`, sans suivi de redirection ni réauthentification,
+avec les bornes HTML existantes. Le client générique n'ouvre pas cette
+route. `BnfProviderSession._read_history_events(account)` est une
+lecture privée explicite, verrouillée et liée au compte/session/epoch
+avant et après le GET et le parsing ; aucune invocation automatique,
+aucune persistance ni promotion des prêts actifs. Échec HTTP, login ou
+DOM inconnu ne deviennent pas un historique vide. Tests synthétiques
+sur erreurs, changement de compte et reconnexion ; le GET réel dans une
+session autorisée, le sens terminé des événements et l'exhaustivité
+restent non attestés. `history=False` inchangé.

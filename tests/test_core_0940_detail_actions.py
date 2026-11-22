@@ -235,3 +235,40 @@ def test_value_names_distinguish_repeated_authors_and_keep_full_copy():
     assert events == []
     rows[2].children[0].click()
     assert clipboard.value == long_value and events == []
+
+
+def test_native_field_actions_revoke_old_render_on_aba_and_route_change():
+    render, clipboard = _group()
+    groups, events = [], []
+    service = NS(current_identity=NS(identity_id="alice"),
+                 _account_context_epoch=1, _source_context_epoch=1)
+    window = NS(service=service, _route_display_token=object(),
+                toast=events.append,
+                search_books=lambda *a, **kw: events.append("search"))
+    host = NS(window=window, _append_content=groups.append)
+
+    def buttons():
+        render(host, "Détail", [("Auteur", "Alice Exemple")],
+               fields=(NS(kind="author"),))
+        return groups[-1].children[0].children[0].children[0].children
+
+    for invalidate in (
+        lambda: setattr(service, "_account_context_epoch", service._account_context_epoch + 2),
+        lambda: setattr(service, "_source_context_epoch", service._source_context_epoch + 2),
+        lambda: setattr(window, "_route_display_token", object()),
+        lambda: setattr(service, "current_identity", NS(identity_id="alice")),
+    ):
+        copy, search = buttons()
+        invalidate()
+        copy.click()
+        search.click()
+        assert events == [] and clipboard.value is None
+    copy, search = buttons()
+    copy.mapped = search.mapped = False
+    copy.click()
+    search.click()
+    assert events == [] and clipboard.value is None
+    copy, search = buttons()
+    copy.click()
+    search.click()
+    assert clipboard.value == "Alice Exemple" and events == ["Copié", "search"]

@@ -597,3 +597,37 @@ def test_malformed_borrower_author_does_not_abort_sibling_projection(
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_borrower_public_fiche_without_cover_survives_eviction_and_restart(tmp_path):
+    from contextlib import closing
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
+    from tests.test_core_p0_6366_same_call_public_cover_writer import witnessed
+
+    path = tmp_path / "borrower-fiche.sqlite"
+    uri = "https://books.example.org/title/book-42"
+    with closing(Storage(path)) as db:
+        row = witnessed(verified_public(
+            source_provider="bnf-pret", record_id="book-42",
+            title="Livre source", author="Autrice", docbase="BNF_PRET",
+            thumbnail_url=None, friendly_url=uri,
+            metadata={"public_url_evidence": "bnf-pret.public_search_product_card"},
+        ))
+        saved = persist(db, row)
+        canonical = persist_exact_public_search_cover(db, saved)
+        assert not canonical.candidates and len(canonical.catalogue_web_references) == 1
+        assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+    with closing(Storage(path)) as db:
+        items = [loan(), history()]
+        assert admit(db, items) == 2
+        for item in items:
+            packet = borrower_public_c_receipt(item, identity_id="alice")
+            assert packet.document == canonical.document
+            assert not cached_notice_cover_snapshot(NS(storage=db), packet.document).candidates
+            menu = read_public_web_choices(db, packet.document)
+            choice, = menu.choices
+            assert resolve_public_web_choice(db, packet.document,
+                expected_epoch=menu.epoch, choice_id=choice.choice_id) == uri
+            assert borrower_public_c_receipt(item, identity_id="bob") is None
+        assert db.entitlements() == [] and db.acquisitions() == []

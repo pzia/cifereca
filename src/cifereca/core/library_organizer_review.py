@@ -311,15 +311,51 @@ def review_organizer_file(scope, artifact_id, row, description, *, allow_classif
         return result(relative, None, "physical_unverified")
 
 
+def _single_local_rename(scope, group):
+    """Separate local naming observation; never qualify a dedup candidate.
+
+    The shared inventory deliberately vetoes all source-bound placements.
+    A single local occurrence with a matching catalogue can still be reviewed
+    for filename advice. The existing writer must independently qualify all
+    operational references, and the organizer execution fence stays closed.
+    """
+    if (group.status != "blocked" or group.reason != "legacy_source_scope_unbound"
+            or len(group.placements) != 1 or not group.placements[0].catalogued):
+        return False
+    pid = group.placements[0].placement_id
+    with scope.storage._lock:
+        db = scope.storage._connect()
+        if db.in_transaction:
+            return False
+        with db:
+            db.execute("BEGIN")
+            row = db.execute(
+                "SELECT provider_id, source_item_id FROM placements "
+                "WHERE placement_id=? AND identity_id=? AND artifact_id=? AND state='present'",
+                (pid, scope.identity, group.artifact_id),
+            ).fetchone()
+            if row is None or row[0] != "local" or not _text(row[1], 512):
+                return False
+            entries = db.execute(
+                "SELECT provider_id,item_id FROM catalog_entries "
+                "WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 9", (pid,),
+            ).fetchall()
+            return (0 < len(entries) <= 8
+                    and all(tuple(entry) == tuple(row) for entry in entries))
+
+
 def _group(scope, group):
     """Classify one inventory group; blocked groups never become a safe batch."""
     report = {"status": group.status, "reason": group.reason,
               "copies": len(group.placements), "files": (), "keeper": None,
               "documentary_nature": "unverified", "category_advice": "Non classés",
               "category_evidence": None, "relocation_proposed": False}
-    if (group.status not in ("unique", "candidate_review")
+    local_rename = _single_local_rename(scope, group)
+    if ((group.status not in ("unique", "candidate_review") and not local_rename)
             or not 1 <= len(group.placements) <= _MAX_COPIES):
         return report, None
+    if local_rename:
+        report.update(status="unique", reason="single_registered_local_placement")
     snapshot = _placement_facts(scope, group)
     if snapshot is None:
         return {**report, "status": "blocked", "reason": "scope_changed"}, None

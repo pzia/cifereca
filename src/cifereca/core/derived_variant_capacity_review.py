@@ -42,6 +42,7 @@ def _compact_snapshot(db):
     limits = {"records": compact._MAX_PROOFS, "payload_bytes": compact._MAX_PROOF_TOTAL}
     try:
         count, total = compact._measure_compact_in_transaction(db)
+        retired = compact._retired_receipts(db)
         rows = db.execute(
             "SELECT key,value FROM metadata WHERE key>=? AND key<? ORDER BY key LIMIT ?",
             (compact._PREFIX, compact._END, compact._MAX_PROOFS + 1),
@@ -55,22 +56,23 @@ def _compact_snapshot(db):
                 "THEN value ELSE NULL END FROM metadata WHERE key=?",
                 (journal._MAX_RECORD_BYTES, original_key),
             ).fetchone()
-            if existing == (original,):
+            compact_only = retired.get(original_key) == original
+            if existing == (original,) or compact_only:
                 matched += 1
-            witnesses.append((key, journal._receipt_digest(raw)))
+            witnesses.append((key, journal._receipt_digest(raw), compact_only))
         if len(rows) != count:
             raise journal.DerivedJournalConflict("derived_compact_snapshot_changed")
         return tuple(witnesses), {
             "status": "observed" if matched == count else "partial",
             "count": count, "payload_bytes": total, "matched": matched,
-            "unpaired": count - matched, "capacity": limits,
+            "unpaired": count - matched, "retired": len(retired), "capacity": limits,
             "saturation": ("at_limit" if count >= limits["records"]
                            or total >= limits["payload_bytes"] else "below_limits"),
             "retirement_authorized": False, "quota_refund_authorized": False,
         }
     except journal.DerivedJournalConflict:
         return (), {"status": "unavailable", "count": None,
-                    "payload_bytes": None, "matched": None, "unpaired": None,
+                    "payload_bytes": None, "matched": None, "unpaired": None, "retired": None,
                     "capacity": limits, "saturation": "unknown",
                     "retirement_authorized": False, "quota_refund_authorized": False}
 
@@ -92,9 +94,7 @@ def _snapshot(scope):
             witnesses = []
             bindings = {}
             for key, size in rows:
-                raw = db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (key,),
-                ).fetchone()[0]
+                raw = journal._read_logical_receipt(db, key)
                 witnesses.append((key, _receipt_witness(raw)))
                 phase = "pending" if key.startswith(journal._PREFIX) else "committed"
                 counts[phase] += 1

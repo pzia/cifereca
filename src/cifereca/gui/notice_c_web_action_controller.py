@@ -144,6 +144,47 @@ def request_selected_authenticated_web_actions(host, row, *, selected_id, contex
     )
 
 
+def _web_choice_labels(core, choices):
+    """Human library names with exact source distinctions, no new authority.
+
+    Resolve the installed display name locally, once per provider. The
+    original opaque choices still own resolution and are never rewritten.
+    """
+    from collections import Counter
+
+    lookup = getattr(core, "provider_display_name", None)
+    names = {}
+    labels = []
+    for choice in choices:
+        provider = choice.provider_id
+        if provider not in names:
+            try:
+                name = lookup(provider) if callable(lookup) else None
+            except Exception:
+                name = None
+            names[provider] = (
+                name if type(name) is str and 0 < len(name) <= 80
+                and name == name.strip() and name.isprintable()
+                and not any(mark in name for mark in ("://", "@", "/", chr(92)))
+                else provider
+            )
+        label = choice.label
+        if label.startswith(provider):
+            label = names[provider] + label[len(provider):]
+        labels.append(label)
+    counts = Counter(labels)
+    # Installed descriptors can have the same label. Preserve the exact
+    # distinctions even when two providers share a human-readable name.
+    labels = [
+        label + " · " + choice.provider_id if counts[label] > 1 else label
+        for label, choice in zip(labels, choices)
+    ]
+    if len(set(labels)) != len(labels):
+        labels = [f"Choix {i}/{len(labels)} · {label}"
+                  for i, label in enumerate(labels, 1)]
+    return tuple(labels)
+
+
 def _request_web_actions(host, panel, *, current, load, accept, resolve,
                          authenticated=False, worker_guard=lambda: True,
                          menu_current=lambda menu: True, Gtk=None, Gio=None):
@@ -163,6 +204,13 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         return getattr(host, "_route_display_token", None)
 
     requested_route = route_token()
+    # Public and authenticated menus have separate publication leases.
+    # A newer request for the same kind revokes an older queued read/click
+    # even if the panel and route are reused for the next detail.
+    token_name = ("_notice_c_authenticated_menu_generation" if authenticated
+                  else "_notice_c_public_menu_generation")
+    generation = object()
+    setattr(panel, token_name, generation)
     account_epoch = getattr(core, "_account_context_epoch", None)
     source_epoch = getattr(core, "_source_context_epoch", None)
 
@@ -170,6 +218,7 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         # Only plain context coordinates here. current(), get_mapped()
         # and widget state belong to GTK and must never run in this worker.
         return (not getattr(host, "_closed", False)
+                and getattr(panel, token_name, None) is generation
                 and getattr(host, "service", None) is core
                 and getattr(core, "storage", None) is storage
                 and getattr(core, "_account_context_epoch", None) == account_epoch
@@ -274,8 +323,8 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
             scroller.set_max_content_height(360)
             scroller.set_propagate_natural_height(True)
             scroller.set_child(box)
-            for choice in menu.choices:
-                button = Gtk.Button(label=choice.label)
+            for choice, label in zip(menu.choices, _web_choice_labels(core, menu.choices)):
+                button = Gtk.Button(label=label)
                 button.connect("clicked", lambda b, selected=choice: choose(b, selected))
                 box.append(button)
             popover.set_child(scroller)

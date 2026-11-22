@@ -124,3 +124,127 @@ def test_admitted_command_refuses_drift_before_writer(case, change):
         active[0] = False
     assert command() is None and command() is None
     assert records(service) == [] and calls == []
+
+
+@pytest.mark.parametrize("change", ["none", "cancel", "activation", "view", "right", "new_preview"])
+def test_loan_comparison_candidate_token_projects_only_exact_declaration_advice(case, change):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    from cifereca.plugin_api.local_origin_detail import LocalOriginDeclarationAdvice
+    service, request, choice, candidate, right, path, calls = case
+    active, visible = [True], [True]
+    broker = LocalOriginDetailReadFactory(service).for_activation(
+        "fixture", current=lambda: active[0])
+    def review():
+        return broker.preview(identity_id="A", placement_id=request.placement_id,
+                              still_current=lambda: visible[0], confirmed=True)
+    page = review()
+    loan_choice = next(c for c in page.private_choices if c.kind == "loan")
+    report = broker.compare_private(token=loan_choice.token, confirmed=True)
+    hit, = report.matches
+    token = hit.declaration_choice
+    assert type(token) is str and len(token) == 64
+    assert broker.preview_loan_declaration(token=token) is None
+    assert broker.preview_loan_declaration(token="forged", confirmed=True) is None
+    if change == "cancel":
+        broker.cancel(token=page.token)
+    elif change == "activation":
+        active[0] = False
+    elif change == "view":
+        visible[0] = False
+    elif change == "right":
+        service.storage.entitlement_put({**right, "state": "expired"})
+    elif change == "new_preview":
+        assert review() is not None
+    before, data = records(service), path.read_bytes()
+    advice = broker.preview_loan_declaration(token=token, confirmed=True)
+    if change == "none":
+        assert type(advice) is LocalOriginDeclarationAdvice
+        assert (advice.edition_id, advice.loan_id) == (candidate.source.edition_id, candidate.source.resource_id)
+        assert advice.trust == "user_declaration" and not advice.association_authorized
+        assert not hasattr(advice, "plan_token") and not hasattr(advice, "path")
+    else:
+        assert advice is None
+    assert broker.preview_loan_declaration(token=token, confirmed=True) is None
+    assert records(service) == before and path.read_bytes() == data and calls == []
+
+
+@pytest.mark.parametrize("change", ["none", "expired", "view", "back"])
+def test_detail_loan_declaration_preview_is_explicit_exact_and_read_only(case, change):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, request, choice, candidate, right, path, calls = case
+    controller, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, None, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    before, data = records(service), path.read_bytes()
+    assert actions["preview"][2]()
+    deliver(tasks)
+    action = next(v[2] for k, v in actions.items() if k.startswith("private-"))
+    assert action()
+    deliver(tasks)
+    select = actions["declare-preview-1"][2]
+    assert candidate.source.resource_id in repr(groups[-1])
+    assert records(service) == before
+    if change == "back":
+        assert actions["declare-back"][2]()
+        deliver(tasks)
+        assert not select()
+    else:
+        if change == "expired":
+            service.storage.entitlement_put({**right, "state": "expired"})
+        assert select()
+        if change == "view":
+            host.live = False
+        deliver(tasks)
+        assert not select()
+    assert any(g[0] == "Aperçu de déclaration utilisateur" for g in groups) == (change == "none")
+    assert records(service) == before and path.read_bytes() == data and calls == []
+
+
+def test_declaration_selection_available_on_every_private_page(case, monkeypatch):
+    from cifereca.core import local_origin_private_catalogue as private
+    from tests.test_core_p0_4030_private_catalogue import _populate_windows
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    # case already holds a matching entitlement for loan-1. Other loans
+    # remain documentary only, even when a selection button is present.
+    service, request, choice, candidate, right, path, calls = case
+    _populate_windows((service, request, choice.account, None, calls, path))
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    controller, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, None, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    before, data = records(service), path.read_bytes()
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert next(v[2] for k, v in actions.items() if k.startswith("private-"))()
+    deliver(tasks)
+    seen = []
+    for page in range(1, 4):
+        group = next(g for g in reversed(groups) if g[0] == "Occurrence à examiner")
+        seen.extend(group[1])
+        old = actions["declare-preview-1"][2]
+        assert "declare-preview-2" in actions
+        if page < 3:
+            advance = actions["declare-next-page"][2]
+            assert advance()
+            deliver(tasks)
+            assert not old() and not advance()
+        else:
+            assert "declare-next-page" not in actions
+            # No exact existing right for this occurrence.
+            assert old()
+            deliver(tasks)
+            assert toasts and not any(g[0] == "Aperçu de déclaration utilisateur" for g in groups)
+    assert len(seen) == 6
+    for index in range(1, 7):
+        assert any(f"Prêt : loan-{index}" in row[1] for row in seen)
+    assert records(service) == before and path.read_bytes() == data and calls == []

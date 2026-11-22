@@ -607,11 +607,19 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
     }
     # Inspect hidden descendants too: a collapsed paginator or lazy loader
     # may not appear in the public presentation but still truncates coverage.
-    pending = [section]
+    pending = [(section, False)]
     while pending:
-        node = pending.pop()
-        pending.extend(child for child in node.children if isinstance(child, _Node))
+        node, ancestor_hidden = pending.pop()
         attrs = node.attrs
+        hidden = (ancestor_hidden or node.tag in _HIDDEN
+                  or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+        # The visible traversal cannot count hidden loan cards. If a
+        # collapsed/template card exists, visible positives remain usable
+        # but their count cannot attest exhaustive coverage.
+        if hidden and node.has_class("js-loan"):
+            return True
+        pending.extend((child, hidden) for child in node.children
+                       if isinstance(child, _Node))
         if attrs.get("aria-busy", "").lower() == "true":
             return True
         if attrs.get("data-has-more", "").lower() in {"true", "1", "yes"}:
@@ -718,3 +726,170 @@ def merge_observed_loans(previous: LoanSnapshot, current: LoanSnapshot) -> LoanS
     if len(result) > MAX_ITEMS:
         raise WebParseError("item_limit")
     return LoanSnapshot(current.scope, tuple(result.values()), "partial")
+
+
+# #4283: the authenticated reader's history surface is distinct from active
+# loans. A history row attests a displayed borrowing event, not its end.
+@dataclass(frozen=True)
+class HistoryEvent:
+    resource_id: str = field(repr=False)
+    title: str = field(repr=False)
+    borrowed_at: str | None = field(repr=False)
+
+
+@dataclass(frozen=True)
+class HistoryPage:
+    scope: ProfileScope = field(repr=False)
+    events: tuple[HistoryEvent, ...] = field(repr=False)
+    status: str
+    displayed_count: int | None
+    # Neither server pagination nor exclusion of active loans is qualified.
+    exhaustive: bool = False
+
+
+def _history_direct_nodes(node):
+    return [child for child in node.children if isinstance(child, _Node)]
+
+
+def _history_visible(node):
+    return node.tag not in _HIDDEN and "hidden" not in node.attrs and node.attrs.get("aria-hidden") != "true"
+
+
+def _history_title(node):
+    def parts(current):
+        if not _history_visible(current) or current.has_class("line-desc-title__suptitle"):
+            return
+        for child in current.children:
+            if isinstance(child, str):
+                yield child
+            elif isinstance(child, _Node):
+                yield from parts(child)
+    return " ".join(" ".join(parts(node)).split())[:MAX_TEXT]
+
+
+def _history_stamp(value):
+    if (type(value) is not str or not 20 <= len(value) <= 40
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", value)):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.utcoffset() is None or not 1900 <= parsed.year <= 2100:
+            return None
+        from datetime import timezone
+        return parsed.astimezone(timezone.utc).isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
+def parse_history_events(html: str, *, page_url: str, expected: ProfileScope,
+                         observed: ProfileScope) -> HistoryPage:
+    """Read only the captured FR history structure, with exact caller scope.
+
+    No HTTP, no pagination guesses, no right or returned-loan status. Even
+    an internally reconciled page is not a complete server history. The
+    caller must separately establish authenticated session ownership.
+    """
+    if (type(expected) is not ProfileScope or type(observed) is not ProfileScope
+            or expected != observed):
+        raise WebParseError("scope_mismatch")
+    expected.__post_init__()
+    observed.__post_init__()
+    if page_url not in (ORIGIN + "/my_profile/history",
+                        ORIGIN + "/my_profile/history?l=fr"):
+        raise WebParseError("invalid_history_page")
+    root = _dom(html)
+    bodies = [n for n in root.walk() if n.tag == "body"
+              and n.attrs.get("id") == "members" and n.has_class("profile_history")
+              and n.attrs.get("data-coffee-cup") == "Members#ProfileHistory"]
+    if len(bodies) != 1 or not bodies[0].closed:
+        raise WebParseError("unrecognized_history")
+    body = bodies[0]
+    mains = [n for n in body.walk() if n.attrs.get("id") == "main"]
+    if len(mains) != 1 or not mains[0].closed:
+        raise WebParseError("unrecognized_history")
+    main = mains[0]
+    headings = [n for n in main.walk() if n.tag == "h1"
+                and n.has_class("list-header__title") and n.closed]
+    nav = [n for n in main.walk() if n.tag == "a" and n.has_class("aside-nav__current")
+           and n.attrs.get("href") in (ORIGIN + "/my_profile/history", "/my_profile/history",
+                                       ORIGIN + "/my_profile/history?l=fr", "/my_profile/history?l=fr")]
+    account_menu = [n for n in body.walk() if n.tag == "a"
+                    and n.has_class("nav-account__link-account")]
+    if len(headings) != 1 or headings[0].text() != "Historique" or len(nav) != 1 or not account_menu:
+        raise WebParseError("unrecognized_history")
+
+    counters = [n for n in main.walk() if n.has_class("list-header__page") and n.closed]
+    values = [n.text() for counter in counters for n in counter.walk()
+              if n.tag == "strong" and n.closed]
+    count = int(values[0]) if (len(counters) == 1 and len(values) == 1
+                               and re.fullmatch(r"[0-9]{1,7}", values[0])) else None
+    lists = [n for n in main.walk() if n.tag == "ul" and n.has_class("list-ui")]
+    if len(lists) != 1 or not lists[0].closed:
+        raise WebParseError("unrecognized_history")
+    children = _history_direct_nodes(lists[0])
+    if len(children) > MAX_ITEMS:
+        raise WebParseError("item_limit")
+    partial = count is None
+    events = {}
+    uncertain = []
+    conflicts = set()
+    card_count = 0
+    for card in children:
+        if not _history_visible(card):
+            partial = True
+            continue
+        if card.tag != "li" or not card.has_class("input-group") or not card.closed:
+            partial = True
+            continue
+        card_count += 1
+        links = [n for n in card.walk() if n.tag == "a"
+                 and _id(n.attrs.get("href", ""), "resources") is not None]
+        if len(links) != 1 or not links[0].closed:
+            partial = True
+            continue
+        link = links[0]
+        rid = _id(link.attrs.get("href", ""), "resources")
+        if not re.fullmatch(r"[a-fA-F0-9]{24}", rid):
+            partial = True
+            continue
+        # The captured href is an edition coordinate, not a loan identifier.
+        titles = [n for n in link.walk() if n.tag == "h2"
+                  and n.has_class("line-desc-title") and n.closed]
+        types = [n for title in titles for n in title.walk()
+                 if n.has_class("line-desc-title__suptitle") and n.closed]
+        if len(titles) != 1 or len(types) != 1 or types[0].text() != "Prêt":
+            partial = True
+            continue
+        title = _history_title(titles[0])
+        if not title:
+            partial = True
+            continue
+        info = [n for n in link.walk() if n.has_class("line-desc-supinfo") and n.closed]
+        times = [n for row in info for n in row.walk() if n.tag == "time" and n.closed]
+        stamp = (_history_stamp(times[0].attrs.get("datetime", ""))
+                 if len(info) == 1 and info[0].text().startswith("Emprunté le ")
+                 and len(times) == 1 else None)
+        event = HistoryEvent(rid, title, stamp)
+        if stamp is None:
+            # No stable event coordinate: retain descriptive row, no ID guess.
+            uncertain.append(event)
+            partial = True
+            continue
+        key = (rid, stamp)
+        if key in conflicts:
+            partial = True
+            continue
+        if key in events:
+            partial = True  # indistinguishable events cannot prove a count
+            if events[key] != event:
+                del events[key]
+                conflicts.add(key)
+        else:
+            events[key] = event
+    partial |= count != card_count or not card_count or len(events) != card_count
+    # Pagination is not qualified. Links or hidden/truncated rows are never
+    # followed here. A zero fixture stays partial, not a proved empty history.
+    if _active_loans_may_be_truncated(main):
+        partial = True
+    return HistoryPage(expected, tuple(events.values()) + tuple(uncertain),
+                       "partial" if partial else "observed", count)

@@ -236,3 +236,52 @@ def test_http_probe_keeps_click_bound_method_and_refuses_aba_callback(monkeypatc
     args[2](result)
     assert "en cours" in editor["explicit_probe_status"].subtitle
     assert [x[3]["phase"] for x in events][-1] == "completed_unverified"
+
+
+@pytest.mark.parametrize("changed", [
+    "draft_owner", "draft_secret", "draft_option", "draft_enabled",
+    "saved_secret", "saved_option", "saved_disabled",
+])
+def test_late_probe_result_cannot_describe_changed_account(monkeypatch, changed):
+    editor, submits, events, action, saved = _harness(
+        monkeypatch, return_saved=True,
+    )
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[-1]
+    action.return_value = NS(status="connected_ephemeral")
+    result = args[1]()
+    # Neither an in-place persisted update nor a local GTK edit needs to
+    # change the navigation generation. Both invalidate the old result.
+    if changed == "draft_owner":
+        editor["identity"].text = "identity-2"
+    elif changed == "draft_secret":
+        editor["fields"]["username"].text = "NEW-SYNTHETIC-USER"
+    elif changed == "draft_option":
+        editor["option_fields"]["experimental_http_probe"].text = "off"
+    elif changed == "draft_enabled":
+        editor["enabled"].active = False
+    elif changed == "saved_secret":
+        saved["credentials"]["username"] = "NEW-SYNTHETIC-USER"
+    elif changed == "saved_option":
+        saved["options"]["experimental_http_probe"] = "off"
+    elif changed == "saved_disabled":
+        saved["enabled"] = False
+    previous = editor["explicit_probe_status"].subtitle
+    args[2](result)
+    assert editor["explicit_probe_status"].subtitle == previous
+    assert "Connexion vérifiée" not in previous
+    assert not any("NEW-SYNTHETIC" in repr(event) for event in events)
+    assert editor["explicit_probe_button"].sensitive is True
+
+
+def test_result_after_saved_option_update_is_visible_for_exact_new_form(monkeypatch):
+    editor, submits, events, action, saved = _harness(
+        monkeypatch, return_saved=True,
+    )
+    saved["options"] = {"experimental_http_probe": "on"}
+    editor["option_fields"]["experimental_http_probe"].text = "on"
+    action.return_value = NS(status="connected_ephemeral")
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[-1]
+    args[2](args[1]())
+    assert "Session temporaire refermée" in editor["explicit_probe_status"].subtitle

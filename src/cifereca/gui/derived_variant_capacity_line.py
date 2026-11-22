@@ -77,11 +77,12 @@ def _subtitle(value):
                 cc = compact["capacity"]
                 n, used = compact["count"], compact["payload_bytes"]
                 exact, unpaired = compact["matched"], compact["unpaired"]
+                retired = compact.get("retired", 0)
                 if (set(cc) != {"records", "payload_bytes"}
                         or any(type(k) is not int or not 0 <= k <= 2**74
-                               for k in (n, used, exact, unpaired, *cc.values()))
+                               for k in (n, used, exact, unpaired, retired, *cc.values()))
                         or n > cc["records"] or used > cc["payload_bytes"]
-                        or exact + unpaired != n
+                        or exact + unpaired != n or retired > exact
                         or (compact["status"] == "observed") != (unpaired == 0)
                         or compact["saturation"] not in ("at_limit", "below_limits")
                         or (compact["saturation"] == "at_limit") != (
@@ -93,7 +94,9 @@ def _subtitle(value):
                     f'Traces compactes : {n}/{cc["records"]} témoins, '
                     f'{used:,}/{cc["payload_bytes"]:,} octets ; '
                     f'{exact} rattachés au reçu exact, {unpaired} non rattachés.'
-                    f'{compact_limit} Capacité distincte, aucune retraite attestée.'
+                    f'{compact_limit} Capacité distincte. '
+                    + (f'{retired} reçus en représentation compacte seule.'
+                       if retired else 'Aucune retraite attestée.')
                 )
                 if unpaired:
                     compact_text += " Nouvelles réservations refusées : reçu original non vérifié."
@@ -103,7 +106,7 @@ def _subtitle(value):
         return (
             f'Installation : {value["record_count"]}/{cap["records"]} reçus '
             f'({counts["pending"]} actifs, {counts["committed"]} terminés), '
-            f'{value["payload_bytes"]:,}/{cap["payload_bytes"]:,} octets de journal.\n'
+            f'{value["payload_bytes"]:,}/{cap["payload_bytes"]:,} octets de charge logique du journal.\n'
             f'{prefix}{value["known_output_bytes"]:,}/{cap["output_bytes"]:,} '
             f'octets déclarés réservés. {limit}\n'
             f'Profil actif : {counts["active_pending"]} actifs, {counts["active_committed"]} terminés, '

@@ -7,11 +7,13 @@ Both namespaces are validated in the same SQLite read transaction.
 from __future__ import annotations
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, _PREFIX, _COMMITTED, _MAX_RECORDS,
     _MAX_TOTAL_BYTES, _MAX_RESERVED_OUTPUT_BYTES, _decode, _measure,
 )
 from .derived_variant_compact_receipt import (
     _MAX_PROOFS, _MAX_PROOF_TOTAL, _measure_compact_in_transaction,
+    _retired_receipts, _MAX_RETIREMENT_BYTES,
 )
 
 
@@ -36,13 +38,12 @@ def review_derived_capacity_status(storage, *, identity_id=None):
             shadow_count, shadow_bytes = _measure_compact_in_transaction(
                 db, require_paired=True,
             )
+            retired = _retired_receipts(db)
             rows, payload_bytes = _measure(db)
             pending = committed = declared_output = 0
             profile_pending = profile_committed = profile_output = 0
             for key, _size in rows:
-                raw = db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (key,),
-                ).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 declared_output += intent.output_size
                 if intent.identity_id == identity_id:
@@ -77,7 +78,12 @@ def review_derived_capacity_status(storage, *, identity_id=None):
         "declared_output_bytes": declared_output,
         "declared_output_limit": _MAX_RESERVED_OUTPUT_BYTES,
         "declared_output_remaining": _MAX_RESERVED_OUTPUT_BYTES - declared_output,
-        "paired_compact_shadows": shadow_count,
+        "paired_compact_shadows": shadow_count - len(retired),
+        "compact_only_receipts": len(retired),
+        "compact_retirement_payload_bytes": 64 * len(retired),
+        "compact_retirement_payload_limit": _MAX_RETIREMENT_BYTES,
+        "physical_original_payload_bytes": payload_bytes - sum(
+            len(raw.encode("ascii")) for raw in retired.values()),
         "compact_shadow_payload_bytes": shadow_bytes,
         "compact_shadow_limit": _MAX_PROOFS,
         "compact_shadow_payload_limit": _MAX_PROOF_TOTAL,

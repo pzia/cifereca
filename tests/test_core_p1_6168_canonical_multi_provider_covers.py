@@ -408,3 +408,22 @@ def test_canonical_http_fallback_requires_exact_definitive_absence(tmp_path, mon
         service.close()
         loader.close()
         db.close()
+
+
+@pytest.mark.parametrize("evicted", [False, True])
+def test_cold_n2_refuses_superseded_canonical_source_before_republication(tmp_path, evicted):
+    from contextlib import closing
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    path = tmp_path / "superseded.sqlite"
+    with closing(Storage(path)) as db:
+        old = _join(db, "bnf", "https://covers.example.org/old.jpg")
+        newer = _store(db, "bnf", "https://covers.example.org/new.jpg", at=11)
+        if evicted:
+            assert evict_notice_cover(db, newer.document, expected_epoch=newer.epoch)
+        assert read_consolidated_notice_cover(db, old.document) == old
+    with closing(Storage(path)) as db:
+        assert cached_notice_cover_snapshot(NS(storage=db), old.document) is None
+        current = _join(db, "bnf", "https://covers.example.org/new.jpg", at=12)
+        assert [c.url for c in cached_notice_cover_snapshot(NS(storage=db), current.document).candidates] == [
+            "https://covers.example.org/new.jpg"]
+        assert db.entitlements() == [] and db.acquisitions() == []

@@ -217,3 +217,67 @@ def test_recent_label_parity_for_list_and_detail(provider, value, expected, stan
         assert ("Provenance", expected) in model["rows"]
     assert calls == ([] if provider == "local" else [provider, provider])
     assert [event[0] for event in events[2:]] == ["notice", "local", "facets"]
+
+
+@pytest.mark.parametrize("changed", [
+    {"artifact_id": "sha256:new", "path": "/books/new.epub"},
+    {"identity_id": "B"},
+    {},
+])
+def test_recent_same_key_replacement_requires_new_display_occurrence(changed):
+    original = {"key": "a", "placement_id": "a", "artifact_id": "sha256:old",
+                "identity_id": "A", "title": "Livre", "path": "/books/old.epub"}
+    def factory(*args):
+        return NS(key=args[0], title=args[1], subtitle=args[2], meta=args[3],
+                  badge=args[4], thumbnail_url=args[5])
+
+    old_rows, _ = project_recent_rows([original], row_factory=factory)
+    replacement = {**original, **changed}
+    new_rows, lookup = project_recent_rows([replacement], row_factory=factory)
+    window, events, stamp = _fake(lookup)
+    window.service = NS(current_identity=NS(identity_id=replacement["identity_id"]))
+    window.recent_page.detail.empty = lambda *args: events.append(("empty", args))
+    recent_selected(window, old_rows[0], Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == ["empty"]
+    events.clear()
+    recent_selected(window, new_rows[0], Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == [
+        "stamp", "summary", "notice", "local", "facets",
+    ]
+    assert events[3][1] is replacement
+    from tests.test_core_p1_3104_master_detail_visual_signature import production_methods
+    same, _ = production_methods()
+    assert not same(old_rows[0], new_rows[0])
+    repeated, _ = project_recent_rows([replacement], row_factory=factory)
+    assert same(new_rows[0], repeated[0])
+
+
+def test_recent_old_current_occurrence_is_revoked_by_duplicate_snapshot():
+    from cifereca.gui.library_render_controller import render_recent
+    original = {"key": "a", "placement_id": "a", "title": "Livre",
+                "identity_id": "A", "path": "/books/a.epub"}
+    duplicate = {**original, "path": "/other/b.epub"}
+    def factory(*args):
+        return NS(key=args[0], title=args[1], subtitle=args[2], meta=args[3],
+                  badge=args[4], thumbnail_url=args[5])
+    window, events, stamp = _fake({"a": original})
+    window.service = NS(current_identity=NS(identity_id="A"))
+    window.recent_page.detail.empty = lambda *args: events.append(("empty", args))
+    retained = []
+    window.recent_page.show_rows = lambda rows: retained.extend(rows)
+    window._attach_row_facets = lambda *args: None
+    window.ui_perf = NS(record=lambda *args: None)
+    kwargs = dict(perf_counter=lambda: 0., project_recent_rows=project_recent_rows,
+                  BookListItem=factory)
+    render_recent(window, [original], **kwargs)
+    old = retained[-1]
+    render_recent(window, [duplicate, original], **kwargs)
+    assert window._recent_objects["a"] is original
+    assert window._recent_ambiguous_keys == {"a"}
+    recent_selected(window, old, Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == ["empty"]
+    events.clear()
+    render_recent(window, [original], **kwargs)
+    assert not window._recent_ambiguous_keys
+    recent_selected(window, retained[-1], Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == ["stamp", "summary", "notice", "local", "facets"]

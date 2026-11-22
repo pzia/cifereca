@@ -54,7 +54,7 @@ def _resolve_public_source_c_many(
     if type(coordinates) not in (list, tuple) or len(coordinates) > max_batch:
         return {}
     wanted = {}
-    source_refs = set()
+    source_refs = {}
     for key in coordinates:
         if not _valid_coordinates(key):
             continue
@@ -75,7 +75,7 @@ def _resolve_public_source_c_many(
                     "digital": "digital", "physical": "print", "unknown": "unknown",
                 }[medium],
             )
-            source_refs.add(notice_cover_document_ref(source).source_key)
+            source_refs[notice_cover_document_ref(source).source_key] = key
         except (TypeError, ValueError, UnicodeError):
             continue
         wanted[key] = edition
@@ -100,13 +100,36 @@ def _resolve_public_source_c_many(
             # Keep the Python validator authoritative. The SQL predicate
             # is only a prefilter, never a document or access proof.
             for key, raw in cursor:
+                claimed = set()
                 try:
+                    # Decode only the opaque claimed source keys first.
+                    # The canonical decoder remains the positive authority.
+                    wire = json.loads(raw)
+                    members = wire.get("sources", {})
+                    if type(members) is dict:
+                        claimed = {source_refs[ref] for ref in members
+                                   if ref in source_refs}
+                    if not claimed - rejected:
+                        continue
                     parsed = _json(raw)
+                    # Once a coordinate exceeds its ambiguity budget, do
+                    # not repeatedly decode thousands of additional claims
+                    # for it. Still decode rows bearing ANY other requested
+                    # coordinate; one noisy source cannot starve its sibling.
+                    raw_sources = parsed.get("sources")
+                    if type(raw_sources) is not dict or not any(
+                        ref in source_refs and source_refs[ref] not in rejected
+                        for ref in raw_sources
+                    ):
+                        continue
                     document = canonical_cover_document_ref(parsed["edition_id"])
                     if _db_key(document) != key:
-                        continue
+                        raise ValueError("corrupt_canonical_cover")
                     consolidated = _decode(raw, document)
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, AttributeError, RecursionError):
+                    rejected.update(claimed)
+                    for coords in claimed:
+                        matches.pop(coords, None)
                     continue
                 sources = consolidated.sources
                 if not sources or any(

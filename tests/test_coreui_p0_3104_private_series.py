@@ -155,3 +155,51 @@ def test_provider_disabled_before_worker_and_public_rows_refused(selected):
     row.source_credential = "__public__"
     assert not request(host, row)
     assert not pending
+
+
+def test_account_scoped_series_retained_only_for_exact_registered_account(tmp_path):
+    from cifereca.core.notice_c_private_series import read_series_for_search
+    from cifereca.core.search_orchestration import capture_search_read_scope
+
+    path = tmp_path / "account-series.sqlite"
+    with closing(Storage(path)) as db:
+        host = Host(db)
+        a = host.account("alice")
+        row = SearchResult(
+            id="row", record_id="record", docbase="fixture", medium="digital",
+            title="Fixture", author=None, type=None, format=None, publisher=None,
+            published_at=None, description=None, thumbnail_url=None, friendly_url=None,
+            scenario="fixture", source_provider=a.provider_id,
+            source_credential=a.credential_id, source_account_id=a.unique_id,
+            metadata={"series": ["Cycle exact"],
+                      "bibliography_evidence": {"series": {
+                          "source": a.provider_id + ".fixture.search",
+                          "source_field": "Search.fixture", "scope": "fixture",
+                          "confidence": "linked_search_relation", "freshness": "search_response",
+                      }}},
+        )
+        call = capture_series_call(host, host._sessions[(a.provider_id, a.credential_id)], "alice")
+        foreign = replace(row, source_account_id="other-account")
+        stamp_series_rows(host, call, [foreign, row])
+        assert persist_series_rows(host, [foreign, row], identity_id="alice") == 1
+        key = _key(row, "alice")
+        assert key.account_id == a.unique_id
+        assert key.edition_id != _key(replace(row, source_account_id=None), "alice").edition_id
+        doc = notice_cover_document_ref(key)
+        source = read_notice_cover(db, doc)
+        assert evict_notice_cover(db, doc, expected_epoch=source.epoch)
+    with closing(Storage(path)) as db:
+        host = Host(db)
+        row = replace(row, metadata={})
+        scope = capture_search_read_scope(host, "alice")
+        assert read_series_for_search(host, row, reader_scope=scope).label == "Cycle exact"
+        for modified in (replace(row, source_account_id=None), foreign):
+            assert read_series_for_search(host, modified, reader_scope=scope) is None
+        assert read_series_for_search(host, row, reader_scope=capture_search_read_scope(
+            host, "bob",
+        )) is None
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM provider_accounts WHERE account_id=?", (a.unique_id,))
+        assert read_series_for_search(host, row, reader_scope=scope) is None
+        assert host._sessions == {}
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
