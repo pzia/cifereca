@@ -17,10 +17,11 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | Adaptateur ADEPT historique — verrous | Reprise | Même contrôleur Core / #7244 | Diagnostic des verrous et vérification des fichiers ; aucun déverrouillage autorisé |
 | Téléchargements à reprendre (adaptateur CoreUI) | Reprise | Même dialogue/file que Synchronisation / #7161, #7231 | Réarmement individuel admissible, aucun GET au clic |
 | maintenance.cleanup.duplicates.recover | Reprise | library.maintenance / #3185 | Reprise supervisée des tombstones |
-| maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue, capacité et simulation ; pas de reprise effective |
+| maintenance.library.derived-variants | Reprise | library.derived.read / #6937 | Revue et simulation ; pas de reprise effective |
+| maintenance.library.derived-capacity | Stockage | library.derived.read / #6937 | Observations séparées ; aucune restitution de quota |
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
 
-Restent à livrer : dissociation capacité/reprise dans le package variantes, suggestions détaillées par livre (rapport agrégé livré, aucune correction), recette GTK sur le parcours complet. Le classement des contributions n'est pas une réception de leur moteur métier.
+Limites métier : suggestions détaillées par livre (rapport agrégé livré, aucune correction), reprise effective des variantes et organisation mutatrice non autorisées par cette réorganisation. Recette GTK intégrée à valider. Le classement des contributions n'est pas une réception de leur moteur métier.
 
 ## Migration des anciens accès
 
