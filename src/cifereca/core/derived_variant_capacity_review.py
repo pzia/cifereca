@@ -93,8 +93,18 @@ def _snapshot(scope):
     # Config may contain duplicate identity rows even when SQLite has one
     # exact owner. A dict comprehension would silently accept the last
     # directory as physical ownership evidence; mark that identity unbound.
+    rows = scope.config.identities()
+    # The configured-owner inventory is a bounded, native snapshot. A
+    # generator, truncated list or malformed row is not ownership evidence.
+    if type(rows) is not list or not 1 <= len(rows) <= 128:
+        raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
     configured = {}
-    for row in scope.config.identities():
+    for row in rows:
+        if (type(row) is not dict or type(row.get("id")) is not str
+                or not 0 < len(row["id"]) <= 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in row["id"])
+                or "directory_name" not in row):
+            raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
         identity = row["id"]
         configured[identity] = (
             row["directory_name"] if identity not in configured else None
