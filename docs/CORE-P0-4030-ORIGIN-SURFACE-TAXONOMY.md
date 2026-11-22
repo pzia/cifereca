@@ -123,9 +123,10 @@ synthétique en preuve terrain ou en autorisation de GET.
 | Sélection explicite de catalogues publics, 401/403/429/timeout, activation révocable | `test_core_p0_7092_origin_detail_public.py`, `test_core_p0_7092_origin_detail_controller.py` | Seul le titre OPF est envoyé après choix ; résultat distant non exhaustif |
 | Achats/prêts privés exacts, cache et continuation, choix d'un compte | `test_core_p0_4030_private_catalogue.py`, `test_core_p0_4030_real_purchase_c_comparison.py`, `test_core_p0_4030_private_cache_evidence_order.py` | Cache non réputé frais, dénominateur de couverture non attesté |
 | Relecture typée du seul inventaire de prêts sélectionné | `test_core_p0_4030_remote_loans.py` | Ne prouve aucune branche canonique, activation ni droit |
+| Priorité transverse sur les fenêtres explicitement consultées, classement par preuve puis public/achats/prêts à preuve égale | `test_core_p0_4030_cross_surface_ranking.py` (#7711, **réception soumise à CI et fusion**) | Un ISBN revendiqué par plusieurs éditions reste ambigu ; classement documentaire seulement, une provenance attestée n'est jamais rétrogradée |
 | Déclaration humaine distincte des attestations, consentement et révocation transactionnelle | `test_core_p0_4030_loan_declaration_bridge.py`, `test_core_p0_4030_purchase_declaration.py` | Writer existant #2797, droit exact préalable obligatoire, jamais `OriginLink(provider)` inventé |
 | Batch supervisé, annulation/ABA, scopes et budgets | `test_core_p0_4030_suggestion_batch.py`, `test_core_p0_4030_batch_native_reception.py` | Comparaison C locale seulement ; pas de balayage réseau silencieux |
-| Cohabitation des trois surfaces, 403 public sans veto privé, révocation de profil, invariance FS/SQLite | `test_core_p0_4030_three_surface_reception.py` (PR #7707, **réception sous réserve de CI et merge**) | N'exécute ni téléchargement fournisseur ni prêt réel |
+| Cohabitation des trois surfaces, 403 public sans veto privé, révocation de profil, invariance FS/SQLite | `test_core_p0_4030_three_surface_reception.py` (#7707, fusion `bc29ce1`, PR CI verte) | N'exécute ni téléchargement fournisseur ni prêt réel |
 
 **Critères de clôture encore à arbitrer en réception :** la somme des témoins
 ci-dessus doit être confrontée au parcours complet de l'utilisateur, dont les

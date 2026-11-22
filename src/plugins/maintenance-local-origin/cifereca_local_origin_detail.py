@@ -24,6 +24,72 @@ _LABELS = {
 }
 
 
+_DOCUMENTARY_STRENGTH = {
+    "isbn_title_author_concordant": 0,
+    "title_author_concordant": 1,
+    # An ISBN claimed by multiple editions is not an exact edition source.
+    "isbn_claim_ambiguous": 2,
+    "title_concordant_author_unknown": 3,
+    "title_concordant_author_unverified": 3,
+    "title_related": 4,
+    "title_concordant_author_divergent": 5,
+    "isbn_claim_divergent": 6,
+    "purchase_description_conflicting": 7,
+}
+_SURFACE_PRIORITY = {
+    "known-c": 0, "public": 0, "purchase": 1, "loan": 2, "remote-loan": 2,
+}
+_SURFACE_LABEL = {
+    "known-c": "Notice C déjà connue",
+    "public": "Catalogue public",
+    "purchase": "Achat en cache",
+    "loan": "Prêt en cache",
+    "remote-loan": "Inventaire de prêts relu",
+}
+
+
+def ranked_documentary_rows(compared):
+    """Present the explicitly reviewed windows, never produce a right or origin.
+
+    Rank documentary evidence before family preference; public precedes
+    purchases then loans ONLY at equal evidence strength. An exact attested
+    provider origin is excluded upstream from this local-origin tool.
+    """
+    candidates = []
+    for family, report in compared:
+        if family not in _SURFACE_PRIORITY:
+            continue
+        for match in report.matches:
+            strength = _DOCUMENTARY_STRENGTH.get(match.comparison, 8)
+            provider = (match.provider_id if family in ("known-c", "public")
+                        else report.provider_id)
+            record = (match.record_id if family == "public" else
+                      match.edition_id if family in ("known-c", "purchase", "loan",
+                                                     "remote-loan") else "")
+            candidates.append((
+                strength, _SURFACE_PRIORITY[family],
+                match.title,
+                _SURFACE_LABEL[family] + " · " + provider
+                + (" · édition/référence : " + record if record else "")
+                + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
+            ))
+    if not candidates:
+        return ()
+    candidates.sort(key=lambda row: (row[0], row[1]))
+    rows = [
+        ("Portée", "Fenêtres explicitement comparées seulement ; tri documentaire, "
+         "jamais attribution de provenance, d'achat, de prêt ou de droit."),
+        ("Ordre", "Concordance d'abord ; à preuve égale, public, achats puis prêts. "
+         "Un reçu fournisseur attesté n'est pas une simple suggestion."),
+        ("Couverture", "Partielle, sans fraîcheur réseau ni inventaire exhaustif attestés."),
+    ]
+    rows.extend((title, description) for _, _, title, description in candidates[:10])
+    if len(candidates) > 10:
+        rows.append(("Limite", f"{len(candidates) - 10} candidats examinés de plus, "
+                     "non affichés dans cet aperçu classé ; aucune absence attestée."))
+    return tuple(rows)
+
+
 def known_rows(page):
     lines = [
         ("Portée", "Notices publiques connues uniquement. Aucune origine ni droit attestés."),
@@ -128,6 +194,7 @@ class DetailController:
         self.choice_offset = None
         self.private_next = {}
         self.declaration_view = None
+        self.compared = []
         self.busy = self.finished = self.disposed = False
 
     def current(self):
@@ -161,6 +228,7 @@ class DetailController:
         self.used.clear()
         self.private_next.clear()
         self.declaration_view = None
+        self.compared.clear()
 
         def display(value):
             if previous is not None and callable(getattr(self.host, "retire_action", None)):
@@ -179,6 +247,8 @@ class DetailController:
             self.page = value
             self.finished = not value.can_continue
             self.host.add_group("Suggestions de provenance — lecture seule", known_rows(value))
+            if value.matches:
+                self.compared.append(("known-c", value))
             if value.page == 1 and value.metadata_evidence == "verified_epub_opf_description":
                 if callable(getattr(self.host, "retire_action", None)):
                     self._show_choice_window(value, 0)
@@ -374,6 +444,7 @@ class DetailController:
                 self.host.toast("Continuation privée indisponible ; aucune absence attestée.")
                 return
             self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
+            self._record_comparison(choice.kind, value, original)
             if (choice.kind in ("loan", "purchase")
                     and callable(getattr(self.host, "retire_action", None))
                     and callable(getattr(self.broker, "preview_" + choice.kind + "_declaration", None))
@@ -544,6 +615,7 @@ class DetailController:
                 self.host.toast("Inventaire privé indisponible ; aucune absence attestée.")
                 return
             self.host.add_group("Inventaire privé de prêts — lecture seule", remote_loan_rows(value))
+            self._record_comparison("remote-loan", value, original)
 
         return self._submit(
             lambda: self.broker.compare_remote_loan(token=choice.token, confirmed=True), display)
@@ -576,9 +648,21 @@ class DetailController:
                                 " ; aucune absence attestée. Nouvelle revue nécessaire.")
                 return
             self.host.add_group("Catalogue public — " + choice.provider_id, public_rows(value))
+            self._record_comparison("public", value, original)
 
         return self._submit(
             lambda: self.broker.search_public(token=choice.token, confirmed=True), display)
+
+    def _record_comparison(self, family, report, original):
+        if not self.current() or self.page is not original or not report.matches:
+            return
+        # Local, per-view presentation only; no provider request or retained
+        # source cache. The host appends immutable snapshot groups.
+        self.compared.append((family, report))
+        if len(self.compared) > 1:
+            rows = ranked_documentary_rows(self.compared)
+            if rows:
+                self.host.add_group("Classement documentaire — lecture seule", rows)
 
     def _submit(self, work, display):
         self.busy = True
@@ -610,6 +694,7 @@ class DetailController:
     def dispose(self):
         self.disposed = True
         self.page = None
+        self.compared.clear()
         self.used.clear()
         self.private_next.clear()
         self.declaration_view = None
