@@ -618,3 +618,63 @@ def test_native_multi_account_search_keeps_exact_web_links_separate(tmp_path):
             assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == row.friendly_url
         assert read_authenticated_web_for_search(host, unknown, reader_scope=scope) is None
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_exact_mixed_c_web_references_keep_public_and_private_authority_separate(tmp_path):
+    """A strong controlled document relation does not grant another account's link.
+
+    This exercises the two existing Core readers, not admission of a mixed
+    public Search group or proof of a relation from actual suppliers.
+    """
+    from cifereca.core.notice_c_web_choices import resolve_public_web_choice
+    from tests.test_core_p0_6397_c_web_reference_persistence import source, link, publish
+
+    filename = tmp_path / "mixed-web.sqlite"
+    public_url = "https://books.example.org/title/public"
+    with closing(Storage(filename)) as db:
+        host = Host(db)
+        owner = host.account("alice")
+        host.account("bob")
+        public = source(db, "seller-a", "public-record", [link("seller-a", public_url)])
+        target = public.observation.key.edition_id
+        publish(db, target, public)
+        private, combined = host.source(owner, group=target)
+        public_menu = read_public_web_choices(db, combined.document)
+        private_menu = host.menu(combined, private.document)
+        public_choice, = public_menu.choices
+        private_choice, = private_menu.choices
+        assert public_menu.document == private_menu.document == combined.document
+        assert public_menu.epoch == private_menu.epoch == combined.epoch
+        assert private_choice.access_mode == "authenticated"
+        assert resolve_public_web_choice(
+            db, combined.document, expected_epoch=public_menu.epoch,
+            choice_id=public_choice.choice_id,
+        ) == public_url
+        assert resolve_authenticated_web_choice(
+            host, private_menu, choice_id=private_choice.choice_id,
+        ) == URL
+        assert host.menu(combined, private.document, owner="bob") is None
+        assert resolve_public_web_choice(
+            db, combined.document, expected_epoch=public_menu.epoch,
+            choice_id=private_choice.choice_id,
+        ) is None
+        assert resolve_authenticated_web_choice(
+            host, private_menu, choice_id=public_choice.choice_id,
+        ) is None
+        # Disconnect just the private session without modifying the C.
+        host._sessions[host._session_key(owner.provider_id, owner.credential_id)].connected = False
+        assert resolve_authenticated_web_choice(
+            host, private_menu, choice_id=private_choice.choice_id,
+        ) is None
+        assert resolve_public_web_choice(
+            db, combined.document, expected_epoch=public_menu.epoch,
+            choice_id=public_choice.choice_id,
+        ) == public_url
+        assert evict_notice_cover(db, public.document, expected_epoch=public.epoch)
+    with closing(Storage(filename)) as db:
+        assert read_public_web_choices(db, combined.document) == public_menu
+        assert resolve_public_web_choice(
+            db, combined.document, expected_epoch=public_menu.epoch,
+            choice_id=public_choice.choice_id,
+        ) == public_url
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
