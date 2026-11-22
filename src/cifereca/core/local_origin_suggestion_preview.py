@@ -149,7 +149,8 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                     "CASE WHEN title IS NULL OR (typeof(title)='text' "
                     "AND length(CAST(title AS BLOB))<=2048) THEN title ELSE X'00' END,"
                     "CASE WHEN author IS NULL OR (typeof(author)='text' "
-                    "AND length(CAST(author AS BLOB))<=2048) THEN author ELSE X'00' END "
+                    "AND length(CAST(author AS BLOB))<=2048) THEN author ELSE X'00' END,"
+                    "provider_id "
                     "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 33",
                     (placement_id,),
                 ).fetchall()
@@ -157,7 +158,8 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                     return "catalogue_evidence_unavailable", None
                 # All claims about this exact placement must agree. Do not pick
                 # a convenient title from an ambiguous or foreign catalogue row.
-                if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
+                if any(entry[1:4] != (artifact, identity, "local")
+                       or entry[6] != "local" for entry in entries):
                     return "catalogue_evidence_unavailable", None
                 # An oversized claim is an invalid BLOB sentinel, never a missing value.
                 # SQLite's TEXT affinity does not guarantee a native TEXT
