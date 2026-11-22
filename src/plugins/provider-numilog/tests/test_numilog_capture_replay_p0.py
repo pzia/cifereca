@@ -182,3 +182,13 @@ def test_decoded_capture_body_is_not_classified_as_a_failed_transport_decode(tmp
     assert report["counts"]["eligible_public_get"] == 1
     assert report["reasons"] == {"body_representation_unverified": 1}
     assert report["counts"].get("parser_qualified", 0) == 0
+
+
+def test_oversized_zip_member_inventory_is_rejected_before_replay(tmp_path):
+    # One valid trace plus many inert members must not induce an unbounded
+    # member-name scan or silently qualify the otherwise valid book.
+    path = _archive(tmp_path / "too-many-members.zip", [_entry("a", HTML)])
+    with ZipFile(path, "a") as archive:
+        for index in range(2001):
+            archive.writestr(f"extra/{index:04d}", b"")
+    assert analyse_capture(path) == {"status": "invalid_capture"}
