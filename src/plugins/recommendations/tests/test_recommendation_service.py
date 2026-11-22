@@ -441,3 +441,89 @@ def test_explicit_reader_catalogue_facet_is_used_instead_of_unscoped_broker():
     result = compute_recommendations(Metadata(), broker, "id-1", max_queries=2)
     assert broker.identities == ["id-1"]
     assert broker.scoped.calls and result.ranked
+
+
+@pytest.mark.parametrize("progressive", [True, False])
+def test_durable_public_c_remains_visible_when_live_supplier_also_replies(progressive):
+    """A successful but partial live provider window must not remove local C."""
+    known = {
+        "title": "Archives de l'histoire", "author": "Alice",
+        "metadata": {"subjects": ["histoire"], "notice_c_known": True},
+        "source_provider": "bnf", "source_collection": "notice_c_public",
+        "source_credential": "", "record_id": "known-1",
+        "docbase": "digital-books", "medium": "digital",
+    }
+    live = {
+        "title": "Chroniques de l'histoire", "author": "Alice",
+        "metadata": {"subjects": ["histoire"]},
+        "source_provider": "paris", "source_credential": "card-alice",
+        "record_id": "live-2", "docbase": "digital-books", "medium": "digital",
+    }
+
+    class Mixed:
+        def searchable_providers(self):
+            return (("paris", "Paris"),)
+
+        def known_public_notices(self, query, **kwargs):
+            assert query
+            assert kwargs["scope"] == "digital"
+            assert kwargs["provider_ids"] == ()  # C survives absent BnF session.
+            return [known]
+
+        def search(self, query, **kwargs):
+            return [live]
+
+    class MixedProgressive(Mixed):
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            on_batch(SimpleNamespace(
+                provider_id="paris", results=(live,), warnings=(),
+                error_message="", cached=False,
+            ))
+            return SimpleNamespace(warnings=(), cancelled=False)
+
+    notices = []
+    result = compute_recommendations(
+        Metadata(), MixedProgressive() if progressive else Mixed(),
+        "id-1", max_queries=1, exploration=0, exclude_owned=False,
+        partial=notices.append,
+    )
+    titles = {row.item["title"] for row in result.ranked}
+    assert {"Archives de l'histoire", "Chroniques de l'histoire"} <= titles
+    # C is published BEFORE the supplier callback, not substituted for it.
+    assert notices and notices[0].provider_done == 0
+    assert any(row.item["title"] == "Archives de l'histoire"
+               for row in notices[0].ranked)
+    if progressive:
+        assert result.catalogue_observations[0].results_seen == 1
+        assert result.network_batches == 1
+        assert result.cache_unknown_calls == 0
+    else:
+        assert result.cache_unknown_calls == 1
+    assert result.cancelled is False
+
+
+def test_failed_live_supplier_preserves_one_c_batch_not_a_duplicate():
+    class Broken:
+        def searchable_providers(self):
+            return (("paris", "Paris"),)
+
+        def known_public_notices(self, query, **kwargs):
+            return [{
+                "title": "Archives histoire", "author": "Alice",
+                "metadata": {"subjects": ["histoire"], "notice_c_known": True},
+                "source_provider": "bnf", "source_collection": "notice_c_public",
+                "source_credential": "", "record_id": "known-a",
+            }]
+
+        def search(self, query, **kwargs):
+            raise RuntimeError("private-provider-diagnostic")
+
+    result = compute_recommendations(
+        Metadata(), Broken(), "id-1",
+        max_queries=1, exploration=0, exclude_owned=False,
+    )
+    assert len(result.ranked) == 1
+    assert result.ranked[0].item["title"] == "Archives histoire"
+    assert result.warnings == ("catalogue_search_failed",)
+    assert result.cache_unknown_calls == 0
+    assert "private-provider-diagnostic" not in str(result.warnings)

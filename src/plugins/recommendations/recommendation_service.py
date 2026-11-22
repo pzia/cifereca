@@ -460,14 +460,19 @@ def compute_recommendations(
                 f"{query} · requête {query_index}/{len(queries)} · catalogues 0/{provider_total} · {results_seen} résultats",
             )
 
-        # Local C is a partial descriptive fallback, not an observed provider
-        # response. Read it on this existing ranking worker before any GET.
+        # Durable public C is a partial descriptive input, independent of
+        # live provider replies. Read it on this ranking worker before any GET.
+        # A nonempty supplier batch does not make unrelated admitted C vanish.
         known_rows = []
         if callable(known_reader):
             try:
                 raw_known = list(known_reader(
                     query, scope=scope,
-                    provider_ids=tuple(str(pid) for pid, _ in providers),
+                    # Public C is installation-scoped and persists without
+                    # a corresponding active supplier session. The catalogue
+                    # inventory below limits only live provider dispatch;
+                    # source facets apply later via the common view filter.
+                    provider_ids=(),
                 ) or ())[:max(10, int(per_query))]
                 for item in raw_known:
                     key = tuple(str(get_field(item, field, "") or "") for field in (
@@ -489,6 +494,14 @@ def compute_recommendations(
             ingest_provisional(known_rows)
             emit_partial(query_index, 0)
             continue
+
+        # Keep the C-first batch visible even when a live provider later
+        # returns other editions. This is NOT a supplier response or a right:
+        # provider coverage counters still measure only on_batch.
+        if known_rows:
+            results_seen += len(known_rows)
+            ingest_provisional(known_rows)
+            emit_partial(query_index, 0)
 
         if callable(progressive):
             def on_batch(batch: Any) -> None:
@@ -547,35 +560,29 @@ def compute_recommendations(
                 else:
                     warnings.append("catalogue_search_failed")
             rows = _merge_provider_rows(grouped, providers)[:max(10, int(per_query))]
-            # Keep live provider ranking unchanged when it has results; if
-            # offline/empty, C remains usable, not an attested availability.
-            if not rows and not was_cancelled:
-                rows = known_rows
-                results_seen += len(rows)
-                ingest_provisional(rows)
-                if rows:
-                    emit_partial(query_index, provider_done)
-            batches.append(rows)
+            # Preserve BOTH independently admitted inputs. A live search
+            # window is not an exhaustive catalogue census; dropping known
+            # C simply because another source replied hides offline editions.
+            # The existing ranking/host gates still distinguish C description
+            # from credential-bearing source actions.
+            batches.append([*known_rows, *rows])
         else:
             try:
                 rows = list(catalog_broker.search(query, scope=scope, force=False) or [])
-                if not rows:
-                    rows = known_rows
                 results_seen += len(rows)
                 cache_unknown_calls += 1
                 ingest_provisional(rows)
-                batches.append(rows[: max(10, int(per_query))])
+                batches.append([*known_rows, *rows[:max(10, int(per_query))]])
                 emit_partial(query_index, provider_total)
             except Exception:
                 if cancelled_or_revoked():
                     was_cancelled = True
                 else:
                     warnings.append("catalogue_search_failed")
-                rows = [] if was_cancelled else known_rows
-                results_seen += len(rows)
-                ingest_provisional(rows)
-                batches.append(rows)
-                if rows:
+                # The independently read C batch already entered the
+                # provisional view; a failed supplier must not add it twice.
+                batches.append([] if was_cancelled else known_rows)
+                if known_rows and not was_cancelled:
                     emit_partial(query_index, 0)
 
         if progress and not was_cancelled:
