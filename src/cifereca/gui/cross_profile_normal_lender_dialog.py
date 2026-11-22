@@ -166,6 +166,16 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     choices = {f"choice-{i}": row for i, row in enumerate(rows)}
 
     def selected(_dialog, response):
+        # The displayed N-way inventory is a single exact choice receipt.
+        # An unselected lender can change after painting without changing
+        # the selected candidate. Do not turn a stale N-way roster into a
+        # seemingly valid one-account confirmation.
+        if (not dialog_current()
+                or not possible_lender_claims_distinct(
+                    rows, item, requesting_identity_id=identity_id)
+                or any(not lender_current(row) for row in rows)):
+            release()
+            return
         present_confirmation(choices.get(response) if type(response) is str else None)
 
     try:
