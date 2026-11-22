@@ -64,7 +64,10 @@ def _stamp(value, length):
 
 
 def _decode_trace(key, raw):
-    _require(type(raw) is str and 0 < len(raw.encode("ascii")) <= _MAX_RECORD_BYTES)
+    # SQLite metadata can be a corrupted TEXT value containing Unicode.
+    # Reject it as non-canonical evidence rather than leaking UnicodeEncodeError.
+    _require(type(raw) is str and raw.isascii()
+             and 0 < len(raw) <= _MAX_RECORD_BYTES)
     value = json.loads(raw, object_pairs_hook=journal._unique_pairs)
     _require(type(value) is dict and set(value) == {
         "schema", "receipt", "binding", "nonce", "state", "before", "after",
