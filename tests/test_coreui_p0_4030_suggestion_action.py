@@ -170,3 +170,25 @@ def test_known_c_native_detail_disambiguates_editions_and_revisions(store, tmp_p
             assert "Révision C : " + hit.source_revision in matches[0]
     assert "aucune origine ni droit attestés" in repr(groups)
     assert not store.entitlements()
+
+@pytest.mark.parametrize("known,expected", [
+    (0, "Aucune correspondance connue ; absence non prouvée."),
+    (2, "Correspondances C connues, aucune fiche présentable sur cette page ; absence non prouvée."),
+])
+def test_empty_local_c_window_does_not_hide_known_source_matches(
+    store, tmp_path, known, expected,
+):
+    from dataclasses import replace
+
+    host, panel, row, item, token, tasks, buttons, groups, _ = _host(store, tmp_path)
+    assert action.add_local_origin_suggestion_action(host, panel, row, item, token=token)
+    button, = buttons
+    button.callback(button)
+    original = tasks[0][0]()
+    assert original["status"] == "partial"
+    page = replace(original["suggestions"], suggestions=(), known_matches=known)
+    tasks[0][1]({**original, "suggestions": page})
+    assert len(groups) == 1
+    assert ("Résultats connus", str(known)) in groups[0][1]
+    assert ("Résultat", expected) in groups[0][1]
+    assert not store.entitlements()
