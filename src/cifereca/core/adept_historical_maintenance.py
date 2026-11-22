@@ -6,13 +6,13 @@ inventory evidence, and the canonical branch is never inferred from it.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 from pathlib import Path
 
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .adept_historical_diagnostic import review_historical_loan_diagnostic
+from .adept_historical_snapshot import historical_read_snapshot
 from .canonical_recovery import _unique_checkpoint_fields
 from .local_origin_suggestion_operator import _root, _navigation_epoch
 from .library_sqlite_freshness import sqlite_source_stamp
@@ -80,20 +80,8 @@ def admit_historical_review(service):
 
 
 
-@contextmanager
-def _isolated_historical_read(storage):
-    """A read-only review must not settle a caller-owned SQLite transaction."""
-    with storage._lock:
-        db = storage._connect()
-        if db.in_transaction:
-            raise RuntimeError("historical_review_nested_transaction")
-        with db:
-            db.execute("BEGIN")
-            yield db
-
-
 def _page(storage, identity, cursor):
-    with _isolated_historical_read(storage) as db:
+    with historical_read_snapshot(storage) as db:
         return tuple(db.execute(
             "SELECT acquisition_id,provider_id,credential_id,account_id,item_id,status,"
             "CASE WHEN length(CAST(metadata_json AS BLOB))<=? THEN metadata_json ELSE NULL END "
@@ -104,7 +92,7 @@ def _page(storage, identity, cursor):
 
 
 def _branches(storage, identity, provider, credential, account, edition, loan):
-    with _isolated_historical_read(storage) as db:
+    with historical_read_snapshot(storage) as db:
         return tuple(db.execute(
             "SELECT branch_id FROM source_references WHERE identity_id=? AND provider_id=? "
             "AND credential_id=? AND account_id=? AND edition_id=? AND right_id=? "
