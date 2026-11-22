@@ -89,3 +89,92 @@ def test_plugin_master_detail_uri_action_is_checked_and_invalid_actions_are_drop
     assert "if not uri:" in source
     assert "continue" in source
     assert "Gtk.LinkButton(uri=uri, label=str(action.title))" in source
+
+
+def test_native_document_link_rechecks_context_before_gtk_default_launch():
+    from types import SimpleNamespace as NS
+
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
+    cls = next(node for node in ast.parse(source.read_text()).body
+               if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "show_presentation")
+
+    class LinkButton:
+        def __init__(self, *, uri, label):
+            self.uri, self.label, self.mapped = uri, label, True
+            self.opened = []
+
+        def set_tooltip_text(self, _text):
+            pass
+
+        def get_mapped(self):
+            return self.mapped
+
+        def connect(self, signal, callback):
+            assert signal == "activate-link"
+            self.callback = callback
+
+        def activate(self):
+            if not self.callback(self):
+                self.opened.append(self.uri)
+
+    namespace = {
+        "current_detail_trace": lambda: None,
+        "clear_box": lambda _content: None,
+        "Gtk": NS(LinkButton=LinkButton),
+        "safe_document_link_url": safe_document_link_url,
+        "UiBookDetailPresentation": object,
+    }
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[method], type_ignores=[])), str(source), "exec"), namespace)
+    render = namespace["show_presentation"]
+    service = NS(current_identity=NS(identity_id="alice"),
+                 _account_context_epoch=1, _source_context_epoch=1)
+    window = NS(service=service, _route_display_token=object())
+    buttons = []
+
+    def clear():
+        for button in buttons:
+            button._cifereca_action_context_revoked = True
+        buttons.clear()
+
+    panel = NS(window=window, content=object(),
+               _cancel_meta_request=lambda: None,
+               _focused_action_key=lambda: "",
+               _clear_actions=clear,
+               _cover_and_title=lambda *_a, **_kw: None,
+               _show_description=lambda *_: None,
+               _actions=buttons.extend)
+    url = "https://catalogue.example/notice/42"
+    presentation = NS(title="Livre", subtitle="", thumbnail_url=None, badges=(),
+                      sections=(), links=(NS(id="notice", label="Fiche",
+                                             url=url, relation="notice"),))
+
+    for invalidate in (
+        lambda button: setattr(service, "_account_context_epoch", service._account_context_epoch + 2),
+        lambda button: setattr(service, "_source_context_epoch", service._source_context_epoch + 2),
+        lambda button: setattr(window, "_route_display_token", object()),
+        lambda button: setattr(service, "current_identity", NS(identity_id="alice")),
+        lambda button: setattr(button, "mapped", False),
+        lambda button: setattr(button, "_cifereca_action_context_revoked", True),
+    ):
+        render(panel, presentation)
+        button, = buttons
+        button.activate()
+        assert button.opened == [url]
+        invalidate(button)
+        button.activate()
+        assert button.opened == [url]
+
+    render(panel, presentation)
+    original, = buttons
+    render(panel, presentation)
+    original.activate()
+    assert original.opened == []
+    current, = buttons
+    current.activate()
+    assert current.opened == [url]
+    window._closed = True
+    current.activate()
+    assert current.opened == [url]
