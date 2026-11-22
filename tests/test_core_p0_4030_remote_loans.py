@@ -273,11 +273,9 @@ def test_remote_loan_result_suppresses_spoofed_occurrence_coordinates(
     case, coordinate, spoof,
 ):
     service, request, account, session, path, calls, choice, observed = case
-    forged = replace(
-        observed, id="other-loan",
-        **{coordinate: ("other-loan" if coordinate == "id" else "other-edition")
-           + spoof + "FORGED"},
-    )
+    changes = {"id": "other-loan"}
+    changes[coordinate] = ("other-loan" if coordinate == "id" else "other-edition") + spoof + "FORGED"
+    forged = replace(observed, **changes)
     snapshot = LoanInventorySnapshot(
         LoanInventoryScope.for_account(account), (forged, observed),
         status="success",
