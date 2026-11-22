@@ -59,18 +59,24 @@ def _loan_titles(service, scope):
     matched = {}
     counts = Counter()
     for loan in loans:
-        if (type(loan) is not Loan or loan.medium != "digital"
+        if (type(loan) is not Loan
                 or (loan.identity_id, loan.source_provider, loan.source_credential,
                     loan.source_account_id) != _scope_coords(scope)):
+            continue
+        # Count the exact account's occurrence BEFORE medium, edition or
+        # descriptive filters; a contradictory sibling cannot disappear
+        # from the ambiguity check. Other accounts remain independent.
+        if type(loan.id) is str and 0 < len(loan.id) <= 256:
+            counts[loan.id] += 1
+        if loan.medium != "digital":
             continue
         key = (loan.record_id or loan.id, loan.id)
         if not all(type(value) is str and 0 < len(value) <= 256 for value in key):
             continue
-        counts[key] += 1
         pair = _descriptive_pair(loan.title, loan.author)
         if pair is not None:
             matched[key] = pair
-    return {key: entry for key, entry in matched.items() if counts[key] == 1}
+    return {key: entry for key, entry in matched.items() if counts[key[1]] == 1}
 
 
 def _purchase_description(notice, title):
