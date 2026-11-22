@@ -23,7 +23,8 @@ def _service(store, root):
                   f"{author} - {title}.{extension}" if author else f"{title}.{extension}")
 
 
-def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True):
+def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True,
+              provider_id=None):
     path = root / owner / name
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _book(metadata).getvalue()
@@ -32,12 +33,19 @@ def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True):
     artifact = "sha256:" + digest
     store.artifact_put({"artifact_id": artifact, "sha256": digest,
                         "size": len(data), "media_format": "epub"})
+    # Mutating recipes need an explicitly scoped local occurrence; review-only
+    # fixtures may continue to exercise unqualified historical placements.
+    placement_scope = ({"provider_id": provider_id, "source_item_id": name}
+                       if provider_id is not None else {})
+    catalog_scope = ({"provider_id": provider_id, "item_id": name}
+                     if provider_id is not None else {})
     pid = store.placement_put({"artifact_id": artifact, "identity_id": owner,
-                               "state": "present", "path": str(path)})
+                               "state": "present", "path": str(path), **placement_scope})
     if catalogue:
         store.catalog_entry_put({
             "placement_id": pid, "artifact_id": artifact, "identity_id": owner,
             "title": "Roman commun", "author": "Autrice", "local_state": "local",
+            **catalog_scope,
         })
     return path, pid
 
@@ -300,3 +308,38 @@ def test_keeper_advice_rejects_unavailable_physical_recheck_without_exception(
     assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
     assert rows(store) == before
     assert all(Path(store.placement_get(p.placement_id)["path"]).exists() for p in pair)
+
+
+@pytest.mark.parametrize("case", ["exact_local", "missing_source", "catalog_conflict", "remote"])
+def test_single_local_rename_observation_does_not_relax_shared_inventory(store, tmp_path, case):
+    from cifereca.core.canonical_placement_inventory import read_canonical_placement_inventory
+    from cifereca.core.library_organizer_plan import prepare_organizer_dry_run
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, pid = _put_epub(store, root, "Acquisitions/old.epub",
+                         provider_id="seller" if case == "remote" else "local")
+    if case in ("missing_source", "catalog_conflict"):
+        with store._lock, store._connect() as db:
+            if case == "missing_source":
+                db.execute("UPDATE placements SET source_item_id=NULL WHERE placement_id=?", (pid,))
+            else:
+                db.execute("UPDATE catalog_entries SET item_id='other' WHERE placement_id=?", (pid,))
+    before = rows(store)
+    inventory = read_canonical_placement_inventory(store, identity_id="A")
+    group, = inventory.groups
+    assert group.status == "blocked" and group.reason == "legacy_source_scope_unbound"
+    scope, page = _run(_service(store, root))
+    assert page["inventory_status"] == "partial"
+    assert page["keeper_advice"].eligible == ()
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    assert plan is not None and plan.executable is False
+    if case == "exact_local":
+        entry, = plan.entries
+        assert entry.placement_id == pid and entry.operation == "rename"
+        assert entry.state == "review_only"
+        file, = page["groups"][0]["files"]
+        assert file["classified_path_advice"] is None
+    else:
+        assert plan.entries == () and page["groups"][0]["status"] == "blocked"
+    assert rows(store) == before and path.is_file()

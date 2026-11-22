@@ -361,3 +361,46 @@ def test_guided_rename_only_preserves_conflicts_and_can_reselect_empty(
         assert c.page.dry_run_state == "prepared" and not c.page.dry_run_rename_only
         assert all(e.state == "destination_conflict" for e in c.page.dry_run_entries)
     assert rows(store) == before and not c.page.mutation_authorized
+
+
+@pytest.mark.parametrize("change", ["none", "bytes", "sqlite", "cancel"])
+def test_revise_confirmed_plan_rotates_token_and_preserves_page(store, tmp_path, change):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, _ = _put_epub(store, root, "Acquisitions/old.epub")
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    controller = plugin.controller(host, lambda *args: renders.append(args))
+    assert controller.request("preview")
+    _finish(tasks)
+    original = controller.page
+    assert controller.request("prepare", rename_only=True)
+    _finish(tasks)
+    assert controller.request("confirm")
+    _finish(tasks)
+    accepted = controller.page
+    assert accepted.dry_run_state == "confirmed"
+    assert plugin.broker.revise_dry_run(token=accepted.token) is None
+    if change == "bytes":
+        path.write_bytes(b"changed after confirmation")
+    elif change == "sqlite":
+        store.metadata_set("organizer-revision-drift", "changed")
+    before, data = rows(store), path.read_bytes()
+    assert controller.request("revise")
+    if change == "cancel":
+        assert controller.cancel()
+    _finish(tasks)
+    assert plugin.broker.confirm_dry_run(token=accepted.token, confirmed=True) is None
+    assert plugin.broker.revise_dry_run(token=accepted.token, confirmed=True) is None
+    if change == "none":
+        revised = controller.page
+        assert revised.token not in (original.token, accepted.token)
+        assert revised.groups == original.groups and revised.page == original.page
+        assert not revised.dry_run_state and not revised.dry_run_entries and not revised.selected
+        assert controller.request("prepare", group_index=0)
+        _finish(tasks)
+        assert controller.page.dry_run_group == 0
+        assert not controller.page.mutation_authorized
+    else:
+        assert controller.page is None
+    assert rows(store) == before and path.read_bytes() == data

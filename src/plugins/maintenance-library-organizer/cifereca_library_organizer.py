@@ -133,6 +133,10 @@ class GuidedOrganizer:
                 token=page.token, confirmed=True,
                 **({"group_index": group_index} if group_index is not None else {}),
                 **({"rename_only": True} if rename_only else {}))
+        elif (action == "revise" and page is not None
+              and (page.dry_run_state or page.selected)
+              and callable(getattr(self.broker, "revise_dry_run", None))):
+            operation = lambda: self.broker.revise_dry_run(token=page.token, confirmed=True)
         elif (action == "confirm" and page is not None and page.dry_run_state == "prepared"
               and callable(getattr(self.broker, "confirm_dry_run", None))):
             operation = lambda: self.broker.confirm_dry_run(token=page.token, confirmed=True)
@@ -287,6 +291,9 @@ class OrganizerPlugin:
         simulation_scope.set_sensitive(False)
         outer.append(simulation_scope)
         outer.append(simulation)
+        revise = Gtk.Button(label="Modifier la sélection")
+        revise.set_sensitive(False)
+        outer.append(revise)
         detail = Gtk.Label(xalign=0)
         detail.set_wrap(True)
         detail.set_selectable(True)
@@ -317,6 +324,9 @@ class OrganizerPlugin:
             simulation.set_label("Confirmer la simulation" if prepared else "Préparer le plan à blanc")
             simulation.set_sensitive(not busy and ((prepared and callable(getattr(controller.broker, "confirm_dry_run", None)))
                 or (can_prepare(page) and callable(getattr(controller.broker, "prepare_dry_run", None)))))
+            revise.set_sensitive(not busy and page is not None
+                and bool(page.dry_run_state or page.selected)
+                and callable(getattr(controller.broker, "revise_dry_run", None)))
             cancel.set_sensitive(not controller._cancelled and (busy or page is not None))
             detail.set_visible(True)
             detail.set_text(
@@ -342,6 +352,7 @@ class OrganizerPlugin:
                 else:
                     controller.request("prepare", group_index=None if selection == "all" else int(selection))
         simulation.connect("clicked", simulate)
+        revise.connect("clicked", lambda _b: controller.request("revise"))
         cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)
 
