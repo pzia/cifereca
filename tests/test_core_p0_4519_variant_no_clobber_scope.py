@@ -473,3 +473,20 @@ def test_private_derived_stage_cannot_be_input_or_output_lease(tmp_path, monkeyp
         assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
     finally:
         service.storage.close()
+
+
+def test_exact_private_component_does_not_block_ordinary_sibling_lease(tmp_path):
+    from cifereca.core.derived_variant_region_paths import PRIVATE_DERIVED_REGION
+    service, source, pid, broker = _broker(tmp_path)
+    original = tmp_path / "library" / "Book.epub"
+    sibling = original.parent / (PRIVATE_DERIVED_REGION + "-archive") / "Book.epub"
+    sibling.parent.mkdir()
+    sibling.write_bytes(original.read_bytes())
+    try:
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("UPDATE placements SET path=? WHERE placement_id=?", (str(sibling), pid))
+        lease = broker.input_lease(source, identity_id="id1", placement_id=pid)
+        assert lease.path == sibling and sibling.read_bytes() == b"book-data"
+        assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+    finally:
+        service.storage.close()
