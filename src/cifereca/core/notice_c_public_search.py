@@ -417,7 +417,8 @@ def search_public_notice_c(
     if (type(query) is not str or not 2 <= len(query.strip()) <= 160
             # An invisible bidi/format control cannot become a silent
             # partial or zero-result documentary query in a shared C cursor.
-            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in query)
+            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+                   for char in query)
             or type(field) is not str or field not in _FIELDS
             or type(scope) is not str or scope not in _SCOPES
             or type(provider_ids) is not tuple or len(provider_ids) > 128
