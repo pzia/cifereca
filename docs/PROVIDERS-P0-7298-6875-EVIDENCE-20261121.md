@@ -17,6 +17,26 @@ Cette **matrice de réception**, limitée aux lectures déjà rapportées dans [
 | **Gutenberg / OPDS** | 9 réponses HTTP 503 sur `/ebooks/search.opds/` au cours de la capture du 20/11. | Aucun flux Atom ni zéro catalogue attesté pendant cette fenêtre : **indisponible observé**, couverture `unknown`. Pas de boucle de retries ni de contournement. | #6875 |
 | **Baen / Free Library** | Deux captures Browser Recorder privées déjà reçues, dont un parcours catégorie Free Library → page suivante → fiche produit et bouton téléchargement ; JSON AJAX, pagination et vignette étudiés dans #2333. | Aucune recette **HTTPX publique reproductible** page 1/2 + `q` + détail n'a été établie dans l'environnement agent ; pas de droit anonyme d'acquisition inféré d'un bouton. Ne pas demander une troisième capture. | #2333 Providers |
 
+## Complément de réception des parcours privés déjà reçus
+
+D'après les deux réceptions explicitement consignées dans #6875 le 21/11 :
+
+| Surface | Lecture reçue | Statut de qualification / limite |
+|---|---|---|
+| Paris / recherche ISBN | 8 Search EBOOKS par ISBN/EAN, HTTP 200, un résultat par requête | Recherche ISBN positive attestée pour ces requêtes ; ni exhaustivité ni pagination d'un autre champ. |
+| Paris / détails indexés | 5 Search et 5 GetRecord HTTP 200 ; corps over-budget, requêtes `Publisher_idx`, `SubjectTopic_idx`, `Classification_idx` | Requête et transport observés ; application des filtres et champs retournés restent inconnus. |
+| Paris / disponibilité | 5 CheckAvailability (50/20/1/50/4 entrées), 5 GetHoldings success=true, 5 More success=true avec résultat vide | Disponible catalogue et droit individuel sont distincts. More vide n'atteste ni historique vide ni absence de prêts. |
+| Paris / prêts | 6 ListLoans HTTP 200 | Existence du parcours de lecture attestée ; nombre, branches, périmètre individuel, pagination et quota non établis par le seul statut. |
+| Numilog / MesLivres | 3 GET HTTP 200 | Lecture de bibliothèque privée reçue ; aucune autorisation de téléchargement ni exhaustivité déduite. |
+| BnF-Prêt / activité | 8 GET activity et 1 GET loans réussis | Parcours actif observé, aucun zéro actif officiel, historique terminé ou quota attesté par un succès HTTP seul. |
+| BiblioAccess / MyLoans | 4 GET réussis | Lecture de prêts reçue ; couverture de pagination et quota nécessitent une preuve distincte. |
+
+Les 13 clés du manifest Kobo observées sur 536 occurrences ne prouvent
+pas chaque valeur ni 536 titres uniques. Aucun corps, identifiant de
+lecteur, secret, URL signée ou archive n'est publié. Ces réceptions sont
+transmises aux tickets propriétaires existants, sans relecture réseau,
+sans nouveau PU et sans déplacement de l'autorité Notices/Publication.
+
 ## Politique de réception
 
 - **Attesté** = résultat réel disponible pour la route, la portée et la requête explicitement observées ; **implémenté** = code/tests existants sans garantie de compatibilité réseau ; **inconnu** = preuve absente, omise, tronquée ou source refusée. Ne jamais transformer `unknown`, `partial` ou une erreur HTTP en `supported`, `complete` ou zéro résultat.

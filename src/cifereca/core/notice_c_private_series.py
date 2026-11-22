@@ -13,9 +13,9 @@ from sqlite3 import Error as SQLiteError
 from ..models import SearchResult
 from ..providers.base import ProviderCapabilities, ProviderDescriptor
 from .loan_action_scope import _inert_session_state
-from .notice_c_authenticated_web_choices import _native_reader_scope
+from .notice_c_authenticated_web_choices import _native_reader_scope, _capture
 from .notice_c_authenticated_web_retention import _scope_digest
-from .notice_c_private_search_web import _coordinate
+from .notice_c_private_search_web import _coordinate, _sql_binding_current
 from .notice_cover_projection import notice_cover_document_ref, project_notice_cover_attribute
 from .notice_cover_repository import (
     _checked_source_state, _opaque_key, _persist_notice_cover_txn,
@@ -130,8 +130,10 @@ def capture_series_call(service, session, identity_id):
 
 
 def _key(row, identity):
-    # Account-specific rows retain their separate contracts. No fake borrower.
-    if (type(row) is not SearchResult or row.source_account_id is not None
+    # Preserve the original credential-only key. An explicitly observed
+    # account uses a distinct key and must pass the native borrower binding.
+    if (type(row) is not SearchResult
+            or (row.source_account_id is not None and not _coordinate(row.source_account_id))
             or not all(_coordinate(x) for x in (
                 identity, row.source_provider, row.source_credential,
                 row.record_id, row.docbase, row.scenario,
@@ -140,13 +142,17 @@ def _key(row, identity):
             or (row.source_collection is not None and not _coordinate(row.source_collection))
             or (row.revision_id is not None and not _coordinate(row.revision_id))):
         return None
+    edition = (
+        identity, row.source_provider, row.source_credential, row.source_collection,
+        row.record_id, row.docbase, row.medium, row.revision_id,
+    )
+    if row.source_account_id is not None:
+        edition += ("account", row.source_account_id)
     return NoticeSourceKey(
-        row.source_provider, "private", identity, row.source_credential, None, _BRANCH,
+        row.source_provider, "private", identity, row.source_credential,
+        row.source_account_id, _BRANCH,
         "search:" + _coordinate_digest(row.source_collection, row.record_id),
-        "edition:" + _coordinate_digest(
-            identity, row.source_provider, row.source_credential, row.source_collection,
-            row.record_id, row.docbase, row.medium, row.revision_id,
-        ),
+        "edition:" + _coordinate_digest(*edition),
         "digital" if row.medium == "digital" else "print",
     )
 
@@ -169,6 +175,17 @@ def _proof(row):
     return tuple(getattr(relation, k) for k in _FIELDS) if relation is not None else None
 
 
+def _account_current(service, call, key):
+    if key.account_id is None:
+        return True
+    # Same registered account and live native source, not a guessed primary
+    # account or the navigation profile. Reuse the existing private binding.
+    binding = _capture(service, call.scope, notice_cover_document_ref(key))
+    return (binding is not None and binding.session is call.session
+            and binding.descriptor is call.descriptor
+            and binding.connection_epoch == call.epoch)
+
+
 def stamp_series_rows(service, call, rows):
     if type(rows) not in (list, tuple):
         return
@@ -185,7 +202,8 @@ def stamp_series_rows(service, call, rows):
     for row in rows:
         key = _key(row, call.scope.identity_id)
         if (key is None or seen[key] != 1
-                or (key.provider_id, key.credential_id) != (call.provider, call.credential)):
+                or (key.provider_id, key.credential_id) != (call.provider, call.credential)
+                or not _account_current(service, call, key)):
             continue
         proof = _proof(row)
         if proof is not None:
@@ -193,6 +211,8 @@ def stamp_series_rows(service, call, rows):
 
 
 def _sql_current(db, doc, epoch):
+    if doc.account_id is not None:
+        return _sql_binding_current(db, doc, epoch)
     return db.execute(
         "SELECT c.identity_id,c.enabled,e.epoch FROM provider_connections c "
         "JOIN provider_connection_epochs e ON e.provider_id=c.provider_id "
@@ -223,7 +243,8 @@ def persist_series_rows(service, rows, *, identity_id):
                         or _key(row, identity_id) != receipt.key
                         or _proof(row) != receipt.proof
                         or (receipt.key.provider_id, receipt.key.credential_id)
-                        != (call.provider, call.credential)):
+                        != (call.provider, call.credential)
+                        or not _account_current(service, call, receipt.key)):
                     continue
                 obs = admit_source_notice(
                     key=receipt.key, parser_id=_PARSER, parser_version="1",
@@ -271,7 +292,7 @@ def retain_series_txn(db, source, original):
     raw = obs.fields_copy()
     relation = decode_public_series_relation(raw.get(_FIELD), provider_id=doc.provider_id)
     if (obs.parser_id != _PARSER or obs.parser_version != "1"
-            or obs.status != "complete" or doc.account_id is not None
+            or obs.status != "complete"
             or not _epoch(raw.get("connection_epoch")) or relation is None):
         db.execute("DELETE FROM metadata WHERE key=?", (_retained_key(doc),))
         return None

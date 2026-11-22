@@ -248,13 +248,13 @@ def _observed_free_library_json(response, credential_id, page, *, documentary=Fa
                 or any(category(ch) in {'Cc','Cf','Cs'} for ch in title)):
             rejected += 1
             continue
-        url=urljoin(BASE,href)
-        if not _trusted_baen_url(url):
-            rejected += 1
-            continue
-        parts=urlsplit(url)
-        if (parts.query or not re.fullmatch(
-                r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path)):
+        # The category contract observes exact root product URLs. Refuse
+        # paths that urljoin would rewrite (dot segments, foreign aliases,
+        # protocol-relative references, whitespace) in the ordinary search
+        # as well as in the documentary path. No native ID requirement is
+        # imposed on the legacy descriptive search.
+        _, url = _documentary_product_coordinates(entry)
+        if url is None:
             rejected += 1
             continue
         if url in seen:
