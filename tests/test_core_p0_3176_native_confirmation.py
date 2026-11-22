@@ -573,7 +573,12 @@ def test_native_consent_witness_rejects_in_place_dto_mutation(
         if phase != "queued_worker":
             dialog.respond("apply")
             assert not runner.queue
-            assert not ui.button.sensitive
+            if phase == "observed_refresh":
+                # The freshly observed DTO can be reviewed again, but the
+                # former modal cannot consume or rearm its confirmation.
+                assert ui._dialog is None and ui.button.sensitive
+            else:
+                assert not ui.button.sensitive
         else:
             runner.run()
             assert not runner.queue
