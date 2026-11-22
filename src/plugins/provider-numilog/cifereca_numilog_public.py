@@ -111,7 +111,12 @@ _HIDDEN_TAGS = {*_PublicSearchParser.CDATA_CONTENT_ELEMENTS, 'template', 'svg'}
 def _hidden(node):
     style = ''.join((node.attrs.get('style') or '').lower().split())
     aria = node.attrs.get('aria-hidden')
+    raw_classes = node.attrs.get('class')
+    hidden_classes = ({'hidden', 'd-none', 'sr-only', 'visually-hidden'}
+                      & set(raw_classes.casefold().split())
+                      if type(raw_classes) is str else set())
     return (node.tag in _HIDDEN_TAGS or 'hidden' in node.attrs
+            or bool(hidden_classes)
             or (type(aria) is str and aria.strip().casefold() == 'true')
             or 'display:none' in style or 'visibility:hidden' in style)
 
