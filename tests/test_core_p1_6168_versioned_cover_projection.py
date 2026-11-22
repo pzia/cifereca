@@ -190,3 +190,50 @@ def test_revision_must_be_explicit_nonnegative_integer(revision):
 def test_completeness_is_strict_boolean_not_truthiness():
     with pytest.raises(TypeError):
         resolve_book_cover(catalogue(), [], revision=1, snapshot_complete="complete")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("kind", "loan"),
+    ("identity_id", "borrower-A"),
+    ("source_key", ""),
+    ("provider_id", ""),
+    ("credential_id", "borrower-credential"),
+    ("account_id", "borrower-account"),
+    ("loan_id", "loan-A"),
+    ("artifact_id", "artifact-A"),
+    ("placement_id", "placement-A"),
+])
+def test_n1_revalidates_mutated_anonymous_public_scope(field, value):
+    scope = CoverDocumentScope(
+        kind="public_catalogue", identity_id=None,
+        source_key="public:exact", provider_id="bnf", credential_id="__public__",
+    )
+    object.__setattr__(scope, field, value)
+    with pytest.raises(ValueError):
+        resolve_book_cover(
+            scope, [CoverCandidate(PUBLIC, "catalog", "bnf")],
+            revision=1, snapshot_complete=True,
+        )
+
+
+def test_n1_does_not_invoke_foreign_equality_for_mutated_scope_kind():
+    class Hostile:
+        def __eq__(self, _other):
+            raise AssertionError("foreign equality must not run")
+
+    scope = catalogue()
+    object.__setattr__(scope, "kind", Hostile())
+    with pytest.raises(ValueError, match="invalid cover scope kind"):
+        resolve_book_cover(scope, [], revision=1, snapshot_complete=True)
+
+
+def test_n1_valid_public_scope_retains_original_resolution():
+    scope = CoverDocumentScope(
+        kind="public_catalogue", identity_id=None,
+        source_key="public:exact", provider_id="bnf", credential_id="__public__",
+    )
+    result = resolve_book_cover(
+        scope, [CoverCandidate(PUBLIC, "catalog", "bnf")],
+        revision=1, snapshot_complete=True,
+    )
+    assert result.status == "selected" and result.scope == scope
