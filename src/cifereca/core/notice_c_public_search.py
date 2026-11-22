@@ -520,6 +520,13 @@ def search_public_notice_c(
                         src for src in consolidated.sources
                         if src.visibility == "public" and src.public_bibliography is not None
                     )
+                    # The public Search cursor and the exact-source
+                    # resolver must agree: a relation with an unqualified
+                    # or private member is not a public group. Keep live
+                    # independent sources searchable, but never route them
+                    # through that mixed authority.
+                    if len(public_sources) != len(consolidated.sources):
+                        continue
                     for source in public_sources:
                         if source.source_ref not in refs:
                             continue
