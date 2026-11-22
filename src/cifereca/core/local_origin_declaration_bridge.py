@@ -30,7 +30,7 @@ def _right(db, source):
     scope = source.scope
     coords = (scope.identity_id, scope.provider_id, scope.credential_id,
               scope.account_id, source.branch, source.edition_id,
-              source.resource_id, "loan")
+              source.resource_id, source.kind)
     ref = db.execute(
         "SELECT identity_id,provider_id,credential_id,account_id,branch_id,"
         "edition_id,right_id,reference_kind,state,evidence_kind,evidence_ref,observed_at "
@@ -49,10 +49,21 @@ def _right(db, source):
         "AND account_id=? AND item_id=? LIMIT 2",
         (*coords[:4], source.edition_id),
     ).fetchall()
-    if (len(rights) != 1 or rights[0][1:4] != ("loan", "active", source.resource_id)
-            or type(rights[0][0]) is not str or not rights[0][0]):
+    if len(rights) != 1 or type(rights[0][0]) is not str or not rights[0][0]:
         return None
-    return ref, rights[0]
+    right = rights[0]
+    if source.kind == "loan":
+        if right[1:4] != ("loan", "active", source.resource_id):
+            return None
+    elif source.kind == "purchase":
+        # A legacy owned entitlement without an exact occurrence identifier
+        # cannot support a purchase declaration. Never infer it by edition.
+        if (right[0] != source.resource_id or right[1:3] != ("owned", "active")
+                or right[3] not in (None, "") or right[4] not in (None, "")):
+            return None
+    else:
+        return None
+    return ref, right
 
 
 def _observation(path, local, signature, identity_id, live):
@@ -100,7 +111,7 @@ class _DeclarationPreview:
         scope = source.scope
         return {"identity": scope.identity_id, "provider": scope.provider_id,
                 "account": scope.account_id, "edition": source.edition_id,
-                "loan": source.resource_id, "path": self.observation.path,
+                source.kind: source.resource_id, "path": self.observation.path,
                 "trust": "user_declaration", "rights_mutations": 0,
                 "placement_mutations": 0, "file_mutations": 0}
 
@@ -112,7 +123,7 @@ def _options(candidate, observation):
                 account_id=scope.account_id, item_id=source.edition_id)
 
 
-def preview_private_loan_declaration(service, *, choice, candidate,
+def _preview_private_declaration(service, *, choice, candidate, expected_kind,
                                      continuation=None, confirmed=False,
                                      still_current=lambda: True):
     """Explicit separate selection of a returned loan, never a title-to-right join.
@@ -122,8 +133,9 @@ def preview_private_loan_declaration(service, *, choice, candidate,
     right ID or callback can substitute for the chosen candidate.
     """
     if (confirmed is not True or type(choice) is not PrivateCatalogueChoice
-            or choice.kind != "loan" or type(candidate) is not PrivateDocumentaryMatch
-            or candidate.source.kind != "loan" or candidate.source.scope != choice.scope
+            or choice.kind != expected_kind or type(candidate) is not PrivateDocumentaryMatch
+            or candidate.source.kind != expected_kind or candidate.source.scope != choice.scope
+            or candidate.comparison == "purchase_description_conflicting"
             or choice.request.service is not service or not callable(still_current)):
         return None
     request = choice.request
@@ -141,7 +153,7 @@ def preview_private_loan_declaration(service, *, choice, candidate,
         if stamp is None:
             return None
         result = compare_known_private_catalogue(
-            service, request, account=choice.account, kind="loan", choice=choice,
+            service, request, account=choice.account, kind=expected_kind, choice=choice,
             continuation=continuation, confirmed=True, still_current=live)
         if result["status"] != "partial" or result["candidates"].count(candidate) != 1:
             return None
@@ -174,7 +186,7 @@ def preview_private_loan_declaration(service, *, choice, candidate,
         return None
 
 
-def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
+def _admit_private_declaration(service, preview, *, expected_kind, user_confirmed=False,
                                    still_current=lambda: True):
     """Consume an exact refreshed preview through the existing single writer.
 
@@ -184,14 +196,15 @@ def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
     file SHA recheck and historical revocation. No new persistent namespace.
     """
     if (user_confirmed is not True or type(preview) is not _DeclarationPreview
-            or preview.service is not service or not callable(still_current)):
+            or preview.service is not service or preview.choice.kind != expected_kind
+            or not callable(still_current)):
         return None
     request = preview.choice.request
     try:
         if still_current() is not True or sqlite_source_stamp(request.database) != preview.stamp:
             return None
-        fresh = preview_private_loan_declaration(
-            service, choice=preview.choice, candidate=preview.candidate,
+        fresh = _preview_private_declaration(
+            service, choice=preview.choice, candidate=preview.candidate, expected_kind=expected_kind,
             continuation=preview.continuation, confirmed=True, still_current=still_current)
         if fresh != preview:
             return None
@@ -224,3 +237,32 @@ def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
             return None
 
     return work
+
+
+def preview_private_loan_declaration(service, *, choice, candidate, continuation=None,
+                                     confirmed=False, still_current=lambda: True):
+    return _preview_private_declaration(
+        service, choice=choice, candidate=candidate, expected_kind="loan",
+        continuation=continuation, confirmed=confirmed, still_current=still_current)
+
+
+def preview_private_purchase_declaration(service, *, choice, candidate, continuation=None,
+                                         confirmed=False, still_current=lambda: True):
+    """Only an exact existing owned occurrence, never an inferred purchase."""
+    return _preview_private_declaration(
+        service, choice=choice, candidate=candidate, expected_kind="purchase",
+        continuation=continuation, confirmed=confirmed, still_current=still_current)
+
+
+def admit_private_loan_declaration(service, preview, *, user_confirmed=False,
+                                   still_current=lambda: True):
+    return _admit_private_declaration(
+        service, preview, expected_kind="loan", user_confirmed=user_confirmed,
+        still_current=still_current)
+
+
+def admit_private_purchase_declaration(service, preview, *, user_confirmed=False,
+                                       still_current=lambda: True):
+    return _admit_private_declaration(
+        service, preview, expected_kind="purchase", user_confirmed=user_confirmed,
+        still_current=still_current)
