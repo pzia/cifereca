@@ -21,6 +21,27 @@ from .plugin_api import BUNDLE_MANIFEST_NAME, BundleError, load_bundle_manifest
 def _private_publication_path(path: Path) -> bool:
     return private_derived_path(path) or private_adept_stage_path(path)
 
+def _ordinary_catalog_files(root: Path):
+    """Traverse only ordinary inventory directories; never enter v1 stages.
+
+    A filename filter after rglob() is too late: the private region has
+    already been enumerated. Treat any scandir failure as an incomplete
+    scan, never as proof that known Placements have vanished.
+    """
+    def incomplete(_error):
+        raise OSError("catalog_scan_incomplete") from None
+
+    if private_derived_path(root):
+        raise OSError("catalog_scan_reserved_root")
+    for current, directories, files in os.walk(
+            root, topdown=True, onerror=incomplete, followlinks=False):
+        directories[:] = [name for name in directories
+                          if name != PRIVATE_DERIVED_REGION]
+        for name in files:
+            yield Path(current) / name
+
+
+
 
 # Locally received copies are physical possessions, never evidence that the
 # recipient has purchased the source account's book (#3275). A scan only
@@ -670,7 +691,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if not _private_publication_path(p.relative_to(self.root)) and p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        bundle_roots = sorted({p.parent.resolve() for p in _ordinary_catalog_files(self.root) if p.name == BUNDLE_MANIFEST_NAME if not _private_publication_path(p.relative_to(self.root)) and p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
         bundle_root_set = set(bundle_roots)
         for bundle_root in bundle_roots:
             scanned += 1
@@ -707,7 +728,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        for path in sorted(p for p in self.root.rglob("*") if not _private_publication_path(p.relative_to(self.root)) and p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts) and self._canonical_stage_visible(p)):
+        for path in sorted(p for p in _ordinary_catalog_files(self.root) if not _private_publication_path(p.relative_to(self.root)) and p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts) and self._canonical_stage_visible(p)):
             scanned += 1
             if not is_unlinked_local_file(path):
                 invalid += 1
