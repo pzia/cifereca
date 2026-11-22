@@ -112,6 +112,7 @@ def test_known_c_page_orders_documentary_strength_without_changing_c_window(stor
 @pytest.mark.parametrize("field", ["title", "author"])
 @pytest.mark.parametrize("control", [
     "\n", "\r", "\t", "\x85", "\u202e", "\u2028", "\u200d",
+    "\u2066", "\x1b",
 ])
 def test_unprintable_local_documentary_labels_refuse_known_c_read(
     store, monkeypatch, field, control,
