@@ -5,7 +5,7 @@ provider are never sufficient to create a shared Notice C. The independent
 Core v14 publication graph has multiple *completed provider* OriginLinks, each
 joined to its own positive provider-response SourceReference and to the SAME
 present Artifact Placement under the SAME identity. Only that exact
-multi-provider, one-artifact proof can attach independently witnessed
+multi-record, one-artifact proof can attach independently witnessed
 anonymous public Search source editions to a shared cover C.
 
 This worker-only producer performs no provider dispatch, N3 read or account
@@ -190,9 +190,11 @@ def _eligible_origin_groups(verified, public, current_by_coords):
     for group, coords in groups.items():
         if (not 2 <= len(coords) <= _MAX_SOURCES
                 or not (coords & current_by_coords.keys())
-                or len({provider for provider, _edition in coords}) != len(coords)
                 or any(membership.get(coord) != {group} for coord in coords)):
             continue
+        # Distinct records from one provider may have independently completed
+        # origins too. Provider count is not an identity proof; the exact
+        # origin membership and competing-edition veto apply to every record.
         ordered = tuple(sorted(coords))
         sources = tuple(public[coord] for coord in ordered)
         refs = {source.document.source_key for source in sources}
