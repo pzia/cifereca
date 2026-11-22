@@ -1159,28 +1159,33 @@ class MainWindow(Adw.ApplicationWindow):
             run.connect("clicked", prepare)
         if _page_context is not None and (not _page_context.is_current() or self._tools_box is not box):
             return
+        # Native adapters must have the same mount/registry lease as plugin
+        # rows and section navigation. A hidden rooted GTK row is not live.
+        disposers = self._guided_maintenance_disposers
+        registry = getattr(manager, "registry_generation", None)
+
+        def native_current():
+            return (_page_context is None or (
+                not self._closed and self._tools_box is box
+                and self._guided_maintenance_disposers is disposers
+                and _page_context.is_current()
+                and self.plugin_manager is manager
+                and getattr(manager, "registry_generation", None) == registry))
+
         # ADEPT remains a bounded transitional adapter (#6777).
         add_adept_historical_maintenance_line(
             self, sections["provenance"] if sections else box, Gtk=Gtk, Adw=Adw,
-            mode="provenance" if sections is not None else "combined")
+            mode="provenance" if sections is not None else "combined",
+            view_current=native_current)
         if sections is not None:
             add_adept_historical_maintenance_line(
-                self, sections["recovery"], Gtk=Gtk, Adw=Adw, mode="holds")
+                self, sections["recovery"], Gtk=Gtk, Adw=Adw, mode="holds",
+                view_current=native_current)
             from cifereca.gui.loan_download_retry_dialog import add_maintenance_retry_entry
             add_maintenance_retry_entry(
                 self, sections["recovery"], _page_context, Gtk=Gtk, Adw=Adw)
             from cifereca.gui.maintenance_sections import show_unavailable, finish_sections, add_section_links
-            disposers = self._guided_maintenance_disposers
-            registry = getattr(manager, "registry_generation", None)
-            add_section_links(
-                sections, services, Gtk=Gtk,
-                current=lambda: (
-                    not self._closed and self._tools_box is box
-                    and self._guided_maintenance_disposers is disposers
-                    and _page_context.is_current()
-                    and self.plugin_manager is manager
-                    and getattr(manager, "registry_generation", None) == registry),
-            )
+            add_section_links(sections, services, Gtk=Gtk, current=native_current)
             statuses = getattr(manager, "statuses", None)
             if callable(statuses):
                 show_unavailable(sections, statuses(), services, Gtk=Gtk)

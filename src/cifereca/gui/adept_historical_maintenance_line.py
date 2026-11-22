@@ -95,14 +95,16 @@ def _display_holds(result):
     return "\n".join(lines)
 
 
-def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combined"):
+def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combined",
+                                          view_current=lambda: True):
     """Mount the existing controller on one functional surface.
 
     The flat legacy host retains both actions. The grouped host exposes
     separate provenance and recovery rows with independent ephemeral views,
     not a second hold scanner, queue or writer.
     """
-    if type(mode) is not str or mode not in ("combined", "provenance", "holds"):
+    if (type(mode) is not str or mode not in ("combined", "provenance", "holds")
+            or not callable(view_current)):
         return False
     service = getattr(window, "service", None)
     if (not isinstance(getattr(service, "storage", None), Storage)
@@ -156,9 +158,15 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
     last_generation = None
     hold_mode = mode == "holds"
 
+    def mounted():
+        try:
+            return view_current() is True
+        except Exception:
+            return False
+
     def selection_changed(_control):
         compare.set_sensitive(
-            not busy and 0 <= selection.get_active() < len(selected_rows)
+            mounted() and not busy and 0 <= selection.get_active() < len(selected_rows)
             and last_request is not None and last_request.current()
             and getattr(window, "_route_display_token", None) is last_route
             and getattr(window, "_identity_context_generation", None) == last_generation
@@ -173,7 +181,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
 
     def run(button, *, restart=False, advance=False, hash_files=False, open_holds=False):
         nonlocal busy, cursor, following, last_request, selected_rows, last_text, last_route, last_generation, hold_mode
-        if (busy or getattr(window, "_closed", False) or button.get_root() is None
+        if (not mounted() or busy or getattr(window, "_closed", False) or button.get_root() is None
                 or (restart and ((mode == "holds" and not open_holds)
                                  or (mode == "provenance" and open_holds)))):
             return
@@ -204,7 +212,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
         detail.set_text("Revue locale en cours…")
 
         def current():
-            return (not getattr(window, "_closed", False) and primary.get_root() is not None
+            return (mounted() and not getattr(window, "_closed", False) and primary.get_root() is not None
                     and window.service is service and request.current()
                     and getattr(window, "_identity_context_generation", None) == generation
                     and getattr(window, "_route_display_token", None) is route)
@@ -219,7 +227,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
             delivered = True
             busy = False
             if not current():
-                if primary.get_root() is not None:
+                if mounted() and primary.get_root() is not None:
                     detail.set_text("")
                     detail.set_visible(False)
                     start.set_sensitive(True)
@@ -265,7 +273,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
     def compare_clicked(button):
         nonlocal busy
         index = selection.get_active()
-        if (busy or not 0 <= index < len(selected_rows)
+        if (not mounted() or busy or not 0 <= index < len(selected_rows)
                 or last_request is None or not last_request.current()
                 or getattr(window, "_closed", False) or button.get_root() is None
                 or window.service is not service
@@ -291,11 +299,11 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
                 return
             delivered = True
             busy = False
-            if (getattr(window, "_closed", False) or button.get_root() is None
+            if (not mounted() or getattr(window, "_closed", False) or button.get_root() is None
                     or window.service is not service or not request.current()
                     or getattr(window, "_route_display_token", None) is not route
                     or getattr(window, "_identity_context_generation", None) != generation):
-                if button.get_root() is not None:
+                if mounted() and button.get_root() is not None:
                     detail.set_text("")
                     detail.set_visible(False)
                     reset_selection()
