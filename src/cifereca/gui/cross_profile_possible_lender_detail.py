@@ -87,7 +87,13 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 # GTK may synchronously notify and navigate during the group
                 # append. Never install a choice under a new route.
                 if (not scope_current() or panel._rendered_search_detail is not visible
-                        or (callable(mapped) and not mapped())):
+                        or (callable(mapped) and not mapped())
+                        or any(not possible_lender_matches(
+                            row, item, requesting_identity_id=identity_id,
+                        ) for row in rows)):
+                    # The group call may synchronously change the native
+                    # source, account or edition without rotating GUI epochs.
+                    # Never add a stale lender action after that reentrancy.
                     return
                 from .cross_profile_normal_lender_dialog import append_normal_lender_action
                 append_normal_lender_action(

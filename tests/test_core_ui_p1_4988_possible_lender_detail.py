@@ -223,7 +223,7 @@ def test_mutated_exact_object_does_not_publish_possible_lender_summary(mutation)
     service.execute_cross_profile_borrow.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["route", "detail", "hidden", "identity", "none"])
+@pytest.mark.parametrize("change", ["route", "detail", "hidden", "identity", "notice", "account", "none"])
 def test_group_render_revalidates_original_context_before_action(monkeypatch, change):
     from cifereca.gui import cross_profile_normal_lender_dialog as dialog
 
@@ -242,6 +242,12 @@ def test_group_render_revalidates_original_context_before_action(monkeypatch, ch
             mapped[0] = False
         elif change == "identity":
             service.current_identity = NS(identity_id="bob")
+        elif change == "notice":
+            # Real admissible source changed during synchronous GTK grouping,
+            # but the navigation/identity generations did not change.
+            w.notice.revision_id = "new-source-revision"
+        elif change == "account":
+            candidate._account.unique_id = "other-borrower"
 
     group.side_effect = during_group
     attach = Mock()
