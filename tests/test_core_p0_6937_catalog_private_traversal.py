@@ -73,3 +73,15 @@ def test_catalogue_scandir_error_does_not_prove_empty_directory(tmp_path, monkey
     with pytest.raises(OSError, match="synthetic child inaccessible"):
         list(catalog._ordinary_catalog_files(root))
     monkeypatch.setattr(catalog.os, "walk", real_walk)
+
+
+def test_catalogue_scan_private_root_never_creates_directory(tmp_path):
+    region = tmp_path / "alice" / PRIVATE_DERIVED_REGION
+    assert not region.exists()
+    storage = Storage(tmp_path / "storage.sqlite")
+    try:
+        with pytest.raises(OSError, match="catalog_scan_reserved_root"):
+            catalog.LocalCatalog(storage, region).scan()
+        assert not region.exists() and not storage.placements()
+    finally:
+        storage.close()
