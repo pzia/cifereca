@@ -215,3 +215,45 @@ class DirectoryTests(unittest.TestCase):
         self.assertEqual({p.read_bytes() for p in files}, expected_bytes)
         self.assertTrue(all(row['media_format'] == 'kepub'
                             for row in self.storage.catalog_entries()))
+
+
+    def test_private_derived_region_refused_at_source_destination_or_recovery(self):
+        from cifereca.core.derived_variant_region_paths import PRIVATE_DERIVED_REGION
+        original = self.book()
+        self.service.catalog_scan()
+        before = self.storage.placements()
+        config = deepcopy(self.config.identities())
+        for side in ("ma-bibliotheque", "hugues"):
+            with self.subTest(side=side):
+                region = self.root / side / PRIVATE_DERIVED_REGION
+                region.mkdir(parents=True)
+                stage = region / "private.epub"
+                stage.write_bytes(b"private stage")
+                with self.assertRaisesRegex(DirectoryMigrationError, "Zone privée"):
+                    self.plan()
+                self.assertEqual(stage.read_bytes(), b"private stage")
+                self.assertEqual(self.storage.placements(), before)
+                self.assertEqual(self.config.identities(), config)
+                self.assertFalse(self.engine().pending())
+                stage.unlink()
+                region.rmdir()
+        engine, plan = self.pending()
+        region = original.parent / PRIVATE_DERIVED_REGION
+        region.mkdir()
+        stage = region / "private.epub"
+        stage.write_bytes(b"late private stage")
+        for operation in (engine.run, engine.abort):
+            with self.assertRaisesRegex(DirectoryMigrationError, "Zone privée"):
+                operation()
+            self.assertEqual(stage.read_bytes(), b"late private stage")
+            self.assertTrue(original.exists())
+            self.assertEqual(engine.pending(), plan)
+            self.assertEqual(self.storage.placements(), before)
+            self.assertEqual(self.config.identities(), config)
+
+    def test_private_derived_lookalike_is_not_reserved(self):
+        from cifereca.core.derived_variant_region_paths import PRIVATE_DERIVED_REGION
+        file = self.book(name=PRIVATE_DERIVED_REGION + "-backup/ordinary.epub")
+        plan = self.plan()
+        self.assertTrue(plan["entries"])
+        self.assertTrue(file.is_file())
