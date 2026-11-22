@@ -12,20 +12,31 @@ from ..storage import Storage
 from ..task_queue import TaskPriority
 
 
+def _ledger_value(candidate):
+    # Historical row coordinates can predate the guarded hold DTO. Keep
+    # exact IDs in Core; only project bounded, non-spoofable UI labels.
+    if candidate is None:
+        return "inconnu"
+    if type(candidate) is str and candidate == "":
+        return "(vide enregistré)"
+    if type(candidate) is int and 0 <= candidate <= 2**63 - 1:
+        return str(candidate)
+    return _hold_coordinate(candidate)
+
+
 def _display(result):
-    if type(result) is not dict or type(result.get("rows")) is not tuple:
+    if (type(result) is not dict or type(result.get("rows")) is not tuple
+            or any(type(row) is not dict for row in result["rows"])):
         return "Revue indisponible ou contexte modifié. Aucun constat d’absence."
     lines = ["Acquisitions historiques enregistrées — aucun état fournisseur actuel vérifié."]
     if not result["rows"]:
         lines.append("Aucune transaction ADEPT enregistrée dans cette page du ledger.")
     for row in result["rows"]:
         def value(key):
-            candidate = row.get(key)
-            return ("inconnu" if candidate is None
-                    else "(vide enregistré)" if candidate == "" else str(candidate))
-        pub = row.get("publication") or {}
-        physical = row.get("local_bytes") or {}
-        evidence = physical.get("evidence") or {}
+            return _ledger_value(row.get(key))
+        pub = row.get("publication") if type(row.get("publication")) is dict else {}
+        physical = row.get("local_bytes") if type(row.get("local_bytes")) is dict else {}
+        evidence = physical.get("evidence") if type(physical.get("evidence")) is dict else {}
         lines.extend((
             "",
             f"Acquisition : {value('acquisition_id')} · {value('ledger_status')}",
@@ -34,9 +45,9 @@ def _display(result):
             f"Profil ADEPT enregistré : {value('recorded_adept_profile_id')}",
             f"Prêt ADEPT enregistré : {value('recorded_adept_loan_id')} · {value('historical_license_state')}",
             f"Branche canonique candidate : {value('canonical_branch')} · {value('canonical_status')}",
-            f"Origines : {pub.get('canonical_origin_records', 'not_checked')} · "
-            f"Placement : {pub.get('canonical_placement_state', 'not_checked')}",
-            f"Octets : {evidence.get('placement_evidence', physical.get('selection', 'not_checked'))}",
+            f"Origines : {_ledger_value(pub.get('canonical_origin_records', 'not_checked'))} · "
+            f"Placement : {_ledger_value(pub.get('canonical_placement_state', 'not_checked'))}",
+            f"Octets : {_ledger_value(evidence.get('placement_evidence', physical.get('selection', 'not_checked')))}",
         ))
         if row.get("inventory_checked_at") is not None:
             lines.append("Horodatage historique (Unix) : " + value("inventory_checked_at"))
