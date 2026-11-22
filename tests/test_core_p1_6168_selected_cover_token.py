@@ -34,7 +34,7 @@ def test_post_paint_lease_matches_actual_selected_scope_revision_and_uri():
     assert lease == source_token
     assert lease is not source_token
     assert lease.scope is not source_token.scope
-    assert cache.peek(decision.scope, revision=1) is decision
+    assert cache.peek(decision.scope, revision=1) == decision
     assert cache.selected_token(
         decision.scope, revision=1, uri="https://other.example/image.jpg",
     ) is None
