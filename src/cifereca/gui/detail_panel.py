@@ -796,6 +796,27 @@ class DetailPanel(Gtk.Box):
             trace.record("sections", sections_started)
         link_buttons = []
         self._rendered_document_urls = set()
+        # A stable public URL is not an action from a different render.
+        # Capture the same context as native metadata copy/search actions.
+        window = getattr(self, "window", None)
+        service = getattr(window, "service", None)
+        identity = getattr(service, "current_identity", None)
+        account_epoch = getattr(service, "_account_context_epoch", None)
+        source_epoch = getattr(service, "_source_context_epoch", None)
+        route = getattr(window, "_route_display_token", None)
+
+        def suppress_retired_link(clicked):
+            # True consumes Gtk.LinkButton's default external launch.
+            return (getattr(clicked, "_cifereca_action_context_revoked", False) is True
+                    or not clicked.get_mapped()
+                    or getattr(window, "_closed", False)
+                    or getattr(self, "window", None) is not window
+                    or getattr(window, "service", None) is not service
+                    or getattr(service, "current_identity", None) is not identity
+                    or getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch
+                    or getattr(window, "_route_display_token", None) is not route)
+
         for link in presentation.links:
             # Plugins can supply UiBookDetailPresentation.links directly:
             # enforce the public URL contract at the final GTK link sink too.
@@ -804,12 +825,7 @@ class DetailPanel(Gtk.Box):
                 continue
             button = Gtk.LinkButton(uri=uri, label=str(link.label))
             button.set_tooltip_text(str(link.label))
-            button.connect(
-                "activate-link",
-                lambda clicked: getattr(
-                    clicked, "_cifereca_action_context_revoked", False,
-                ) is True,
-            )
+            button.connect("activate-link", suppress_retired_link)
             button._cifereca_action_id = f"document-link:{link.id}"
             button._cifereca_action_priority = 30
             link_buttons.append(button)
