@@ -21,7 +21,8 @@
       "help_text": "Distingue la couverture documentaire attestée, la liaison connue et la présence ou validité observée des images en cache. Les états non vérifiés restent inconnus et le rapport est partiel. Aucune récupération réseau ni régénération automatique.",
       "capabilities": [
         "maintenance.audit",
-        "maintenance.audit.covers"
+        "maintenance.audit.covers",
+        "maintenance.group.quality"
       ],
       "requires": [],
       "recommends": [],
@@ -44,7 +45,8 @@
       "help_text": "Distingue tags invalides ou non canoniques et provenance des langues par source : concordante, divergente, partielle ou inconnue. Une déclaration seule ne prouve pas un accord multisource. Aucune attribution de langue au fichier ni modification de données.",
       "capabilities": [
         "maintenance.audit",
-        "maintenance.audit.languages"
+        "maintenance.audit.languages",
+        "maintenance.group.quality"
       ],
       "requires": [],
       "recommends": [],
@@ -67,7 +69,8 @@
       "help_text": "Vérifie les fichiers exposés par les brokers publics metadata/library.read. Signale fichiers manquants, tailles/empreintes incohérentes et conteneurs EPUB/PDF invalides ; aucune réparation n’est inventée sans opération publique Core adaptée.",
       "capabilities": [
         "maintenance.audit",
-        "maintenance.audit.integrity"
+        "maintenance.audit.integrity",
+        "maintenance.group.integrity"
       ],
       "requires": [],
       "recommends": [],
@@ -91,7 +94,8 @@
       "help_text": "Audit read-only des noms observables. La réparation est fournie séparément par maintenance.repair.naming via library.maintenance.",
       "capabilities": [
         "maintenance.audit",
-        "maintenance.audit.naming"
+        "maintenance.audit.naming",
+        "maintenance.group.organization"
       ],
       "requires": [],
       "recommends": [],
@@ -115,7 +119,8 @@
       "help_text": "Produit un plan sans mutation puis délègue chaque normalize_filename au broker Core library.maintenance.",
       "capabilities": [
         "maintenance.repair",
-        "maintenance.repair.naming"
+        "maintenance.repair.naming",
+        "maintenance.group.organization"
       ],
       "requires": [],
       "recommends": [],
@@ -141,7 +146,8 @@
       "help_text": "Suspendu — arbitrage produit #4496 : aucune suppression ordinaire de doublons autorisée. Le verrou Core est non contournable par les préférences. Les audits indépendants et la reprise des tombstones déjà existants conservent leurs propres conditions d'admission.",
       "capabilities": [
         "maintenance.cleanup",
-        "maintenance.cleanup.duplicates"
+        "maintenance.cleanup.duplicates",
+        "maintenance.group.organization"
       ],
       "requires": [],
       "recommends": [],
@@ -166,7 +172,8 @@
       "help_text": "La revue est strictement read-only. Une reprise demande le dialogue destructif de Maintenance, un nouveau plan sous verrou et l'action Core canonical_dedup/recover confirmée. Les preuves incohérentes bloquent toute suppression.",
       "capabilities": [
         "maintenance.cleanup",
-        "maintenance.cleanup.duplicates.recover"
+        "maintenance.cleanup.duplicates.recover",
+        "maintenance.group.recovery"
       ],
       "requires": [],
       "recommends": [],

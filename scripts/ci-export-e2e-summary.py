@@ -293,7 +293,7 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         local_stages = {"setup", "seed", "complete", "warm_n2_cold_n3",
                         "distinct_c_shared_n3", "invalidated_n2_warm_n3",
                         "epub_priority_cold", "epub_priority_warm",
-                         "epub_qualified_fallback"} | {
+                         "epub_qualified_fallback", "catalogue_http_fallback"} | {
             prefix + suffix
             for prefix in ("cold_", "offline_")
             for suffix in ("project", "library_route", "library_list",
@@ -745,11 +745,16 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
                     or safe["n4"].get("ui_decode_recent_count", 0) < 1):
                 return {}
             result[phase] = safe
-        return {"notice_c_cover_metrics": {
+        evidence = {"notice_c_cover_metrics": {
             "schema": "cifereca.cover-six-views/1",
             "fixture": "one_c_six_views_mock_transport",
             **result,
         }}
+        # #4980: this is an explicit assertion in the native GTK fixture,
+        # not an inference from an overall PASS or from a generic texture.
+        if data["checks"].get("P0_4980_catalogue_http_fallback_real_gtk") is True:
+            evidence["notice_c_catalogue_http_fallback"] = True
+        return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
 
