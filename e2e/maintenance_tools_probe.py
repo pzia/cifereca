@@ -1233,8 +1233,11 @@ def main():
                                 assert service.preview_library_filename(title="Roman témoin",
                                     author="Autrice témoin", extension="epub") in dialog.get_body()
                                 assert fixture_evidence() == evidence
-                                dialog.response("cancel")
-                                until(lambda: modal() is None and native.get_sensitive(), reopen)
+                                # Drive the real GTK response button. Emitting
+                                # MessageDialog.response directly would signal
+                                # the handler without closing the modal.
+                                respond(dialog, "Annuler", lambda: until(
+                                    lambda: modal() is None and native.get_sensitive(), reopen))
 
                             def reopen():
                                 report["checks"]["P0_3176_real_native_rename_cancel"] = True
@@ -1253,7 +1256,6 @@ def main():
                                     notices.append(message)
                                     return original_toast(message, *args, **kwargs)
                                 host_window.toast = toast
-                                dialog.response("apply")
                                 def refused():
                                     host_window.toast = original_toast
                                     assert any("Renommage indisponible ou refusé" in x for x in notices)
@@ -1261,7 +1263,10 @@ def main():
                                     assert fixture_evidence() == evidence and durable_counts() == before
                                     report["checks"]["P0_3176_real_native_rename_production_hold"] = True
                                     step(index + 1)
-                                until(lambda: bool(notices), refused)
+                                # Verify the installed native confirmation through
+                                # the actual button and GTK response lifecycle.
+                                respond(dialog, "Confirmer", lambda: until(
+                                    lambda: bool(notices), refused))
 
                             find_candidate()
 
