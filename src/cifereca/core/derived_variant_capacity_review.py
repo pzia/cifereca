@@ -36,7 +36,10 @@ def _receipt_witness(raw):
     digest only allows a stable, redacted partial capacity observation.
     """
     if type(raw) is str:
-        return ("text", journal._receipt_digest(raw))
+        try:
+            return ("text", journal._receipt_digest(raw))
+        except UnicodeError:
+            raise journal.DerivedJournalConflict("derived_capacity_receipt_unverified") from None
     if type(raw) is bytes:
         return ("blob", hashlib.sha256(raw).hexdigest())
     if type(raw) in (int, float):

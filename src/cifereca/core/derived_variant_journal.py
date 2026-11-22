@@ -209,7 +209,8 @@ def _decode(key, raw):
         if key not in (_slot(intent), _COMMITTED + _receipt_digest(raw)):
             raise ValueError()
         return intent
-    except (ValueError, TypeError, KeyError, RecursionError, OverflowError):
+    except (ValueError, TypeError, KeyError, RecursionError, OverflowError,
+            UnicodeError):
         raise DerivedJournalConflict("derived_journal_corrupt") from None
 
 
