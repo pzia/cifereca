@@ -106,7 +106,7 @@ def test_plugin_comparative_review_requires_two_explicit_sources_and_preserves_s
     # adds a comparative snapshot; the private lookup adds the next one.
     assert len(ranked) == 2
     lines = ranked[-1][1]
-    labels = [detail.split(" · ")[0] for _, detail in lines[3:]
+    labels = [detail.split(" · ")[0] for _, detail in lines[3:]]
     assert labels == ["Notice C déjà connue", "Prêt en cache",
                       "Catalogue public", "Catalogue public"]
     assert "jamais attribution" in repr(lines[0])
