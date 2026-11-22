@@ -122,7 +122,8 @@ def main():
         "git_sha": sha, "width": args.width, "backend": "GTK4/X11/XTEST",
         "steps": [], "online_calls": [], "checks": {},
     }
-    started = monotonic()
+    started = monotonic()  # Whole probe, only for global duration reporting.
+    search_started = [None]  # Bound the async Search wait to its actual dispatch.
     window = None
     device = None
     rc = [1]
@@ -361,11 +362,12 @@ def main():
             QueryState(text="Camille", field="title", scope="all"), notify=False,
         )
         window.navigate("search")
+        search_started[0] = monotonic()
         window.run_search(False)
         later(180, wait_search)
 
     def wait_search():
-        if window.search_page.store.get_n_items() != 1 and monotonic() - started < 12:
+        if window.search_page.store.get_n_items() != 1 and monotonic() - search_started[0] < 12:
             later(160, wait_search)
             return
         assert window.search_page.store.get_n_items() == 1, "Notice du catalogue connu absente"
