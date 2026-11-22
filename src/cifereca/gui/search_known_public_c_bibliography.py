@@ -97,6 +97,25 @@ def _alternative_proven_fields(alternative, hit, index, provider):
                 observed_at=observed,
             ),
         ) for number, value in enumerate(values, 1))
+    # Classifications are separate independently attested source facts.
+    # An edited subject must not remove provenance from a genuine genre.
+    from .search_known_public_c_age import _same_native
+    classification = hit.classification.wire() if hit.classification is not None else {}
+    for name, label in _CLASSIFICATION_DETAIL_LABELS:
+        if name not in classification or not _same_native(alternative.get(name), classification[name]):
+            continue
+        values = _values(classification[name], limit=512)
+        if not values:
+            continue
+        fields[name] = tuple(DetailField(
+            id=f"known-public-alternative-{index}-{name}-{number}",
+            label=f"Source {index} · {provider} · {label}", value=value,
+            provenance=Provenance(
+                source="Notice C · observation de source",
+                provider_id=hit.provider_id, source_id=hit.record_id,
+                observed_at=observed,
+            ),
+        ) for number, value in enumerate(values[:8], 1))
     age = hit.age_observation
     if age is not None:
         from .search_known_public_c_age import _same_native
@@ -219,7 +238,8 @@ def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=(
                     alternative, hits[index - 2] if hits else None, displayed_names,
                 ),
             ))
-        for name in ("series", "languages", "youth_age_ranges"):
+        for name in ("series", "languages", "youth_age_ranges",
+                     *(name for name, _ in _CLASSIFICATION_DETAIL_LABELS)):
             fields.extend(proven.get(name, ()))
     if not fields:
         return None
