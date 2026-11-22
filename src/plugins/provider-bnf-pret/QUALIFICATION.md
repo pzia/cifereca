@@ -8,6 +8,28 @@ API/OPDS historiques ne sont pas consommés par l'adaptateur Web.
 
 ---
 
+## Réception #4283 — historique des prêts terminés (22/11/2026)
+
+Les preuves reçues et recensées dans #6875 attestent des GET activité et
+prêt actif, mais **aucune réponse d'historique de prêts terminés**. La
+piste documentaire `GET /v1/loans.json` reste distincte du portail Web
+lecteur : clé API, identité `member_id`, pagination, exhaustivité et
+sémantique des dates de fin/retour ne sont pas qualifiées pour le compte
+lecteur. L'échéance d'un actif et un fichier ADEPT local ne sont pas des
+preuves de prêt terminé.
+
+**Réception technique limitée : unsupported, pas empty.** Le descripteur
+installable BnF conserve `history=False` ; aucune capacité historique
+n'est déclarée dans le manifeste et le runtime hérite du refus explicite
+`ProviderSession.history`. La régression synthétique associée vérifie
+qu'un appel à l'historique n'interroge même pas le client activité et ne
+retourne pas une liste vide fabriquée. Aucun nouveau GET réel, aucun
+appel mutateur, aucune demande de capture utilisateur. Le ticket #4283
+reste ouvert pour une qualification positive ou une preuve explicite
+d'indisponibilité du service.
+
+---
+
 # BnF — Prêt numérique : qualification préalable
 
 **19 octobre 2026 — accès lecteur API non qualifié.** Rôle pilote : Plugins, #2054 ; intégration dépendante #2055.
