@@ -26,14 +26,20 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
     from ..artifact_runtime import LibraryMaintenanceBrokerImpl
     from ..plugin_api import LibraryMutationRequest
 
-    if (confirmed is not True or not callable(still_current)
-            or still_current() is not True or type(accepted) is not OrganizerDryRunPlan
-            or accepted.scope is not scope or accepted.confirmed is not True
-            or accepted.executable is not False or len(accepted.entries) != 1
-            or accepted.entries[0].operation != "rename"
-            or accepted.entries[0].state != "review_only"
-            or not _lock_ok(shared_lock)
-            or not _execution_fence_current(scope, shared_lock)):
+    try:
+        permitted = (confirmed is True and callable(still_current)
+                     and still_current() is True
+                     and type(accepted) is OrganizerDryRunPlan
+                     and accepted.scope is scope and accepted.confirmed is True
+                     and accepted.executable is False and len(accepted.entries) == 1
+                     and accepted.entries[0].operation == "rename"
+                     and accepted.entries[0].state == "review_only"
+                     and _lock_ok(shared_lock)
+                     and _execution_fence_current(scope, shared_lock))
+    except Exception:
+        # An exception from a revoked view/lock/fence never authorizes a write.
+        return {"status": "blocked", "changed": 0}
+    if not permitted:
         return {"status": "blocked", "changed": 0}
     entry = accepted.entries[0]
     invoked = False
