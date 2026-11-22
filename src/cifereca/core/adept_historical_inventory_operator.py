@@ -12,6 +12,7 @@ from threading import Lock
 from .adept_historical_inventory_join import _recorded_binding, review_legacy_adept_inventory
 from .adept_historical_maintenance import HistoricalReviewRequest, _branches, _row, _text, _MAX_METADATA
 from .library_sqlite_freshness import sqlite_source_stamp
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 
@@ -21,8 +22,7 @@ _FIELDS = ("acquisition_id", "provider_id", "credential_id", "account_id", "edit
 
 
 def _record(request, acquisition_id):
-    with request.storage._lock, request.storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(request.storage) as db:
         rows = db.execute(
             "SELECT acquisition_id,provider_id,credential_id,account_id,item_id,status,"
             "CASE WHEN length(CAST(metadata_json AS BLOB))<=? THEN metadata_json ELSE NULL END "

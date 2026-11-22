@@ -102,3 +102,79 @@ def test_explicit_cops_book_reference_survives_eviction_and_reopen(tmp_path, alt
         assert calls == ["feed"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("mode", [
+    "exact", "second-link", "duplicate-card", "signed", "duplicate-param",
+    "hidden-card", "hidden-anchor", "encoded-id",
+])
+def test_html_book_query_is_an_exact_durable_public_reference(tmp_path, mode):
+    from hashlib import sha256
+
+    link = "https://www.ebooksgratuits.com/details.php?book=3500"
+    href = "details.php?book=3500"
+    if mode == "signed":
+        href += "&amp;token=fixture"
+    elif mode == "duplicate-param":
+        href += "&amp;book=3501"
+    elif mode == "encoded-id":
+        href = "details.php?book=%33%35%30%30"
+    second = '<a href="details.php?book=3501">Autre fiche</a>' if mode == "second-link" else ""
+    hidden = " hidden" if mode == "hidden-card" else ""
+    anchor = ' aria-hidden="true"' if mode == "hidden-anchor" else ""
+    card = (f'<li{hidden}><a href="{href}"{anchor}>'
+            '<span class="listeb">Roman HTML témoin</span></a>'
+            '<span class="auteur">Autrice témoin</span>' + second +
+            '<a href="newsendbook.php?id=3500&amp;format=epub">EPUB</a></li>')
+    html = "<ul>" + card + (card if mode == "duplicate-card" else "") + "</ul>"
+    calls = []
+
+    def transport(req):
+        calls.append(req.method)
+        assert req.method == "POST"
+        assert str(req.url) == "https://www.ebooksgratuits.com/ebooks.php"
+        return httpx.Response(200, text=html, request=req)
+
+    session = EbooksSession(credential_id="__public__", label="Public", credentials={},
+                           options={"acquisition_backend": "html"}, config={},
+                           diagnostics=None, transport=None)
+    session.client.close()
+    session.client = httpx.Client(transport=httpx.MockTransport(transport), trust_env=False)
+    filename = tmp_path / "html-c.sqlite"
+    try:
+        session.connect()
+        response = session.search_with_response_facets("Roman", "catalog", field="title")
+        assert response.partial is True and response.catalogue_complete is False
+        assert response.terminal_empty is False and calls == ["POST"]
+        rows = _public_rows_from_response(response, session)
+        if mode != "exact":
+            assert response.results == rows == [] and not response.public_notices
+            return
+        raw, = response.results
+        row, = rows
+        assert response.public_notices[0].result is raw
+        assert row.record_id == raw.record_id == sha256(link.encode()).hexdigest()[:24]
+        assert raw.owned is raw.downloadable is False and raw.download_url is None
+        assert row.friendly_url == link and row.thumbnail_url is None
+        with closing(Storage(filename)) as db:
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            source = row._core_notice_cover_document_ref
+            canonical = row._core_notice_canonical_cover_document_ref
+            snapshot = read_consolidated_notice_cover(db, canonical)
+            assert snapshot.sources[0].state == "pending"
+            ref, = snapshot.catalogue_web_references
+            assert ref.url == link and ref.record_id == raw.record_id
+            menu = read_public_web_choices(db, canonical)
+            choice, = menu.choices
+            assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                             choice_id=choice.choice_id) == link
+            assert evict_notice_cover(db, source, expected_epoch=read_notice_cover(db, source).epoch)
+        with closing(Storage(filename)) as db:
+            assert read_public_web_choices(db, canonical) == menu
+            assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                             choice_id=choice.choice_id) == link
+            assert db.entitlements() == db.acquisitions() == db.placements() == []
+        assert calls == ["POST"]
+    finally:
+        session.close()
