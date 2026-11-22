@@ -489,8 +489,26 @@ class DetailPanel(Gtk.Box):
 
     def _add_metadata_actions(self, row, label, safe_value, kind):
         search = getattr(self.window, "search_books", None)
-        current = getattr(self.window.service, "current_identity", None)
+        service = self.window.service
+        current = getattr(service, "current_identity", None)
         identity_id = getattr(current, "identity_id", None)
+        account_epoch = getattr(service, "_account_context_epoch", None)
+        source_epoch = getattr(service, "_source_context_epoch", None)
+        route = getattr(self.window, "_route_display_token", None)
+
+        def field_scope_current():
+            # Both copy and online search are explicit actions of THIS
+            # render. Matching the profile label after A→B→A is not enough.
+            active_service = getattr(self.window, "service", None)
+            active_identity = getattr(active_service, "current_identity", None)
+            return (not getattr(self.window, "_closed", False)
+                    and active_service is service
+                    and active_identity is current
+                    and getattr(active_identity, "identity_id", None) == identity_id
+                    and getattr(service, "_account_context_epoch", None) == account_epoch
+                    and getattr(service, "_source_context_epoch", None) == source_epoch
+                    and getattr(self.window, "_route_display_token", None) is route)
+
         copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
         copy.add_css_class("flat")
         # Name the individual value, including for repeated labels.
@@ -503,6 +521,8 @@ class DetailPanel(Gtk.Box):
         copy.update_property([Gtk.AccessibleProperty.LABEL], [copy_label])
 
         def copy_one(_button, value=safe_value):
+            if not _button.get_mapped() or not field_scope_current():
+                return
             display = Gdk.Display.get_default()
             if display is None:
                 self.window.toast("Presse-papiers indisponible")
@@ -548,7 +568,7 @@ class DetailPanel(Gtk.Box):
                     getattr(getattr(self.window, "service", None),
                             "current_identity", None), "identity_id", None,
                 )
-                if active != identity:
+                if active != identity or not field_scope_current():
                     return False
                 return search(
                     value, field=field, online=True, identity_id=identity,
