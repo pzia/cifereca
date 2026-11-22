@@ -258,6 +258,10 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                 hit = entry.hit
                 text = " · ".join(part for part in (
                     hit.author, hit.provider_id, hit.record_id,
+                    "Édition C : " + hit.edition_id if hit.edition_id else "Édition C non précisée",
+                    "Révision C : " + hit.source_revision if hit.source_revision else "",
+                    "Support C : " + hit.medium if hit.medium else "",
+                    "Format C : " + hit.media_format if hit.media_format else "",
                     _LABELS.get(entry.comparison, "Comparaison descriptive"),
                     "Notice ancienne" if hit.stale else "Notice en cache",
                     _known_c_observation_label(hit.last_seen_at),
