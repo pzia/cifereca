@@ -212,3 +212,37 @@ def test_public_c_first_never_drops_a_mirror_with_foreign_boolean_or_equality(
         assert _public_mirror_key(damaged, identity_id="alice") is None
         assert base["source"] == "notice_c_public"
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+def test_primary_c_document_rejects_in_place_valid_canonical_rebinding(tmp_path):
+    # Both the view and the Core hit may retain the SAME mutable frozen
+    # DocumentRef. Replacing its source_key with another valid canonical C
+    # must not turn one attested book into a different N2/provenance.
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_c_loaded_filter import _sources
+
+    with closing(Storage(tmp_path / "primary-document-seal.sqlite")) as db:
+        source = persist(db, verified_public(
+            record_id="primary-document", title="Notice source primaire",
+        ), at=100)
+        persist_exact_public_search_cover(db, source)
+        row, = merge_public_notice_c_known_rows(
+            [], search_public_notice_c(db, "Notice source primaire", now=100),
+            identity_id="alice",
+        )
+        hit = known_public_primary_facts(row)
+        assert hit is not None
+        document = row["_cover_document_ref"]
+        assert document is hit.document
+        initial = document.source_key
+        replacement = canonical_cover_document_ref(
+            "another-attested-edition"
+        ).source_key
+        assert replacement != initial
+        object.__setattr__(document, "source_key", replacement)
+        assert known_public_primary_facts(row) is None
+        assert known_public_alternative_facts(row) == ()
+        assert _sources(row) == ()
+        object.__setattr__(document, "source_key", initial)
+        assert known_public_primary_facts(row) is hit
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
