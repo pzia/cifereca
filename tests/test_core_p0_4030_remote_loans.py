@@ -305,3 +305,45 @@ def test_remote_account_discovery_does_not_bind_spoofed_scope(
         service, request, evidence=choice.evidence,
     ) == ()
     assert not calls and rows(service.storage) == before and path.read_bytes() == contents
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_typed_inventory_iso_separator_cannot_forge_local_observation_date(
+    case, spoof,
+):
+    service, request, account, session, path, calls, choice, observed = case
+    # Python's fromisoformat accepts one arbitrary Unicode separator between
+    # the date and time, even bidi overrides, C1, joiners or line separators.
+    from datetime import datetime
+    from cifereca.core.local_origin_remote_loans import compare_remote_loan_catalogue
+
+    forged_date = "2026-01-01" + spoof + "12:00:00Z"
+    assert datetime.fromisoformat(forged_date.replace("Z", "+00:00"))
+    previous = session.loan_inventory_snapshot
+
+    def selected_reader(selected):
+        return replace(previous(selected), observed_at=forged_date)
+
+    session.loan_inventory_snapshot = selected_reader
+    # Re-discover the exact action after changing its typed reader; an old
+    # choice must never reach a new reader silently.
+    known = run_local_origin_suggestion(service, request)
+    replacement, = remote.available_remote_loan_catalogues(
+        service, request, evidence=known["public_comparison_evidence"],
+    )
+    before, data = rows(service.storage), path.read_bytes()
+    result = compare_remote_loan_catalogue(service, replacement, confirmed=True)
+    assert result["status"] == "partial" and len(result["candidates"]) == 1
+    assert result["observed_at"] is None
+    assert result["provider_read_requested"] and calls == ["typed_inventory"]
+    assert not result["fresh_network_verified"] and not result["association_authorized"]
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_safe_typed_inventory_date_remains_visible_but_not_network_freshness(case):
+    service, request, account, session, path, calls, choice, observed = case
+    result = remote.compare_remote_loan_catalogue(service, choice, confirmed=True)
+    assert result["status"] == "partial"
+    assert result["observed_at"] == "2026-01-01T00:00:00Z"
+    assert not result["fresh_network_verified"] and not result["coverage_complete"]
+    assert calls == ["typed_inventory"]
