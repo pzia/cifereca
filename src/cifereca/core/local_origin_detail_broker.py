@@ -48,15 +48,21 @@ class LocalOriginDetailReadBrokerImpl:
         self._active = None
         self._revoked = False
 
-    def _live(self, generation, view, request):
+    def _view_live(self, generation, view):
+        # Pure lifetime check. The declaration authority calls its
+        # cancellation predicate inside its own SQLite transaction.
+        # request.current() must not be called on that connection then.
         with self._lock:
             if self._revoked or generation != self._generation:
                 return False
         try:
             return ((self._activation_current is None or self._activation_current() is True)
-                    and view() is True and request.current() is True)
+                    and view() is True)
         except Exception:
             return False
+
+    def _live(self, generation, view, request):
+        return self._view_live(generation, view) and request.current() is True
 
     def _read(self, request, view, generation):
         try:
@@ -343,18 +349,24 @@ class LocalOriginDetailReadBrokerImpl:
             window = self._declaration_window
         choice, candidate, continuation, view, generation = selected
 
-        def live():
+        def view_live():
             with self._lock:
                 if self._declaration_window is not window:
                     return False
-            return self._live(generation, view, choice.request)
+            return self._view_live(generation, view)
+
+        def live():
+            return view_live() and choice.request.current() is True
 
         try:
             if not live():
                 return None
+            # The bridge revalidates request/account/file before and after
+            # the writer preview. Inside its transaction, pass only the
+            # revocable view/activation guard; the writer owns SQL scope.
             preview = preview_private_loan_declaration(
                 self._service, choice=choice, candidate=candidate,
-                continuation=continuation, confirmed=True, still_current=live)
+                continuation=continuation, confirmed=True, still_current=view_live)
             if preview is None or not live():
                 return None
             source, scope = candidate.source, candidate.source.scope
