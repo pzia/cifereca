@@ -85,3 +85,42 @@ def test_native_mount_selection_uses_actual_activated_port_not_plugin_name():
         plugin_id="maintenance.library.organizer", service=plugin, registry_generation=1))
     resolver.close()
     assert not has_native_organizer_review(manager, resolved)
+
+
+@pytest.mark.parametrize("failure", ["connect", "present"])
+def test_native_dialog_gtk_launch_failure_does_not_consume_review_or_queue_mutation(
+    monkeypatch, failure,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    live = [True]
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _message: pytest.fail("No result should be reported"))
+    lease = NS(identity_id="A", is_current=lambda: live[0])
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),))
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.button.visible and ui.button.sensitive
+    method = getattr(Dialog, failure)
+
+    def failed(*_args, **_kwargs):
+        raise RuntimeError("PRIVATE_GTK_LAUNCH_ERROR")
+
+    monkeypatch.setattr(Dialog, failure, failed)
+    assert ui.open(NS(MessageDialog=Dialog)) is False
+    assert ui._dialog is None and ui._page is page and ui._used is None
+    assert ui.button.sensitive and not runner.queue
+    assert Dialog.dialogs
+    if failure == "present":
+        # The half-built dialogue may still emit its response asynchronously.
+        Dialog.dialogs[-1].respond("apply")
+        assert ui._used is None and not runner.queue
+    monkeypatch.setattr(Dialog, failure, method)
+    assert ui.open(NS(MessageDialog=Dialog)) is True
+    Dialog.dialogs[-1].respond("cancel")
+    assert ui.button.sensitive and ui._used is None and not runner.queue
