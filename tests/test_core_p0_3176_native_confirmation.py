@@ -527,3 +527,54 @@ def test_old_native_dialog_response_cannot_clear_new_modal_after_refresh(
     new_dialog.respond("cancel")
     assert ui._dialog is None and ui.button.sensitive
     assert not runner.queue
+
+
+@pytest.mark.parametrize("phase", [
+    "before_open", "before_response", "queued_worker", "observed_refresh",
+])
+def test_native_consent_witness_rejects_in_place_dto_mutation(
+    monkeypatch, phase,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    messages = []
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=messages.append)
+    lease = NS(identity_id="A", is_current=lambda: True)
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Changed review cannot admit Core"),
+    )
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.button.visible
+    if phase == "before_open":
+        object.__setattr__(entry, "proposed", "changed.epub")
+        assert not ui.open(NS(MessageDialog=Dialog))
+        assert not Dialog.dialogs and not runner.queue
+    else:
+        assert ui.open(NS(MessageDialog=Dialog))
+        dialog = Dialog.dialogs[-1]
+        assert "new.epub" in dialog.body
+        if phase == "queued_worker":
+            dialog.respond("apply")
+            assert len(runner.queue) == 1
+        object.__setattr__(entry, "proposed", "changed.epub")
+        assert not ui._current(page)
+        if phase == "observed_refresh":
+            monkeypatch.setattr(Dialog, "close", lambda _self: None, raising=False)
+            ui.observe(page)
+        if phase != "queued_worker":
+            dialog.respond("apply")
+            assert not runner.queue
+            assert not ui.button.sensitive
+        else:
+            runner.run()
+            assert not runner.queue
+    assert not messages
