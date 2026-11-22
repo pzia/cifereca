@@ -129,7 +129,10 @@ def catalogue_notice_url(row, *, base=None, provider=None):
             continue
         parts = urlsplit(safe)
         # A bare domain or a catalogue root is never a notice.
-        if not parts.path.strip('/') and not parts.query:
+        # A bare origin remains a catalogue entry point even when it
+        # carries a harmless search, tracking or routing query. Query-only
+        # coordinates do not attest a book-specific public HTML sheet.
+        if not parts.path.strip('/'):
             continue
         if reference and page_key(safe) == page_key(reference):
             continue
