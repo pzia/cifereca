@@ -428,7 +428,7 @@ def test_retained_search_parser_upgrade_has_distinct_implementation(monkeypatch)
 
     old = sha256(b"numilog.public.search.html.v1").hexdigest()
     family = sha256(b"numilog.public.search.html").hexdigest()
-    new = sha256(b"numilog.public.search.html.v4").hexdigest()
+    new = sha256(b"numilog.public.search.html.v5").hexdigest()
     fake, _ = setup_public_client(monkeypatch)
     retained = public_client.fetch_public_search("jefferson", _retain_input=True)
     raw = retained.raw_input
