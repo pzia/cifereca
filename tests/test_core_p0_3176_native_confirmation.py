@@ -64,3 +64,24 @@ def test_native_dialog_admits_only_exact_confirmed_single_rename(monkeypatch, ca
         assert "refusé" in messages[0]
     else:
         assert not messages
+
+
+def test_native_mount_selection_uses_actual_activated_port_not_plugin_name():
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+    from cifereca.gui.organizer_native_confirmation import has_native_organizer_review
+    plugin = object()
+    service = NS()
+    key = "library.organizer.read"
+    resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
+                                        "fixture.other-organizer", (key,))
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"fixture.other-organizer": NS(service=plugin, activation_brokers=resolver)})
+    resolved = NS(plugin_id="fixture.other-organizer", service=plugin, registry_generation=1)
+    assert not has_native_organizer_review(manager, resolved)
+    assert resolver(key) is not None
+    assert has_native_organizer_review(manager, resolved)
+    assert not has_native_organizer_review(manager, NS(
+        plugin_id="maintenance.library.organizer", service=plugin, registry_generation=1))
+    resolver.close()
+    assert not has_native_organizer_review(manager, resolved)
