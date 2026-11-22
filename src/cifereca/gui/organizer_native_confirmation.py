@@ -187,9 +187,8 @@ class NativeOrganizerConfirmation:
             self._dialog = None
             if (response_id != "apply" or not self._current(page)
                     or self._review_witness != shown_witness):
-                self.button.set_sensitive(self._page is not None
-                                          and self._page is not self._used
-                                          and self._lease_current())
+                self.button.set_sensitive(self._current(page)
+                                          and self._page is not self._used)
                 return
             self._used = page
 
