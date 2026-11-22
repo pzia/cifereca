@@ -143,6 +143,12 @@ class GuidedOrganizer:
         else:
             return False
 
+        # A new explicit preview supersedes the old keeper/rename advice at
+        # click time, not when a queued worker eventually reaches Core.
+        # This revokes only this view's exact page token. Next-page, select,
+        # prepare and confirm deliberately consume their current page instead.
+        if action == "preview" and page is not None:
+            self._cancel_token(page)
         from threading import Event
         stop = self.stop = Event()
         self._pending_page = page
