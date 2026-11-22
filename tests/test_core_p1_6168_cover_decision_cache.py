@@ -383,3 +383,67 @@ def test_mutated_token_and_resolved_scope_cannot_publish_to_n2():
     object.__setattr__(token.scope, "loan_id", "")
     with pytest.raises(ValueError, match="loan cover requires exact borrower"):
         cache.resolve_and_publish(token, [candidate()], snapshot_complete=True)
+
+
+def test_valid_mutation_of_admitted_producer_scope_cannot_rekey_n2():
+    """The caller's nominally frozen scope is not the N2 dictionary key."""
+    cache = CoverDecisionCache()
+    source = loan()
+    events = []
+    subscription = cache.subscribe(source, events.append)
+    token = cache.begin(source, revision=7)
+    assert token.scope == source and token.scope is not source
+
+    # A legal alternate loan still passes __post_init__: validation alone
+    # cannot protect a dictionary keyed by the producer-owned object.
+    object.__setattr__(source, "loan_id", "other-legal-loan")
+    assert token.scope == loan()
+    assert cache.resolve_and_publish(
+        token, [candidate()], snapshot_complete=True,
+    )
+    assert cache.peek(loan(), revision=7).uri == URL
+    assert cache.peek(source, revision=7) is None
+    assert [e.kind for e in events] == ["refresh", "resolved"]
+    assert all(e.scope == loan() for e in events)
+    assert cache.stats()["scopes"] == 1
+    subscription.cancel()
+    assert cache.stats()["subscribers"] == 0
+
+
+def test_mutating_returned_token_scope_cannot_corrupt_n2_key():
+    """N2 token provenance is not the stored dictionary-key object."""
+    cache = CoverDecisionCache()
+    scope = loan()
+    old = cache.begin(scope, revision=1)
+    object.__setattr__(old.scope, "loan_id", "legally-other-loan")
+    assert old.scope != scope
+    # An old token may be refused; it must not poison the original cache key.
+    next_token = cache.begin(scope, revision=2)
+    assert cache.resolve_and_publish(
+        next_token, [candidate()], snapshot_complete=True,
+    )
+    assert cache.peek(scope, revision=2).uri == URL
+    assert cache.peek(old.scope, revision=1) is None
+    assert cache.stats()["scopes"] == 1
+    assert not cache.resolve_and_publish(
+        old, [candidate(ALT)], snapshot_complete=True,
+    )
+
+
+def test_mutating_one_listener_event_cannot_rekey_other_n2_subscribers():
+    cache = CoverDecisionCache()
+    scope = loan()
+    events = []
+
+    def mutate_event(event):
+        # Valid fields, not a type failure: would corrupt a shared dict key.
+        object.__setattr__(event.scope, "loan_id", "another-book")
+
+    cache.subscribe(scope, mutate_event)
+    cache.subscribe(scope, events.append)
+    completed(cache, scope)
+    assert cache.peek(scope, revision=1).uri == URL
+    assert [event.kind for event in events] == ["refresh", "resolved"]
+    assert all(event.scope == scope for event in events)
+    assert cache.stats()["scopes"] == 1
+
