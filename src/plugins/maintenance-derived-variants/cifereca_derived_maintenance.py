@@ -95,6 +95,12 @@ class DerivedController:
             operation = lambda: self.broker.simulate(token=token, confirmed=True)
         else:
             return False
+        # Switching back to an overview or starting a fresh listing ends
+        # the previous receipt/recovery review NOW, before queue admission.
+        # In particular an old simulate token must not outlive its view.
+        # A next/verify/simulate action still consumes its existing page.
+        if action in ("overview", "list"):
+            self._clear_selection()
         self.reviewed = None
         if action != "simulate":
             self.choice = choice if action == "verify" else None
