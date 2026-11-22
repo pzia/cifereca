@@ -15,6 +15,7 @@ from ..library_files import sha256_file
 from ..models import Loan
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
+from .derived_variant_region_paths import private_derived_path
 
 
 def _open_owned_transfer_file(path: Path, owner_root: Path) -> int:
@@ -136,12 +137,16 @@ def _materialize_to_identity_locked(
                 for other in self.identities
             )):
         raise ProviderConfigurationError("Emplacement source hors du profil propriétaire")
+    if private_derived_path(src):
+        raise ProviderConfigurationError("Zone privée de publication dérivée : envoi interdit")
     if not src.is_file() and not src.is_dir():
         raise ProviderConfigurationError("Artifact source introuvable")
     is_bundle = src.is_dir()
     if is_bundle:
         # copytree follows symlinks by default: reject them, including links
         # hidden in a playlist/manifest subdirectory.
+        if any(private_derived_path(path) for path in src.rglob("*")):
+            raise ProviderConfigurationError("Zone privée de publication dérivée : envoi interdit")
         if any(path.is_symlink() for path in src.rglob("*")):
             raise ProviderConfigurationError("Lien symbolique interdit dans le bundle")
         try:
@@ -286,10 +291,10 @@ def _materialize_to_identity_locked(
         accepted = path.parent == dest_dir or (
             historical and path.parent in {legacy_dir, historical_shared_dir}
         )
-        if path.is_symlink() or path.resolve() != path or not accepted:
+        if private_derived_path(path) or path.is_symlink() or path.resolve() != path or not accepted:
             return False
         if is_bundle:
-            if not path.is_dir() or any(p.is_symlink() for p in path.rglob("*")):
+            if not path.is_dir() or any(p.is_symlink() or private_derived_path(p) for p in path.rglob("*")):
                 return False
             try:
                 return (load_bundle_manifest(path, verify=True).bundle_sha256
