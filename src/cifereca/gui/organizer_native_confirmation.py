@@ -108,6 +108,9 @@ class NativeOrganizerConfirmation:
         # shown in a mounted native dialog. Dismiss it now, not only on
         # disposal: an old Apply signal can never target the new review.
         witness = self._advice_witness(value) if valid else None
+        # An invalid fingerprint is not an admissible review, even if its
+        # visible rename text was otherwise well-formed.
+        valid = valid and witness is not None
         old_dialog = self._dialog if self._dialog is not None and (
             self._page is not value or not valid
             or self._review_witness != witness) else None
