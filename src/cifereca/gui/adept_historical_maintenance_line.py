@@ -101,16 +101,15 @@ def _selected_hold_summary(value):
     if type(value) is not HistoricalHoldSelection or value.unlock_authorized is not False:
         return "Sélection périmée ou indisponible. Relancer la revue."
     source = value.source
-    reason = (
-        "Un reçu final et ses octets ont été vérifiés pour l’offre historique exacte ; "
-        "privilégier la reprise canonique sans GET."
-        if value.final_receipt_evidence == "verified_final_receipt_observed" else
-        "Une copie locale vérifiée a été observée ; privilégier la récupération locale."
-        if value.copy_evidence == "verified_local_copy_observed" else
-        "Témoin exact de non-soumission enregistré ; activation historique non attestée."
-        if value.witness.state == "non_submission_recorded" else
-        "Phase historique ou preuve de rejeu non établie."
-    )
+    reason = {
+        "final_receipt_precedence": "Un reçu final et ses octets ont été vérifiés pour l’offre historique exacte ; privilégier la reprise canonique sans GET.",
+        "local_copy_precedence": "Une copie locale vérifiée a été observée ; privilégier la récupération locale.",
+        "recorded_loan_inactive": "Prêt enregistré inactif ; aucune offre actuelle qualifiée.",
+        "marker_unverified": "Marqueur historique illisible, manquant ou non vérifiable.",
+        "historical_phase_ambiguous": "Phase historique ou preuve de rejeu non établie.",
+        "local_recovery_not_qualified": "Témoin exact de non-soumission enregistré ; vérifier d’abord les copies et reçus locaux. Activation historique non attestée.",
+        "historical_activation_unattested": "Témoin exact de non-soumission enregistré ; activation historique non attestée. Un identifiant de profil actuel ne démontre pas sa continuité.",
+    }.get(value.rearm_blocker, "Preuves de reprise non qualifiées.")
     return ("Verrou sélectionné : " + source.scope.provider_id + " / "
             + source.scope.credential_id + " / " + (source.scope.account_id or "(compte principal)")
             + "\\nÉdition : " + source.edition_id + " · Prêt : " + source.right_id

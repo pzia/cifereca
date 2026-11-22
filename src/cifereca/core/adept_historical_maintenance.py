@@ -313,7 +313,30 @@ class HistoricalHoldSelection:
     stamp: tuple
     copy_evidence: str
     final_receipt_evidence: str = "not_checked"
+    recorded_inactive: bool = False
     unlock_authorized: bool = False
+
+    @property
+    def rearm_blocker(self):
+        """Ordered negative-only disposition; no approval can derive from it.
+
+        The v1 marker plus non-submission witness has no activation generation.
+        A current local profile UUID or readiness report cannot backfill it.
+        Unknown receipt/copy evidence is not a verified absence.
+        """
+        if self.final_receipt_evidence == "verified_final_receipt_observed":
+            return "final_receipt_precedence"
+        if self.copy_evidence == "verified_local_copy_observed":
+            return "local_copy_precedence"
+        if self.recorded_inactive is True:
+            return "recorded_loan_inactive"
+        if self.marker.state != "held_phase_unknown":
+            return "marker_unverified"
+        if self.witness.state != "non_submission_recorded":
+            return "historical_phase_ambiguous"
+        if self.final_receipt_evidence in ("not_checked", "unverified"):
+            return "local_recovery_not_qualified"
+        return "historical_activation_unattested"
 
     def current(self):
         from .canonical_adept_attempt import (
@@ -384,7 +407,7 @@ def select_historical_hold(service, request, page, *, ordinal, confirmed=False):
             final_receipt = observe_final_receipt(request, source, marker, anchor.stamp)
         selection = HistoricalHoldSelection(
             request, source, marker, witness, anchor.stamp, row["local_copy_evidence"],
-            final_receipt_evidence=final_receipt)
+            final_receipt_evidence=final_receipt, recorded_inactive=row["recorded_inactive"] is True)
         return selection if selection.current() else None
     except Exception:
         return None

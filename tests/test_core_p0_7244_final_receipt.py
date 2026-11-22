@@ -49,3 +49,28 @@ def test_exact_final_receipt_observation_precedes_replay(store, tmp_path, monkey
     }[case]
     assert store.metadata_get(marker._key(source)) == raw
     assert (final.read_bytes(), lock_path.read_bytes()) == before
+
+
+@pytest.mark.parametrize("evidence, copy, inactive, phase, witness, expected", [
+    ("verified_final_receipt_observed", "not_proven", True, "held_invalid", "none", "final_receipt_precedence"),
+    ("not_observed", "verified_local_copy_observed", True, "held_invalid", "none", "local_copy_precedence"),
+    ("not_observed", "not_proven", True, "held_phase_unknown", "non_submission_recorded", "recorded_loan_inactive"),
+    ("not_observed", "not_proven", False, "held_invalid", "non_submission_recorded", "marker_unverified"),
+    ("not_observed", "not_proven", False, "held_phase_unknown", "none", "historical_phase_ambiguous"),
+    ("not_checked", "not_requested", False, "held_phase_unknown", "non_submission_recorded", "local_recovery_not_qualified"),
+    ("unverified", "not_proven", False, "held_phase_unknown", "non_submission_recorded", "local_recovery_not_qualified"),
+    ("not_observed", "not_proven", False, "held_phase_unknown", "non_submission_recorded", "historical_activation_unattested"),
+])
+def test_rearm_disposition_never_equates_non_submission_or_profile_with_permission(
+        evidence, copy, inactive, phase, witness, expected):
+    from types import SimpleNamespace
+    from cifereca.gui.adept_historical_maintenance_line import _selected_hold_summary
+    source, _ = new_source(kind="loan", branch="loans", right="private-loan")
+    selected = review.HistoricalHoldSelection(
+        request=None, source=source,
+        marker=SimpleNamespace(state=phase),
+        witness=SimpleNamespace(state=witness),
+        stamp=(), copy_evidence=copy, final_receipt_evidence=evidence,
+        recorded_inactive=inactive)
+    assert selected.rearm_blocker == expected and selected.unlock_authorized is False
+    assert "Retéléchargement non autorisé" in _selected_hold_summary(selected)
