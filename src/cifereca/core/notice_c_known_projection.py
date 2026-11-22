@@ -31,6 +31,12 @@ _PRIMARY_HIT_SEAL_NAMES = (
     "description", "stale", "cover_state", "edition_id", "epoch",
     "observed_at", "last_seen_at",
 )
+# A frozen CoverDocumentScope is also mutable via object.__setattr__.
+# Its native fields belong to the original Core receipt, not to the view.
+_PRIMARY_DOCUMENT_SEAL_NAMES = (
+    "kind", "identity_id", "source_key", "provider_id", "credential_id",
+    "account_id", "loan_id", "artifact_id", "placement_id",
+)
 
 
 def _native_c_source_ref(document):
@@ -94,17 +100,27 @@ def known_public_primary_facts(row):
     # Frozen dataclass fields can still be replaced using object.__setattr__.
     # The original scalar receipt is independent from the mutable view row;
     # inspect native types before comparing to avoid hostile __eq__.
-    if (type(seal) is not tuple or len(seal) != 3
+    if (type(seal) is not tuple or len(seal) != 4
             or seal[0] is not _PRIMARY_FACT_TOKEN
             or type(seal[1]) is not int or seal[1] != id(hit)
             or type(seal[2]) is not tuple
             or len(seal[2]) != len(_PRIMARY_HIT_SEAL_NAMES)
             or any(type(original) not in (str, int, bool, type(None))
                    or (type(original) is str and len(original) > 8192)
-                   for original in seal[2])):
+                   for original in seal[2])
+            or type(seal[3]) is not tuple
+            or len(seal[3]) != len(_PRIMARY_DOCUMENT_SEAL_NAMES)
+            or any(type(original) not in (str, type(None))
+                   or (type(original) is str and len(original) > 512)
+                   for original in seal[3])
+            or type(hit.document) is not CoverDocumentScope):
         return None
     for name, original in zip(_PRIMARY_HIT_SEAL_NAMES, seal[2]):
         current = getattr(hit, name)
+        if type(current) is not type(original) or current != original:
+            return None
+    for name, original in zip(_PRIMARY_DOCUMENT_SEAL_NAMES, seal[3]):
+        current = getattr(hit.document, name)
         if type(current) is not type(original) or current != original:
             return None
     document = row.get("_cover_document_ref")
@@ -345,6 +361,7 @@ def merge_public_notice_c_known_rows(
         rows[-1][_PRIMARY_HIT_SEAL_FIELD] = (
             _PRIMARY_FACT_TOKEN, id(hit),
             tuple(getattr(hit, name) for name in _PRIMARY_HIT_SEAL_NAMES),
+            tuple(getattr(hit.document, name) for name in _PRIMARY_DOCUMENT_SEAL_NAMES),
         )
         by_document[hit.document.source_key] = rows[-1]
     from .notice_c_loaded_filter import attach_filter_sources

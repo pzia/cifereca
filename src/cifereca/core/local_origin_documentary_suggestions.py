@@ -63,8 +63,16 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
     """
     if (not _public_bibliographic_text(title, required=True, limit=160)
             or type(title) is not str or not 2 <= len(title.strip()) <= 160
+            # This local documentary preview must never use a forged
+            # multiline/bidi title as a query or apparent consent label.
+            # Global public C retains its own independent text contract.
+            or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for ch in title)
             or not _public_bibliographic_text(author, limit=512)
             or type(author) not in (str, type(None))
+            or (author is not None and any(
+                unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                for ch in author))
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
         raise ValueError("invalid_documentary_suggestion_request")
