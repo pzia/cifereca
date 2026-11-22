@@ -16,6 +16,8 @@ from pathlib import Path
 import stat
 from typing import Callable
 
+from .derived_variant_region_paths import PRIVATE_DERIVED_REGION, private_derived_path
+
 _ALLOWED_SUFFIXES = frozenset({".epub", ".pdf"})
 _MAX_ENTRIES = 100_000
 _MAX_FILES = 20_000
@@ -85,7 +87,8 @@ def walk_identity_root(
         (max_depth, _MAX_DEPTH),
     )):
         raise ValueError("invalid_reconciliation_walk_budget")
-    if not isinstance(root, Path) or not root.is_absolute() or ".." in root.parts:
+    if (not isinstance(root, Path) or not root.is_absolute()
+            or ".." in root.parts or private_derived_path(root)):
         raise ValueError("invalid_reconciliation_identity_root")
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
         return WalkResult((), 0, 0, ("unsupported_platform",))
@@ -111,6 +114,12 @@ def walk_identity_root(
                     if stopped():
                         reasons.add("cancelled")
                         return
+                    # Reserved Core-only staging is neither an ordinary
+                    # reconciliation candidate nor part of its scan budget.
+                    # Exclude by exact component before stat/open, including
+                    # nested namespaces and interrupted provisioning.
+                    if entry.name == PRIVATE_DERIVED_REGION:
+                        continue
                     if entries >= max_entries:
                         reasons.add("entry_budget")
                         return
