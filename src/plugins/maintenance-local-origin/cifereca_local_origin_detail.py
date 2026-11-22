@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
     LocalOriginRemoteLoanReport, LocalOriginDeclarationAdvice,
+    LocalOriginPurchaseDeclarationAdvice,
 )
 
 # The generic book-review host accepts 12 actions including preview.
@@ -370,11 +371,11 @@ class DetailController:
                 self.host.toast("Continuation privée indisponible ; aucune absence attestée.")
                 return
             self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
-            if (choice.kind == "loan"
-                    and following is None
+            if (choice.kind in ("loan", "purchase")
                     and callable(getattr(self.host, "retire_action", None))
-                    and callable(getattr(self.broker, "preview_loan_declaration", None))
-                    and any(getattr(hit, "declaration_choice", None) for hit in value.matches)):
+                    and callable(getattr(self.broker, "preview_" + choice.kind + "_declaration", None))
+                    and (any(getattr(hit, "declaration_choice", None) for hit in value.matches)
+                         or "declare-next-page" in self.choice_actions)):
                 self._show_declaration_window(original, choice, value, 0)
                 return
             if following is None:
@@ -406,8 +407,8 @@ class DetailController:
     def _show_declaration_window(self, original, choice, report, offset):
         """Display the exact selections within the host's existing action budget.
 
-        Initially only the final cache page offers this window: continuations
-        retain their existing explicit navigation without displacing actions.
+        Each partial cache page can be examined. Its continuation is explicit
+        and revokes the preceding page's candidate callbacks.
         """
         if not self.current() or self.page is not original:
             return
@@ -422,7 +423,7 @@ class DetailController:
                         if type(hit.declaration_choice) is str
                         and len(hit.declaration_choice) == 64
                         and all(c in "0123456789abcdef" for c in hit.declaration_choice))
-        window = matches[offset:offset + 9]
+        window = matches[offset:offset + (8 if report.next_token is not None else 9)]
         lease = object()
         self.declaration_view = lease
 
@@ -435,7 +436,8 @@ class DetailController:
             key = "declare-preview-" + str(index)
             label = f"Examiner la déclaration {index}"
             rows.append((label, "Édition : " + hit.edition_id + " · Branche : "
-                         + (hit.branch or "non renseignée") + " · Prêt : "
+                         + (hit.branch or "non renseignée") + " · "
+                         + ("Prêt" if choice.kind == "loan" else "Achat") + " : "
                          + (hit.resource_id or "non renseigné")))
             self.host.add_action(
                 key, label, "Aperçu seulement, sans association ni droit créé.",
@@ -456,6 +458,16 @@ class DetailController:
                                  "Afficher les choix suivants sans requête.", more)
             keys.append("declare-more")
 
+        if report.next_token is not None:
+            def advance():
+                if not current() or report.next_token in self.used:
+                    return False
+                self.declaration_view = None
+                return self._private_page(choice, original, report.next_token, report.page + 1)
+            self.host.add_action("declare-next-page", "Suite du cache privé",
+                                 "Page suivante du même cache ; les anciens choix expirent.", advance)
+            keys.append("declare-next-page")
+
         def back():
             if not current():
                 return False
@@ -471,18 +483,26 @@ class DetailController:
             self.host.add_group("Occurrence à examiner", tuple(rows))
 
     def _preview_declaration(self, original, choice, selected, current):
-        if not current() or selected.declaration_choice in self.used:
+        if (not current() or selected.declaration_choice in self.used
+                or choice.kind not in ("loan", "purchase")):
             return False
+        operation = getattr(self.broker, "preview_" + choice.kind + "_declaration", None)
+        if not callable(operation):
+            return False
+        expected = (LocalOriginDeclarationAdvice if choice.kind == "loan"
+                    else LocalOriginPurchaseDeclarationAdvice)
+        resource_field = "loan_id" if choice.kind == "loan" else "purchase_id"
+        resource_label = "Prêt" if choice.kind == "loan" else "Achat"
         token = selected.declaration_choice
         self.used.add(token)
         self.declaration_view = None
 
         def display(value):
-            if (type(value) is not LocalOriginDeclarationAdvice
+            if (type(value) is not expected
                     or value.trust != "user_declaration"
                     or value.association_authorized is not False
                     or (value.provider_id, value.credential_id, value.account_id,
-                        value.edition_id, value.loan_id) != (
+                        value.edition_id, getattr(value, resource_field)) != (
                             choice.provider_id, choice.credential_id, choice.account_id,
                             selected.edition_id, selected.resource_id)):
                 self.host.toast("Déclaration indisponible ; aucune association créée.")
@@ -490,7 +510,7 @@ class DetailController:
                 self.host.add_group("Aperçu de déclaration utilisateur", (
                     ("Compte", value.provider_id + " · " + value.credential_id
                      + " · " + (value.account_id or "principal")),
-                    ("Édition", value.edition_id), ("Prêt", value.loan_id),
+                    ("Édition", value.edition_id), (resource_label, getattr(value, resource_field)),
                     ("Effet", "Déclaration utilisateur uniquement. Aucune origine attestée, "
                      "aucune modification de droit, de fichier ou de placement."),
                     ("Disponibilité", "Confirmation native non raccordée ; aucune écriture."),
@@ -498,7 +518,7 @@ class DetailController:
             self._show_choice_window(original, 0)
 
         return self._submit(
-            lambda: self.broker.preview_loan_declaration(token=token, confirmed=True), display)
+            lambda: operation(token=token, confirmed=True), display)
 
     def compare_remote_loan(self, choice, original):
         if (self.busy or not self.current() or self.page is not original

@@ -27,7 +27,10 @@ from .local_origin_remote_loans import (
     RemoteLoanDocumentaryMatch, available_remote_loan_catalogues, compare_remote_loan_catalogue,
 )
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
-from .local_origin_declaration_bridge import preview_private_loan_declaration
+from .local_origin_declaration_bridge import (
+    preview_private_loan_declaration, preview_private_purchase_declaration,
+)
+from ..plugin_api.local_origin_detail import LocalOriginPurchaseDeclarationAdvice
 from .local_origin_suggestion_operator import (
     admit_local_origin_suggestion, continue_local_origin_suggestion,
     run_local_origin_suggestion,
@@ -283,8 +286,9 @@ class LocalOriginDetailReadBrokerImpl:
                     return None
                 next_token = token_hex(32)
             candidate_tokens = tuple(
-                token_hex(32) if choice.kind == "loan" and result["status"] == "partial"
-                else None for _ in result["candidates"])
+                token_hex(32) if choice.kind in ("loan", "purchase") and result["status"] == "partial"
+                and row.comparison != "purchase_description_conflicting"
+                else None for row in result["candidates"])
             report = LocalOriginPrivateReport(
                 result["status"], choice.scope.provider_id, choice.scope.credential_id,
                 choice.scope.account_id, choice.kind,
@@ -330,7 +334,7 @@ class LocalOriginDetailReadBrokerImpl:
         except Exception:
             return None
 
-    def preview_loan_declaration(self, *, token, confirmed=False):
+    def _preview_declaration(self, *, token, kind, confirmed=False):
         """One explicitly picked loan from the latest exact cached comparison.
 
         The existing declaration authority prepares the preview. The public
@@ -343,7 +347,7 @@ class LocalOriginDetailReadBrokerImpl:
             if self._revoked:
                 return None
             selected = self._declaration_choices.get(token)
-            if selected is None:
+            if selected is None or selected[0].kind != kind:
                 return None
             self._declaration_choices.clear()
             window = self._declaration_window
@@ -364,17 +368,26 @@ class LocalOriginDetailReadBrokerImpl:
             # The bridge revalidates request/account/file before and after
             # the writer preview. Inside its transaction, pass only the
             # revocable view/activation guard; the writer owns SQL scope.
-            preview = preview_private_loan_declaration(
+            operation = (preview_private_loan_declaration if kind == "loan"
+                         else preview_private_purchase_declaration)
+            preview = operation(
                 self._service, choice=choice, candidate=candidate,
                 continuation=continuation, confirmed=True, still_current=view_live)
             if preview is None or not live():
                 return None
             source, scope = candidate.source, candidate.source.scope
-            return LocalOriginDeclarationAdvice(
-                scope.provider_id, scope.credential_id, scope.account_id,
-                source.edition_id, source.resource_id)
+            advice = (LocalOriginDeclarationAdvice if kind == "loan"
+                      else LocalOriginPurchaseDeclarationAdvice)
+            return advice(scope.provider_id, scope.credential_id, scope.account_id,
+                          source.edition_id, source.resource_id)
         except Exception:
             return None
+
+    def preview_loan_declaration(self, *, token, confirmed=False):
+        return self._preview_declaration(token=token, confirmed=confirmed, kind="loan")
+
+    def preview_purchase_declaration(self, *, token, confirmed=False):
+        return self._preview_declaration(token=token, confirmed=confirmed, kind="purchase")
 
     def compare_remote_loan(self, *, token, confirmed=False):
         if (confirmed is not True or type(token) is not str
@@ -458,6 +471,6 @@ class LocalOriginDetailReadFactory:
         factory = ActivationScopedReadFactory(
             lambda: LocalOriginDetailReadBrokerImpl(self._service, activation_current=current),
             ("preview", "next_page", "search_public", "compare_private", "compare_remote_loan",
-             "preview_loan_declaration", "cancel"),
+             "preview_loan_declaration", "preview_purchase_declaration", "cancel"),
         )
         return factory.for_activation(plugin_id, current=current)

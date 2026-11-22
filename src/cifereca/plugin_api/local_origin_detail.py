@@ -1,5 +1,5 @@
 """#7092 public contextual known-C review; no rights, private paths or requests."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Protocol, runtime_checkable
 
 
@@ -65,7 +65,7 @@ class LocalOriginPrivateMatch:
     observed_at: int | None
     branch: str = ""
     resource_id: str = ""
-    declaration_choice: str | None = None
+    declaration_choice: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -178,3 +178,20 @@ class LocalOriginDeclarationAdvice:
 class LocalOriginDeclarationReviewBroker(LocalOriginDetailReadBroker, Protocol):
     def preview_loan_declaration(self, *, token: str,
                                  confirmed: bool = False) -> LocalOriginDeclarationAdvice | None: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginPurchaseDeclarationAdvice:
+    provider_id: str
+    credential_id: str
+    account_id: str
+    edition_id: str
+    purchase_id: str
+    trust: str = "user_declaration"
+    association_authorized: bool = False
+
+
+@runtime_checkable
+class LocalOriginPurchaseDeclarationReviewBroker(LocalOriginDetailReadBroker, Protocol):
+    def preview_purchase_declaration(self, *, token: str,
+                                     confirmed: bool = False) -> LocalOriginPurchaseDeclarationAdvice | None: ...
