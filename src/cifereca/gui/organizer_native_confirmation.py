@@ -34,6 +34,7 @@ def has_native_organizer_review(manager, resolved):
 class NativeOrganizerConfirmation:
     def __init__(self, window, resolved, lease, *, Gtk):
         self.window, self.resolved, self.lease = window, resolved, lease
+        self._identity_id = getattr(lease, "identity_id", None)
         self._page = self._used = self._dialog = None
         self._disposed = False
         self.button = Gtk.Button(label="Confirmer le renommage…")
@@ -45,7 +46,12 @@ class NativeOrganizerConfirmation:
         # Revocation is a negative-only guard. A disposed activation may
         # raise while GTK delivers a late response or worker completion.
         try:
-            return not self._disposed and self.lease.is_current() is True
+            return (not self._disposed
+                    and type(self._identity_id) is str
+                    and 0 < len(self._identity_id) <= 1024
+                    and self._displayable_path(self._identity_id)
+                    and self.lease.identity_id == self._identity_id
+                    and self.lease.is_current() is True)
         except Exception:
             return False
 
@@ -121,7 +127,7 @@ class NativeOrganizerConfirmation:
         try:
             dialog = Adw.MessageDialog.new(
                 self.window, "Confirmer le renommage ?",
-                "Profil : " + self.lease.identity_id + "\n"
+                "Profil : " + self._identity_id + "\n"
                 "Chemin actuel : " + entry.current + "\n"
                 "Nom proposé : " + entry.proposed + "\n\n"
                 "Un seul renommage, sans suppression de doublon ni changement de droit. "
@@ -170,7 +176,7 @@ class NativeOrganizerConfirmation:
                     return None
                 command = admit(
                     self.window.plugin_manager, self.resolved, page,
-                    service=self.window.service, identity_id=self.lease.identity_id,
+                    service=self.window.service, identity_id=self._identity_id,
                     confirmed=True, view_current=current)
                 return command() if callable(command) and current() else None
 
