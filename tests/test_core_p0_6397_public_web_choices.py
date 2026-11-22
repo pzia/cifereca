@@ -154,3 +154,52 @@ def test_corrupt_canonical_row_is_not_suppressed_as_missing_source(tmp_path):
             read_public_web_choices(db, result.document)
         with pytest.raises(ValueError):
             choose(db, menu, menu.choices[0])
+
+
+def test_corrected_link_keeps_other_provider_and_same_provider_record_after_restart(tmp_path):
+    """#6397: replacement of a single contribution, not of the whole menu."""
+    filename = tmp_path / "corrected-choices.sqlite"
+    unchanged = "https://books.example.org/title/independent"
+    corrected = "https://books.example.org/title/corrected"
+    with closing(Storage(filename)) as db:
+        a = source(db, "seller-a", "a", [link("seller-a", URL)])
+        b = source(db, "seller-a", "b", [link("seller-a", OTHER)])
+        c = source(db, "seller-b", "c", [link("seller-b", unchanged)])
+        target = a.observation.key.edition_id
+        for item in (a, b, c):
+            aggregate = publish(db, target, item)
+        old = read_public_web_choices(db, aggregate.document)
+        old_by_record = {option.record_id: option for option in old.choices}
+        assert set(old_by_record) == {"a", "b", "c"}
+        assert {record: choose(db, old, option)
+                for record, option in old_by_record.items()} == {
+                    "a": URL, "b": OTHER, "c": unchanged,
+                }
+
+        # A new observation immediately invalidates only its own link even
+        # before consolidation catches up. An independent choice cannot be
+        # substituted when the obsolete choice is activated.
+        updated = source(db, "seller-a", "a", [link("seller-a", corrected)], now=101)
+        assert choose(db, old, old_by_record["a"]) is None
+        assert choose(db, old, old_by_record["b"]) == OTHER
+        assert choose(db, old, old_by_record["c"]) == unchanged
+        pending = read_public_web_choices(db, aggregate.document)
+        assert pending.epoch == old.epoch
+        assert {option.record_id for option in pending.choices} == {"b", "c"}
+
+        new_c = publish(db, target, updated)
+        new = read_public_web_choices(db, new_c.document)
+        assert new.document == old.document and new.epoch > old.epoch
+        new_by_record = {option.record_id: option for option in new.choices}
+        assert set(new_by_record) == set(old_by_record)
+        assert all(choose(db, old, option) is None for option in old.choices)
+        for item in (updated, b, c):
+            assert evict_notice_cover(db, item.document, expected_epoch=item.epoch)
+    with closing(Storage(filename)) as db:
+        assert read_public_web_choices(db, new.document) == new
+        assert {record: choose(db, new, option)
+                for record, option in new_by_record.items()} == {
+                    "a": corrected, "b": OTHER, "c": unchanged,
+                }
+        assert all(choose(db, old, option) is None for option in old.choices)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
