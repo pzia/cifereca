@@ -17,6 +17,7 @@ from ..plugin_api.loan_scope import loan_matches_account
 from .borrow_for_identity_action_scope import capture_cross_profile_borrow_scope
 from .borrow_for_identity_discovery import (
     PossibleBorrowLender, discover_possible_borrow_lenders, possible_lender_matches,
+    possible_lender_session_matches,
 )
 from .borrow_for_identity_executor import _result
 
@@ -83,6 +84,9 @@ def execute_normal_lender_borrow(
         session = service._sessions.get(service._session_key(
             account.provider_id, account.credential_id,
         ))
+        if (not possible_lender_session_matches(captured_candidate, session)
+                or not possible_lender_session_matches(matches[0], session)):
+            return revoked
         lease = capture_cross_profile_borrow_scope(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=account, exact_notice=exact_notice,
@@ -125,6 +129,7 @@ def execute_normal_lender_borrow(
                         captured_candidate, exact_notice,
                         requesting_identity_id=requesting_identity_id,
                     )
+                    and possible_lender_session_matches(captured_candidate, session)
                     and runtime.enabled is True
                     and runtime.state == "ready"
                     and descriptor.id == plugin_id

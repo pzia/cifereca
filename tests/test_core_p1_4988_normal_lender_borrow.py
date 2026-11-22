@@ -377,3 +377,47 @@ def test_revision_changed_after_claim_never_dispatches(harness, monkeypatch):
     assert execute(service, option, item, scope)["status"] == "blocked"
     assert session.actions == 0
     assert service.storage.loan_borrow_state(original_key)["status"] == "blocked"
+
+
+@pytest.mark.parametrize("change", ["replacement", "generation", "generation_type"])
+def test_old_lender_consent_cannot_rebind_same_account_to_new_session(harness, change):
+    service, account, session, item, option, scope = setup(harness)
+    key = borrow_claim_key(account, item)
+    replacement = session
+    if change == "replacement":
+        replacement = BorrowingOffline(account, service)
+        service._sessions[service._session_key(
+            account.provider_id, account.credential_id,
+        )] = replacement
+    elif change == "generation":
+        session._epoch += 1
+    else:
+        session._epoch = str(session._epoch)
+    # Deliberately do not rotate the service epochs. Both sessions have
+    # the same legitimate Account object and the same native notice.
+    assert scope()
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert service.storage.loan_borrow_state(key) is None
+    assert session.actions == replacement.actions == 0
+    fresh, = discover_possible_borrow_lenders(
+        service, requesting_identity_id="default", notices=(item,),
+    )
+    assert execute(service, fresh, item, scope)["status"] == "confirmed"
+    assert replacement.actions == 1
+    assert service.storage.loan_borrow_state(key)["status"] == "confirmed"
+
+
+def test_lender_generation_change_during_claim_prevents_dispatch(harness, monkeypatch):
+    service, account, session, item, option, scope = setup(harness)
+    key = borrow_claim_key(account, item)
+    original = service.storage.loan_borrow_claim_once
+
+    def after_claim(key, op):
+        receipt = original(key, op)
+        session._epoch += 1
+        return receipt
+
+    monkeypatch.setattr(service.storage, "loan_borrow_claim_once", after_claim)
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(key)["status"] == "blocked"
