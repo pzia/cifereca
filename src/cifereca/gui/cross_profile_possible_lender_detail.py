@@ -83,6 +83,9 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
                         or type(rows) is not tuple or not 1 <= len(rows) <= 64
+                        # Repeated references to the same lender receipt are
+                        # not distinct accounts. Refuse ambiguous N-way UI.
+                        or len({id(row) for row in rows}) != len(rows)
                         or any(not lender_current(row) for row in rows)):
                     return
                 details = [
