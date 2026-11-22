@@ -155,7 +155,13 @@ class CoverDecisionCache:
     ) -> None:
         for callback in callbacks:
             try:
-                callback(change)
+                # One subscriber must not rekey a later subscriber's event.
+                callback(CoverDecisionChange(
+                    scope=CoverDecisionCache._snapshot_scope(change.scope),
+                    revision=change.revision, generation=change.generation,
+                    kind=change.kind, decision=change.decision,
+                    cause=change.cause, sequence=change.sequence,
+                ))
             except Exception:
                 # A failing detail listener cannot block a list listener.
                 _LOG.exception("cover-decision subscriber failed")
@@ -175,20 +181,36 @@ class CoverDecisionCache:
             raise ValueError("invalid cover scope kind")
         scope.__post_init__()
 
+    @classmethod
+    def _snapshot_scope(cls, scope: CoverDocumentScope) -> CoverDocumentScope:
+        """Do not retain a caller's mutable dataclass as an N2 dictionary key.
+
+        Frozen dataclass instances can still be changed by object.__setattr__.
+        The key, token and notification must not share an object identity.
+        """
+        cls._require_scope(scope)
+        return CoverDocumentScope(
+            kind=scope.kind, identity_id=scope.identity_id,
+            source_key=scope.source_key, provider_id=scope.provider_id,
+            credential_id=scope.credential_id, account_id=scope.account_id,
+            loan_id=scope.loan_id, artifact_id=scope.artifact_id,
+            placement_id=scope.placement_id,
+        )
+
     def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
         """Start a complete or partial observation, revoking older work."""
-        self._require_scope(scope)
+        scope = self._snapshot_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         with self._lock:
             previous = self._slots.get(scope)
             if previous is not None and revision < previous.token.revision:
                 raise ValueError("stale cover revision")
-            token = CoverCacheToken(scope, revision, self._bump())
+            token = CoverCacheToken(self._snapshot_scope(scope), revision, self._bump())
             self._record(scope, _Slot(token))
             callbacks = self._listeners(scope)
             event = CoverDecisionChange(
-                scope, revision, token.generation, "refresh",
+                self._snapshot_scope(scope), revision, token.generation, "refresh",
                 sequence=self._next_event(),
             )
         self._notify(callbacks, event)
@@ -411,7 +433,7 @@ class CoverDecisionCache:
             self._slots.move_to_end(token.scope)
             callbacks = self._listeners(token.scope)
             event = CoverDecisionChange(
-                token.scope, token.revision, token.generation,
+                self._snapshot_scope(token.scope), token.revision, token.generation,
                 "resolved", decision=decision,
                 sequence=self._next_event(),
             )
@@ -422,7 +444,7 @@ class CoverDecisionCache:
         self, scope: CoverDocumentScope, *,
         cause: CoverInvalidationCause,
     ) -> None:
-        self._require_scope(scope)
+        scope = self._snapshot_scope(scope)
         if cause not in (
             "catalogue_changed", "account_epoch_changed", "identity_changed",
             "artifact_changed", "placement_changed", "origin_link_changed",
@@ -436,10 +458,13 @@ class CoverDecisionCache:
             generation = self._bump()
             # Preserve last known source revision; later workers must advance
             # to a newer producer revision on true source changes.
-            self._record(scope, _Slot(CoverCacheToken(scope, revision, generation)))
+            self._record(scope, _Slot(CoverCacheToken(
+                self._snapshot_scope(scope), revision, generation,
+            )))
             callbacks = self._listeners(scope)
             event = CoverDecisionChange(
-                scope, revision, generation, "invalidated", cause=cause,
+                self._snapshot_scope(scope), revision, generation,
+                "invalidated", cause=cause,
                 sequence=self._next_event(),
             )
         self._notify(callbacks, event)
@@ -453,8 +478,7 @@ class CoverDecisionCache:
         for index, scope in enumerate(scopes):
             if index >= self._max_scopes:
                 raise ValueError("cover invalidation batch too large")
-            self._require_scope(scope)
-            unique[scope] = None
+            unique[self._snapshot_scope(scope)] = None
         # Preserve the exact-event validation behavior even for empty batches.
         if not unique:
             if cause not in (
@@ -475,7 +499,7 @@ class CoverDecisionCache:
     ) -> CoverSubscription:
         if not callable(callback):
             raise TypeError("invalid cover subscriber")
-        self._require_scope(scope)
+        scope = self._snapshot_scope(scope)
         with self._lock:
             if self._subscriber_count >= self._max_subscribers:
                 raise ValueError("too many cover decision subscribers")
@@ -483,7 +507,7 @@ class CoverDecisionCache:
             key = self._listener_id
             self._subscribers.setdefault(scope, {})[key] = callback
             self._subscriber_count += 1
-        return CoverSubscription(self, scope, key)
+        return CoverSubscription(self, self._snapshot_scope(scope), key)
 
     def _unsubscribe(self, scope: CoverDocumentScope, key: int) -> None:
         with self._lock:
