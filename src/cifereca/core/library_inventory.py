@@ -412,15 +412,16 @@ def scan_identity_roots(
                 for entry in entries:
                     if stopped():
                         return
+                    # Private Core/ADEPT staging is not ordinary stock and
+                    # must not spend the inventory entry budget. Decide by
+                    # exact name before stat/open or accounting.
+                    if (entry.name == PRIVATE_DERIVED_REGION
+                            or private_adept_stage_path(Path(entry.name))):
+                        continue
                     if result.entries >= limits.entries:
                         result.reasons.add('entry_budget')
                         return
                     result.entries += 1
-                    # This namespace is owned by the derived journal, not
-                    # ordinary book discovery. Never open or hash its contents.
-                    if (entry.name == PRIVATE_DERIVED_REGION
-                            or private_adept_stage_path(Path(entry.name))):
-                        continue
                     is_directory = False
                     try:
                         info = entry.stat(follow_symlinks=False)
