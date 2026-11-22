@@ -1,5 +1,6 @@
 from contextlib import closing
 
+from cifereca.core.notice_c_enrichment_intent import ExistingLoanIntent, request_notice_enrichment
 from cifereca.core.notice_c_loan_enrichment import request_existing_loan_cache_repairs
 from cifereca.core.notice_c_initial_publication import request_initial_publication
 from cifereca.core.notice_c_cover_index import canonical_cover_document_ref, read_consolidated_notice_cover
@@ -24,10 +25,18 @@ def test_existing_loan_only_repairs_independent_exact_public_cache(tmp_path):
         assert read_consolidated_notice_cover(db, document) is None
 
         def request(rows):
-            return request_existing_loan_cache_repairs(
-                host, rows, identity_id="alice", account_epoch=3, source_epoch=1,
-                descriptors=borrower_descriptors(), now=200,
+            intent = ExistingLoanIntent(
+                host, rows, "alice", 3, 1, borrower_descriptors(),
             )
+            admitted = request_notice_enrichment(db, intent, now=200)
+            assert admitted.changed is None
+            return admitted.refs
+
+        with closing(Storage(tmp_path / "foreign.sqlite")) as foreign:
+            intent = ExistingLoanIntent(host, [active], "alice", 3, 1, borrower_descriptors())
+            assert request_notice_enrichment(foreign, intent, now=200).refs == ()
+            assert read_consolidated_notice_cover(db, document) is None
+            assert foreign.entitlements() == foreign.acquisitions() == foreign.placements() == []
 
         for other in (loan(state="active", source_credential=account.credential_id,
                            source_account_id="other"),
@@ -38,6 +47,10 @@ def test_existing_loan_only_repairs_independent_exact_public_cache(tmp_path):
             assert request([other]) == ()
         ref, = request([active, active])
         assert request([active]) == (ref,)
+        assert request_existing_loan_cache_repairs(
+            host, [active], identity_id="alice", account_epoch=3, source_epoch=1,
+            descriptors=borrower_descriptors(), now=200,
+        ) == (ref,)
         assert request_initial_publication(db, source, now=200) == ref
         assert read_consolidated_notice_cover(db, document) is None
         host._source_context_epoch += 1

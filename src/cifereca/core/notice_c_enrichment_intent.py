@@ -2,13 +2,15 @@
 
 Reuse the existing #4982 journal and specialised validators. An intent
 is not a right, a transport grant, a new scheduler or a plugin API.
-Loan/import remain unsupported until their own native proof ports exist.
+Existing loans use the bounded cache-only native repair port.
+Import remains unsupported without a qualified native proof port.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..models import Loan
 from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 from .notice_cover_repository import PersistedNoticeCover
@@ -32,7 +34,17 @@ class CatalogueReparseIntent:
     expected_generation: int
 
 
-NoticeEnrichmentIntent = ExistingPurchaseIntent | CatalogueReparseIntent
+@dataclass(frozen=True, slots=True, repr=False)
+class ExistingLoanIntent:
+    service: object = field(compare=False)
+    rows: list[Loan] = field(compare=False)
+    identity_id: str
+    account_epoch: int
+    source_epoch: int
+    descriptors: object = field(compare=False)
+
+
+NoticeEnrichmentIntent = ExistingPurchaseIntent | CatalogueReparseIntent | ExistingLoanIntent
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,4 +77,16 @@ def request_notice_enrichment(storage, intent: NoticeEnrichmentIntent, *, now):
         # The existing cache-only port returns the authoritative job ref,
         # not a change notification. Do not guess its dedup state.
         return EnrichmentAdmission((ref,), None)
+    if type(intent) is ExistingLoanIntent:
+        from .notice_c_loan_enrichment import request_existing_loan_cache_repairs
+        # The existing worker owns its storage and context fence. Never
+        # dispatch an intent to a different journal or transfer authority.
+        if getattr(intent.service, "storage", None) is not storage:
+            return EnrichmentAdmission((), None)
+        refs = request_existing_loan_cache_repairs(
+            intent.service, intent.rows, identity_id=intent.identity_id,
+            account_epoch=intent.account_epoch, source_epoch=intent.source_epoch,
+            descriptors=intent.descriptors, now=now,
+        )
+        return EnrichmentAdmission(refs, None)
     raise ValueError("notice_enrichment_trigger_unsupported")
