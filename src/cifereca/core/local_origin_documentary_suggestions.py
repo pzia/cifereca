@@ -103,6 +103,11 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
         if (type(hit) is PublicNoticeCHit and type(hit.title) is str
             and bool(hit.title) and displayable(hit.title)
             and displayable(hit.author)
+            # The collection/docbase is a source coordinate displayed by
+            # the local-origin detail and its cross-surface ranking. An
+            # injected/malformed C hit must not spoof a different origin.
+            and type(hit.docbase) is str and 0 < len(hit.docbase) <= 512
+            and displayable(hit.docbase)
             # These coordinates are rendered alongside the title in the
             # local review; even a malformed C DTO must not spoof a label.
             and all(displayable(getattr(hit, field)) for field in (
