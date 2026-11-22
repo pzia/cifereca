@@ -49,26 +49,49 @@ _CONFIRM = re.compile(r"\bconfirmer\s+l[’']emprunt\b", re.IGNORECASE)
 _INLINE = frozenset(("span", "strong", "small", "b", "em", "a", "label", "i"))
 
 
-def _inline_visible_text(node: _Node, depth: int = 0) -> str:
-    """Bounded ephemeral text for a single DOM label; never returned/logged."""
-    if (depth > 12 or node.tag in _HIDDEN or "hidden" in node.attrs
-            or node.attrs.get("aria-hidden") == "true"):
-        return ""
+def _inline_visible_segments(node: _Node) -> tuple[str, ...]:
+    """Bounded ephemeral label segments; never join across a block boundary."""
+    def chunks(current: _Node, depth: int):
+        if (depth > 12 or current.tag in _HIDDEN or "hidden" in current.attrs
+                or current.attrs.get("aria-hidden") == "true"):
+            # A skipped subtree cannot glue unrelated visible text together.
+            yield None
+            return
+        for child in current.children:
+            if isinstance(child, str):
+                yield child
+            elif isinstance(child, _Node) and child.tag in _INLINE:
+                yield from chunks(child, depth + 1)
+            else:
+                yield None
+
+    segments: list[str] = []
     parts: list[str] = []
     remaining = 512
-    for child in node.children:
+    for chunk in chunks(node, 0):
         if remaining <= 0:
             break
-        if isinstance(child, str):
-            fragment = child[:remaining]
-        elif isinstance(child, _Node) and child.tag in _INLINE:
-            fragment = _inline_visible_text(child, depth + 1)[:remaining]
-        else:
+        if chunk is None:
+            if parts:
+                segments.append(" ".join(" ".join(parts).split()))
+                parts.clear()
             continue
+        fragment = chunk[:remaining]
         parts.append(fragment)
         remaining -= len(fragment)
-    return " ".join(" ".join(parts).split())
+    if parts:
+        segments.append(" ".join(" ".join(parts).split()))
+    return tuple(segments)
 
+
+def _matches_label(node: _Node, pattern, *, confirmation: bool = False) -> bool:
+    for label in _inline_visible_segments(node):
+        if confirmation:
+            label = re.sub(r"l([’'])\s+emprunt", r"l\1emprunt",
+                           label, flags=re.IGNORECASE)
+        if pattern.search(label):
+            return True
+    return False
 
 def _empty(page: str, status: str = "ok") -> dict[str, object]:
     # Fixed keys and enumerated values only, never user-supplied input.
@@ -173,16 +196,13 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
         # A parent and its formatted child can carry the same phrase. Count
         # the deepest matching label, not both. An outer block cannot join
         # unrelated child paragraphs into a fabricated positive marker.
-        label_text = _inline_visible_text(node)
-        if page == "confirmation":
-            label_text = re.sub(r"l([’'])\s+emprunt", r"l\1emprunt",
-                                label_text, flags=re.IGNORECASE)
+        confirmation = page == "confirmation"
         for key, pattern in patterns:
-            if not pattern.search(label_text):
+            if not _matches_label(node, pattern, confirmation=confirmation):
                 continue
             if any(
                 isinstance(child, _Node)
-                and pattern.search(_inline_visible_text(child))
+                and _matches_label(child, pattern, confirmation=confirmation)
                 for child in node.children
             ):
                 continue
