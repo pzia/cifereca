@@ -51,6 +51,35 @@ def checked_tree(path: Path):
     if not seen:
         raise DirectoryMigrationError('Arborescence de migration inaccessible.')
 
+def _migration_descendants(path: Path):
+    """List ordinary descendants without entering a newly appeared private region.
+
+    The initial checked_tree is only a preflight. The follow-up hash,
+    untracked-file scan and recovery cleanup must each veto the reserved
+    namespace *before* descending, even if the tree changed meanwhile.
+    """
+    def unavailable(error):
+        raise DirectoryMigrationError('Arborescence de migration inaccessible.') from error
+
+    seen = False
+    for current, directories, files in os.walk(
+            path, topdown=True, onerror=unavailable, followlinks=False):
+        seen = True
+        if PRIVATE_DERIVED_REGION in directories or PRIVATE_DERIVED_REGION in files:
+            raise DirectoryMigrationError(
+                "Zone privée de publication dérivée : migration non qualifiée.")
+        for name in (*directories, *files):
+            node = Path(current) / name
+            if private_derived_path(node):
+                raise DirectoryMigrationError(
+                    "Zone privée de publication dérivée : migration non qualifiée.")
+            if node.is_symlink() or not (node.is_dir() or node.is_file()):
+                raise DirectoryMigrationError(f'Entrée non régulière refusée : {node}')
+            yield node
+    if not seen:
+        raise DirectoryMigrationError('Arborescence de migration inaccessible.')
+
+
 def fingerprint(path: Path) -> str:
     checked_tree(path)
     if path.is_file():
@@ -58,7 +87,7 @@ def fingerprint(path: Path) -> str:
     if not path.is_dir():
         raise DirectoryMigrationError(f'Chemin disparu : {path}')
     digest = hashlib.sha256(b'directory-v1\0')
-    for node in sorted(path.rglob('*')):
+    for node in sorted(_migration_descendants(path)):
         digest.update(node.relative_to(path).as_posix().encode() + b'\0')
         digest.update((('file:' + sha256_file(node)) if node.is_file() else 'directory').encode() + b'\0')
     return 'directory:' + digest.hexdigest()
@@ -255,7 +284,7 @@ class DirectoryMigration:
             # Reject newly appearing source files instead of abandoning them.
             for change in plan['changes']:
                 source = Path(change['old'])
-                for path in source.rglob('*') if source.exists() else []:
+                for path in _migration_descendants(source) if source.exists() else []:
                     if path.is_file() and not any(path.is_relative_to(Path(e['old'])) for e in plan['entries']):
                         raise DirectoryMigrationError('Nouveau fichier dans la source ; annulez puis relancez la migration.')
             for change in plan['changes']:
@@ -274,13 +303,13 @@ class DirectoryMigration:
                 if source.is_dir():
                     # A crash may have removed only some bundle members. Check
                     # every remaining file against the committed target.
-                    for file in sorted(source.rglob('*')):
+                    for file in sorted(_migration_descendants(source)):
                         if file.is_file():
                             counterpart = target / file.relative_to(source)
                             if not counterpart.is_file() or sha256_file(file) != sha256_file(counterpart):
                                 raise DirectoryMigrationError('Le fichier source a changé ; il est conservé. Reprise nécessaire.')
                             file.unlink()
-                    for directory in sorted((p for p in source.rglob('*') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                    for directory in sorted((p for p in _migration_descendants(source) if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
                         directory.rmdir()
                     source.rmdir()
                 else:
@@ -291,7 +320,7 @@ class DirectoryMigration:
             source = Path(change['old'])
             if source.exists():
                 checked_tree(source)
-                for directory in sorted((p for p in source.rglob('*') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                for directory in sorted((p for p in _migration_descendants(source) if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
                     try: directory.rmdir()
                     except OSError: pass
                 try: source.rmdir()
