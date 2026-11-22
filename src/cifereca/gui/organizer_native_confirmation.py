@@ -140,6 +140,8 @@ class NativeOrganizerConfirmation:
             # A GTK mount/presentation failure must not strand the exact
             # one-shot review with a disabled button or queue Core work.
             # No response has been accepted: preserve the production fence.
+            # A late signal from closing a half-mounted dialog is inert.
+            answered = True
             self._dialog = None
             try:
                 close = getattr(dialog, "close", None)
