@@ -234,6 +234,7 @@ def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
     "empty", "too_many", "tuple_rows", "generator", "non_dict",
     "no_id", "invalid_id", "invalid_id_del", "invalid_id_too_long",
     "invalid_id_not_text", "no_directory",
+    "invalid_id_c1", "invalid_id_bidi", "invalid_id_separator", "invalid_id_zwj",
 ])
 def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
     tmp_path, case,
@@ -254,6 +255,10 @@ def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
         "invalid_id_del": [{"id": "id1\x7fforged", "directory_name": "library"}],
         "invalid_id_too_long": [{"id": "x" * 1025, "directory_name": "library"}],
         "invalid_id_not_text": [{"id": None, "directory_name": "library"}],
+        "invalid_id_c1": [{"id": "id1\x85fake", "directory_name": "library"}],
+        "invalid_id_bidi": [{"id": "id1\u202efake", "directory_name": "library"}],
+        "invalid_id_separator": [{"id": "id1\u2028fake", "directory_name": "library"}],
+        "invalid_id_zwj": [{"id": "id1\u200dfake", "directory_name": "library"}],
         "no_directory": [{"id": "id1"}],
     }
     try:
