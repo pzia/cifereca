@@ -259,7 +259,7 @@ def test_late_probe_result_cannot_describe_changed_account(monkeypatch, changed)
     elif changed == "draft_option":
         editor["option_fields"]["experimental_http_probe"].text = "off"
     elif changed == "draft_enabled":
-        editor["enabled"].set_active(False)
+        editor["enabled"].active = False
     elif changed == "saved_secret":
         saved["credentials"]["username"] = "NEW-SYNTHETIC-USER"
     elif changed == "saved_option":
