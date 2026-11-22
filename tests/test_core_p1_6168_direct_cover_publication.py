@@ -35,8 +35,9 @@ def test_one_exact_core_library_decision_paints_list_and_detail():
     cache.subscribe(decision.scope, b.append)
     token = cache.begin(decision.scope, revision=10)
     assert cache.publish_resolved(token, decision)
-    assert cache.peek(decision.scope, revision=10) is decision
-    assert a[-1].decision is decision and b[-1].decision is decision
+    assert cache.peek(decision.scope, revision=10) == decision
+    assert a[-1].decision == decision and b[-1].decision == decision
+    assert a[-1].decision is not b[-1].decision
     assert a[-1].generation == b[-1].generation
     assert [x.kind for x in a] == ["refresh", "resolved"]
 
@@ -52,7 +53,7 @@ def test_loan_supplier_and_verified_placement_publish_same_decision_to_both_view
     cache.subscribe(decision.scope, events.append)
     token = cache.begin(decision.scope, revision=4)
     assert cache.publish_resolved(token, decision)
-    assert events[-1].decision is decision
+    assert events[-1].decision == decision
     assert cache.peek(decision.scope, revision=4).uri == decision.uri
     assert current.thumbnail_url is None
     assert not cache.publish_resolved(token, decision)
@@ -204,7 +205,7 @@ def test_malformed_token_does_not_consume_valid_slot(field, value, direct):
     assert all(cache.n1_latency_stats()[f"n1_{status}_count"] == 0
                for status in ("selected", "missing", "pending", "ambiguous"))
     assert cache.publish_resolved(token, valid)
-    assert cache.peek(valid.scope, revision=1) is valid
+    assert cache.peek(valid.scope, revision=1) == valid
     assert [event.kind for event in events] == ["refresh", "resolved"]
 
 
@@ -215,4 +216,4 @@ def test_zero_revision_remains_valid_for_initial_snapshot():
     )
     token = cache.begin(valid.scope, revision=0)
     assert cache.publish_resolved(token, valid)
-    assert cache.peek(valid.scope, revision=0) is valid
+    assert cache.peek(valid.scope, revision=0) == valid
