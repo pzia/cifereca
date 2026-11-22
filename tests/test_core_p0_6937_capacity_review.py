@@ -226,3 +226,14 @@ def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
         assert stage.samefile(intent.candidate_path)
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("raw", [
+    "unpaired-\ud800", "unpaired-\udfff", "pair-\ud800broken",
+])
+def test_unencodable_unicode_receipt_is_closed_conflict_not_raw_codec_error(raw):
+    key = journal._PREFIX + "0" * 64
+    with pytest.raises(journal.DerivedJournalConflict, match="derived_journal_corrupt"):
+        journal._decode(key, raw)
+    with pytest.raises(journal.DerivedJournalConflict, match="derived_capacity_receipt_unverified"):
+        core._receipt_witness(raw)
