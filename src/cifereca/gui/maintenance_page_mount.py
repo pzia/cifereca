@@ -52,6 +52,7 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
         return False
     lease = admit_guided_maintenance_host(window, resolved, view_current=view_current)
     view = None
+    native = None
     mounting = False
     disposers = window._guided_maintenance_disposers
     try:
@@ -70,8 +71,18 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
         if not lease.is_current() or window._guided_maintenance_disposers is not disposers:
             raise ValueError("guided_mount_replaced")
 
+        if resolved.plugin_id == "maintenance.library.organizer":
+            from .organizer_native_confirmation import NativeOrganizerConfirmation
+            native = NativeOrganizerConfirmation(window, resolved, lease, Gtk=Gtk)
+            lease._observer = native.observe
+            box.append(native.button)
+            if not lease.is_current() or window._guided_maintenance_disposers is not disposers:
+                raise ValueError("guided_mount_replaced")
+
         def dispose():
             lease.dispose()
+            if native is not None:
+                native.dispose()
             try:
                 view.dispose()
             except Exception:
@@ -81,6 +92,10 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
     except Exception:
         if lease is not None:
             lease.dispose()
+        if native is not None:
+            native.dispose()
+            if native.button.get_parent() is box:
+                box.remove(native.button)
         if mounting:
             # Do not leave a revoked/failed contribution attached. Only
             # remove our own widget from this exact box, never a successor.
