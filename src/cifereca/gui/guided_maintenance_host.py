@@ -12,7 +12,7 @@ from ..task_queue import TaskPriority
 
 
 class GuidedMaintenanceHostLease:
-    __slots__ = ("_identity_id", "_valid", "_enqueue", "_lock", "_disposed", "_ticket")
+    __slots__ = ("_identity_id", "_valid", "_enqueue", "_lock", "_disposed", "_ticket", "_observer")
 
     def __init__(self, identity_id, valid, enqueue):
         self._identity_id = identity_id
@@ -21,6 +21,7 @@ class GuidedMaintenanceHostLease:
         self._lock = Lock()
         self._disposed = False
         self._ticket = None
+        self._observer = None  # private native mount observer, not a plugin port
 
     @property
     def identity_id(self):
@@ -42,6 +43,8 @@ class GuidedMaintenanceHostLease:
             if self._disposed or self._ticket is not None:
                 return False
             ticket = self._ticket = object()
+        if self._observer is not None:
+            self._observer(None)
 
         def current():
             with self._lock:
@@ -62,6 +65,10 @@ class GuidedMaintenanceHostLease:
             if self.is_current():
                 try:
                     done(value)
+                    with self._lock:
+                        idle = self._ticket is None and not self._disposed
+                    if idle and self.is_current() and self._observer is not None:
+                        self._observer(value)
                 except Exception:
                     # Do not expose private plugin error text to the UI/log.
                     pass
