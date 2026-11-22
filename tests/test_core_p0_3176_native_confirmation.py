@@ -162,3 +162,47 @@ def test_native_dialog_builder_failure_is_retryable_without_worker(
     assert ui.open(NS(MessageDialog=Dialog)) is True
     Dialog.dialogs[-1].respond("cancel")
     assert ui._used is None and ui.button.sensitive and not runner.queue
+
+
+@pytest.mark.parametrize("malformed", [
+    "none_entries", "list_entries", "text_entries", "bad_entry",
+    "none_current", "newline_current", "del_proposed",
+    "oversized_proposed", "empty_proposed",
+])
+def test_native_review_refuses_malformed_or_unsafe_plugin_advice_without_dialog(
+    malformed,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Malformed advice cannot start work"))
+    advice = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(advice,),
+    )
+    changes = {
+        "none_entries": None,
+        "list_entries": [advice],
+        "text_entries": "rename",
+        "bad_entry": (object(),),
+        "none_current": (replace(advice, current=None),),
+        "newline_current": (replace(advice, current="old\\nfile.epub"),),
+        "del_proposed": (replace(advice, proposed="new\\x7ffile.epub"),),
+        "oversized_proposed": (replace(advice, proposed="x" * 4097),),
+        "empty_proposed": (replace(advice, proposed=""),),
+    }
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(replace(page, dry_run_entries=changes[malformed]))
+    assert not ui.button.visible and not ui.button.sensitive
+    assert not ui.open(NS(MessageDialog=Dialog))
+    assert not runner.queue and not Dialog.dialogs
+
+    # A later valid Core snapshot may re-enable the same widget.
+    ui.observe(page)
+    assert ui.button.visible and ui.button.sensitive
+    assert ui.open(NS(MessageDialog=Dialog))
+    Dialog.dialogs[-1].respond("cancel")
+    assert not runner.queue and ui._used is None
