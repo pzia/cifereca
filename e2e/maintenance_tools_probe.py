@@ -710,6 +710,37 @@ def main():
             assert names.count("Provenances de prêts historiques") == 1
             report["checks"]["P0_7100_gtk_optional_" + key.rsplit(".", 1)[-1]] = True
 
+        # Receive the zero-optional-contribution case in the actual page
+        # host as well: disabling each independently is not proof that the
+        # empty combination is safe. No registry mock or tool dispatch.
+        try:
+            for key in titles:
+                manager.set_enabled(key, False)
+            refresh_tools()
+            assert not original_services("maintenance.tool")
+            assert w._plugin_page_widgets["tools"] is host_widget
+            names = action_titles()
+            assert not any(title in names for title in titles.values())
+            assert names.count("Provenances de prêts historiques") == 1
+            assert names.count("Téléchargements à reprendre") == 1
+            seen = []
+            child = w._tools_box.get_first_child()
+            while child is not None:
+                if isinstance(child, Gtk.Box):
+                    heading = child.get_first_child()
+                    if isinstance(heading, Gtk.Label) and heading.get_text() in group_names:
+                        seen.append(heading.get_text())
+                child = child.get_next_sibling()
+            assert tuple(seen) == group_names
+            assert tool.plan_calls == tool.run_calls == 0
+        finally:
+            for key in titles:
+                manager.set_enabled(key, True)
+            refresh_tools()
+        assert all(action_titles().count(title) == 1 for title in titles.values())
+        assert w._plugin_page_widgets["tools"] is host_widget
+        report["checks"]["P0_7407_zero_optional_and_restore_real_host"] = True
+
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
