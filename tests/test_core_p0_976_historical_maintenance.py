@@ -363,7 +363,10 @@ def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(
     from types import SimpleNamespace as NS
     from cifereca.core.canonical_adept_attempt import _key, _value
     from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
-    from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+    from tests.test_core_ui_1358_maintenance_preview_cancellation import Button as BaseButton, Container
+
+    class Button(BaseButton):
+        def set_label(self, label): self.label = label
 
     class Label(Button):
         def __init__(self, **kwargs):
@@ -415,7 +418,7 @@ def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(
     selector, inspect = recovery.children[2].children
     assert len(selector.items) == 1 and not inspect.sensitive
     selector.set_active(0)
-    selector.emit_changed()
+    selector.handlers["changed"](selector)
     assert inspect.sensitive
     inspect.click()
     args, _ = jobs[-1]
