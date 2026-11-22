@@ -284,6 +284,7 @@ class _ReadOnlyTool:
 _DOCUMENTARY_COUNTS = {
     "covers": ("embedded", "origin", "catalog", "ambiguous", "missing", "unknown"),
     "languages": ("canonical", "noncanonical", "invalid", "unknown"),
+    "metadata": ("divergent", "complement", "observed", "unknown"),
 }
 
 
@@ -310,6 +311,10 @@ def _documentary_preview(kind, facts):
         expected.update(("n2", "n3"))
     if language_v2:
         expected.add("provenance")
+    if kind == "metadata":
+        expected.add("fields")
+        if v2:
+            raise ValueError("invalid_documentary_audit")
     if (type(facts) is not dict
             or set(facts) != expected
             or type(facts["schema"]) is not int or (facts["schema"] != 1 and not v2)
@@ -336,8 +341,24 @@ def _documentary_preview(kind, facts):
                    + n3["not_validated"] > selected
                 or n3["not_applicable"] != n2["missing"]):
             raise ValueError("invalid_documentary_audit")
+    if kind == "metadata":
+        fields = facts["fields"]
+        if (type(fields) is not dict or set(fields) != {"title", "author", "publisher", "published_at"}
+                or not all(_valid_audit_counts(value, keys, facts["entries"]) for value in fields.values())):
+            raise ValueError("invalid_documentary_audit")
     if facts["status"] == "unavailable":
         return "Audit documentaire indisponible.", ("Aucune conclusion sur les notices.",)
+    if kind == "metadata":
+        summary = (f'{facts["entries"]} livre(s) ; {facts["divergent"]} avec divergences littérales, '
+                   f'{facts["complement"]} avec compléments possibles, {facts["observed"]} observés, '
+                   f'{facts["unknown"]} inconnus.')
+        for field, label in (("title", "Titre"), ("author", "Auteur"), ("publisher", "Éditeur"), ("published_at", "Date")):
+            values = fields[field]
+            summary += (f'\n{label} : {values["divergent"]} divergences, {values["complement"]} compléments, '
+                        f'{values["observed"]} observés, {values["unknown"]} inconnus.')
+        return summary, ("Audit partiel des déclarations C attestées, non des fichiers. "
+                         "Une divergence littérale ne tranche pas une contradiction ; "
+                         "aucune valeur choisie ni appliquée. Couverture des champs et sources partielle.",)
     if kind == "covers":
         summary = (
             f'{facts["entries"]} livre(s) ; N1 attesté : '
@@ -389,7 +410,7 @@ def _documentary_plan(tool, context, control, kind):
     absent = object()
     try:
         port = "library_cover_audit" if kind == "covers" else "library_language_audit"
-        runtime = getattr(broker, port, absent)
+        runtime = absent if kind == "metadata" else getattr(broker, port, absent)
         if runtime is not absent:
             # A declared but broken v2 port is not a legacy broker.
             if not callable(runtime):
@@ -408,6 +429,9 @@ def _documentary_plan(tool, context, control, kind):
     except Exception:
         facts = {"schema": 1, "status": "unavailable", "entries": 0,
                  **dict.fromkeys(_DOCUMENTARY_COUNTS[kind], 0)}
+        if kind == "metadata":
+            facts["fields"] = {field: dict.fromkeys(_DOCUMENTARY_COUNTS[kind], 0)
+                               for field in ("title", "author", "publisher", "published_at")}
         summary, warnings = _documentary_preview(kind, facts)
     if control is not None:
         control.check_cancelled()
@@ -435,6 +459,40 @@ def _documentary_run(tool, plan, control, kind):
     control.check_cancelled()
     return MaintenanceResult(ok=facts["status"] == "partial", changed=0,
                              summary=summary, warnings=warnings, facts=dict(facts))
+
+
+class MetadataAuditTool(_ReadOnlyTool):
+    info = MaintenanceToolInfo(
+        id="metadata.audit", title="Vérifier les métadonnées",
+        description="Divergences et compléments documentaires des sources C retenues ; lecture seule.",
+        icon_name="document-properties-symbolic", scope="library", danger_level="read-only",
+        supports_dry_run=True, cancellable=True,
+    )
+
+    def plan(self, context):
+        return self.plan_with_progress(context, None)
+
+    def plan_with_progress(self, context, control):
+        if control is not None:
+            control.check_cancelled()
+        plan = _documentary_plan(self, context, control, "metadata")
+        if plan is not None:
+            return plan
+        facts = {"schema": 1, "status": "unavailable", "entries": 0,
+                 **dict.fromkeys(_DOCUMENTARY_COUNTS["metadata"], 0)}
+        facts["fields"] = {field: dict.fromkeys(_DOCUMENTARY_COUNTS["metadata"], 0)
+                           for field in ("title", "author", "publisher", "published_at")}
+        summary, warnings = _documentary_preview("metadata", facts)
+        return MaintenancePlan(tool_id=self.info.id, summary=summary, warnings=warnings, facts=facts)
+
+    def run(self, plan, control):
+        result = _documentary_run(self, plan, control, "metadata")
+        return result if result is not None else MaintenanceResult(
+            ok=False, changed=0, summary="Audit documentaire indisponible : plan invalide.",
+        )
+
+
+METADATA_AUDIT = MetadataAuditTool()
 
 
 class CoverAuditTool(_ReadOnlyTool):

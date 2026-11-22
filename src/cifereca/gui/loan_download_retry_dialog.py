@@ -8,6 +8,8 @@ from ..core.loan_download_retry_review import (
     review_loan_download_retries, reset_reviewed_loan_download_retry,
 )
 from .sync_action_scope import sync_action_scope_current
+from ..core.source_context import source_context_epoch
+from ..plugin_api.page_lifecycle import PageViewContext
 from .task_runner import TaskPriority
 
 
@@ -16,9 +18,81 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
     def current():
         return window.service is service and sync_action_scope_current(window, scope)
 
-    def read():
+    return _open_retry_dialog(window, service, scope.identity_id, current,
+                              window._refresh_sync_page, Gtk=Gtk, Adw=Adw, control=control)
+
+
+def add_maintenance_retry_entry(window, box, context, *, Gtk, Adw):
+    """A second entry point, not a second queue or retry policy."""
+    try:
+        service, runner = window.service, window.runner
+        owner = service.current_identity
+        identity = owner.identity_id
+        generation = window._identity_context_generation
+        epoch = source_context_epoch(service)
+        mount = window._maintenance_mount_owner
+        disposers = window._guided_maintenance_disposers
+        if (type(context) is not PageViewContext or context.route != "tools"
+                or type(identity) is not str or not identity.strip()
+                or context.identity_id != identity or type(generation) is not int
+                or mount is None):
+            return False
+    except Exception:
+        return False
+    disposed = False
+    opened = 0
+
+    def current():
         try:
-            return review_loan_download_retries(service, identity_id=scope.identity_id)
+            return (not disposed and not window._closed and window.service is service
+                    and window.runner is runner and service.current_identity is owner
+                    and owner.identity_id == identity
+                    and window._identity_context_generation == generation
+                    and source_context_epoch(service) == epoch
+                    and window._maintenance_mount_owner is mount
+                    and window._guided_maintenance_disposers is disposers
+                    and context.is_current())
+        except Exception:
+            return False
+
+    if not current():
+        return False
+    group, row = Adw.PreferencesGroup(), Adw.ActionRow()
+    row.set_title("Téléchargements à reprendre")
+    row.set_subtitle("Même file que Synchronisation ; reprise individuelle des tentatives admissibles.")
+    button = window.action_button("Examiner…", "view-refresh-symbolic")
+    row.add_suffix(button)
+    group.add(row)
+
+    def clicked(control):
+        nonlocal opened
+        if not current() or control.get_root() is None:
+            return
+        opened += 1
+        lease = opened
+        _open_retry_dialog(window, service, identity,
+                           lambda: current() and lease == opened,
+                           lambda: None, Gtk=Gtk, Adw=Adw, control=control)
+
+    def dispose():
+        nonlocal disposed
+        disposed = True
+
+    button.connect("clicked", clicked)
+    disposers.append(dispose)
+    box.append(group)
+    return True
+
+
+def _open_retry_dialog(window, service, identity_id, current, after_reset, *, Gtk, Adw, control):
+    if not current():
+        return
+
+    def read():
+        if not current():
+            return None
+        try:
+            return review_loan_download_retries(service, identity_id=identity_id)
         except Exception:
             return None
 
@@ -105,7 +179,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
                         return False
                     try:
                         reset_reviewed_loan_download_retry(
-                            service, identity_id=scope.identity_id, row=row,
+                            service, identity_id=identity_id, row=row,
                         )
                         return True
                     except Exception:
@@ -115,7 +189,7 @@ def open_loan_download_retry_dialog(window, scope, *, Gtk, Adw, control):
                         dialog.close()
                         window.toast("Tentatives réinitialisées" if ok is True else
                                      "Reprise indisponible : actualisez l’affichage")
-                        window._refresh_sync_page()
+                        after_reset()
                 window.runner.submit(
                     "Réinitialisation des tentatives…", work, done, control=button,
                     priority=TaskPriority.USER_ACTION, kind="source-sync",

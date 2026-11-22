@@ -9,6 +9,17 @@ GROUPS = (
 )
 _PREFIX = "maintenance.group."
 _FALLBACK = "unclassified"
+_LINK_PREFIX = "maintenance.link."
+_UNAVAILABLE_LABELS = {
+    "maintenance_safety_hold": "suspendu — garde de sécurité",
+    "missing_broker": "indisponible — service requis absent",
+    "missing_service": "indisponible — service requis absent",
+    "contract_mismatch": "indisponible — contrat incompatible",
+    "configuration_missing": "indisponible — configuration requise",
+    "binary_missing": "indisponible — dépendance système absente",
+    "python_dependency_missing": "indisponible — dépendance système absente",
+    "system_resource_missing": "indisponible — dépendance système absente",
+}
 
 
 def presentation_group(capabilities):
@@ -44,11 +55,49 @@ def show_unavailable(sections, statuses, services, *, Gtk):
         if d.type != "maintenance.tool" or d.id in active:
             continue
         title = getattr(d, "display_name", None) or d.id
-        if type(title) is not str or not 0 < len(title) <= 256:
+        if (type(title) is not str or not 0 < len(title) <= 256
+                or not title.isprintable()):
             title = "Outil de maintenance"
-        label = Gtk.Label(label=title + " — indisponible ou désactivé", xalign=0, wrap=True)
+        code = getattr(status, "reason_code", None)
+        state = getattr(status, "enabled", None)
+        suffix = _UNAVAILABLE_LABELS.get(code) if type(code) is str else None
+        if suffix is None:
+            suffix = "désactivé" if state is False else "indisponible"
+        label = Gtk.Label(label=title + " — " + suffix, xalign=0, wrap=True)
         label.add_css_class("dim-label")
         sections[presentation_group(d.capabilities)].append(label)
+
+
+def add_section_links(sections, services, *, Gtk, current):
+    """Declared cross-navigation only; no alternate execution entry point."""
+    names = dict(GROUPS)
+    links = set()
+    for service in services:
+        caps = getattr(service, "capabilities", ())
+        group = presentation_group(caps)
+        if group not in names:
+            continue
+        for cap in caps:
+            if type(cap) is not str or not cap.startswith(_LINK_PREFIX):
+                continue
+            target = cap[len(_LINK_PREFIX):]
+            if target in names and target != group:
+                links.add((group, target))
+    for group, target in sorted(links):
+        heading = sections[target].get_first_child()
+        if heading is None:
+            continue
+        heading.set_focusable(True)
+        button = Gtk.Button(label="Voir : " + names[target])
+        button.set_tooltip_text("Aller au parcours indiqué, sans lancer d’opération.")
+
+        def navigate(control, destination=heading):
+            if (current() is True and control.get_root() is not None
+                    and destination.get_root() is control.get_root()):
+                destination.grab_focus()
+
+        button.connect("clicked", navigate)
+        sections[group].append(button)
 
 
 def finish_sections(sections, *, Gtk):
