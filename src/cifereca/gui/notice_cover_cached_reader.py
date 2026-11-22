@@ -42,6 +42,13 @@ def cached_notice_cover_snapshot(
                      or not document.account_id.isprintable()))
             or document.kind != "public_catalogue"):
         return None
+    # A frozen CoverDocumentScope is not a trust boundary: object.__setattr__
+    # can mutate it after construction. Recheck the public anonymous invariant
+    # before any SQLite lookup, including the v1 fallback path.
+    try:
+        document.__post_init__()
+    except (TypeError, ValueError):
+        return None
     storage = getattr(service, "storage", None)
     if storage is None:
         return None
