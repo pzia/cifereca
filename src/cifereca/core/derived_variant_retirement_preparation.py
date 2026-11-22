@@ -23,6 +23,7 @@ from . import derived_variant_private_region as region
 from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_retention_review import _canonical
 from .derived_variant_reader_evidence import kepub_text_spans_observed
+from .derived_variant_pdf_reader import pdf_reader_observed
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _receipt_alias_verdict, _walk
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -49,8 +50,7 @@ def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: 
                         max_bytes=None, deadline=None):
     """Pinned, bounded EPUB container and spine readability, not rendering.
 
-    PDFs are deliberately not accepted by this tranche: a PDF signature or
-    EOF marker is not a reader proof and Core has no qualified PDF reader.
+    PDF reader evidence is handled separately by the optional bounded worker.
     """
     deadline = min(deadline, monotonic() + _SECONDS) if deadline is not None else monotonic() + _SECONDS
     budget = _MAX_BYTES if max_bytes is None else min(_MAX_BYTES, max_bytes)
@@ -213,7 +213,7 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
                              and record["region_binding_sha256"] == approved_binding_sha256
                              and intent.identity_id == identity_id
                              and intent.parent_stamp[2] + intent.output_size <= _MAX_BYTES)
-                    _require(intent.media_format in ("epub", "kepub"),
+                    _require(intent.media_format in ("epub", "kepub", "pdf"),
                              "derived_retirement_reader_unverified")
                     directory = region._directory(db, identity_id)
                     parent, stage, final = map(Path, (
@@ -294,10 +294,16 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
                              "derived_retirement_dependency_unverified")
                     _require(_hash(parent_fd, original[2]) == intent.parent_sha256
                              and _hash(final_fd, output[2]) == intent.output_sha256)
-                    _inspect_epub_final(
-                        final_fd, output[2], media_format=intent.media_format,
-                        still_current=lambda: (_lock_current(shared_lock)
-                                               and scope_current(db) is True))
+                    reader_current = lambda: (_lock_current(shared_lock)
+                                               and scope_current(db) is True)
+                    if intent.media_format == "pdf":
+                        _require(pdf_reader_observed(final_fd, output[2],
+                                                     still_current=reader_current),
+                                 "derived_retirement_reader_unverified")
+                    else:
+                        _inspect_epub_final(
+                            final_fd, output[2], media_format=intent.media_format,
+                            still_current=reader_current)
                     physical()
                     current_sql()
                     _require(_walk(library_root, (str(stage),), deadline=deadline) == witness,
@@ -324,7 +330,9 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
             finally:
                 db.execute(f"PRAGMA synchronous={int(sync)}")
         return {"status": "blocked_external_consumers", "checkpoint_durable": True,
-                "epub_structure_observed": True, "consumer_exclusivity_verified": False,
+                "epub_structure_observed": intent.media_format in ("epub", "kepub"),
+                "pdf_reader_observed": intent.media_format == "pdf",
+                "consumer_exclusivity_verified": False,
                 "retention_authorized": False, "quota_refund_authorized": False,
                 "destructive_cleanup_allowed": False}
     except journal.DerivedJournalConflict:
