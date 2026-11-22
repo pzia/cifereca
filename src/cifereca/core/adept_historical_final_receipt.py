@@ -58,11 +58,19 @@ def observe_final_receipt(request, source, reviewed_marker, stamp):
                     # Historical ledger records are not completed receipts.
                     continue
                 offer = data.get("offer_id")
-                if (type(offer) is not str or not 0 < len(offer) <= 1024
-                        or data.get("source") != recovery._scope(source)):
+                if data.get("source") != recovery._scope(source):
+                    # An internally inconsistent same-source ledger is not
+                    # evidence of absence. If its offer identifies the exact
+                    # checkpoint key, a corrupted body must remain a blocker.
+                    if (type(offer) is str and 0 < len(offer) <= 1024
+                            and record == recovery._stage_id(source, offer)):
+                        return "unverified"
                     continue
-                if (sha256(offer.encode()).hexdigest() == raw["offer_digest"]
-                        and record == recovery._stage_id(source, offer)):
+                if type(offer) is not str or not 0 < len(offer) <= 1024:
+                    return "unverified"
+                if sha256(offer.encode()).hexdigest() == raw["offer_digest"]:
+                    if record != recovery._stage_id(source, offer):
+                        return "unverified"
                     offers.append(offer)
             if len(offers) != 1:
                 return "unverified" if offers else "not_observed"
