@@ -28,11 +28,15 @@ def test_selected_hold_report_explains_reason_without_marker_or_unlock(store, tm
     assert store.metadata_get(marker._key(source)) == raw and path.read_bytes() == BYTES
 
 
+@pytest.mark.parametrize("unsafe_text", [
+    "prefix\tFORGED", "prefix\x85FORGED", "prefix\u202eFORGED",
+    "prefix\u2028FORGED", "prefix\u200dFORGED",
+])
 @pytest.mark.parametrize("field", [
     "provider_id", "credential_id", "account_id", "edition_id",
     "right_id", "branch",
 ])
-def test_historical_hold_display_sanitizes_exact_control_character_coordinates(field):
+def test_historical_hold_display_sanitizes_exact_control_character_coordinates(field, unsafe_text):
     from types import SimpleNamespace
     from cifereca.core.source_convergence import SourceKey
     from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
@@ -42,7 +46,7 @@ def test_historical_hold_display_sanitizes_exact_control_character_coordinates(f
                  credential_id="credential", account_id="")
     coordinates = dict(edition_id="edition", right_id="loan",
                        kind="loan", branch="branch")
-    invalid = "prefix\tFORGED"
+    invalid = unsafe_text
     if field in scope:
         scope[field] = invalid
     else:

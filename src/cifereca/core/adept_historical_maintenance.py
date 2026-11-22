@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from unicodedata import category
 
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .adept_historical_diagnostic import review_historical_loan_diagnostic
@@ -219,7 +220,8 @@ def _hold_display_title(value):
     """
     return (value if type(value) is str and 0 < len(value) <= 256
             and value.strip()
-            and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+            and all(category(char) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for char in value)
             else "Référence de prêt historique")
 
 

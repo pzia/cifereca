@@ -1,6 +1,8 @@
 """#976: explicit local historical loan review in Outils/Maintenance."""
 from __future__ import annotations
 
+from unicodedata import category
+
 from ..core.adept_historical_maintenance import (
     admit_historical_review, run_historical_review, run_historical_hold_review,
     select_historical_hold,
@@ -52,7 +54,8 @@ def _hold_coordinate(value, *, account=False):
     if account and value == "":
         return "(compte principal)"
     return (value if type(value) is str and 0 < len(value) <= 256
-            and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+            and all(category(char) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for char in value)
             else "(identifiant non affichable)")
 
 
