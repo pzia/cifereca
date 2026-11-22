@@ -6,14 +6,14 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 |---|---|---|---|
 | maintenance.library.organizer | Organisation | library.organizer.read / #3176, #7087 | Revue, plan à blanc, aucune mutation |
 | maintenance.audit.naming | Organisation | metadata, library.naming / #3995 | Suspendu par garde manager |
-| maintenance.repair.naming | Organisation | library.maintenance / #3185 | Suspendu par garde manager |
-| maintenance.cleanup.duplicates | Organisation | library.maintenance / #3185, #4496 | Gel destructif |
+| maintenance.repair.naming | Organisation | metadata, library.naming, library.read, library.maintenance / #3185 | Suspendu par garde manager |
+| maintenance.cleanup.duplicates | Organisation | metadata, library.read, library.maintenance / #3185, #4496 | Gel destructif |
 | maintenance.audit.integrity | Intégrité | metadata, library.read / #3185 | Suspendu par garde manager |
 | maintenance.audit.covers | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
 | maintenance.audit.languages | Qualité | catalog / #3995 | Audit read-only, version réparée admise |
 | maintenance.audit.metadata | Qualité | catalog / #7407, #6366 | Rapport agrégé partiel des divergences et compléments C ; aucune correction |
 | maintenance.library.local-origin | Provenance | library.origin.read, library.origin.detail.read / #4030 | Comparaison documentaire bornée |
-| Adaptateur ADEPT historique — provenances | Provenance | Core / #976 | Diagnostic et association sous gardes existantes |
+| Adaptateur ADEPT historique — provenances | Provenance | Core / #976 | Diagnostic local et comparaison d'inventaire ADEPT ; aucune association automatique |
 | Adaptateur ADEPT historique — verrous | Reprise | Même contrôleur Core / #7244 | Diagnostic des verrous et vérification des fichiers ; aucun déverrouillage autorisé |
 | Téléchargements à reprendre (adaptateur CoreUI) | Reprise | Même dialogue/file que Synchronisation / #7161, #7231 | Réarmement individuel admissible, aucun GET au clic |
 | maintenance.cleanup.duplicates.recover | Reprise | library.maintenance / #3185 | Reprise supervisée des tombstones |
@@ -22,6 +22,8 @@ Les groupes sont des capacités de présentation additives `maintenance.group.*`
 | core.maintenance.cache | Stockage | cache / #3996 | Suspendu par garde manager |
 
 Limites métier : suggestions détaillées par livre (rapport agrégé livré, aucune correction), reprise effective des variantes et organisation mutatrice non autorisées par cette réorganisation. Recette GTK intégrée à valider. Le classement des contributions n'est pas une réception de leur moteur métier.
+
+La matrice des contributions `maintenance.tool` est vérifiée par `tests/test_core_p0_7407_maintenance_sections.py` contre les manifestes livrés : identifiant unique, groupe, totalité des ports obligatoires, ticket et état documentés. Les trois adaptateurs natifs sont identifiés séparément ; leur unicité relève de la recette GTK réelle.
 
 ## Migration des anciens accès
 

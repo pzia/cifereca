@@ -120,3 +120,40 @@ def test_declared_navigation_deduplicated_and_revocable():
     live[0] = False
     button.callback(button)
     assert heading.focus_count == 1
+
+
+def test_documented_inventory_is_exactly_the_installed_manifest_contract():
+    """Do not receive #7407 with an omitted, duplicated or wrongly mapped tool."""
+    manifests = [ROOT / "src/cifereca/builtin_ui/cifereca-plugin.json",
+                 *ROOT.glob("src/plugins/*/cifereca-plugin.json")]
+    descriptors = [p for path in manifests for p in json.loads(path.read_text())["plugins"]
+                   if p["type"] == "maintenance.tool"]
+    group_labels = {
+        "organization": "Organisation", "integrity": "Intégrité",
+        "quality": "Qualité", "provenance": "Provenance",
+        "recovery": "Reprise", "storage": "Stockage",
+    }
+    document = (ROOT / "docs/CORE-P0-7407-MAINTENANCE-SECTIONS.md").read_text()
+    rows = []
+    for line in document.splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = tuple(part.strip() for part in line.strip("|").split("|"))
+        if cells[0].startswith(("maintenance.", "core.maintenance.")):
+            assert len(cells) == 4
+            rows.append(cells)
+    by_id = {r[0]: r for r in rows}
+    assert len(by_id) == len(rows) == len(descriptors)
+    assert set(by_id) == {p["id"] for p in descriptors}
+    for descriptor in descriptors:
+        _, group, contract, availability = by_id[descriptor["id"]]
+        assert group == group_labels[presentation_group(descriptor.get("capabilities", ()))]
+        ports, tickets = contract.split(" / ", 1)
+        assert set(ports.split(", ")) == set(descriptor.get("requires_brokers", ()))
+        assert tickets.startswith("#") and availability and availability != "Terminé"
+    # Native adapters are not plugin manifests and cannot be counted as a
+    # second installed maintenance command.
+    for title in ("Adaptateur ADEPT historique — provenances",
+                  "Adaptateur ADEPT historique — verrous",
+                  "Téléchargements à reprendre (adaptateur CoreUI)"):
+        assert document.count("| " + title + " |") == 1
