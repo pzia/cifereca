@@ -1,6 +1,8 @@
 """#976: explicit local historical loan review in Outils/Maintenance."""
 from __future__ import annotations
 
+from unicodedata import category
+
 from ..core.adept_historical_maintenance import (
     admit_historical_review, run_historical_review, run_historical_hold_review,
     select_historical_hold,
@@ -8,6 +10,23 @@ from ..core.adept_historical_maintenance import (
 from ..core.adept_historical_inventory_operator import admit_inventory_comparison
 from ..storage import Storage
 from ..task_queue import TaskPriority
+
+
+def _ledger_label(value):
+    # A historical acquisition coordinate is a hint in this view, not a
+    # command, a source key or a verified entitlement. Preserve the Core
+    # value but do not render control characters as another diagnostic line.
+    if value is None:
+        return "inconnu"
+    if value == "":
+        return "(vide enregistré)"
+    if type(value) is int:
+        return str(value)
+    if (type(value) is str and 0 < len(value) <= 1024
+            and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for ch in value)):
+        return value
+    return "(valeur non affichable)"
 
 
 def _display(result):
@@ -18,9 +37,7 @@ def _display(result):
         lines.append("Aucune transaction ADEPT enregistrée dans cette page du ledger.")
     for row in result["rows"]:
         def value(key):
-            candidate = row.get(key)
-            return ("inconnu" if candidate is None
-                    else "(vide enregistré)" if candidate == "" else str(candidate))
+            return _ledger_label(row.get(key))
         pub = row.get("publication") or {}
         physical = row.get("local_bytes") or {}
         evidence = physical.get("evidence") or {}
@@ -32,9 +49,9 @@ def _display(result):
             f"Profil ADEPT enregistré : {value('recorded_adept_profile_id')}",
             f"Prêt ADEPT enregistré : {value('recorded_adept_loan_id')} · {value('historical_license_state')}",
             f"Branche canonique candidate : {value('canonical_branch')} · {value('canonical_status')}",
-            f"Origines : {pub.get('canonical_origin_records', 'not_checked')} · "
-            f"Placement : {pub.get('canonical_placement_state', 'not_checked')}",
-            f"Octets : {evidence.get('placement_evidence', physical.get('selection', 'not_checked'))}",
+            f"Origines : {_ledger_label(pub.get('canonical_origin_records', 'not_checked'))} · "
+            f"Placement : {_ledger_label(pub.get('canonical_placement_state', 'not_checked'))}",
+            f"Octets : {_ledger_label(evidence.get('placement_evidence', physical.get('selection', 'not_checked')))}",
         ))
         if row.get("inventory_checked_at") is not None:
             lines.append("Horodatage historique (Unix) : " + value("inventory_checked_at"))
@@ -52,7 +69,8 @@ def _hold_coordinate(value, *, account=False):
     if account and value == "":
         return "(compte principal)"
     return (value if type(value) is str and 0 < len(value) <= 256
-            and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+            and all(category(char) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for char in value)
             else "(identifiant non affichable)")
 
 

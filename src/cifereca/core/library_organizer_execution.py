@@ -127,7 +127,7 @@ def admit_native_reviewed_rename(manager, resolved, page, *, service, identity_i
             return {"status": "blocked", "changed": 0}
         try:
             # Do not create/truncate an acquisition lock during maintenance.
-            with InterProcessLock(acquisition_lock_file(), existing_nofollow=True) as lock:
+            with InterProcessLock(acquisition_lock_file(create=False), existing_nofollow=True) as lock:
                 def current_lock():
                     return live() and lock.strict_current()
                 if not current_lock():

@@ -101,6 +101,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
 def test_offline_analyzers_are_real_and_named_in_inventory():
     document = DOC.read_text(encoding="utf-8")
     sources = (
+        "src/plugins/provider-numilog/cifereca_numilog_capture_replay.py",
         "src/plugins/provider-numilog/numilog_delivery_diagnose.py",
         "scripts/numilog_html_shape.py",
         "src/plugins/recommendations/trace_report.py",
@@ -164,7 +165,7 @@ def test_plugin_direct_executables_are_explicitly_classified_without_running_the
     assert report["status"] == "complete", report
     assert report["unclassified"] == []
     assert report["removed"] == []
-    assert len(report["entries"]) == 5
+    assert len(report["entries"]) == 6
     assert {row["path"] for row in report["entries"]} == set(CLASSIFIED)
     assert {row["risk"] for row in report["entries"]} == {"F", "M", "T/M"}
     for row in report["entries"]:
@@ -229,7 +230,7 @@ def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
     assert structured.stderr == ""
     payload = json.loads(structured.stdout)
     assert payload["status"] == "complete"
-    assert len(payload["entries"]) == 5
+    assert len(payload["entries"]) == 6
     assert payload["unclassified"] == []
     assert payload["removed"] == []
     assert all(not entry["path"].startswith("/") for entry in payload["entries"])
@@ -238,7 +239,7 @@ def test_plugin_entrypoint_inspector_cli_is_offline_and_has_two_output_modes(
     assert human.returncode == 0
     assert human.stderr == ""
     assert human.stdout == (
-        "plugin_entrypoints_complete count=5 unclassified=0 removed=0\\n"
+        "plugin_entrypoints_complete count=6 unclassified=0 removed=0\\n"
     ).replace("\\n", "\n")
     assert str(ROOT) not in human.stdout
 

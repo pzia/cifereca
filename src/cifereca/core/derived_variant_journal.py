@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 from secrets import token_hex
+from unicodedata import category
 
 from .derived_variant_region_paths import PRIVATE_DERIVED_REGION
 
@@ -66,7 +67,8 @@ def _receipt_digest(raw):
 def _text(value, *, required=True, limit=1024):
     return (type(value) is str and len(value) <= limit
             and (bool(value) or not required)
-            and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+            and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for ch in value))
 
 
 def _digest(value):
@@ -209,8 +211,6 @@ def _decode(key, raw):
         return intent
     except (ValueError, TypeError, KeyError, RecursionError, OverflowError,
             UnicodeError):
-        # Unpaired surrogate text is not a UTF-8 receipt. Never leak a raw
-        # UnicodeEncodeError through a recovery or capacity reader.
         raise DerivedJournalConflict("derived_journal_corrupt") from None
 
 

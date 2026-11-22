@@ -107,3 +107,25 @@ def test_known_c_page_orders_documentary_strength_without_changing_c_window(stor
         assert all(not item.association_authorized and not item.provider_origin_attested
                    for item in result.suggestions)
     assert rows(store) == before and store.entitlements() == []
+
+
+@pytest.mark.parametrize("field", ["title", "author"])
+@pytest.mark.parametrize("control", [
+    "\n", "\r", "\t", "\x85", "\u202e", "\u2028", "\u200d",
+    "\u2066", "\x1b",
+])
+def test_unprintable_local_documentary_labels_refuse_known_c_read(
+    store, monkeypatch, field, control,
+):
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+
+    original = rows(store)
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("An unprintable local label cannot dispatch a C query")
+    monkeypatch.setattr(documentary, "search_public_notice_c", forbidden)
+    values = {"title": "Roman commun", "author": "Autrice"}
+    values[field] = "before" + control + "FORGED"
+    with pytest.raises(ValueError, match="invalid_documentary_suggestion_request"):
+        suggest_known_public_documents(store, **values)
+    assert rows(store) == original
+    assert store.entitlements() == []
