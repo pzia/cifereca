@@ -227,3 +227,27 @@ def test_confirmed_worker_dispatch_is_one_shot(completion_first):
     done(result)
     window._activity_result.assert_called_once()
     assert window._cross_profile_borrow_pending is None
+
+
+@pytest.mark.parametrize("replace_detail", [False, True])
+def test_homonymous_lender_choices_and_exact_detail_worker_fence(replace_detail):
+    panel, args, dialogs = setup()
+    first, second = args["rows"]
+    args["rows"] = (first, replace(second, label=first.label))
+    assert present_normal_lender_choice(panel, **args)
+    labels = dialogs[0].responses
+    assert labels["choice-0"] != labels["choice-1"]
+    dialogs[0].respond("choice-1")
+    assert labels["choice-1"] in dialogs[1].body
+    dialogs[1].respond("borrow")
+    _, work, done, _ = panel.window.runner.submit.call_args.args
+    if replace_detail:
+        panel._rendered_search_detail = (args["item"], object())
+    result = work()
+    execute = args["service"].execute_normal_lender_borrow_for_current_identity
+    if replace_detail:
+        assert result == {"status": "blocked"}
+        execute.assert_not_called()
+    else:
+        assert execute.call_args.kwargs["captured_candidate"] is args["rows"][1]
+    done(result)
