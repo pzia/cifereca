@@ -217,3 +217,36 @@ def test_recent_label_parity_for_list_and_detail(provider, value, expected, stan
         assert ("Provenance", expected) in model["rows"]
     assert calls == ([] if provider == "local" else [provider, provider])
     assert [event[0] for event in events[2:]] == ["notice", "local", "facets"]
+
+
+@pytest.mark.parametrize("changed", [
+    {"artifact_id": "sha256:new", "path": "/books/new.epub"},
+    {"identity_id": "B"},
+    {},
+])
+def test_recent_same_key_replacement_requires_new_display_occurrence(changed):
+    original = {"key": "a", "placement_id": "a", "artifact_id": "sha256:old",
+                "identity_id": "A", "title": "Livre", "path": "/books/old.epub"}
+    def factory(*args):
+        return NS(key=args[0], title=args[1], subtitle=args[2], meta=args[3],
+                  badge=args[4], thumbnail_url=args[5])
+
+    old_rows, _ = project_recent_rows([original], row_factory=factory)
+    replacement = {**original, **changed}
+    new_rows, lookup = project_recent_rows([replacement], row_factory=factory)
+    window, events, stamp = _fake(lookup)
+    window.service = NS(current_identity=NS(identity_id=replacement["identity_id"]))
+    window.recent_page.detail.empty = lambda *args: events.append(("empty", args))
+    recent_selected(window, old_rows[0], Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == ["empty"]
+    events.clear()
+    recent_selected(window, new_rows[0], Path=Path, format_recent_timestamp=stamp)
+    assert [event[0] for event in events] == [
+        "stamp", "summary", "notice", "local", "facets",
+    ]
+    assert events[3][1] is replacement
+    from tests.test_core_p1_3104_master_detail_visual_signature import production_methods
+    same, _ = production_methods()
+    assert not same(old_rows[0], new_rows[0])
+    repeated, _ = project_recent_rows([replacement], row_factory=factory)
+    assert same(new_rows[0], repeated[0])
