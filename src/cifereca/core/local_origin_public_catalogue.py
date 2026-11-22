@@ -5,7 +5,8 @@ write to C, search UI projection, download, association, or right.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, replace
 import re
 
 from ..plugin_api import ProviderSearchResponse, PublicSearchNotice, ProviderSearchWithFacets
@@ -215,7 +216,21 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                     projected.medium, projected.title, projected.author,
                     projected.format, remote, _comparison(title, authors, isbns, projected, remote),
                 ))
-            result = report("partial", tuple(candidates))
+            # A matching ISBN does not identify one edition when the same
+            # public response claims it for multiple records or formats.
+            # Keep every candidate and downgrade only the otherwise exact
+            # descriptive claim; do not merge editions or select a winner.
+            by_isbn = defaultdict(set)
+            for candidate in candidates:
+                for isbn in candidate.isbns:
+                    by_isbn[isbn].add((candidate.docbase, candidate.record_id,
+                                       candidate.medium, candidate.media_format))
+            candidates = tuple(
+                replace(candidate, comparison="isbn_claim_ambiguous")
+                if (candidate.comparison == "isbn_title_author_concordant"
+                    and any(len(by_isbn[isbn]) > 1 for isbn in candidate.isbns))
+                else candidate for candidate in candidates)
+            result = report("partial", candidates)
         return result if live() else report("scope_changed")
     except Exception:
         # Never expose supplier exceptions, account details or private path.

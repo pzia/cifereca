@@ -72,7 +72,7 @@ def test_explicit_public_lookup_keeps_isbn_ambiguity_without_persistence(rig):
     assert result["status"] == "partial"
     assert calls == [("Roman commun", "digital", {"field": "title", "content_types": ()})]
     assert [(r.record_id, r.comparison) for r in result["candidates"]] == [
-        ("one", "isbn_title_author_concordant"), ("two", "isbn_claim_ambiguous"),
+        ("one", "isbn_claim_ambiguous"), ("two", "isbn_claim_ambiguous"),
     ]
     assert result["provider_access_performed"]
     assert not any(result[k] for k in ("coverage_complete", "fresh_network_verified",
@@ -168,3 +168,18 @@ def test_changed_or_invalid_response_is_not_a_candidate(rig, change):
     assert result["status"] in ("scope_changed", "unavailable", "response_unverified")
     assert len(calls) == 1 and result["provider_access_performed"]
     assert result["candidates"] == () and "PRIVATE" not in repr(result)
+
+
+@pytest.mark.parametrize("other_format", ["EPUB", "PDF"])
+def test_public_same_isbn_distinct_editions_remain_ambiguous(rig, other_format):
+    service, session, request, calls, path = rig
+    first, second = _row("one"), _row("two", format=other_format)
+    session.search_with_response_facets = lambda *a, **kw: ProviderSearchResponse(
+        [first, second], public_notices=(PublicSearchNotice(first), PublicSearchNotice(second)))
+    before, data = rows(service.storage), path.read_bytes()
+    result = _run(service, request)
+    assert result["status"] == "partial"
+    assert [(x.record_id, x.comparison) for x in result["candidates"]] == [
+        ("one", "isbn_claim_ambiguous"), ("two", "isbn_claim_ambiguous")]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert rows(service.storage) == before and path.read_bytes() == data
