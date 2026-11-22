@@ -24,10 +24,16 @@ def _sensitive_parameters(text):
         'ticket', 'credential', 'credentials', 'secret', 'password',
         'apikey', 'expires', 'policy', 'keypairid', 'awsaccesskeyid',
         'googleaccessid', 'jwt',
+        # OAuth/SAML handoff parameters can convey account authority even
+        # without a literal token/signature key. They are never catalogue
+        # notice coordinates and must not reach the browser-link renderer.
+        'clientsecret', 'oauthcode', 'authorizationcode', 'codeverifier',
+        'samlresponse', 'samlrequest', 'assertion',
     }:
         return True
     return any(
         key.startswith(('xamz', 'xgoog'))
+        or key.endswith(('secret', 'assertion'))
         or 'token' in key or 'signature' in key
         for key in normalized
     )
