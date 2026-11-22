@@ -691,7 +691,7 @@ class LocalCatalog:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        bundle_roots = sorted({p.parent.resolve() for p in _ordinary_catalog_files(self.root) if p.name == BUNDLE_MANIFEST_NAME if not _private_publication_path(p.relative_to(self.root)) and p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        bundle_roots = sorted({p.parent.resolve() for p in _ordinary_catalog_files(self.root) if p.name == BUNDLE_MANIFEST_NAME and not _private_publication_path(p.relative_to(self.root)) and p.is_file() and is_unlinked_local_file(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
         bundle_root_set = set(bundle_roots)
         for bundle_root in bundle_roots:
             scanned += 1
