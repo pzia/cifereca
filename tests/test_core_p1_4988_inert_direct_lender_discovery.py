@@ -418,3 +418,40 @@ def test_label_only_clone_preserves_original_captured_source_contract(harness):
         renamed, notice, requesting_identity_id="default",
     )
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", [
+    "disconnect", "closed", "provider_rebind", "credential_rebind",
+    "account_unregistered", "duplicate_account",
+])
+def test_original_lender_session_receipt_rejects_live_revocation_without_epoch(
+    harness, change,
+):
+    """A stale local lender cannot survive a same-epoch session alteration."""
+    from cifereca.core.borrow_for_identity_discovery import (
+        possible_lender_session_matches,
+    )
+
+    service, account, session = harness
+    notice = _candidate().notice
+    choice, = _discover(service, notice)
+    assert possible_lender_session_matches(choice, session)
+    original_epoch = session._epoch
+    if change == "disconnect":
+        session.connected = False
+    elif change == "closed":
+        session._closed = True
+    elif change == "provider_rebind":
+        session.provider_id = "other-provider"
+    elif change == "credential_rebind":
+        session.credential_id = "other-card"
+    elif change == "account_unregistered":
+        session._accounts = []
+    else:
+        session._accounts = [account, account]
+
+    assert session._epoch == original_epoch
+    assert not possible_lender_session_matches(choice, session)
+    assert not possible_lender_session_matches(choice, object())
+    assert session.calls == 0
+    assert service.current_identity.identity_id == "default"
