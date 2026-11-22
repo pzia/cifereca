@@ -19,6 +19,7 @@ from cifereca_bnf_pret_signed_action import signed_loan_url
 
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
+HISTORY = ORIGIN + '/my_profile/history?l=fr'
 
 
 class ReaderHTTPError(RuntimeError):
@@ -512,3 +513,35 @@ class ReaderHTTPClient:
 
     def activity(self):
         return self.request('GET', ACTIVITY)[1]
+
+
+    def history_events_page(self):
+        """One bounded GET, only the observed French reader history route.
+
+        Keep it outside the generic redirect/SSO allowlist: no redirect,
+        authentication replay, pagination guess or mutation is admitted.
+        """
+        deadline = time.monotonic() + 15
+        try:
+            with self._stream('GET', HISTORY, headers={'Accept': 'text/html'},
+                              timeout=15) as response:
+                if 300 <= response.status_code < 400 or str(response.url) != HISTORY:
+                    raise ReaderHTTPError('redirect_invalid')
+                if response.status_code != 200:
+                    raise ReaderHTTPError(
+                        {401: 'auth_required', 403: 'access_denied',
+                         429: 'rate_limited'}.get(response.status_code, 'http_unavailable')
+                    )
+                if response.headers.get('content-type', '').split(';')[0].strip() not in {
+                        'text/html', 'application/xhtml+xml'}:
+                    raise ReaderHTTPError('unexpected_content')
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if time.monotonic() >= deadline:
+                        raise ReaderHTTPError('operation_timeout')
+                    if len(body) + len(chunk) > MAX_HTML_BYTES:
+                        raise ReaderHTTPError('html_limit')
+                    body.extend(chunk)
+                return HISTORY, body.decode(response.encoding or 'utf-8', errors='strict')
+        except (httpx.HTTPError, UnicodeError):
+            raise ReaderHTTPError('transport_unavailable') from None
