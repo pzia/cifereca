@@ -272,3 +272,37 @@ def test_unselected_lender_change_revokes_entire_n_way_chooser(tamper):
     assert panel.window._cross_profile_borrow_pending is None
     panel.window.runner.submit.assert_not_called()
     args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
+
+
+@pytest.mark.parametrize("phase", ["confirmation", "queued_worker"])
+@pytest.mark.parametrize("tamper", ["account", "label", "session"])
+def test_n_way_roster_revocation_after_selection_blocks_consent_or_dispatch(phase, tamper):
+    """A still-valid selected lender must not outlive a changed N-way receipt."""
+    panel, args, dialogs = setup(multiple=True)
+    window = panel.window
+    assert present_normal_lender_choice(panel, **args)
+    dialogs[0].respond("choice-0")
+    assert len(dialogs) == 2
+
+    if phase == "queued_worker":
+        dialogs[1].respond("borrow")
+        window.runner.submit.assert_called_once()
+        _, work, done, _ = window.runner.submit.call_args.args
+
+    unselected = args["rows"][1]
+    if tamper == "account":
+        unselected._account.unique_id += "-revoked"
+    elif tamper == "label":
+        object.__setattr__(unselected, "label", "Reassigned")
+    else:
+        object.__setattr__(unselected, "_session", object())
+
+    if phase == "confirmation":
+        dialogs[1].respond("borrow")
+        window.runner.submit.assert_not_called()
+    else:
+        assert work() == {"status": "blocked"}
+        done({"status": "blocked"})
+
+    args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
+    assert window._cross_profile_borrow_pending is None
