@@ -92,6 +92,10 @@ def project_recent_rows(
             label,
             legacy_url,
         )
+        if hasattr(row, "__dict__"):
+            # Selection authority is this exact worker occurrence, not
+            # the placement's display key or a matching thumbnail.
+            row._recent_source_item = item
         if occurrences[key] > 1 and hasattr(row, "__dict__"):
             # A selection of either duplicate must not open the other row's
             # detail (including a wrongly attributed physical cover).

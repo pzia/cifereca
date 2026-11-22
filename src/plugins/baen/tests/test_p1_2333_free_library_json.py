@@ -304,3 +304,38 @@ def test_out_of_range_empty_page_never_becomes_global_zero():
         assert client.last_search_warnings == [UNVERIFIED_SEARCH_WARNING]
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("href", [
+    "/other/../synthetic-0.html",
+    "../synthetic-0.html",
+    "//www.baen.com/synthetic-0.html",
+    "https://www.baen.com:443/synthetic-0.html",
+    " https://www.baen.com/synthetic-0.html",
+    "/synthetic-0.html?token=PRIVATE",
+])
+def test_category_search_rejects_rewritten_product_coordinates(href):
+    data = payload(count=2)
+    data["productData"][0]["productUrl"] = href
+    current = session(lambda _request: httpx.Response(200, json=data))
+    try:
+        rows = current.search("")
+        assert len(rows) == 1
+        assert rows[0].friendly_url.endswith("/synthetic-1.html")
+        assert len(current.last_search_warnings) == 2
+        assert rows[0].downloadable is False
+    finally:
+        current.close()
+
+
+def test_category_search_accepts_exact_relative_root_product_url():
+    data = payload(count=1)
+    data["productData"][0]["productUrl"] = "/synthetic-0.html"
+    current = session(lambda _request: httpx.Response(200, json=data))
+    try:
+        rows = current.search("")
+        assert len(rows) == 1
+        assert rows[0].friendly_url == "https://www.baen.com/synthetic-0.html"
+        assert not rows[0].downloadable
+    finally:
+        current.close()

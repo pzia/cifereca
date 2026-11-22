@@ -30,6 +30,13 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     if not item:
         return
     detail = window.recent_page.detail
+    if (hasattr(row, "_recent_source_item")
+            and row._recent_source_item is not item):
+        detail.empty(
+            "Référence périmée",
+            "Actualisez les livres récents avant d'ouvrir ce détail.",
+        )
+        return
     active = getattr(
         getattr(getattr(window, "service", None), "current_identity", None),
         "identity_id", None,
