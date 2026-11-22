@@ -563,3 +563,42 @@ def test_disposed_native_organizer_cannot_remount_from_late_worker_result(monkey
     assert not ui.open(NS(MessageDialog=Dialog))
     assert not runner.queue and not calls
     assert len(Dialog.dialogs) == 1
+
+
+@pytest.mark.parametrize("phase", ["before_dialog", "mounted_dialog", "after_cancellation"])
+def test_disposed_native_organizer_ignores_late_valid_review_even_if_lease_is_live(
+    monkeypatch, phase,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    calls = []
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_args, **_kwargs: calls.append("unexpected"),
+    )
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("unmounted UI cannot notify"))
+    lease = NS(identity_id="A", is_current=lambda: True)
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    if phase != "before_dialog":
+        assert ui.open(NS(MessageDialog=Dialog))
+    if phase == "after_cancellation":
+        Dialog.dialogs[-1].respond("cancel")
+    ui.dispose()
+    assert ui._disposed and not ui._lease_current()
+    ui.observe(page)
+    ui.observe(replace(page, dry_run_entries=(
+        replace(entry, proposed="another.epub"),)))
+    assert ui._page is None and ui._dialog is None
+    assert not ui.button.visible and not ui.button.sensitive
+    assert ui.open(NS(MessageDialog=Dialog)) is False
+    if Dialog.dialogs:
+        Dialog.dialogs[0].respond("apply")
+    assert not runner.queue and not calls
