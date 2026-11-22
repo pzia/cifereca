@@ -100,7 +100,7 @@ def test_private_derived_stage_is_not_an_ordinary_send_source(tmp_path, kind, mo
             prepared = profile / "local" / "Audio" if kind == "bundle" else source
             prepared.mkdir(parents=True)
             (prepared / "track.mp3").write_bytes(b"audio")
-            (prepared / "play.m3u8").write_text("#EXTM3U\\ntrack.mp3\\n")
+            (prepared / "play.m3u8").write_text("#EXTM3U\ntrack.mp3\n")
             write_bundle_manifest(prepared, title="Audio", playlist="play.m3u8")
             if kind == "bundle":
                 source.parent.mkdir(parents=True)
