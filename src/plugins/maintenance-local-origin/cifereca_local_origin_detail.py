@@ -1,5 +1,6 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
 from datetime import datetime, timezone
+from unicodedata import category
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
@@ -48,6 +49,13 @@ _SURFACE_LABEL = {
 }
 
 
+def _displayable_c_docbase(value):
+    # C source coordinates are documentary hints, not a trusted UI channel.
+    return (type(value) is str and 0 < len(value) <= 512
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def ranked_documentary_rows(compared):
     """Present the explicitly reviewed windows, never produce a right or origin.
 
@@ -77,7 +85,8 @@ def ranked_documentary_rows(compared):
                       if match.media_format else "")
                    if family == "public" else "")
                 + (" · Collection C : " + match.docbase
-                   if family == "known-c" else "")
+                   if family == "known-c" and _displayable_c_docbase(match.docbase)
+                   else "")
                 + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
             ))
     if not candidates:
@@ -116,7 +125,7 @@ def known_rows(page):
         lines.append((hit.title, " · ".join(x for x in (
             hit.author, hit.provider_id,
             "Référence C : " + hit.record_id,
-            "Collection C : " + hit.docbase,
+            "Collection C : " + hit.docbase if _displayable_c_docbase(hit.docbase) else "",
             "Édition C : " + hit.edition_id,
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
             "Notice ancienne" if hit.stale else "Notice en cache",
