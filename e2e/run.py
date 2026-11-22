@@ -808,6 +808,13 @@ def main() -> int:
             visual_change_ratio = None
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
+                # #3176: the isolated Organizer fixture contains synthetic
+                # paths only. Publish the bounded source-line coordinate of a
+                # failing probe, never its exception, labels or private report.
+                if name == "maintenance-organizer-1366" and report_data.get("status") != "PASS":
+                    line = report_data.get("maintenance_failure_line")
+                    if type(line) is int and 1 <= line <= 2500:
+                        print("P0_3176_ORGANIZER_FAILURE_LINE=" + str(line), flush=True)
                 # #5178 synthetic-only probe: closed numeric gate diagnostics.
                 # Never emit worker exceptions, account data, GTK label text,
                 # raw logs or task paths to the public E2E workflow.
