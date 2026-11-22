@@ -131,11 +131,22 @@ def possible_lender_session_matches(candidate, session):
             or session is None or candidate._session is not session):
         return False
     state = _inert_session_state(session)
-    if state is None:
+    registered = _inert_session_accounts(session)
+    fields = candidate._captured_fields
+    if (state is None or registered is None
+            or type(fields) is not tuple or not _valid_fields(fields)):
         return False
     generation = state.get("_epoch")
     expected = candidate._session_generation
-    return (type(generation) in (int, str, type(None))
+    # Session epoch alone cannot attest a still-connected borrower. A
+    # disconnect, closed session or in-place credential rebind may happen
+    # after discovery without rotating the Core account context.
+    return (state.get("connected") is True
+            and state.get("_closed") is not True
+            and state.get("provider_id") == fields[1]
+            and state.get("credential_id") == fields[2]
+            and sum(account is candidate._account for account in registered) == 1
+            and type(generation) in (int, str, type(None))
             and type(expected) is type(generation)
             and expected == generation)
 
