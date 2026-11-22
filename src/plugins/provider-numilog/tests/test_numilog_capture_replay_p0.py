@@ -142,3 +142,43 @@ def test_duplicate_capture_index_or_body_is_never_accepted_as_a_receipt(tmp_path
             with ZipFile(archive, "a") as zipfile:
                 zipfile.writestr(member, b"AMBIGUOUS_PRIVATE_BODY")
         assert analyse_capture(archive) == {"status": "invalid_capture"}
+
+
+@pytest.mark.parametrize("private_header", [
+    "X-API-Key", "X-Access-Key", "X-Session-ID", "X-Auth-Context",
+    "X-Secret-Key", "X-Credential", "X-Signature", "X-SSO-Ticket",
+    "X-User-Key", "X-OAuth-Assertion",
+])
+def test_private_header_alias_is_not_qualified_as_anonymous_get(tmp_path, private_header):
+    entry = _entry("a", HTML)
+    entry["request"]["headers"].append([private_header, "PRIVATE_SENTINEL"])
+    report = analyse_capture(_archive(tmp_path / "private-header.zip", [entry]))
+    assert report["status"] == "reviewed"
+    assert report["counts"]["unqualified"] == 1
+    assert report["counts"].get("eligible_public_get", 0) == 0
+    assert report["counts"].get("parser_qualified", 0) == 0
+    output = json.dumps(report)
+    assert "PRIVATE_SENTINEL" not in output and "numilog.com" not in output
+
+
+def test_two_safe_public_gets_with_distinct_headers_are_not_coalescible(tmp_path):
+    first = _entry("a", HTML, offset=0)
+    second = _entry("b", HTML, offset=1)
+    first["request"]["headers"].append(["X-Trace-Id", "probe-a"])
+    second["request"]["headers"].append(["X-Trace-Id", "probe-b"])
+    report = analyse_capture(_archive(tmp_path / "different-headers.zip", [first, second]))
+    assert report["counts"]["eligible_public_get"] == 2
+    assert report["counts"]["distinct_exact_public_get"] == 2
+    assert report["counts"]["repeated_exact_public_get_observed"] == 0
+    assert report["counts"]["overlapping_exact_public_get_observed"] == 0
+    assert report["counts"]["parser_qualified"] == 2
+
+
+def test_decoded_capture_body_is_not_classified_as_a_failed_transport_decode(tmp_path):
+    entry = _entry("a", HTML, coding="br")
+    entry["response_body"]["representation"] = "decoded_bytes"
+    report = analyse_capture(_archive(tmp_path / "decoded-body.zip", [entry]))
+    assert report["status"] == "reviewed"
+    assert report["counts"]["eligible_public_get"] == 1
+    assert report["reasons"] == {"body_representation_unverified": 1}
+    assert report["counts"].get("parser_qualified", 0) == 0
