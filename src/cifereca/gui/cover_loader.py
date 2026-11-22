@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 import math
 import base64
 import binascii
@@ -148,6 +148,9 @@ class CoverLoader:
         self._callbacks: dict[str, list[_Callback]] = {}
         self._queued: set[str] = set()
         self._fail_until: dict[str, float] = {}
+        # Exact direct HTTP absence, not a generic failure/cooldown. Keep
+        # only a bounded in-memory receipt for optional N2 requalification.
+        self._http_missing_until: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -484,6 +487,15 @@ class CoverLoader:
             else:
                 self._stats["cache_invalid"] += 1
 
+    def definitive_http_missing_ttl(self, url: str) -> float:
+        """Remaining lifetime of a direct exact GET 404/410; no media IO."""
+        if type(url) is not str or not url.startswith("https://"):
+            return 0.0
+        with self._lock:
+            if self._stop.is_set():
+                return 0.0
+            return max(0.0, self._http_missing_until.get(url, 0.0) - time.monotonic())
+
     def load(
         self,
         url: str | None,
@@ -562,6 +574,7 @@ class CoverLoader:
             if self._valid_cache_file(path):
                 with self._lock:
                     self._stats["cache_hit_valid"] += 1
+                    self._http_missing_until.pop(absolute, None)
                 callback(path)
                 self._maybe_report()
                 return request
@@ -578,6 +591,8 @@ class CoverLoader:
                     self._stats["deduplicated"] += 1
                     return request
                 self._queued.add(absolute)
+                # A newer real attempt supersedes the old absence receipt.
+                self._http_missing_until.pop(absolute, None)
 
         if cooling_down:
             # A consumer may synchronously consult stats(), invalidate, or
@@ -812,6 +827,7 @@ class CoverLoader:
                             self._stats["n3_url_ok_max_ms"], elapsed_ms,
                         )
                         self._fail_until.pop(absolute, None)
+                        self._http_missing_until.pop(absolute, None)
                 except Exception as exc:  # le fallback visuel gère l'échec
                     error = exc
                     try:
@@ -831,7 +847,20 @@ class CoverLoader:
                         self._stats["n3_url_failed_max_ms"] = max(
                             self._stats["n3_url_failed_max_ms"], elapsed_ms,
                         )
-                        self._fail_until[absolute] = time.monotonic() + 90.0
+                        expires = time.monotonic() + 90.0
+                        self._fail_until[absolute] = expires
+                        self._http_missing_until.pop(absolute, None)
+                        # Do not qualify redirects, auth or transient errors,
+                        # broken preview, bad bytes or filesystem failures.
+                        if (isinstance(exc, httpx.HTTPStatusError)
+                                and exc.response.status_code in (404, 410)
+                                and not exc.response.history
+                                and exc.request.method == "GET"
+                                and exc.request.url == httpx.URL(absolute)
+                                and absolute.startswith("https://")):
+                            self._http_missing_until[absolute] = expires
+                            while len(self._http_missing_until) > 1024:
+                                self._http_missing_until.popitem(last=False)
 
                 elapsed = int((time.perf_counter() - started) * 1000)
                 with self._lock:

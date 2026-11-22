@@ -5267,6 +5267,7 @@ class Storage:
     def catalog_entries(
         self, *, state: str | None = None, identity_id: str | None = None,
         provider_id: str | None = None, limit: int | None = None,
+        placement_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Read optional exact scopes before loading/decoding catalogue rows."""
         if limit is not None and (type(limit) is not int or not 1 <= limit <= 100_001):
@@ -5277,6 +5278,7 @@ class Storage:
         args: list[Any] = []
         for column, value in (
             ("local_state", state), ("identity_id", identity_id), ("provider_id", provider_id),
+            ("placement_id", placement_id),
         ):
             if value is not None:
                 if type(value) is not str:

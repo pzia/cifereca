@@ -20,7 +20,11 @@ from .document_cover_service import CoverSourceSnapshot
 def cached_notice_cover_snapshot(
     service: Any, document: CoverDocumentScope,
 ) -> CoverSourceSnapshot | None:
-    """Resolve canonical C first, then legacy exact-source C, never provider I/O."""
+    """Read public cover candidates for the shared, account-free loader.
+
+    An exact private source reference carries provenance but no live session
+    authority. Keep it out of this read-through, even when its row is current.
+    """
     if (type(document) is not CoverDocumentScope
             or any(type(getattr(document, name)) is not str
                    or len(getattr(document, name)) > 512
@@ -36,7 +40,7 @@ def cached_notice_cover_snapshot(
                 and (type(document.account_id) is not str
                      or len(document.account_id) > 512
                      or not document.account_id.isprintable()))
-            or document.kind not in ("catalogue", "public_catalogue")):
+            or document.kind != "public_catalogue"):
         return None
     storage = getattr(service, "storage", None)
     if storage is None:

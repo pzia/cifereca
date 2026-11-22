@@ -576,7 +576,24 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     QueryState(text=title, field="all", scope="all"), notify=False,
                 )
                 window.navigate(route)
+                # Use the exact retained alternative in the actual local
+                # Search widget, not a flattened union of source subjects.
+                window.search_controls.set_state(
+                    QueryState(text="Cuisine", field="subject", scope="all"), notify=False,
+                )
                 window._populate_local_search(state["projected_rows"][2])
+                assert window.search_page.store.get_n_items() == 1
+                window.search_controls.set_state(
+                    QueryState(text="Cuisine Astronomie", field="subject", scope="all"),
+                    notify=False,
+                )
+                window._render_search_results()
+                assert window.search_page.store.get_n_items() == 0
+                window.search_controls.set_state(
+                    QueryState(text=title, field="all", scope="all"), notify=False,
+                )
+                window._render_search_results()
+                assert window.search_page.store.get_n_items() == 1
             elif route == "loans":
                 # Do not let the earlier local-origin fixture be interpreted
                 # as an attested EPUB of the synthetic borrower occurrence.
@@ -612,7 +629,23 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                                         (recorded_provider, "Numilog")))
                 view._reload_languages(view._ranked)
                 view._reload_document_choices()
+                # The same independent-source predicates as Search, on
+                # the actual shared local filter controls. No recalculation
+                # or supplier search; the original rank and C ref survive.
+                original_rank = view._ranked[0]
+                page = view._master._page
+                query.set_state(QueryState(text="Cuisine", field="subject", scope="all"),
+                                notify=False)
                 view._render()
+                assert page.store.get_n_items() == 1
+                query.set_state(QueryState(text="Cuisine Astronomie", field="subject", scope="all"),
+                                notify=False)
+                view._render()
+                assert page.store.get_n_items() == 0
+                query.set_state(QueryState(), notify=False)
+                view._render()
+                assert page.store.get_n_items() == 1 and view._ranked[0] is original_rank
+                report["checks"]["P0_4761_same_source_filter_parity_" + label] = True
                 window.view_stack.add_named(widget, recommendation_route)
                 window.view_stack.set_visible_child_name(recommendation_route)
             else:
