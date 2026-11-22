@@ -472,7 +472,7 @@ def test_declaration_choices_on_every_private_cache_page(private_rig, monkeypatc
         assert "Occurrence à examiner" == groups[-1][0]
         assert f"Prêt : loan-{2 * page - 1}" in repr(_legacy_groups(groups)[-1])
         assert f"Prêt : loan-{2 * page}" in repr(_legacy_groups(groups)[-1])
-        assert f"Page', '{page}" in repr(groups[-2])
+        assert f"Page', '{page}" in repr(_legacy_groups(groups)[-2])
         obsolete.append(actions["declare-preview-1"][2])
         if page < 3:
             advance = actions["declare-next-page"][2]
