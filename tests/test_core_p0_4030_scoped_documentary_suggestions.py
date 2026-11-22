@@ -216,3 +216,34 @@ def test_declaration_created_during_search_revokes_page(store, tmp_path, monkeyp
     monkeypatch.setattr(documentary, "suggest_known_public_documents", changed)
     outcome = _request(store, root, pid, include_declared=True)
     assert outcome["status"] == "excluded" and outcome["suggestions"] is None
+
+
+@pytest.mark.parametrize("column", ["title", "author"])
+def test_oversized_epub_catalogue_claim_cannot_be_treated_as_missing(
+    store, tmp_path, monkeypatch, column,
+):
+    from tests.test_core_p0_4030_epub_evidence import _local_epub, META
+    import hashlib
+
+    root, path, pid = _local_epub(store, tmp_path, META)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    store.catalog_entry_put({
+        "catalog_entry_id": "epub-oversized", "artifact_id": "sha256:" + digest,
+        "placement_id": pid, "identity_id": "A", "provider_id": "local",
+        "title": "Roman commun", "author": "Autrice", "local_state": "local",
+    })
+    with store._lock, store._connect() as db:
+        db.execute(
+            f"UPDATE catalog_entries SET {column}=? WHERE catalog_entry_id=?",
+            ("x" * 2049, "epub-oversized"),
+        )
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("invalid catalogue must not query C"),
+    )
+    report = _request(store, root, pid)
+    assert report["status"] == "excluded"
+    assert report["reason"] == "catalogue_evidence_unavailable"
+    assert report["suggestions"] is None
+    assert not report["provider_access_performed"]
+    assert path.is_file()
