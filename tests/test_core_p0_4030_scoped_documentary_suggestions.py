@@ -329,3 +329,52 @@ def test_catalogue_claim_must_be_from_exact_local_provider(
         assert result["association_authorized"] is False
         assert result["provider_access_performed"] is False
     assert rows(store) == prior and path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("phase", ["during_comparison", "between_snapshot_and_file"])
+def test_documentary_review_rejects_sqlite_aba_even_when_visible_rows_revert(
+    store, tmp_path, monkeypatch, phase,
+):
+    root, path, pid, entry = _setup(store, tmp_path)
+    old_bytes = path.read_bytes()
+    initial = preview._snapshot(store, "A", pid, catalogue=True)
+    assert initial[0] == "unlinked_snapshot"
+    touched = []
+
+    def rewrite_and_restore():
+        store.catalog_entry_put({**entry, "title": "Titre temporaire"})
+        store.catalog_entry_put(entry)
+        touched.append(True)
+        # SQL presentation returned to identical values; the WAL still changed.
+        assert preview._snapshot(store, "A", pid, catalogue=True) == initial
+
+    original_search = documentary.suggest_known_public_documents
+    if phase == "during_comparison":
+        def changed(*args, **kwargs):
+            result = original_search(*args, **kwargs)
+            rewrite_and_restore()
+            return result
+        monkeypatch.setattr(documentary, "suggest_known_public_documents", changed)
+    else:
+        original_verify = preview._verified_variant_file
+
+        from contextlib import contextmanager
+        @contextmanager
+        def changed(*args, **kwargs):
+            rewrite_and_restore()
+            with original_verify(*args, **kwargs) as current:
+                yield current
+        monkeypatch.setattr(preview, "_verified_variant_file", changed)
+        monkeypatch.setattr(
+            documentary, "suggest_known_public_documents",
+            lambda *_args, **_kwargs: pytest.fail("stale SQL evidence cannot query C"),
+        )
+
+    report = _request(store, root, pid)
+    assert touched == [True]
+    assert report["status"] == "excluded"
+    assert report["reason"] == "evidence_changed"
+    assert report["suggestions"] is None and report["continuation"] is None
+    assert report["association_authorized"] is False
+    assert report["may_write_origin_or_right"] is False
+    assert path.read_bytes() == old_bytes
