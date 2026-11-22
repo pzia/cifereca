@@ -215,7 +215,8 @@ class LocalOriginDetailReadBrokerImpl:
             )
             if (not live() or type(result) is not dict
                     or result.get("status") not in ("partial", "excluded", "scope_changed",
-                                                   "unavailable", "response_unverified")
+                                                   "unavailable", "response_unverified", "auth_required",
+                                                   "access_denied", "rate_limited", "timeout", "cancelled")
                     or type(result.get("provider_access_performed")) is not bool
                     or any(result.get(flag) is not False for flag in (
                         "coverage_complete", "fresh_network_verified",
