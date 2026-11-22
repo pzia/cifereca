@@ -1,6 +1,8 @@
 """#4030: explicit Library-only preview of known public documentary matches."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from ..core.local_origin_suggestion_operator import (
     admit_local_origin_suggestion, continue_local_origin_suggestion,
     run_local_origin_suggestion,
@@ -25,6 +27,17 @@ _LABELS = {
     "isbn_claim_divergent": "ISBN déclarés divergents",
     "title_concordant_author_unverified": "Titre concordant, auteur non vérifié",
 }
+
+
+def _known_c_observation_label(timestamp):
+    """Show the retained C date, never claim current provider freshness."""
+    if type(timestamp) is not int or timestamp < 0:
+        return "Dernière observation C : date indisponible"
+    try:
+        when = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return "Dernière observation C : date indisponible"
+    return f"Dernière observation C (UTC) : {when:%Y-%m-%d %H:%M}"
 
 
 def add_local_origin_suggestion_action(window, detail, row, item, *, token):
@@ -247,6 +260,7 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                     hit.author, hit.provider_id, hit.record_id,
                     _LABELS.get(entry.comparison, "Comparaison descriptive"),
                     "Notice ancienne" if hit.stale else "Notice en cache",
+                    _known_c_observation_label(hit.last_seen_at),
                 ) if part)
                 lines.append((hit.title, text))
             if not page.suggestions:

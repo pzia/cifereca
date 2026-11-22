@@ -48,6 +48,7 @@ def test_no_implicit_search_and_only_descriptive_results(store, tmp_path):
     done(work())
     assert len(groups) == 1
     assert "Roman commun" in repr(groups)
+    assert "Dernière observation C (UTC)" in repr(groups)
     assert "aucune origine ni droit attestés" in repr(groups)
     assert item["placement_id"] not in repr(groups)
     button.callback(button)
@@ -121,3 +122,20 @@ def test_next_page_not_queued_after_origin_context_revocation(store, tmp_path):
     button.callback(button)
     assert len(tasks) == len(groups) == 1
     assert toasts and "Contexte modifié" in toasts[-1]
+
+
+def test_observation_date_is_utc_and_does_not_claim_network_freshness():
+    assert action._known_c_observation_label(100) == (
+        "Dernière observation C (UTC) : 1970-01-01 00:01"
+    )
+    assert action._known_c_observation_label(0) == (
+        "Dernière observation C (UTC) : 1970-01-01 00:00"
+    )
+    assert "réseau" not in action._known_c_observation_label(100)
+
+
+@pytest.mark.parametrize("untrusted", [None, True, 2.5, -1, "123", 10 ** 100])
+def test_unusable_c_timestamp_never_exposes_raw_value(untrusted):
+    assert action._known_c_observation_label(untrusted) == (
+        "Dernière observation C : date indisponible"
+    )
