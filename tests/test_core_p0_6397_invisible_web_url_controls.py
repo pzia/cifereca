@@ -48,3 +48,14 @@ def test_relative_book_link_does_not_bypass_encoded_bidi_fence():
         {"friendly_url": "/notice/42?book=%E2%80%AE"},
         base="https://books.example.org/catalogue",
     ) is None
+
+
+@pytest.mark.parametrize("layers", [5, 6, 8, 11])
+def test_deep_percent_encoded_bidi_does_not_escape_four_layer_guard(layers):
+    from urllib.parse import quote
+    value = "\u202e"
+    for _ in range(layers):
+        value = quote(value, safe="")
+    url = "https://books.example.org/notice/42?book=" + value
+    assert catalogue_notice_url({"friendly_url": url}) is None
+    assert safe_document_link_url(url, relation="notice") is None
