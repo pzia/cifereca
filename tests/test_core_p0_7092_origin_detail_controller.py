@@ -37,6 +37,12 @@ def deliver(tasks):
     done(value)
 
 
+def _legacy_groups(groups):
+    """Preserve legacy action assertions while allowing the read-only rank overlay."""
+    return [group for group in groups
+            if group[0] != "Classement documentaire — lecture seule"]
+
+
 def test_mount_is_inert_and_public_action_is_explicit_one_shot(rig):
     service, session, request, calls, path = rig
     before, data = rows(service.storage), path.read_bytes()
@@ -51,7 +57,7 @@ def test_mount_is_inert_and_public_action_is_explicit_one_shot(rig):
     assert search() is True and search() is False
     deliver(tasks)
     assert search() is False and len(calls) == 1
-    assert len(groups) == 2 and "aucune origine ni droit" in str(groups[1]).lower()
+    assert len(_legacy_groups(groups)) == 2 and "aucune origine ni droit" in str(_legacy_groups(groups)[1]).lower()
     assert rows(service.storage) == before and path.read_bytes() == data
 
 
