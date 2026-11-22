@@ -98,10 +98,22 @@ def known_rows(page):
         ("Résultats connus", str(page.known_matches)),
     ]
     for hit in page.matches:
+        observed = "Dernière observation C : date indisponible"
+        if type(hit.observed_at) is int and 0 <= hit.observed_at <= 253402300799:
+            try:
+                observed = ("Dernière observation C (UTC) : "
+                            + datetime.fromtimestamp(hit.observed_at, tz=timezone.utc)
+                            .strftime("%Y-%m-%d %H:%M"))
+            except (OverflowError, OSError, ValueError):
+                pass
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, hit.edition_id,
+            hit.author, hit.provider_id,
+            "Référence C : " + hit.record_id,
+            "Collection C : " + hit.docbase,
+            "Édition C : " + hit.edition_id,
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
             "Notice ancienne" if hit.stale else "Notice en cache",
+            observed,
         ) if x)))
     if not page.matches:
         verdict = ("Correspondances C connues, aucune fiche présentable sur cette page ; "
@@ -119,8 +131,15 @@ def public_rows(report):
         ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
     ]
     for hit in report.matches:
+        # Every displayed coordinate comes from this one explicit catalogue
+        # response, not from the local EPUB, an attested right or a C write.
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, ", ".join(hit.isbns),
+            hit.author, hit.provider_id,
+            "Référence catalogue : " + hit.record_id,
+            "Collection catalogue : " + hit.docbase,
+            "Support catalogue : " + hit.medium,
+            "Format catalogue : " + hit.media_format if hit.media_format else "",
+            "ISBN déclarés par le catalogue : " + ", ".join(hit.isbns) if hit.isbns else "",
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
         ) if x)))
     if not report.matches:
