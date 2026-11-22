@@ -180,6 +180,9 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
         items, row_factory=BookListItem,
         provider_display_name=provider_display_name,
     )
+    window._recent_ambiguous_keys = frozenset(
+        row.key for row in rows if getattr(row, "_recent_ambiguous_key", False) is True
+    )
     if phase is not None:
         phase("row_projection")
     window._attach_row_facets(rows, window._recent_objects, window.search_controls)

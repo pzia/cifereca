@@ -66,10 +66,17 @@ def display(page):
                   "sans effet sur les fichiers, droits ou provenances."))
     if page.dry_run_state:
         lines.extend(("", "Simulation confirmée — aucune exécution."
-                      if page.dry_run_state == "confirmed" else "Plan à blanc — à confirmer."))
+                      if page.dry_run_state == "confirmed" else
+                      "Aucun renommage non conflictuel observé sur cette page."
+                      if page.dry_run_state == "empty" else "Plan à blanc — à confirmer."))
         lines.append("Périmètre simulé : " + (
-            "toute cette page" if page.dry_run_group is None
+            "renommages sans collision observée sur cette page (avis)" if page.dry_run_rename_only
+            else "toute cette page" if page.dry_run_group is None
             else f"groupe {page.dry_run_group + 1} de cette page"))
+        if page.dry_run_rename_only:
+            lines.append(f"{len(page.dry_run_entries)} renommage(s) proposé(s) · "
+                         f"{page.dry_run_excluded} autre(s) avis non retenu(s). "
+                         "Les autres pages ne sont pas vérifiées par cette sélection.")
         labels = {"rename": "Renommage", "classify": "Classement", "keeper": "Copie à conserver"}
         states = {"review_only": "Avis uniquement", "relocation_held": "Déplacement bloqué",
                   "cleanup_held": "Retrait bloqué", "destination_conflict": "Collision"}
@@ -80,7 +87,7 @@ def display(page):
 
 
 def can_prepare(page):
-    return (type(page) is OrganizerPageAdvice and not page.dry_run_state
+    return (type(page) is OrganizerPageAdvice and page.dry_run_state in ("", "empty")
             and (page.eligible > 0 or any(
                 group.copies == 1 and (file.reason == "rename_advice_only" or file.classified_path)
                 for group in page.groups for file in group.files)))
@@ -106,8 +113,9 @@ class GuidedOrganizer:
                 # Never leak private broker errors to the tool row.
                 pass
 
-    def request(self, action, *, group_index=None):
-        if (self.busy or not self.current()
+    def request(self, action, *, group_index=None, rename_only=False):
+        if (self.busy or not self.current() or type(rename_only) is not bool
+                or (rename_only and (action != "prepare" or group_index is not None))
                 or (group_index is not None and (action != "prepare"
                     or type(group_index) is not int or group_index < 0))):
             return False
@@ -123,7 +131,8 @@ class GuidedOrganizer:
                 return False
             operation = lambda: self.broker.prepare_dry_run(
                 token=page.token, confirmed=True,
-                **({"group_index": group_index} if group_index is not None else {}))
+                **({"group_index": group_index} if group_index is not None else {}),
+                **({"rename_only": True} if rename_only else {}))
         elif (action == "confirm" and page is not None and page.dry_run_state == "prepared"
               and callable(getattr(self.broker, "confirm_dry_run", None))):
             operation = lambda: self.broker.confirm_dry_run(token=page.token, confirmed=True)
@@ -292,13 +301,17 @@ class OrganizerPlugin:
             simulation_scope.remove_all()
             simulation_scope.append("all", "Tous les groupes de cette page")
             if page is not None:
+                if any(group.copies == 1 and f.reason == "rename_advice_only"
+                       for group in page.groups for f in group.files):
+                    simulation_scope.append("rename-only", "Renommages sans collision observée (page)")
                 for index, group in enumerate(page.groups):
                     if (group.keeper or any(
                             f.reason == "rename_advice_only" or f.classified_path
                             for f in group.files)):
                         simulation_scope.append(str(index), f"Groupe {index + 1}")
             simulation_scope.set_active_id(
-                str(page.dry_run_group) if page is not None and page.dry_run_group is not None
+                "rename-only" if page is not None and page.dry_run_rename_only
+                else str(page.dry_run_group) if page is not None and page.dry_run_group is not None
                 else "all")
             simulation_scope.set_sensitive(not busy and can_prepare(page))
             simulation.set_label("Confirmer la simulation" if prepared else "Préparer le plan à blanc")
@@ -324,7 +337,10 @@ class OrganizerPlugin:
                 selection = simulation_scope.get_active_id()
                 if selection is None:
                     return
-                controller.request("prepare", group_index=None if selection == "all" else int(selection))
+                if selection == "rename-only":
+                    controller.request("prepare", rename_only=True)
+                else:
+                    controller.request("prepare", group_index=None if selection == "all" else int(selection))
         simulation.connect("clicked", simulate)
         cancel.connect("clicked", lambda _b: controller.cancel())
         return GuidedMaintenanceView(outer, controller.dispose)

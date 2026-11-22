@@ -1,6 +1,6 @@
 # P1 #2703 — Contrat additif des preuves de capacités (v1)
 
-**Statut : première tranche Core.** Ce contrat n'est pas la matrice complète des
+**Statut : contrat Core et projection native livrés ; voir l'état de réception du 22/11 en fin de document.** Ce contrat n'est pas la matrice complète des
 fournisseurs et ne remplace ni `CatalogueSourceCapability` (#2385), ni
 `LoanInventorySnapshot` (#3122), ni `SyncSourceRef.sync_capabilities`.
 
@@ -191,3 +191,42 @@ consommateurs CoreUI existants.
 **Restent #2703 :** présentation/recette CoreUI des sept familles et
 attestations fournisseur réellement qualifiées. L'inventaire statique
 et ce bridge n'en prétendent pas la couverture.
+
+
+## État de réception P0 #7298 — 22/11/2026
+
+Les sections précédentes décrivent les tranches historiques. Sur main, la
+projection native de Paramètres a été rétablie (#7303), revalide les DTO et
+distingue les signalements manuels des observations (#7330), classe
+`artifact.backup` dans Transversal (#7337) et projette `catalog.detail`
+depuis `holdings` (#7342). Les quatre PR ont passé leurs gates respectifs.
+Le panneau lit une fois `capability_matrices(identity_id)` avec une identité
+explicite ; il ne lance pas de collecte. Le pont de preuves précollectées
+reste distinct et n'est pas automatiquement alimenté par l'ouverture du
+panneau.
+
+### Matrice des sept familles : capacités et écarts
+
+Les observations terrain ci-dessous sont des **preuves documentaires
+bornées**, pas des lignes runtime supplémentaires ni des autorisations.
+Le relevé détaillé par source est [la matrice #6875](PROVIDERS-P0-7298-6875-EVIDENCE-20261121.md).
+Les déclarations v1 sont limitativement celles de `_PROVIDER_FLAGS` ;
+les préfixes du panneau n'implémentent pas les opérations qui y manquent.
+
+| Famille | Projection installée / exemple d'état | Preuves disponibles et écarts (tickets existants) |
+|---|---|---|
+| Catalogue | `catalog.search/detail` : déclaré = unverified, flag absent = unsupported dans la portée déclarée ; `catalog.refresh` distinct. | BnF SRU recherche auteur observée, Paris ISBN, Numilog formulaire combiné, Baen page 2 navigateur ; pagination/couverture et recherche HTTPX Baen non établies ; Gallica 403 et Gutenberg 503 ne sont pas des zéros. #6875, #2333, #1917. |
+| Métadonnées | Préfixe `metadata.` ; preuve indisponible en l'absence de lignes, aucune déclaration automatique dans v1. | Fiches/attributs observés selon source et édition ; série/âge et champs omis restent inconnus. #6875, #3724, #1023, #4530 (Notices). |
+| Droits | `personal_inventory.list` déclaré ; `personal_inventory.rights` précollecté au plus partial, jamais autorisant. | Manifestes Kobo et MesLivres Numilog ; compte, édition et couverture distincts, aucun droit déduit du catalogue. #3252, #5540, #2797. |
+| Prêt | `loan.inventory/borrow/renew` déclarés ; inventaire précollecté complet peut produire supported pour sa portée, jamais permission. | Lectures Paris ListLoans, BnF activité, La Rochelle MyLoans observées ; zéro BnF, historique, quotas et fin de cycle restent distincts. #3120, #4063, #4480, #4283, #4082, #6002. |
+| Acquisition | `acquisition.download` déclaré ; aucune autorisation du panneau. | Baen redirection login, pas de livraison anonyme prouvée ; offres et récupération exactes restent au pipeline #4496/#5225/#7161. |
+| DRM | Préfixe `drm.` ; preuve indisponible si aucune ligne. | Un format affiché, ACSM ou runtime ADEPT installé ne prouve pas une licence ou un déchiffrement réussi ; #4496 conserve le pipeline canonique. |
+| Transversal | `artifact.backup` et déclarations `sync.*` ; une observation partielle ne devient pas un succès global. | Contrat, installation et tests sans réseau ne prouvent ni sauvegarde effective ni fraîcheur terrain ; #2703, #6875. |
+
+Référence de test : `tests/test_coreui_p1_2703_capability_overview.py` —
+les quatre états sont exercés pour chaque famille avec observations
+**synthétiques**, séparément de la qualification fournisseur. Un libellé
+d'observation reste non autorisant même avec enabled/connected vrais.
+La matrice ne remplace ni le broker d'action, ni les autorités A/B/C.
+Les tests ne prouvent pas les capacités terrain manquantes. Aucun changement
+des priorités, aucun appel fournisseur et aucune clôture automatique de #2703.

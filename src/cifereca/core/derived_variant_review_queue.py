@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, DerivedReservation, _PREFIX, _decode, _digest,
     _measure, _receipt_digest,
 )
@@ -50,7 +51,7 @@ def pending_derived_review_page(storage, *, identity_id, after_key="", limit=32)
             for key, _size in rows:
                 if not key.startswith(_PREFIX):
                     continue
-                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 if intent.identity_id != identity_id:
                     continue
