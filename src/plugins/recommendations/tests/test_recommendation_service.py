@@ -467,7 +467,7 @@ def test_durable_public_c_remains_visible_when_live_supplier_also_replies(progre
         def known_public_notices(self, query, **kwargs):
             assert query
             assert kwargs["scope"] == "digital"
-            assert kwargs["provider_ids"] == ("paris",)
+            assert kwargs["provider_ids"] == ()  # C survives absent BnF session.
             return [known]
 
         def search(self, query, **kwargs):
