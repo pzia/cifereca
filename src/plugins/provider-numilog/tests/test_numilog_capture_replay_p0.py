@@ -126,3 +126,19 @@ def test_advanced_readable_layout_is_replayed_but_never_counted_as_coalescible(t
     assert sum(result["reasons"].values()) + result["counts"]["parser_qualified"] == 3
     output = json.dumps(result)
     assert "RATitle" not in output and "numilog.com" not in output
+
+
+def test_duplicate_capture_index_or_body_is_never_accepted_as_a_receipt(tmp_path):
+    import warnings
+    for member in ("http/index.json", "http/bodies/" + "a" * 32 + "-response.bin"):
+        archive = _archive(tmp_path / ("duplicate-index.zip" if member.endswith(".json")
+                                      else "duplicate-body.zip"), [
+            _entry("a", HTML),
+        ])
+        # ZIP permits ambiguous duplicate members; getinfo would otherwise
+        # select the last content and emit a superficially valid verdict.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with ZipFile(archive, "a") as zipfile:
+                zipfile.writestr(member, b"AMBIGUOUS_PRIVATE_BODY")
+        assert analyse_capture(archive) == {"status": "invalid_capture"}
