@@ -18,7 +18,7 @@ _MAX_CHECKPOINTS = 64
 
 
 def observe_final_receipt(request, source, reviewed_marker, stamp):
-    """Observe final bytes only for the same recorded offer and full source."""
+    """Prefer the exact offer; another receipt for the same full loan still blocks replay."""
     def live():
         return (request.bound() and sqlite_source_stamp(request.database) == stamp)
 
@@ -48,6 +48,7 @@ def observe_final_receipt(request, source, reviewed_marker, stamp):
             if len(rows) > _MAX_CHECKPOINTS or not live() or not lock.strict_current():
                 return "unverified"
             offers = []
+            other_offers = []
             for record, body in rows:
                 if type(body) is not str:
                     return "unverified"
@@ -68,19 +69,26 @@ def observe_final_receipt(request, source, reviewed_marker, stamp):
                     continue
                 if type(offer) is not str or not 0 < len(offer) <= 1024:
                     return "unverified"
+                if record != recovery._stage_id(source, offer):
+                    return "unverified"
                 if sha256(offer.encode()).hexdigest() == raw["offer_digest"]:
-                    if record != recovery._stage_id(source, offer):
-                        return "unverified"
                     offers.append(offer)
-            if len(offers) != 1:
-                return "unverified" if offers else "not_observed"
+                else:
+                    other_offers.append(offer)
+            if len(offers) > 1 or (not offers and len(other_offers) > 1):
+                return "unverified"
+            if not offers and not other_offers:
+                return "not_observed"
+            exact = bool(offers)
+            chosen = offers[0] if exact else other_offers[0]
             completed = recovery.recover_completed_delivery(
-                storage, source=source, offer_id=offers[0],
+                storage, source=source, offer_id=chosen,
                 library_root=Path(request.root), shared_lock=lock)
             if not lock.strict_current() or not live():
                 return "unverified"
             if completed is not None and completed.adept_receipt_ref:
-                return "verified_final_receipt_observed"
+                return ("verified_final_receipt_observed" if exact
+                        else "verified_other_offer_receipt_observed")
             return "unverified"
     except Exception:
         return "unverified"
