@@ -480,7 +480,7 @@ def test_overlapping_unverified_layout_preserves_terminal_code(monkeypatch):
 def test_invalid_utf8_public_html_is_not_projected_and_replay_agrees(monkeypatch):
     # The attested fixture contains the target title; replacing one byte
     # would otherwise silently create a plausible but corrupted book fact.
-    broken = HTML.replace(b"Jefferson", b"Jeffers\\xffon", 1)
+    broken = HTML.replace(b"Jefferson", b"Jeffers\xffon", 1)
     assert broken != HTML
     url = public_client.public_search_url("jefferson")
     fake, _ = setup_public_client(monkeypatch, FakeResponse(body=broken))
@@ -495,7 +495,7 @@ def test_invalid_utf8_public_html_is_not_projected_and_replay_agrees(monkeypatch
 
 
 def test_overlapping_invalid_encoding_flight_shares_failure_without_second_get(monkeypatch):
-    broken = HTML.replace(b"Jefferson", b"Jeffers\\xffon", 1)
+    broken = HTML.replace(b"Jefferson", b"Jeffers\xffon", 1)
     fake, first, second = _overlapping_readers(
         monkeypatch, FakeResponse(body=broken),
         lambda: public_client.fetch_public_search("jefferson"),
