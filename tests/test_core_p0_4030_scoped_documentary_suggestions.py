@@ -247,3 +247,31 @@ def test_oversized_epub_catalogue_claim_cannot_be_treated_as_missing(
     assert report["suggestions"] is None
     assert not report["provider_access_performed"]
     assert path.is_file()
+
+
+@pytest.mark.parametrize("drift", ["sha256", "size"])
+def test_stale_user_declaration_on_same_path_is_not_applied_to_local_artifact(
+    store, tmp_path, monkeypatch, drift,
+):
+    from cifereca.core.library_declared_links import _PREFIX, _json
+
+    root, path, pid, _ = _setup(store, tmp_path)
+    record = _record_declaration(store, path)
+    if drift == "sha256":
+        record["file"]["sha256"] = "0" * 64
+    else:
+        record["file"]["size"] += 1
+    store.metadata_set(_PREFIX + record["relation_id"], _json(record))
+    prior = rows(store)
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("stale declaration must block C"),
+    )
+    for selected in (False, True):
+        report = _request(store, root, pid, include_declared=selected)
+        assert report["status"] == "excluded"
+        assert report["reason"] == "declaration_scope_unverified"
+        assert report["suggestions"] is None
+        assert not report["association_authorized"]
+    assert rows(store) == prior
+    assert path.read_bytes() == BYTES
