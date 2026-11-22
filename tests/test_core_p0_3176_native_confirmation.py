@@ -189,8 +189,8 @@ def test_native_review_refuses_malformed_or_unsafe_plugin_advice_without_dialog(
         "text_entries": "rename",
         "bad_entry": (object(),),
         "none_current": (replace(advice, current=None),),
-        "newline_current": (replace(advice, current="old\\nfile.epub"),),
-        "del_proposed": (replace(advice, proposed="new\\x7ffile.epub"),),
+        "newline_current": (replace(advice, current="old\nfile.epub"),),
+        "del_proposed": (replace(advice, proposed="new\x7ffile.epub"),),
         "oversized_proposed": (replace(advice, proposed="x" * 4097),),
         "empty_proposed": (replace(advice, proposed=""),),
     }
