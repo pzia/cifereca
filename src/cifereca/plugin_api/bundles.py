@@ -95,11 +95,15 @@ def _safe_relative_path(root: Path, value: str) -> Path:
     # declared path and a symlink-resolved alias before any member stat/hash.
     if _PRIVATE_DERIVED_REGION in root.parts or _PRIVATE_DERIVED_REGION in rel.parts:
         raise BundleError("reserved Core derived region is not a bundle member")
-    path = (root / rel).resolve()
+    try:
+        path = (root / rel).resolve()
+        root_resolved = root.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BundleError("bundle member path unavailable") from exc
     if _PRIVATE_DERIVED_REGION in path.parts:
         raise BundleError("reserved Core derived region is not a bundle member")
     try:
-        path.relative_to(root.resolve())
+        path.relative_to(root_resolved)
     except ValueError as exc:
         raise BundleError(f"bundle member escapes root: {value!r}") from exc
     return path
@@ -223,7 +227,10 @@ def write_bundle_manifest(
 
 
 def load_bundle_manifest(root: Path, *, verify: bool = True) -> BundleManifest:
-    root = Path(root).expanduser().resolve()
+    try:
+        root = Path(root).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BundleError("bundle root unavailable") from exc
     # A manifest placed directly under the private region is not ordinary
     # stock even if it was created by an older writer.
     if _PRIVATE_DERIVED_REGION in root.parts:
@@ -246,15 +253,20 @@ def load_bundle_manifest(root: Path, *, verify: bool = True) -> BundleManifest:
             raise BundleError("invalid bundle member")
         rel = str(row.get("path") or "")
         path = _safe_relative_path(root, rel)
-        if not path.is_file():
-            raise BundleError(f"bundle member missing: {rel}")
         expected_sha = str(row.get("sha256") or "").casefold()
         expected_size = int(row.get("size") or 0)
-        if verify:
-            if path.stat().st_size != expected_size:
-                raise BundleError(f"bundle member size mismatch: {rel}")
-            if _sha256_file(path).casefold() != expected_sha:
-                raise BundleError(f"bundle member hash mismatch: {rel}")
+        try:
+            if not path.is_file():
+                raise BundleError(f"bundle member missing: {rel}")
+            if verify:
+                if path.stat().st_size != expected_size:
+                    raise BundleError(f"bundle member size mismatch: {rel}")
+                if _sha256_file(path).casefold() != expected_sha:
+                    raise BundleError(f"bundle member hash mismatch: {rel}")
+        except (OSError, RuntimeError) as exc:
+            # An unreadable/replaced legacy bundle is not evidence of a
+            # valid ordinary file or authority to inspect Core stages.
+            raise BundleError("bundle member unavailable") from exc
         members.append(BundleMember(
             path=rel,
             sha256=expected_sha,
