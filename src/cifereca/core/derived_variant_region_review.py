@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+from unicodedata import category
 from time import monotonic
 
 from . import derived_variant_journal as journal
@@ -143,7 +144,8 @@ def review_derived_private_region(storage, *, library_root, identity_id,
             or not library_root.is_absolute() or library_root == Path("/")
             or ".." in library_root.parts or type(identity_id) is not str
             or not 0 < len(identity_id) <= 1024
-            or any(ord(ch) < 32 or ord(ch) == 127 for ch in identity_id)):
+            or any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for ch in identity_id)):
         return _report("unavailable")
     fd = None
     try:
