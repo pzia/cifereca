@@ -36,7 +36,12 @@ def _headers(value):
         if (type(pair) not in (list, tuple) or len(pair) != 2
                 or any(type(v) is not str or len(v) > 4096 for v in pair)):
             return None
-        result.append((pair[0].casefold(), pair[1]))
+        name = pair[0].casefold()
+        # A duplicated Content-Encoding/Type or auth header is ambiguous:
+        # dict(headers) would silently select one value during replay.
+        if any(previous == name for previous, _ in result):
+            return None
+        result.append((name, pair[1]))
     return tuple(sorted(result))
 
 def _private_request_header(name):

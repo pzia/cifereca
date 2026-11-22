@@ -192,3 +192,24 @@ def test_oversized_zip_member_inventory_is_rejected_before_replay(tmp_path):
         for index in range(2001):
             archive.writestr(f"extra/{index:04d}", b"")
     assert analyse_capture(path) == {"status": "invalid_capture"}
+
+
+@pytest.mark.parametrize("header", ["Content-Encoding", "Content-Type", "X-Trace-Id"])
+def test_ambiguous_duplicate_response_headers_cannot_qualify_html(tmp_path, header):
+    entry = _entry("a", HTML)
+    if header == "X-Trace-Id":
+        entry["response"]["headers"].append([header, "first"])
+    entry["response"]["headers"].append([header.swapcase(), "private-conflict"])
+    report = analyse_capture(_archive(tmp_path / "ambiguous-response.zip", [entry]))
+    assert report["status"] == "reviewed"
+    assert report["reasons"] == {"invalid_receipt": 1}
+    assert report["counts"].get("parser_qualified", 0) == 0
+
+
+def test_ambiguous_duplicate_request_headers_cannot_count_public_get(tmp_path):
+    entry = _entry("a", HTML)
+    entry["request"]["headers"].append(["accept", "private-conflict"])
+    report = analyse_capture(_archive(tmp_path / "ambiguous-request.zip", [entry]))
+    assert report["status"] == "reviewed"
+    assert report["counts"]["unqualified"] == 1
+    assert report["counts"].get("eligible_public_get", 0) == 0
