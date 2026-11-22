@@ -129,3 +129,34 @@ def test_unprintable_local_documentary_labels_refuse_known_c_read(
         suggest_known_public_documents(store, **values)
     assert rows(store) == original
     assert store.entitlements() == []
+
+
+@pytest.mark.parametrize("field", ["title", "author"])
+@pytest.mark.parametrize("control", ["\x85", "\u202e", "\u2028", "\u200d"])
+def test_local_documentary_comparison_omits_spoofed_public_c_hit(
+    store, monkeypatch, field, control,
+):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+
+    _seed(store, record_id="safe", title="Roman commun", author="Autrice")
+    before = rows(store)
+    public = search_public_notice_c(
+        store, "Roman commun", field="title", scope="all",
+        page=0, page_size=20, max_scan=2048, now=101,
+        group_by_document=False,
+    )
+    good, = public.hits
+    forged = replace(good, record_id="forged",
+                     **{field: "Roman" + control + "FORGED"})
+    monkeypatch.setattr(documentary, "search_public_notice_c",
+                        lambda *_a, **_kw: replace(
+                            public, hits=(good, forged), known_matches=2))
+    page = suggest_known_public_documents(
+        store, title="Roman commun", author="Autrice", now=101)
+    assert page.status == "partial"
+    assert page.known_matches == 2
+    assert tuple(x.hit.record_id for x in page.suggestions) == ("safe",)
+    assert not page.provider_access_performed and not page.may_write_origin_or_right
+    assert rows(store) == before and store.entitlements() == []
