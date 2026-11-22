@@ -349,3 +349,22 @@ def test_later_source_cannot_publish_obsolete_earlier_lender(harness, change):
     assert len(calls) == 2
     assert first.calls == second.calls == 0
     assert service.current_identity.identity_id == "default"
+
+
+@pytest.mark.parametrize("flag, value", [
+    ("catalogue_access", "shared_read_only"),
+    ("search_provenance", "known_catalog_stale"),
+])
+def test_readonly_document_occurrence_never_becomes_lender_candidate(harness, flag, value):
+    from cifereca.core.borrow_for_identity_discovery import possible_lender_matches
+    service, account, session = harness
+    notice = _candidate().notice
+    native, = _discover(service, notice)
+    key = borrow_claim_key(account, notice)
+    mirror = replace(notice, metadata={**notice.metadata, flag: value})
+    assert _discover(service, mirror) == ()
+    notice.metadata = mirror.metadata
+    assert not possible_lender_matches(native, notice, requesting_identity_id="default")
+    assert _discover(service, notice) == ()
+    assert service.storage.loan_borrow_state(key) is None
+    assert session.calls == 0
