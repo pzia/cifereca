@@ -18,6 +18,15 @@ from .derived_variant_region_review import review_derived_private_region
 from .library_sqlite_freshness import sqlite_source_stamp
 
 
+def _valid_profile_directory(value):
+    # Capacity cannot recognize a profile owner more permissively than the
+    # exact identity-directory binding used by private retirement reviews.
+    return (type(value) is str and 0 < len(value) <= 256
+            and value not in (".", "..") and "/" not in value
+            and chr(92) not in value
+            and not any(ord(char) < 32 or ord(char) == 127 for char in value))
+
+
 def _receipt_witness(raw):
     """Snapshot invalid native SQLite values without treating them as receipts.
 
@@ -108,9 +117,7 @@ def _snapshot(scope):
                 if identity not in bindings:
                     directory = configured.get(identity)
                     bindings[identity] = (
-                        directory if type(directory) is str and directory
-                        and directory not in (".", "..")
-                        and "/" not in directory and chr(92) not in directory
+                        directory if _valid_profile_directory(directory)
                         and db.execute(
                             "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
                             (identity,),
