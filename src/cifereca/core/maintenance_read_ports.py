@@ -15,7 +15,7 @@ def maintenance_read_ports(service):
     return {
         "library.organizer.read": ActivationScopedReadFactory(
             lambda: LibraryOrganizerReadBrokerImpl(service),
-            ("preview", "next_page", "select_all_advice", "prepare_dry_run", "confirm_dry_run", "cancel"),
+            ("preview", "next_page", "select_all_advice", "prepare_dry_run", "confirm_dry_run", "revise_dry_run", "cancel"),
         ),
         "library.origin.read": ActivationScopedReadFactory(
             lambda: LocalOriginBatchReadBrokerImpl(service),

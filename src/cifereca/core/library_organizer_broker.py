@@ -179,6 +179,31 @@ class LibraryOrganizerReadBrokerImpl:
     def confirm_dry_run(self, *, token, confirmed=False):
         return self._review_dry_run(token, confirmed, confirm=True)
 
+    def revise_dry_run(self, *, token, confirmed=False):
+        """Discard advice and return to the exact reviewed page, never execute."""
+        if confirmed is not True:
+            return None
+        with self._lock:
+            try:
+                active = self._current(token)
+                if active is None:
+                    return None
+                scope, report, stamp, page = active
+                if not page.dry_run_state and not page.selected:
+                    return None
+                anchor = report["review_anchor"]
+                fresh = run_organizer_review(
+                    scope.service, scope, cursor=anchor if anchor.offset else None)
+                if fresh != report or self._current(token) is None:
+                    self._active = self._dry_run = None
+                    return None
+                # _project rotates the token and drops both the keeper
+                # selection and the previous dry-run, including confirmation.
+                return self._project(scope, fresh, stamp)
+            except Exception:
+                self._active = self._dry_run = None
+                return None
+
     def cancel(self, *, token):
         with self._lock:
             if (type(token) is str and self._active is not None
