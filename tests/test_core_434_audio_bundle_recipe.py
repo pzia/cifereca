@@ -162,3 +162,66 @@ def test_unresolved_recipe_cannot_claim_validation_of_final_bundle(tmp_path: Pat
 
     with pytest.raises(BundleRecipeError, match='unresolved recipe'):
         validate_audio_bundle_manifest(manifest, recipe=recipe)
+
+
+def test_bundle_manifest_never_enters_derived_private_stage(tmp_path, monkeypatch):
+    import cifereca.plugin_api.bundles as bundle_api
+    from cifereca.core.derived_variant_region_paths import PRIVATE_DERIVED_REGION
+
+    assert bundle_api._PRIVATE_DERIVED_REGION == PRIVATE_DERIVED_REGION
+    root = tmp_path / "audiobook"
+    private = root / "disc" / PRIVATE_DERIVED_REGION
+    private.mkdir(parents=True)
+    stage = private / "secret.mp3"
+    stage.write_bytes(b"private unpublished track")
+    (root / "track.mp3").write_bytes(b"public track")
+    actual_scandir = bundle_api.os.scandir
+
+    def guard(path):
+        if not isinstance(path, int):
+            assert PRIVATE_DERIVED_REGION not in Path(path).parts
+        return actual_scandir(path)
+
+    monkeypatch.setattr(bundle_api.os, "scandir", guard)
+    with pytest.raises(bundle_api.BundleError, match="reserved Core derived region"):
+        write_bundle_manifest(root, title="Synthetic audio")
+    assert stage.read_bytes() == b"private unpublished track"
+    assert (root / "track.mp3").read_bytes() == b"public track"
+    assert not (root / bundle_api.BUNDLE_MANIFEST_NAME).exists()
+
+
+def test_bundle_manifest_preserves_near_named_ordinary_directory(tmp_path):
+    import cifereca.plugin_api.bundles as bundle_api
+
+    root = tmp_path / "audiobook"
+    folder = root / (bundle_api._PRIVATE_DERIVED_REGION + "-backup")
+    folder.mkdir(parents=True)
+    (folder / "track.mp3").write_bytes(b"ordinary")
+    manifest = write_bundle_manifest(root, title="Synthetic audio")
+    assert [member.path for member in manifest.members] == [
+        bundle_api._PRIVATE_DERIVED_REGION + "-backup/track.mp3",
+    ]
+    assert (folder / "track.mp3").read_bytes() == b"ordinary"
+
+
+def test_bundle_manifest_rejects_symlink_and_scan_failure(tmp_path, monkeypatch):
+    import cifereca.plugin_api.bundles as bundle_api
+
+    root = tmp_path / "audiobook"
+    root.mkdir()
+    foreign = tmp_path / "foreign.mp3"
+    foreign.write_bytes(b"foreign data")
+    (root / "link.mp3").symlink_to(foreign)
+    with pytest.raises(bundle_api.BundleError, match="symlink"):
+        write_bundle_manifest(root)
+    assert foreign.read_bytes() == b"foreign data"
+    (root / "link.mp3").unlink()
+
+    def denied(_root, **kwargs):
+        kwargs["onerror"](PermissionError("synthetic denied"))
+        yield
+
+    monkeypatch.setattr(bundle_api.os, "walk", denied)
+    with pytest.raises(bundle_api.BundleError, match="scan incomplete"):
+        write_bundle_manifest(root)
+    assert not (root / bundle_api.BUNDLE_MANIFEST_NAME).exists()

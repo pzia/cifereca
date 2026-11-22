@@ -94,10 +94,17 @@ def test_private_derived_stage_is_not_an_ordinary_send_source(tmp_path, kind, mo
             witness = source
         else:
             source = (region if kind == "bundle" else profile / "local") / "Audio"
-            source.mkdir(parents=True)
-            (source / "track.mp3").write_bytes(b"audio")
-            (source / "play.m3u8").write_text("#EXTM3U\ntrack.mp3\n")
-            write_bundle_manifest(source, title="Audio", playlist="play.m3u8")
+            # A valid legacy bundle can exist under the private namespace,
+            # but the manifest writer must never create one there. Prepare
+            # this fixture outside the region and move it there afterward.
+            prepared = profile / "local" / "Audio" if kind == "bundle" else source
+            prepared.mkdir(parents=True)
+            (prepared / "track.mp3").write_bytes(b"audio")
+            (prepared / "play.m3u8").write_text("#EXTM3U\ntrack.mp3\n")
+            write_bundle_manifest(prepared, title="Audio", playlist="play.m3u8")
+            if kind == "bundle":
+                source.parent.mkdir(parents=True)
+                prepared.rename(source)
             witness = source / "track.mp3"
             if kind == "nested_bundle":
                 hidden = source / PRIVATE_DERIVED_REGION

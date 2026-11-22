@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 BUNDLE_MANIFEST_NAME = ".cifereca-bundle.json"
 BUNDLE_MANIFEST_VERSION = 1
+# Exact reserved Core namespace. A technical bundle is never its owner.
+_PRIVATE_DERIVED_REGION = ".cifereca-derived-v1"
 
 
 class BundleError(ValueError):
@@ -142,10 +145,36 @@ def write_bundle_manifest(
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
         raise BundleError(f"bundle root is not a directory: {root}")
+    if _PRIVATE_DERIVED_REGION in root.parts:
+        raise BundleError("reserved Core derived region is not a bundle")
     wanted = {str(value) for value in include} if include is not None else None
     rows: list[BundleMember] = []
     meta_by_path = {str(key): dict(value) for key, value in (member_metadata or {}).items()}
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+
+    def unavailable(error):
+        raise BundleError("bundle scan incomplete") from error
+
+    def ordinary_files():
+        seen = False
+        for current, directories, files in os.walk(
+                root, topdown=True, onerror=unavailable, followlinks=False):
+            seen = True
+            # Never scandir or hash a Core-owned stage, even if a caller
+            # supplies an explicit include list that excludes it.
+            if _PRIVATE_DERIVED_REGION in directories or _PRIVATE_DERIVED_REGION in files:
+                raise BundleError("reserved Core derived region is not a bundle")
+            for name in (*directories, *files):
+                if (Path(current) / name).is_symlink():
+                    raise BundleError("bundle symlink not allowed")
+            for name in files:
+                path = Path(current) / name
+                if not path.is_file():
+                    raise BundleError("bundle member is not a regular file")
+                yield path
+        if not seen:
+            raise BundleError("bundle scan incomplete")
+
+    for path in sorted(ordinary_files()):
         rel = path.relative_to(root).as_posix()
         if rel == BUNDLE_MANIFEST_NAME or path.name.endswith(".part"):
             continue
