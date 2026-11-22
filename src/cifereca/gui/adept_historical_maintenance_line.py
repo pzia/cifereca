@@ -43,6 +43,19 @@ def _display(result):
     return "\n".join(lines)
 
 
+def _hold_coordinate(value, *, account=False):
+    """Render untrusted source identifiers without changing exact Core keys.
+
+    SourceKey coordinates may legally contain TAB/ESC characters. They can
+    identify a held loan in Core but must never forge a second diagnostic line.
+    """
+    if account and value == "":
+        return "(compte principal)"
+    return (value if type(value) is str and 0 < len(value) <= 256
+            and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+            else "(identifiant non affichable)")
+
+
 def _display_holds(result):
     if type(result) is not dict or type(result.get("rows")) is not tuple:
         return "Verrous indisponibles ou contexte modifié. Aucun constat d’absence."
@@ -72,10 +85,12 @@ def _display_holds(result):
         lines.extend((
             "",
             row["title"],
-            f"Source : {row['provider_id']} / {row['credential_id']} / "
-            + (row['account_id'] or "(compte principal)"),
-            f"Édition : {row['edition_id']} · Prêt : {row['provider_loan_id']}",
-            f"Branche : {row['canonical_branch']}",
+            f"Source : {_hold_coordinate(row['provider_id'])} / "
+            + _hold_coordinate(row['credential_id']) + " / "
+            + _hold_coordinate(row['account_id'], account=True),
+            f"Édition : {_hold_coordinate(row['edition_id'])} · "
+            f"Prêt : {_hold_coordinate(row['provider_loan_id'])}",
+            f"Branche : {_hold_coordinate(row['canonical_branch'])}",
             reason,
             {
                 "not_requested": "Copie finale non vérifiée ; sélectionnez « Vérifier les fichiers ».",
@@ -111,10 +126,12 @@ def _selected_hold_summary(value):
         "local_recovery_not_qualified": "Témoin exact de non-soumission enregistré ; vérifier d’abord les copies et reçus locaux. Activation historique non attestée.",
         "historical_activation_unattested": "Témoin exact de non-soumission enregistré ; activation historique non attestée. Un identifiant de profil actuel ne démontre pas sa continuité.",
     }.get(value.rearm_blocker, "Preuves de reprise non qualifiées.")
-    return ("Verrou sélectionné : " + source.scope.provider_id + " / "
-            + source.scope.credential_id + " / " + (source.scope.account_id or "(compte principal)")
-            + "\\nÉdition : " + source.edition_id + " · Prêt : " + source.right_id
-            + " · Branche : " + source.branch + "\\n" + reason
+    return ("Verrou sélectionné : " + _hold_coordinate(source.scope.provider_id) + " / "
+            + _hold_coordinate(source.scope.credential_id) + " / "
+            + _hold_coordinate(source.scope.account_id, account=True)
+            + "\\nÉdition : " + _hold_coordinate(source.edition_id)
+            + " · Prêt : " + _hold_coordinate(source.right_id)
+            + " · Branche : " + _hold_coordinate(source.branch) + "\\n" + reason
             + "\\nRetéléchargement non autorisé ; aucun verrou modifié.").replace("\\n", "\n")
 
 
