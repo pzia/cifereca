@@ -94,9 +94,9 @@ def public_search_url(query: str, page: int = 0) -> str:
 _MAX_RETAINED_BYTES = 2 * 1024 * 1024
 _PARSER_FAMILY_DIGEST = sha256(b"numilog.public.search.html").hexdigest()
 # Bump with changes to the replay parser and its dependent HTML helpers.
-# v5: reject opacity-zero HTML evidence before publication (#7163).
+# v6: refuse undecodable UTF-8 instead of projecting replacement characters (#7163).
 # Keep the family digest: retained earlier inputs can be replayed safely.
-_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v5").hexdigest()
+_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v6").hexdigest()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -147,12 +147,22 @@ _LAYOUT_REASONS = frozenset({
     "duplicate_product", "ambiguous_pagination", "inconsistent_pagination",
     "inconsistent_page", "excessive_pagination", "pagination_query_changed",
     "invalid_pagination", "invalid_facets", "ambiguous_sort", "invalid_sort",
+    "invalid_encoding",
 })
 
 
 def _parse_search_body(body, url):
+    # The transport and retained replay must see identical source bytes.
+    # Replacement decoding can turn an invalid supplier title/identifier into
+    # apparently verified public C text; never publish such a false fact.
     try:
-        return parse_public_search(body.decode("utf-8-sig", errors="replace"), url)
+        html = body.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        error = ProviderError("Numilog : public_catalog_layout_unverified:invalid_encoding")
+        error.code = "search_protocol_unverified"
+        raise error from None
+    try:
+        return parse_public_search(html, url)
     except PublicSearchParseError as exc:
         reason = exc.code if type(exc.code) is str and exc.code in _LAYOUT_REASONS else "unknown"
         error = ProviderError("Numilog : public_catalog_layout_unverified:" + reason)
