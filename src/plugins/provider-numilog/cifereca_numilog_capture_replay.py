@@ -110,6 +110,11 @@ def analyse_capture(path):
             # ZIP permits duplicate member names, while getinfo() silently
             # selects only the final one. A replay must never certify counts
             # from an ambiguous index or body chosen by archive ordering.
+            # A capture is bounded to 1000 exchanges; even with separate
+            # request and response bodies it needs at most 2001 members.
+            # Reject oversized ZIP directories before indexing their names.
+            if len(archive.infolist()) > 2001:
+                raise ValueError("oversized_trace_member_inventory")
             names = archive.namelist()
             if len(names) != len(set(names)):
                 raise ValueError("ambiguous_trace_members")
