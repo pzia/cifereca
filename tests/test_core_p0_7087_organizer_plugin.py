@@ -277,3 +277,37 @@ def test_guided_dry_run_has_two_explicit_steps_and_never_mutates(store, tmp_path
     assert plugin.broker.confirm_dry_run(token=prepared.token, confirmed=True) is None
     assert rows(store) == before
     assert path.exists() and not (path.parent / "Autrice - Roman commun.epub").exists()
+
+
+def test_guided_simulation_selects_one_group_and_preserves_scope(store, tmp_path):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    for name, suffix in (("one", ""), ("two", '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')):
+        _put_epub(store, root, f"Acquisitions/{name}.epub", metadata=META + suffix)
+    module, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    controller = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert controller.request("preview")
+    _finish(tasks)
+    first = controller.page
+    assert len(first.groups) == 2
+    assert not controller.request("prepare", group_index=True)
+    assert not controller.request("prepare", group_index=2)
+    assert controller.request("prepare", group_index=1)
+    _finish(tasks)
+    prepared = controller.page
+    assert prepared.dry_run_group == 1
+    assert all(e.current == first.groups[1].files[0].current
+               for e in prepared.dry_run_entries)
+    assert len(prepared.dry_run_entries) == 1
+    assert prepared.dry_run_entries[0].state == "destination_conflict"
+    assert "groupe 2 de cette page" in module.display(prepared)
+    assert not controller.request("confirm", group_index=0)
+    assert controller.request("confirm")
+    _finish(tasks)
+    assert controller.page.dry_run_group == 1
+    assert controller.page.dry_run_state == "confirmed" and not controller.page.mutation_authorized
+    assert controller.page.dry_run_entries == prepared.dry_run_entries
+    assert plugin.broker.confirm_dry_run(token=prepared.token, confirmed=True) is None
+    assert rows(store) == before
