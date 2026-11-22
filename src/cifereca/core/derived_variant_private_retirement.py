@@ -97,10 +97,14 @@ def _trace_snapshot(db):
     total = 0
     for key, size in rows:
         _require(type(size) is int and 0 < size <= _MAX_RECORD_BYTES)
-        total += size
-        _require(total <= _MAX_TOTAL_BYTES, "derived_retirement_capacity")
         raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-        result[key] = (raw, _decode_trace(key, raw))
+        trace = _decode_trace(key, raw)
+        # Reserve the full fixed per-record budget for a prepared trace.
+        # After unlink its terminal witness grows (after stamp + outcome).
+        # Refuse before the physical transition if that space is not held.
+        total += _MAX_RECORD_BYTES if trace["state"] == "prepared" else size
+        _require(total <= _MAX_TOTAL_BYTES, "derived_retirement_capacity")
+        result[key] = (raw, trace)
     return result, total
 
 
@@ -322,7 +326,7 @@ def prepare_private_stage_retirement(storage, *, library_root, identity_id,
                     "mount": mount, "outcome": None,
                 })
                 _decode_trace(key, raw)
-                _require(total + len(raw.encode("ascii")) <= _MAX_TOTAL_BYTES,
+                _require(total + _MAX_RECORD_BYTES <= _MAX_TOTAL_BYTES,
                          "derived_retirement_capacity")
                 db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, raw))
                 _require(names() == (linked, before)
