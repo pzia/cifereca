@@ -56,7 +56,8 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
 
     A descriptive match is not an exact identifier proof. All results retain
     the source DTO, including record, edition, revision, dates and stale flag.
-    Page ordering remains C's ordering; comparison is not a global ranking.
+    Ranking is local to the C page: stronger descriptive evidence first,
+    stable ties retain C's exact order. No global or cross-page rank claimed.
     Even no known matches is partial evidence, not a negative catalogue result.
     No caller-supplied provider/account scope or arbitrary search callback.
     """
@@ -72,11 +73,23 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
         page=page, page_size=page_size, max_scan=2048, now=now,
         group_by_document=False,
     )
+    # Ranking is advisory only. Do not infer origin/right from similarity,
+    reorder across pagination windows, or collapse source editions.
+    evidence_rank = {
+        "title_author_concordant": 0,
+        "title_concordant_author_unknown": 1,
+        "title_concordant_author_divergent": 2,
+        "title_related": 3,
+    }
+    matches = tuple(
+        DocumentarySuggestion(hit, _comparison(hit, title, author))
+        for hit in found.hits
+    )
+    ordered = tuple(sorted(
+        matches, key=lambda item: evidence_rank.get(item.comparison, 4),
+    ))
     return DocumentarySuggestionPage(
-        suggestions=tuple(
-            DocumentarySuggestion(hit, _comparison(hit, title, author))
-            for hit in found.hits
-        ),
+        suggestions=ordered,
         known_matches=found.known_matches, status=found.status,
         has_more=found.has_more, page=page, page_size=page_size,
         unindexed_sources=found.unindexed_sources,
