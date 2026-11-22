@@ -77,3 +77,39 @@ def test_initial_submit_failure_does_not_publish_actions(tmp_path):
             current=lambda: True, Gtk=GTK, Gio=NS(),
         )
         assert actions == []
+
+
+def test_new_public_menu_request_revokes_old_queued_read_and_click(tmp_path):
+    with closing(Storage(tmp_path / "menu-generation.sqlite")) as db:
+        c = setup(db)
+        pending, actions, launches = [], [], []
+        host = NS(service=NS(storage=db),
+                  runner=NS(submit=lambda label, work, done, fail, **kw:
+                            pending.append((work, done, fail))),
+                  toast=lambda _: None)
+        panel = NS(add_actions=actions.extend)
+        gio = NS(AppInfo=NS(launch_default_for_uri=lambda uri, _: launches.append(uri)))
+        def ask():
+            assert request_public_web_actions(
+                host, panel, c.document, expected_epoch=c.epoch,
+                current=lambda: True, Gtk=GTK, Gio=gio)
+        ask()
+        ask()
+        work, done, _ = pending.pop(0)
+        assert work() is None
+        done(None)
+        assert not actions
+        deliver(pending)
+        button, = actions
+        button.callback(button)
+        ask()
+        work, done, _ = pending.pop(0)
+        assert work() is None
+        done(None)
+        assert not launches
+        button.callback(button)
+        assert len(pending) == 1
+        deliver(pending)
+        actions[-1].callback(actions[-1])
+        deliver(pending)
+        assert launches == [URL]
