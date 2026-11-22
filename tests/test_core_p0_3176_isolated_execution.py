@@ -121,3 +121,70 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
         assert not new.exists()
         assert store.placement_get(pid) == baseline
     assert authority() == before
+
+
+@pytest.mark.parametrize("case", ["success", "production", "cancelled", "lock_busy", "late_revocation"])
+def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, case):
+    from types import SimpleNamespace as NS
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+    from cifereca.core.library_organizer_execution import admit_native_reviewed_rename
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data, baseline = old.read_bytes(), store.placement_get(pid)
+    service = _service(store, root)
+    key = "library.organizer.read"
+    resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
+                                        "organizer", (key,))
+    broker = resolver(key)
+    plugin = object()
+    resolved = NS(plugin_id="organizer", service=plugin, registry_generation=1)
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"organizer": NS(service=plugin, activation_brokers=resolver)})
+    page = broker.preview(identity_id="A", confirmed=True)
+    page = broker.prepare_dry_run(token=page.token, confirmed=True, rename_only=True)
+    page = broker.confirm_dry_run(token=page.token, confirmed=True)
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda: lock_path)
+    with InterProcessLock(lock_path):
+        pass
+    lock_bytes = lock_path.read_bytes()
+    active = [True]
+    def admit(confirmed):
+        return admit_native_reviewed_rename(
+            manager, resolved, page, service=service, identity_id="A",
+            confirmed=confirmed, view_current=lambda: active[0])
+    assert admit(False) is None
+    command = admit(True)
+    assert callable(command) and admit(True) is None
+    if case != "production":
+        monkeypatch.setattr(execute, "_execution_fence_current",
+                            lambda s, lock: s.root == root and s.storage is store)
+    if case == "cancelled":
+        active[0] = False
+    if case == "late_revocation":
+        original = LibraryMaintenanceBrokerImpl.plan
+        def revoke(self, request):
+            result = original(self, request)
+            active[0] = False
+            return result
+        monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "plan", revoke)
+    if case == "lock_busy":
+        with InterProcessLock(lock_path, existing_nofollow=True):
+            result = command()
+    else:
+        result = command()
+    assert command() == {"status": "blocked", "changed": 0}
+    assert lock_path.read_bytes() == lock_bytes
+    new = old.with_name("Autrice - Roman commun.epub")
+    if case == "success":
+        assert result == {"status": "renamed", "changed": 1}
+        assert new.read_bytes() == data and not old.exists()
+        assert store.placement_get(pid)["path"] == str(new)
+    else:
+        assert result == {"status": "blocked", "changed": 0}
+        assert old.read_bytes() == data and not new.exists()
+        assert store.placement_get(pid) == baseline
