@@ -12,6 +12,7 @@ from ..plugin_api.local_origin_detail import (
     LocalOriginPublicMatch, LocalOriginPublicReport,
     LocalOriginPrivateChoice, LocalOriginPrivateMatch, LocalOriginPrivateReport,
     LocalOriginRemoteLoanChoice, LocalOriginRemoteLoanMatch, LocalOriginRemoteLoanReport,
+    LocalOriginDeclarationAdvice,
 )
 from .activation_scoped_broker import ActivationScopedReadFactory
 from .local_origin_public_catalogue import (
@@ -26,6 +27,7 @@ from .local_origin_remote_loans import (
     RemoteLoanDocumentaryMatch, available_remote_loan_catalogues, compare_remote_loan_catalogue,
 )
 from .local_origin_documentary_suggestions import DocumentarySuggestionPage
+from .local_origin_declaration_bridge import preview_private_loan_declaration
 from .local_origin_suggestion_operator import (
     admit_local_origin_suggestion, continue_local_origin_suggestion,
     run_local_origin_suggestion,
@@ -39,20 +41,28 @@ class LocalOriginDetailReadBrokerImpl:
         self._public = {}
         self._private = {}
         self._remote_loans = {}
+        self._declaration_choices = {}
+        self._declaration_window = None
         self._lock = Lock()
         self._generation = 0
         self._active = None
         self._revoked = False
 
-    def _live(self, generation, view, request):
+    def _view_live(self, generation, view):
+        # Pure lifetime check. The declaration authority calls its
+        # cancellation predicate inside its own SQLite transaction.
+        # request.current() must not be called on that connection then.
         with self._lock:
             if self._revoked or generation != self._generation:
                 return False
         try:
             return ((self._activation_current is None or self._activation_current() is True)
-                    and view() is True and request.current() is True)
+                    and view() is True)
         except Exception:
             return False
+
+    def _live(self, generation, view, request):
+        return self._view_live(generation, view) and request.current() is True
 
     def _read(self, request, view, generation):
         try:
@@ -119,6 +129,7 @@ class LocalOriginDetailReadBrokerImpl:
                 self._public = {token: (choice, view, generation) for token, choice in choices}
                 self._private = {token: (choice, view, generation, None) for token, choice in private_choices}
                 self._remote_loans = {token: (choice, view, generation) for token, choice in remote_loans}
+                self._declaration_choices.clear()
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -140,6 +151,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._public.clear()
             self._private.clear()
             self._remote_loans.clear()
+            self._declaration_choices.clear()
         try:
             if still_current() is not True:
                 return None
@@ -166,6 +178,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._public.clear()
             self._private.clear()
             self._remote_loans.clear()
+            self._declaration_choices.clear()
             self._generation += 1
             generation = self._generation
         return self._read(request, view, generation)
@@ -229,6 +242,9 @@ class LocalOriginDetailReadBrokerImpl:
             if selected is None:
                 return None
             choice, view, generation, continuation = selected
+            self._declaration_choices.clear()
+            declaration_window = object()
+            self._declaration_window = declaration_window
         request = choice.request
 
         def live():
@@ -266,14 +282,17 @@ class LocalOriginDetailReadBrokerImpl:
                         or following.page != page + 1):
                     return None
                 next_token = token_hex(32)
+            candidate_tokens = tuple(
+                token_hex(32) if choice.kind == "loan" and result["status"] == "partial"
+                else None for _ in result["candidates"])
             report = LocalOriginPrivateReport(
                 result["status"], choice.scope.provider_id, choice.scope.credential_id,
                 choice.scope.account_id, choice.kind,
                 tuple(LocalOriginPrivateMatch(
                     row.source.edition_id, row.title, row.author, row.comparison,
                     row.evidence, row.title_observed_at,
-                    row.source.branch, row.source.resource_id,
-                ) for row in result["candidates"]), result["window_truncated"],
+                    row.source.branch, row.source.resource_id, candidate_token,
+                ) for row, candidate_token in zip(result["candidates"], candidate_tokens)), result["window_truncated"],
                 page=page, next_token=next_token,
             )
             if not live():
@@ -293,7 +312,67 @@ class LocalOriginDetailReadBrokerImpl:
                     if next_token is not None:
                         self._private.pop(next_token, None)
                 return None
+            with self._lock:
+                if (self._revoked or self._generation != generation
+                        or self._declaration_window is not declaration_window):
+                    return None
+                self._declaration_choices = {
+                    candidate_token: (choice, row, continuation, view, generation)
+                    for row, candidate_token in zip(result["candidates"], candidate_tokens)
+                    if candidate_token is not None
+                }
+            if not live():
+                with self._lock:
+                    if self._declaration_window is declaration_window:
+                        self._declaration_choices.clear()
+                return None
             return report
+        except Exception:
+            return None
+
+    def preview_loan_declaration(self, *, token, confirmed=False):
+        """One explicitly picked loan from the latest exact cached comparison.
+
+        The existing declaration authority prepares the preview. The public
+        result is inert; its private writer token never crosses this port.
+        """
+        if (confirmed is not True or type(token) is not str
+                or self._activation_current is None):
+            return None
+        with self._lock:
+            if self._revoked:
+                return None
+            selected = self._declaration_choices.get(token)
+            if selected is None:
+                return None
+            self._declaration_choices.clear()
+            window = self._declaration_window
+        choice, candidate, continuation, view, generation = selected
+
+        def view_live():
+            with self._lock:
+                if self._declaration_window is not window:
+                    return False
+            return self._view_live(generation, view)
+
+        def live():
+            return view_live() and choice.request.current() is True
+
+        try:
+            if not live():
+                return None
+            # The bridge revalidates request/account/file before and after
+            # the writer preview. Inside its transaction, pass only the
+            # revocable view/activation guard; the writer owns SQL scope.
+            preview = preview_private_loan_declaration(
+                self._service, choice=choice, candidate=candidate,
+                continuation=continuation, confirmed=True, still_current=view_live)
+            if preview is None or not live():
+                return None
+            source, scope = candidate.source, candidate.source.scope
+            return LocalOriginDeclarationAdvice(
+                scope.provider_id, scope.credential_id, scope.account_id,
+                source.edition_id, source.resource_id)
         except Exception:
             return None
 
@@ -353,6 +432,7 @@ class LocalOriginDetailReadBrokerImpl:
                 self._public.clear()
                 self._private.clear()
                 self._remote_loans.clear()
+                self._declaration_choices.clear()
                 self._generation += 1
 
     def revoke(self):
@@ -363,6 +443,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._public.clear()
             self._private.clear()
             self._remote_loans.clear()
+            self._declaration_choices.clear()
             self._generation += 1
 
 
@@ -376,6 +457,7 @@ class LocalOriginDetailReadFactory:
     def for_activation(self, plugin_id, *, current):
         factory = ActivationScopedReadFactory(
             lambda: LocalOriginDetailReadBrokerImpl(self._service, activation_current=current),
-            ("preview", "next_page", "search_public", "compare_private", "compare_remote_loan", "cancel"),
+            ("preview", "next_page", "search_public", "compare_private", "compare_remote_loan",
+             "preview_loan_declaration", "cancel"),
         )
         return factory.for_activation(plugin_id, current=current)
