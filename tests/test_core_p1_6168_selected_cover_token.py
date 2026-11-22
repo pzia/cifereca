@@ -31,7 +31,9 @@ def test_post_paint_lease_matches_actual_selected_scope_revision_and_uri():
     lease = cache.selected_token(
         decision.scope, revision=decision.revision, uri=decision.uri,
     )
-    assert lease is source_token
+    assert lease == source_token
+    assert lease is not source_token
+    assert lease.scope is not source_token.scope
     assert cache.peek(decision.scope, revision=1) is decision
     assert cache.selected_token(
         decision.scope, revision=1, uri="https://other.example/image.jpg",
@@ -56,10 +58,10 @@ def test_same_uri_on_different_loan_and_borrower_does_not_prove_scope():
     assert token2.scope != old.scope
     assert cache.selected_token(
         second.scope, revision=1, uri=second.uri,
-    ) is token2
+    ) == token2
     assert cache.selected_token(
         first.scope, revision=1, uri=first.uri,
-    ) is old
+    ) == old
 
 
 def test_late_gtk_callback_cannot_resurrect_invalidated_source():
