@@ -213,3 +213,13 @@ def test_ambiguous_duplicate_request_headers_cannot_count_public_get(tmp_path):
     assert report["status"] == "reviewed"
     assert report["counts"]["unqualified"] == 1
     assert report["counts"].get("eligible_public_get", 0) == 0
+
+
+def test_invalid_brotli_bytes_are_counted_as_transport_refusal(tmp_path):
+    pytest.importorskip("brotli")
+    entry = _entry("a", b"not-a-brotli-response", coding="br")
+    result = analyse_capture(_archive(tmp_path / "invalid-brotli.zip", [entry]))
+    assert result["status"] == "reviewed"
+    assert result["counts"]["eligible_public_get"] == 1
+    assert result["reasons"] == {"encoding_unavailable_or_invalid": 1}
+    assert result["counts"].get("parser_qualified", 0) == 0

@@ -99,7 +99,10 @@ def _bounded_decode(raw, coding):
             if not decoder.is_finished():
                 return None
             return b"".join(chunks)
-        except (ValueError, RuntimeError, AttributeError):
+        except (ValueError, RuntimeError, AttributeError, brotli.error):
+            # The optional Brotli package raises its own Exception subclass
+            # for invalid wire bytes. A corrupt historical response is an
+            # unqualified transport, never an uncaught replay failure.
             return None
     return None
 
