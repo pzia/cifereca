@@ -530,3 +530,46 @@ def test_historical_hold_redacts_unsafe_borrowed_loan_title(
     assert selected is not None and not selected.unlock_authorized
     assert store.metadata_get(_key(selected_source)) == marker
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("unsafe", [
+    "prefix\nFORGED", "prefix\x85FORGED", "prefix\u202eFORGED",
+    "prefix\u2028FORGED", "prefix\u200dFORGED",
+    "prefix\u2066FORGED", "prefix\x1bFORGED",
+])
+def test_historical_ledger_display_redacts_unprintable_source_and_evidence(
+    store, tmp_path, unsafe,
+):
+    service, _source, path, _receipt = _setup(store, tmp_path)
+    before = rows(store), path.read_bytes()
+    page = _run(service)
+    record = dict(page["rows"][0])
+    for field in (
+        "acquisition_id", "provider_id", "credential_id", "account_id",
+        "edition_id", "provider_loan_id", "recorded_adept_profile_id",
+        "recorded_adept_loan_id", "canonical_branch", "ledger_status",
+    ):
+        record[field] = unsafe
+    record["publication"] = {
+        "canonical_origin_records": unsafe,
+        "canonical_placement_state": unsafe,
+    }
+    record["local_bytes"] = {"evidence": {"placement_evidence": unsafe}}
+    displayed = _display({**page, "rows": (record,)})
+    assert "FORGED" not in displayed and unsafe not in displayed
+    assert "valeur non affichable" in displayed
+    assert "Horodatage historique (Unix) : 1234" in displayed
+    assert "Aucun retour, rattachement, acquisition ou suppression autorisé" in displayed
+    assert (rows(store), path.read_bytes()) == before
+
+
+def test_historical_ledger_display_preserves_readable_identifiers_and_empty_account(
+    store, tmp_path,
+):
+    service, _source, path, _receipt = _setup(store, tmp_path, account="")
+    page = _run(service)
+    shown = _display(page)
+    assert "Profil ADEPT enregistré : historical-adobe" in shown
+    assert "Horodatage historique (Unix) : 1234" in shown
+    assert "Source : seller / card-A / (vide enregistré)" in shown
+    assert path.read_bytes() == BYTES

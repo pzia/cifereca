@@ -17,7 +17,7 @@ URL = ("https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx"
 
 
 def _entry(letter, data, *, offset=0, duration=100, coding="identity",
-           status=200, cookies=False, producer="provider.numilog.public"):
+           status=200, cookies=False, producer="provider.numilog.public", url=URL):
     ref = letter * 32
     headers = [["Accept", "text/html"], ["Accept-Language", "fr-FR,fr;q=0.9"]]
     if cookies:
@@ -27,7 +27,7 @@ def _entry(letter, data, *, offset=0, duration=100, coding="identity",
     return {
         "exchange_ref": ref, "started_at": started.isoformat(),
         "duration_ms": duration,
-        "request": {"method": "GET", "url": URL, "producer": producer,
+        "request": {"method": "GET", "url": url, "producer": producer,
                     "headers": headers},
         "request_body": {"state": "complete", "stored_bytes": 0},
         "response": {"status_code": status, "headers": [
@@ -102,3 +102,43 @@ def test_bad_archive_has_closed_error(tmp_path):
     path = tmp_path / "unreadable.zip"
     path.write_bytes(b"PRIVATE_ARCHIVE_CONTENT")
     assert analyse_capture(path) == {"status": "invalid_capture"}
+
+
+def test_advanced_readable_layout_is_replayed_but_never_counted_as_coalescible(tmp_path):
+    # An Ra GET is eligible for offline parsing, but our installed shared
+    # public transport deliberately accepts brSimple only. The diagnostic
+    # must not promise to coalesce an unsupported advanced request.
+    advanced = ("https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx"
+                "?mode=Ra&RATitle=loup")
+    entries = [
+        _entry("a", HTML, url=URL, offset=0),
+        _entry("b", HTML, url=advanced, offset=10),
+        _entry("c", HTML, url=advanced, offset=20),
+    ]
+    result = analyse_capture(_archive(tmp_path / "advanced.zip", entries))
+    assert result["status"] == "reviewed"
+    assert result["counts"]["exchanges"] == 3
+    assert result["counts"]["eligible_public_get"] == 1
+    assert result["counts"]["advanced_get_not_coalescible"] == 2
+    assert result["counts"]["distinct_exact_public_get"] == 1
+    assert result["counts"]["repeated_exact_public_get_observed"] == 0
+    assert result["counts"]["overlapping_exact_public_get_observed"] == 0
+    assert sum(result["reasons"].values()) + result["counts"]["parser_qualified"] == 3
+    output = json.dumps(result)
+    assert "RATitle" not in output and "numilog.com" not in output
+
+
+def test_duplicate_capture_index_or_body_is_never_accepted_as_a_receipt(tmp_path):
+    import warnings
+    for member in ("http/index.json", "http/bodies/" + "a" * 32 + "-response.bin"):
+        archive = _archive(tmp_path / ("duplicate-index.zip" if member.endswith(".json")
+                                      else "duplicate-body.zip"), [
+            _entry("a", HTML),
+        ])
+        # ZIP permits ambiguous duplicate members; getinfo would otherwise
+        # select the last content and emit a superficially valid verdict.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with ZipFile(archive, "a") as zipfile:
+                zipfile.writestr(member, b"AMBIGUOUS_PRIVATE_BODY")
+        assert analyse_capture(archive) == {"status": "invalid_capture"}

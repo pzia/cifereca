@@ -88,6 +88,12 @@ def analyse_capture(path):
     observed_intervals = defaultdict(list)
     try:
         with ZipFile(path) as archive:
+            # ZIP permits duplicate member names, while getinfo() silently
+            # selects only the final one. A replay must never certify counts
+            # from an ambiguous index or body chosen by archive ordering.
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError("ambiguous_trace_members")
             index = archive.getinfo("http/index.json")
             if index.file_size > _MAX_INDEX:
                 raise ValueError("invalid_trace_index")
@@ -119,7 +125,7 @@ def analyse_capture(path):
                     counts["unqualified"] += 1
                     continue
                 try:
-                    _query(url, allow_advanced=True)
+                    parsed_url = _query(url, allow_advanced=True)
                 except PublicSearchParseError:
                     counts["unqualified"] += 1
                     continue
@@ -127,23 +133,30 @@ def analyse_capture(path):
                 if type(body_request) is not dict or body_request.get("stored_bytes") != 0:
                     counts["unqualified"] += 1
                     continue
-                counts["eligible_public_get"] += 1
-                # Exact transport equivalence, not normalization of query,
-                # session, endpoint, charset, or differing request headers.
-                transport_key = (url, headers)
-                transport_keys.add(transport_key)
-                started = entry.get("started_at")
-                duration = entry.get("duration_ms")
-                if (type(started) is str and type(duration) in (int, float)
-                        and not isinstance(duration, bool) and 0 <= duration <= 60000):
-                    try:
-                        instant = datetime.fromisoformat(started)
-                        if instant.tzinfo is not None:
-                            start = instant.timestamp()
-                            observed_intervals[transport_key].append(
-                                (start, start + duration / 1000.0))
-                    except (ValueError, OverflowError, OSError):
-                        pass
+                # Only brSimple GETs can use the installed anonymous
+                # _coalesced_public_search transport. Advanced Ra evidence
+                # is still replayed below, but must never inflate the number
+                # of network requests that our deduplication could prevent.
+                if parsed_url["mode"] == "brSimple":
+                    counts["eligible_public_get"] += 1
+                    # Exact transport equivalence, not normalization of query,
+                    # session, endpoint, charset or different headers.
+                    transport_key = (url, headers)
+                    transport_keys.add(transport_key)
+                    started = entry.get("started_at")
+                    duration = entry.get("duration_ms")
+                    if (type(started) is str and type(duration) in (int, float)
+                            and not isinstance(duration, bool) and 0 <= duration <= 60000):
+                        try:
+                            instant = datetime.fromisoformat(started)
+                            if instant.tzinfo is not None:
+                                start = instant.timestamp()
+                                observed_intervals[transport_key].append(
+                                    (start, start + duration / 1000.0))
+                        except (ValueError, OverflowError, OSError):
+                            pass
+                else:
+                    counts["advanced_get_not_coalescible"] += 1
                 response = entry.get("response")
                 info = entry.get("response_body")
                 if type(response) is not dict or type(info) is not dict:

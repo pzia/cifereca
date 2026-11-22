@@ -416,3 +416,114 @@ def test_disposed_native_widget_cannot_rearm_from_late_observation(
     if dispose_with_dialog:
         prior.respond("apply")
     assert not runner.queue and ui._page is None and ui._dialog is None
+
+
+@pytest.mark.parametrize("invalid_owner", [
+    "A\nFORGED", "A\x85FORGED", "A\u202eFORGED",
+    "A\u200dFORGED", "A" * 1025, None, 7,
+])
+def test_native_confirmation_never_presents_unsafe_owner_identity(
+    monkeypatch, invalid_owner,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Unrenderable owner cannot report"))
+    lease = NS(identity_id=invalid_owner, is_current=lambda: True)
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),),
+    )
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Unsafe owner cannot admit Core"),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert not ui.button.visible and not ui.button.sensitive
+    assert not ui.open(NS(MessageDialog=Dialog))
+    assert not Dialog.dialogs and not runner.queue
+
+
+@pytest.mark.parametrize("phase", ["before_open", "after_open"])
+def test_native_confirmed_rename_cannot_switch_identity_after_mount(
+    monkeypatch, phase,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Changed owner cannot report"))
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),),
+    )
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Changed owner cannot admit Core"),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.button.visible
+    if phase == "after_open":
+        assert ui.open(NS(MessageDialog=Dialog))
+        dialog = Dialog.dialogs[-1]
+        assert "Profil : A\n" in dialog.body
+    lease.identity_id = "B"
+    assert not ui._lease_current()
+    if phase == "before_open":
+        assert not ui.open(NS(MessageDialog=Dialog))
+    else:
+        dialog.respond("apply")
+    ui.observe(page)
+    assert not ui.button.visible and not ui.button.sensitive
+    assert not runner.queue
+
+
+@pytest.mark.parametrize("stale_response", ["apply", "cancel"])
+def test_old_native_dialog_response_cannot_clear_new_modal_after_refresh(
+    monkeypatch, stale_response,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Stale dialog must not deliver a result"))
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Stale dialog must not admit Core"),
+    )
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    old_dialog = Dialog.dialogs[-1]
+    # Native close is asynchronous: its cancellation may arrive after a new
+    # review opens. Simulate that documented scheduling without GTK timing.
+    closed = []
+    monkeypatch.setattr(Dialog, "close", lambda self: closed.append(self), raising=False)
+    next_page = replace(page, dry_run_entries=(
+        replace(entry, proposed="different.epub"),))
+    ui.observe(next_page)
+    assert closed == [old_dialog] and ui._dialog is None
+    assert ui.open(NS(MessageDialog=Dialog))
+    new_dialog = Dialog.dialogs[-1]
+    assert new_dialog is not old_dialog
+    assert ui._dialog is new_dialog and not ui.button.sensitive
+    old_dialog.respond(stale_response)
+    assert ui._dialog is new_dialog and not ui.button.sensitive
+    assert not runner.queue
+    new_dialog.respond("cancel")
+    assert ui._dialog is None and ui.button.sensitive
+    assert not runner.queue
