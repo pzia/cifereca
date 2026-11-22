@@ -5,6 +5,7 @@ refresh, GET, URL, provider action, association or write. Descriptive equality
 never attests the local file's source or the user's current legal right.
 """
 from dataclasses import dataclass
+from unicodedata import category
 from collections import Counter
 
 from ..models import Account, Loan
@@ -47,7 +48,13 @@ def _scope_coords(scope):
 def _descriptive_pair(title, author):
     if (not _public_bibliographic_text(title, required=True, limit=512)
             or not title.strip()
-            or not _public_bibliographic_text(author, limit=512)):
+            or not _public_bibliographic_text(author, limit=512)
+            # Cached private descriptions are rendered in a local consent
+            # review. C1/bidi/invisible controls cannot be trusted as labels,
+            # regardless of their acceptability in a source-side catalogue.
+            or any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for value in (title, author) if value is not None
+                   for ch in value)):
         return None
     return title, author or None
 

@@ -502,3 +502,29 @@ def test_cached_occurrence_ambiguity_precedes_descriptive_filter(private_rig, co
     assert report.status == "partial" and report.matches == ()
     assert not report.association_authorized and not report.provider_access_performed
     assert not calls and rows(service.storage) == before and path.read_bytes() == content
+
+
+@pytest.mark.parametrize("kind", ["loan", "purchase"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_private_cached_descriptions_with_spoofed_author_are_not_local_candidates(
+    private_rig, monkeypatch, kind, spoof,
+):
+    service, request, account, session, calls, path, *_ = private_rig
+    if kind == "loan":
+        service.last_loans[0] = replace(
+            service.last_loans[0], author="Autrice" + spoof + "FORGED",
+        )
+    else:
+        key, snapshot = new_source()
+        persist_attested_source_references(service.storage, snapshot)
+        monkeypatch.setattr(private, "_read_descriptive_txn", lambda _db, _source: NS(
+            facts=(NS(field="title", value="Roman commun", observed_at=100),
+                   NS(field="author", value="Autrice" + spoof + "FORGED", observed_at=100)),
+            alternatives=(),
+        ))
+    before, content = rows(service.storage), path.read_bytes()
+    result = _run(private_rig, kind=kind)
+    assert result["status"] == "partial" and not result["candidates"]
+    assert not result["provider_access_performed"]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert not calls and rows(service.storage) == before and path.read_bytes() == content
