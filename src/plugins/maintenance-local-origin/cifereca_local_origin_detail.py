@@ -38,7 +38,10 @@ def known_rows(page):
             "Notice ancienne" if hit.stale else "Notice en cache",
         ) if x)))
     if not page.matches:
-        lines.append(("Résultat", "Aucune correspondance connue ; absence non prouvée."))
+        verdict = ("Correspondances C connues, aucune fiche présentable sur cette page ; "
+                   "absence non prouvée." if page.known_matches > 0 else
+                   "Aucune correspondance connue ; absence non prouvée.")
+        lines.append(("Résultat", verdict))
     if page.has_more and not page.can_continue:
         lines.append(("Limite", "Limite de revue atteinte ; d’autres résultats peuvent exister."))
     return tuple(lines)
