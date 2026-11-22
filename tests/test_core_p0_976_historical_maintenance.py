@@ -142,7 +142,9 @@ def test_native_maintenance_hook_exists_with_or_without_tools():
     calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)
              and isinstance(node.func, ast.Name)
              and node.func.id == "add_adept_historical_maintenance_line"]
-    assert len(calls) == 2
+    assert len(calls) == 1
+    # One unconditional call after the service loop covers both empty and populated registries.
+    assert any(isinstance(node, ast.Expr) and node.value is calls[0] for node in method.body)
 
 
 def test_hold_review_includes_marker_without_ledger_and_never_unlocks(store, tmp_path):
