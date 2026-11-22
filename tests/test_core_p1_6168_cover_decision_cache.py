@@ -324,3 +324,62 @@ def test_concurrent_observation_cannot_publish_after_invalidation():
     assert not thread.is_alive()
     assert outcomes == [False]
     assert cache.peek(scope, revision=1) is None
+
+
+@pytest.mark.parametrize("operation", [
+    lambda cache, scope: cache.begin(scope, revision=1),
+    lambda cache, scope: cache.peek(scope, revision=1),
+    lambda cache, scope: cache.observe(scope, revision=1),
+    lambda cache, scope: cache.selected_token(scope, revision=1, uri=URL),
+    lambda cache, scope: cache.invalidate(scope, cause="loan_changed"),
+    lambda cache, scope: cache.invalidate_many((scope,), cause="loan_changed"),
+    lambda cache, scope: cache.subscribe(scope, lambda _change: None),
+])
+def test_mutated_loan_scope_is_refused_before_n2_map_access(operation):
+    cache = CoverDecisionCache()
+    safe = loan()
+    completed(cache, safe)
+    hostile = loan(loan_id="other-loan")
+    object.__setattr__(hostile, "credential_id", "")
+    with pytest.raises(ValueError, match="loan cover requires exact borrower"):
+        operation(cache, hostile)
+    assert cache.peek(safe, revision=1).uri == URL
+
+
+def test_mutated_scope_never_invokes_foreign_hash_or_equality_in_n2():
+    class Hostile:
+        def __hash__(self):
+            raise AssertionError("foreign hash must not run")
+        def __eq__(self, _other):
+            raise AssertionError("foreign equality must not run")
+
+    cache = CoverDecisionCache()
+    scope = loan()
+    object.__setattr__(scope, "kind", Hostile())
+    with pytest.raises(ValueError, match="invalid cover scope kind"):
+        cache.begin(scope, revision=1)
+    scope = loan()
+    object.__setattr__(scope, "source_key", Hostile())
+    with pytest.raises(ValueError, match="invalid cover scope field"):
+        cache.peek(scope, revision=1)
+    assert cache.stats()["scopes"] == 0
+
+
+def test_mutated_token_and_resolved_scope_cannot_publish_to_n2():
+    from cifereca.core.book_cover_projection import ResolvedBookCover
+
+    cache = CoverDecisionCache()
+    exact = loan()
+    token = cache.begin(exact, revision=1)
+    other = loan()
+    object.__setattr__(other, "account_id", None)
+    forged = ResolvedBookCover(
+        other, 1, "missing", "complete_no_admissible_cover",
+    )
+    with pytest.raises(ValueError, match="loan cover requires exact borrower"):
+        cache.publish_resolved(token, forged)
+    assert cache.peek(exact, revision=1) is None
+
+    object.__setattr__(token.scope, "loan_id", "")
+    with pytest.raises(ValueError, match="loan cover requires exact borrower"):
+        cache.resolve_and_publish(token, [candidate()], snapshot_complete=True)

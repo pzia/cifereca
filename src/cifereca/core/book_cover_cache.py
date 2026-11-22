@@ -160,10 +160,24 @@ class CoverDecisionCache:
                 # A failing detail listener cannot block a list listener.
                 _LOG.exception("cover-decision subscriber failed")
 
-    def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
-        """Start a complete or partial observation, revoking older work."""
+    @staticmethod
+    def _require_scope(scope: CoverDocumentScope) -> None:
+        """Check a frozen-but-mutable source before dictionary hashing/equality.
+
+        An exact dataclass type is insufficient: callers may have replaced
+        fields via object.__setattr__ after the original construction.
+        """
         if type(scope) is not CoverDocumentScope:
             raise TypeError("expected exact cover scope")
+        # The constructor in older admitted scopes does not first type-check
+        # the kind; avoid invoking hostile equality from a mutated object.
+        if type(scope.kind) is not str:
+            raise ValueError("invalid cover scope kind")
+        scope.__post_init__()
+
+    def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
+        """Start a complete or partial observation, revoking older work."""
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         with self._lock:
@@ -184,8 +198,7 @@ class CoverDecisionCache:
         self, scope: CoverDocumentScope, *, revision: int,
     ) -> ResolvedBookCover | None:
         """Exact scoped/revisioned hit; expiry never becomes a \u2018missing\u2019 proof."""
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         with self._lock:
@@ -206,8 +219,7 @@ class CoverDecisionCache:
         Exact token + decision let a reader reject changes during external
         physical observation. Unknown/expired is never documentary missing.
         """
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         with self._lock:
@@ -234,8 +246,7 @@ class CoverDecisionCache:
         Read-only: no publisher callback, URL fetch, preview scan or rights
         inference. Missing, pending and ambiguous decisions cannot paint.
         """
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         if type(uri) is not str or not uri:
@@ -260,10 +271,10 @@ class CoverDecisionCache:
             raise TypeError("expected cover cache token")
         # Dataclass equality otherwise aliases True/1 and 1.0/1.
         # Validate before slot lookup or N1 resolution, not just on begin().
-        if (type(token.scope) is not CoverDocumentScope
-                or type(token.revision) is not int or token.revision < 0
+        if (type(token.revision) is not int or token.revision < 0
                 or type(token.generation) is not int or token.generation < 1):
             raise ValueError("invalid cover cache token")
+        CoverDecisionCache._require_scope(token.scope)
 
     def resolve_and_publish(
         self, token: CoverCacheToken, candidates: Iterable[CoverCandidate], *,
@@ -343,6 +354,7 @@ class CoverDecisionCache:
                 or type(decision.candidate_count) is not int
                 or not 0 <= decision.candidate_count <= 4096):
             raise ValueError("invalid cover decision contract")
+        CoverDecisionCache._require_scope(decision.scope)
         status_reasons = {
             "selected": ("attested",),
             "missing": ("complete_no_admissible_cover",),
@@ -410,8 +422,7 @@ class CoverDecisionCache:
         self, scope: CoverDocumentScope, *,
         cause: CoverInvalidationCause,
     ) -> None:
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if cause not in (
             "catalogue_changed", "account_epoch_changed", "identity_changed",
             "artifact_changed", "placement_changed", "origin_link_changed",
@@ -442,8 +453,7 @@ class CoverDecisionCache:
         for index, scope in enumerate(scopes):
             if index >= self._max_scopes:
                 raise ValueError("cover invalidation batch too large")
-            if type(scope) is not CoverDocumentScope:
-                raise TypeError("invalid cover invalidation scope")
+            self._require_scope(scope)
             unique[scope] = None
         # Preserve the exact-event validation behavior even for empty batches.
         if not unique:
@@ -463,8 +473,9 @@ class CoverDecisionCache:
         self, scope: CoverDocumentScope,
         callback: Callable[[CoverDecisionChange], None],
     ) -> CoverSubscription:
-        if type(scope) is not CoverDocumentScope or not callable(callback):
+        if not callable(callback):
             raise TypeError("invalid cover subscriber")
+        self._require_scope(scope)
         with self._lock:
             if self._subscriber_count >= self._max_subscribers:
                 raise ValueError("too many cover decision subscribers")
