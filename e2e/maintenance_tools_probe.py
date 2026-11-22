@@ -463,6 +463,13 @@ def main():
             if predicate():
                 callback()
             elif monotonic() >= deadline:
+                if args.guided_only == "organizer":
+                    # Fixed allowlist of local test states, not plugin/reader data.
+                    markers = {"received": 1, "second_page": 2, "restarted": 3,
+                               "prepare_candidate": 4, "confirm_simulation": 5,
+                               "open_dialog": 6, "cancel_dialog": 7,
+                               "reopen": 8, "apply_dialog": 9, "refused": 10}
+                    report["maintenance_failure_stage"] = markers.get(callback.__name__, 0)
                 raise AssertionError("GTK maintenance operation timed out")
             else:
                 later(check, 95)
