@@ -71,8 +71,10 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
         if not lease.is_current() or window._guided_maintenance_disposers is not disposers:
             raise ValueError("guided_mount_replaced")
 
-        if resolved.plugin_id == "maintenance.library.organizer":
-            from .organizer_native_confirmation import NativeOrganizerConfirmation
+        from .organizer_native_confirmation import (
+            NativeOrganizerConfirmation, has_native_organizer_review,
+        )
+        if has_native_organizer_review(window.plugin_manager, resolved):
             native = NativeOrganizerConfirmation(window, resolved, lease, Gtk=Gtk)
             lease._observer = native.observe
             box.append(native.button)
