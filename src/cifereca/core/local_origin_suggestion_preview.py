@@ -48,7 +48,8 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
     return path
 
 
-def _declared_witness(db, *, identity, path, inode, include_declared, digest, size):
+def _declared_witness(db, *, identity, path, inode, include_declared, digest, size,
+                      signature=None):
     """Reuse #2797's strict decoder; never attach a stale declaration by path."""
     from .library_declared_links import DeclarationRejected, _records, _json
 
@@ -68,7 +69,11 @@ def _declared_witness(db, *, identity, path, inode, include_declared, digest, si
     # the canonical Artifact currently verified at that location.
     if (len(matched) != 1 or matched[0]["scope"]["identity_id"] != identity
             or matched[0]["file"]["sha256"] != digest
-            or matched[0]["file"]["size"] != size):
+            or matched[0]["file"]["size"] != size
+            or (signature is not None and
+                tuple(matched[0]["file"]["fingerprint"]) !=
+                (signature[0], signature[1], signature[3],
+                 signature[4], signature[5]))):
         return "declaration_scope_unverified", None
     if not include_declared:
         return "declared_origin_requires_review", None
@@ -77,7 +82,7 @@ def _declared_witness(db, *, identity, path, inode, include_declared, digest, si
 
 
 def _snapshot(storage, identity, placement_id, *, catalogue=False,
-              include_declared=False, inode=None):
+              include_declared=False, inode=None, signature=None):
     with storage._lock:
         db = storage._connect()
         # A consultation may be called from a borrowed connection. Refuse
@@ -133,6 +138,7 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
             reason, declaration = _declared_witness(
                 db, identity=identity, path=path, inode=inode,
                 include_declared=include_declared, digest=digest, size=size,
+                signature=signature,
             )
             if declaration is None:
                 return reason, None
@@ -187,9 +193,11 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
             or library_root == Path("/") or ".." in library_root.parts):
         raise _CandidateRejected("invalid_scope")
 
-    def snapshot(inode=None):
+    def snapshot(signature=None):
         return _snapshot(storage, identity_id, placement_id, catalogue=catalogue,
-                         include_declared=include_declared, inode=inode)
+                         include_declared=include_declared,
+                         inode=signature[:2] if signature is not None else None,
+                         signature=signature)
 
     status, row = snapshot()
     if row is None:
@@ -204,7 +212,7 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         raise _CandidateRejected("review_budget_exceeded")
     with _verified_variant_file(path, digest, expected_size=size) as recheck:
         signature = recheck()
-        checked_status, checked = snapshot(signature[:2])
+        checked_status, checked = snapshot(signature)
         if checked is None:
             # An origin/receipt appearing after the first snapshot, or any
             # other lost SQL admission, is a change of evidence. A previously
@@ -221,7 +229,7 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         status, row = checked_status, checked
 
         def current():
-            if snapshot(signature[:2]) != (status, row) or recheck() != signature:
+            if snapshot(signature) != (status, row) or recheck() != signature:
                 raise _CandidateRejected("evidence_changed")
 
         current()
