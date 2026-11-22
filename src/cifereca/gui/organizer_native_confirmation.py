@@ -34,12 +34,15 @@ class NativeOrganizerConfirmation:
     def __init__(self, window, resolved, lease, *, Gtk):
         self.window, self.resolved, self.lease = window, resolved, lease
         self._page = self._used = self._dialog = None
+        self._disposed = False
         self.button = Gtk.Button(label="Confirmer le renommage…")
         self.button.set_visible(False)
         self.button.set_sensitive(False)
         self.button.connect("clicked", self._clicked)
 
     def _lease_current(self):
+        if self._disposed:
+            return False
         # Revocation is a negative-only guard. A disposed activation may
         # raise while GTK delivers a late response or worker completion.
         try:
@@ -58,6 +61,10 @@ class NativeOrganizerConfirmation:
                 and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
 
     def observe(self, value):
+        # Disposal ends this exact UI lifetime permanently. Late queued
+        # worker results cannot mount a fresh native Apply after unmount.
+        if self._disposed:
+            return
         from ..core import library_organizer_execution as execution
         entries = value.dry_run_entries if type(value) is OrganizerPageAdvice else ()
         valid = (type(value) is OrganizerPageAdvice
@@ -90,6 +97,7 @@ class NativeOrganizerConfirmation:
         # A profile switch or unmount revokes even an already presented
         # confirmation. Close the native dialog before it can outlive the
         # owning view; its late response must never enqueue Core work.
+        self._disposed = True
         dialog = self._dialog
         self._dialog = None
         self._page = None
