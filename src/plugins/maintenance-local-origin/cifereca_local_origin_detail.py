@@ -71,6 +71,13 @@ def ranked_documentary_rows(compared):
                 match.title,
                 _SURFACE_LABEL[family] + " · " + provider
                 + (" · édition/référence : " + record if record else "")
+                + (" · Collection catalogue : " + match.docbase
+                   + " · Support catalogue : " + match.medium
+                   + (" · Format catalogue : " + match.media_format
+                      if match.media_format else "")
+                   if family == "public" else "")
+                + (" · Collection C : " + match.docbase
+                   if family == "known-c" else "")
                 + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
             ))
     if not candidates:
