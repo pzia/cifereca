@@ -112,7 +112,7 @@ def _require_link(stage, candidate, signature, *, flush=False):
 def recover_linked_derived_publication(
     storage, *, library_root: Path, identity_id: str,
     reservation: DerivedReservation, approved_receipt_sha256: str,
-    shared_lock: InterProcessLock, scope_current,
+    shared_lock: InterProcessLock, scope_current, _private_guard=None,
 ):
     """Commit one already linked pending receipt after fresh explicit approval.
 
@@ -131,6 +131,8 @@ def recover_linked_derived_publication(
             or not callable(scope_current) or not _lock_current(shared_lock)):
         raise DerivedJournalConflict("derived_recovery_approval_required")
 
+    private_options = {"_private_guard": _private_guard} if _private_guard is not None else {}
+
     def live(db):
         return _lock_current(shared_lock) and scope_current(db) is True
 
@@ -144,7 +146,7 @@ def recover_linked_derived_publication(
             db.execute("BEGIN")
             if not live(db):
                 raise DerivedJournalConflict("derived_recovery_scope_changed")
-            _raw, intent = _read_pending_reservation(db, reservation)
+            _raw, intent = _read_pending_reservation(db, reservation, **private_options)
             if not _exact_scope(db, identity_id=identity_id, root=library_root, intent=intent):
                 raise DerivedJournalConflict("derived_recovery_scope_changed")
             if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
@@ -165,7 +167,7 @@ def recover_linked_derived_publication(
             if not live(db):
                 return False
             try:
-                _raw, observed = _read_pending_reservation(db, reservation)
+                _raw, observed = _read_pending_reservation(db, reservation, **private_options)
                 if (observed != intent or
                         not _exact_scope(db, identity_id=identity_id,
                                          root=library_root, intent=intent)
@@ -194,5 +196,6 @@ def recover_linked_derived_publication(
             warnings=(), facts={"recovered_from_private_intent": True,
                                 "transformer_facts_available": False},
             scope_current=transaction_current, journal_reservation=reservation,
+            **private_options,
         )
     return {"status": "committed", "destructive_cleanup_allowed": False}
