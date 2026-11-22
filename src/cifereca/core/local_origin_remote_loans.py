@@ -143,7 +143,18 @@ def _matches(snapshot, choice, title, authors):
                       else "title_concordant_author_divergent")
         candidates.append(RemoteLoanDocumentaryMatch(*key, pair[0], author, comparison))
     unique = tuple(c for c in candidates if counts[c.loan_id] == 1)
-    return unique[:_MAX_MATCHES], len(unique) > _MAX_MATCHES
+    # Rank this bounded typed-inventory window by documentary evidence,
+    # never by provider order or a claimed right. Stable ties preserve exact
+    # occurrence order; no branch, ownership or acquisition is inferred.
+    evidence_rank = {
+        "title_author_concordant": 0,
+        "title_concordant_author_unknown": 1,
+        "title_concordant_author_divergent": 2,
+    }
+    ordered = tuple(sorted(
+        unique, key=lambda row: evidence_rank.get(row.comparison, 3),
+    ))
+    return ordered[:_MAX_MATCHES], len(ordered) > _MAX_MATCHES
 
 
 def compare_remote_loan_catalogue(service, choice, *, confirmed=False,
