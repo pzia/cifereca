@@ -10,7 +10,7 @@ class NeverAccessStorage:
 
 
 @pytest.mark.parametrize("field", ["provider_ids", "content_types"])
-@pytest.mark.parametrize("separator", ["\\u2028", "\\u2029"])
+@pytest.mark.parametrize("separator", [chr(0x2028), chr(0x2029)])
 def test_public_c_rejects_invisible_filter_separators_before_sql(field, separator):
     with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
         search_public_notice_c(
