@@ -163,3 +163,33 @@ def test_batch_explicit_origin_filter_preserves_declared_statement(store, tmp_pa
     assert included.known_matches == 1
     assert not explicit.association_authorized and not explicit.provider_access_performed
     assert rows(store) == before and path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("change", ["bytes", "inode", "missing"])
+def test_previously_compared_file_changed_during_later_batch_row_is_not_delivered(
+        store, tmp_path, monkeypatch, change):
+    service, root, pid = _service(store, tmp_path)
+    _extra(store, root, "second.pdf")
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    actual = batch.suggest_local_placement_documents
+    visited = []
+
+    def changed(*args, **kwargs):
+        result = actual(*args, **kwargs)
+        visited.append(Path(store.placement_get(kwargs["placement_id"])["path"]))
+        if len(visited) == 2:
+            first = visited[0]
+            if change == "bytes":
+                first.write_bytes(b"changed")
+            elif change == "inode":
+                replacement = first.with_suffix(".replacement")
+                replacement.write_bytes(first.read_bytes())
+                replacement.replace(first)
+            else:
+                first.unlink()
+        return result
+
+    before = rows(store)
+    monkeypatch.setattr(batch, "suggest_local_placement_documents", changed)
+    assert batch.run_origin_batch(service, scope) is None
+    assert len(visited) == 2 and rows(store) == before
