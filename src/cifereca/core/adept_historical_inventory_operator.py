@@ -42,6 +42,7 @@ def _producer(manager):
         if row.enabled is True and row.state == "ready"
         and row.descriptor.type == "runtime.adapter"
         and type(row.descriptor.capabilities) is tuple
+        and len(row.descriptor.capabilities) <= 256
         and "loan.inventory.readonly" in row.descriptor.capabilities
     ]
     if len(claimed) != 1 or not _text(claimed[0]):
@@ -51,6 +52,7 @@ def _producer(manager):
     if (row.enabled is not True or row.state != "ready" or row.descriptor.id != plugin_id
             or row.descriptor.type != "runtime.adapter"
             or type(row.descriptor.capabilities) is not tuple
+            or len(row.descriptor.capabilities) > 256
             or "loan.inventory.readonly" not in row.descriptor.capabilities):
         return None
     runtime = manager.service(plugin_id)
