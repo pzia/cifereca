@@ -6,6 +6,7 @@ qualified eviction and restart, using a fresh scoped offline session.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from threading import get_ident
 from time import monotonic
 from types import SimpleNamespace as NS
@@ -138,6 +139,33 @@ def seed_private_web_choices(db):
         )
         assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
         fixtures.append((row, expected))
+    # The Series sidecar is written by the actual same-call writer, not
+    # by a synthetic retained JSON blob. Its branch is independent of web.
+    from cifereca.core.notice_c_private_series import (
+        _key, capture_series_call, persist_series_rows, stamp_series_rows,
+    )
+    from cifereca.core.notice_cover_projection import notice_cover_document_ref
+    from cifereca.core.notice_cover_repository import read_notice_cover
+
+    series = replace(fixtures[0][0], source_account_id=None, friendly_url=None,
+                     metadata={
+                         "series": ["Cycle témoin"],
+                         "bibliography_evidence": {"series": {
+                             "source": PROVIDER + ".fixture.search",
+                             "source_field": "Search.fixture",
+                             "scope": "fixture",
+                             "confidence": "linked_search_relation",
+                             "freshness": "search_response",
+                         }},
+                     })
+    call = capture_series_call(core, core._sessions[(PROVIDER, a.credential_id)], OWNER)
+    assert call is not None
+    stamp_series_rows(core, call, [series])
+    assert persist_series_rows(core, [series], identity_id=OWNER) == 1
+    document = notice_cover_document_ref(_key(series, OWNER))
+    source = read_notice_cover(db, document)
+    assert source is not None
+    assert evict_notice_cover(db, document, expected_epoch=source.epoch)
     return tuple(fixtures)
 
 
@@ -228,10 +256,7 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     "foreign_reader_refused": True, "old_menu_revoked": True,
                     "qualified_eviction": True, "provider_io": 0,
                 }
-                probe.destroy()
-                state["probe"] = None
-                window.present()
-                complete()
+                verify_series()
 
             later(40, guard(foreign_done))
             return
@@ -330,6 +355,95 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
             later(40, guard(click))
 
         later(40, guard(poll))
+
+    def verify_series():
+        from gi.repository import Adw
+        from cifereca.gui.notice_c_private_series_controller import request_selected_retained_series
+
+        # Both stages read retained C without any live provider session.
+        # The actual TaskRunner and DetailPanel remain in use.
+        core._sessions.clear()
+        series = replace(fixtures[0][0], source_account_id=None,
+                         friendly_url=None, metadata={})
+        cell = NS(key="series")
+        host.search_page = NS(detail=panel, selection=NS(get_selected_item=lambda: cell))
+        host.search_objects = {cell.key: series}
+        selected_identity = [OWNER]
+        host._search_detail_context_current = lambda key, ctx: (
+            key == series.id and ctx[0] == generation[0] and ctx[3] == selected_identity[0]
+        )
+        series_deadline = monotonic() + 15
+
+        def widgets(node):
+            yield node
+            child = node.get_first_child()
+            while child is not None:
+                yield from widgets(child)
+                child = child.get_next_sibling()
+
+        def rendered():
+            return [(widget.get_title(), widget.get_subtitle())
+                    for widget in widgets(panel.content)
+                    if isinstance(widget, Adw.ActionRow)]
+
+        def reset(identity):
+            generation[0] += 1
+            selected_identity[0] = identity
+            panel.show_summary(title="Notice privée témoin")
+
+        def run_series(index):
+            identity = FOREIGN if index == 2 else OWNER
+            phase(("series_owner", "series_aba", "series_foreign")[index])
+            reset(identity)
+            wanted = runner.completed + 1
+            host.runner = runner
+            # Capture a real successful read and invalidate the exact render
+            # before delivering it, including a return to the original profile.
+            if index == 1:
+                def delayed_submit(title, work, done, fail, **kw):
+                    def delayed_done(value):
+                        assert value is not None and value.label == "Cycle témoin"
+                        reset(FOREIGN)
+                        reset(OWNER)
+                        done(value)
+                    runner.submit(title, work, delayed_done, fail, **kw)
+                host.runner = NS(submit=delayed_submit)
+            context = (generation[0], 1, 1, identity)
+            assert request_selected_retained_series(
+                host, series, selected_id=series.id, context=context,
+            )
+            assert not request_selected_retained_series(
+                host, series, selected_id=series.id, context=context,
+            )
+
+            def poll_series():
+                if runner.completed < wanted:
+                    assert monotonic() < series_deadline, "retained series GTK timeout"
+                    later(40, guard(poll_series))
+                    return
+                rows = rendered()
+                if index == 0:
+                    assert rows.count(("Série", "Cycle témoin")) == 1
+                    assert rows.count(("Champ source", "Search.fixture")) == 1
+                    assert any(isinstance(widget, Adw.ActionRow)
+                               and widget.get_title() == "Série" and widget.get_mapped()
+                               for widget in widgets(panel.content))
+                    capture("00-notice-c-private-series-" + label)
+                else:
+                    assert not any(title in ("Série", "Champ source") for title, _ in rows)
+                assert series.metadata == {} and core._sessions == {}
+                if index < 2:
+                    run_series(index + 1)
+                    return
+                report["checks"]["P0_3104_retained_private_series_real_gtk_" + label] = True
+                probe.destroy()
+                state["probe"] = None
+                window.present()
+                complete()
+
+            later(40, guard(poll_series))
+
+        run_series(0)
 
     # Wait for the actual mapped GTK widget before enqueuing the first read.
     # Otherwise a fast local worker can complete before the new transient
