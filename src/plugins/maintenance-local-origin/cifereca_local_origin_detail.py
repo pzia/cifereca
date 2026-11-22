@@ -1,6 +1,7 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
 from datetime import datetime, timezone
 from unicodedata import category
+from heapq import nsmallest
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
@@ -57,41 +58,48 @@ def _displayable_c_docbase(value):
 
 
 def ranked_documentary_rows(compared):
-    """Present the explicitly reviewed windows, never produce a right or origin.
+    """Top ten from explicit review windows, bounded independently of pages.
 
-    Rank documentary evidence before family preference; public precedes
-    purchases then loans ONLY at equal evidence strength. An exact attested
-    provider origin is excluded upstream from this local-origin tool.
+    Evidence precedes catalogue family; ties preserve observation order.
+    This projection creates neither a right, a provider source nor a new
+    request. Only the displayed top ten need remain in working memory.
     """
-    candidates = []
-    for family, report in compared:
-        if family not in _SURFACE_PRIORITY:
-            continue
-        for match in report.matches:
-            strength = _DOCUMENTARY_STRENGTH.get(match.comparison, 8)
-            provider = (match.provider_id if family in ("known-c", "public")
-                        else report.provider_id)
-            record = (match.record_id if family == "public" else
-                      match.edition_id if family in ("known-c", "purchase", "loan",
-                                                     "remote-loan") else "")
-            candidates.append((
-                strength, _SURFACE_PRIORITY[family],
-                match.title,
-                _SURFACE_LABEL[family] + " · " + provider
-                + (" · édition/référence : " + record if record else "")
-                + (" · Collection catalogue : " + match.docbase
-                   + " · Support catalogue : " + match.medium
-                   + (" · Format catalogue : " + match.media_format
-                      if match.media_format else "")
-                   if family == "public" else "")
-                + (" · Collection C : " + match.docbase
-                   if family == "known-c" and _displayable_c_docbase(match.docbase)
-                   else "")
-                + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
-            ))
-    if not candidates:
+    total = 0
+
+    def candidates():
+        nonlocal total
+        for family, report in compared:
+            if family not in _SURFACE_PRIORITY:
+                continue
+            for match in report.matches:
+                total += 1
+                strength = _DOCUMENTARY_STRENGTH.get(match.comparison, 8)
+                provider = (match.provider_id if family in ("known-c", "public")
+                            else report.provider_id)
+                record = (match.record_id if family == "public" else
+                          match.edition_id if family in ("known-c", "purchase", "loan",
+                                                         "remote-loan") else "")
+                yield (
+                    strength, _SURFACE_PRIORITY[family],
+                    match.title,
+                    _SURFACE_LABEL[family] + " · " + provider
+                    + (" · édition/référence : " + record if record else "")
+                    + (" · Collection catalogue : " + match.docbase
+                       + " · Support catalogue : " + match.medium
+                       + (" · Format catalogue : " + match.media_format
+                          if match.media_format else "")
+                       if family == "public" else "")
+                    + (" · Collection C : " + match.docbase
+                       if family == "known-c" and _displayable_c_docbase(match.docbase)
+                       else "")
+                    + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
+                )
+
+    # nsmallest maintains input order for equal (evidence, family) keys.
+    # Unlike sorting every retained page this stores only ten comparisons.
+    strongest = nsmallest(10, candidates(), key=lambda row: row[:2])
+    if not strongest:
         return ()
-    candidates.sort(key=lambda row: (row[0], row[1]))
     rows = [
         ("Portée", "Fenêtres explicitement comparées seulement ; tri documentaire, "
          "jamais attribution de provenance, d'achat, de prêt ou de droit."),
@@ -99,12 +107,11 @@ def ranked_documentary_rows(compared):
          "Un reçu fournisseur attesté n'est pas une simple suggestion."),
         ("Couverture", "Partielle, sans fraîcheur réseau ni inventaire exhaustif attestés."),
     ]
-    rows.extend((title, description) for _, _, title, description in candidates[:10])
-    if len(candidates) > 10:
-        rows.append(("Limite", f"{len(candidates) - 10} candidats examinés de plus, "
+    rows.extend((title, description) for _, _, title, description in strongest)
+    if total > len(strongest):
+        rows.append(("Limite", f"{total - len(strongest)} candidats examinés de plus, "
                      "non affichés dans cet aperçu classé ; aucune absence attestée."))
     return tuple(rows)
-
 
 def known_rows(page):
     lines = [
