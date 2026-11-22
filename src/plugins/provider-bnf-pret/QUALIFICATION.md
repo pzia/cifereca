@@ -230,3 +230,17 @@ qualification de cette sémantique, avec provenance exacte. Jusqu'alors
 `history=False` est conservé, unsupported distinct d'un historique vide.
 Aucune demande de nouvelle capture redondante, aucune mutation fournisseur,
 aucune archive ni donnée personnelle publiée.
+
+### Tranche transport de qualification (MockTransport uniquement)
+
+`ReaderHTTPClient.history_events_page()` limite la lecture à un GET
+sur `/my_profile/history?l=fr`, sans suivi de redirection ni réauthentification,
+avec les bornes HTML existantes. Le client générique n'ouvre pas cette
+route. `BnfProviderSession._read_history_events(account)` est une
+lecture privée explicite, verrouillée et liée au compte/session/epoch
+avant et après le GET et le parsing ; aucune invocation automatique,
+aucune persistance ni promotion des prêts actifs. Échec HTTP, login ou
+DOM inconnu ne deviennent pas un historique vide. Tests synthétiques
+sur erreurs, changement de compte et reconnexion ; le GET réel dans une
+session autorisée, le sens terminé des événements et l'exhaustivité
+restent non attestés. `history=False` inchangé.
