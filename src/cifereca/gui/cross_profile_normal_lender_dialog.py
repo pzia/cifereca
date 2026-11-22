@@ -24,6 +24,8 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     stage = "choose"
     route = getattr(window, "_route_display_token", None)
     visible = getattr(panel, "_rendered_search_detail", None)
+    ui_identity = getattr(window, "_identity_context_generation", None)
+    ui_account = getattr(window, "_account_context_generation", None)
     from collections import Counter
     counts = Counter(row.label for row in rows)
     labels = {
@@ -37,7 +39,9 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         return (not getattr(window, "_closed", False)
                 and window.service is service
                 and getattr(panel, "_rendered_search_detail", None) is visible
-                and getattr(window, "_route_display_token", None) is route)
+                and getattr(window, "_route_display_token", None) is route
+                and getattr(window, "_identity_context_generation", None) == ui_identity
+                and getattr(window, "_account_context_generation", None) == ui_account)
 
     def dialog_current():
         return route_current() and current()
