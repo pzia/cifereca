@@ -1187,7 +1187,7 @@ def main():
                                         and node.get_label() == "Préparer le plan à blanc")
                             selector, = (node for node in walk(outer)
                                           if isinstance(node, Gtk.ComboBoxText))
-                            native, = (node for node in walk(outer)
+                            native, = (node for node in walk(window[0]._tools_box)
                                        if isinstance(node, Gtk.Button)
                                        and node.get_label() == "Confirmer le renommage…")
                             assert not native.get_visible()
