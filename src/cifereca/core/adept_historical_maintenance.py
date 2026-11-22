@@ -211,6 +211,18 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
         return None
 
 
+def _hold_display_title(value):
+    """Only bounded printable cached labels may enter the native hold review.
+
+    A loan title is a UI hint, not an exact source or rights coordinate.
+    Invalid provider text must not impersonate a second review line.
+    """
+    return (value if type(value) is str and 0 < len(value) <= 256
+            and value.strip()
+            and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+            else "Référence de prêt historique")
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _HoldPageAnchor:
     request: HistoricalReviewRequest
@@ -275,7 +287,7 @@ def run_historical_hold_review(service, request, *, offset=0,
                 "edition_id": source.edition_id,
                 "provider_loan_id": source.right_id,
                 "canonical_branch": source.branch,
-                "title": row.title,
+                "title": _hold_display_title(row.title),
                 "hold_origin": row.adept_hold_origin,
                 "marker_state": row.adept_marker_state,
                 "non_submission_evidence": row.adept_unsubmitted_state,

@@ -490,3 +490,42 @@ def test_historical_hold_reports_correlated_non_submission_without_permit(store,
     assert proof not in repr(page) and raw not in repr(page) and "fingerprint" not in repr(page)
     assert path.read_bytes() == BYTES
     assert store.metadata_get(marker._unsubmitted_key(pending)) == proof
+
+
+@pytest.mark.parametrize("unsafe", [
+    "line\nForged activation", "escape\x1b[2J", "", " " * 4, "x" * 1025, None,
+])
+def test_historical_hold_redacts_unsafe_borrowed_loan_title(
+    store, tmp_path, monkeypatch, unsafe,
+):
+    from dataclasses import replace
+    from cifereca.core import loan_download_retry_review as queue
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.adept_historical_maintenance_line import _display_holds
+
+    service, _first, path, _ = _setup(store, tmp_path)
+    selected_source, snapshot = new_source(kind="loan", branch="loans",
+                                           right="untrusted-title")
+    persist_attested_source_references(store, snapshot)
+    marker = _value("offer", "a" * 32)
+    store.metadata_set(_key(selected_source), marker)
+
+    original = queue.review_loan_download_retries
+    def unsafe_queue(*args, **kwargs):
+        return tuple(replace(row, title=unsafe) for row in original(*args, **kwargs))
+    monkeypatch.setattr(queue, "review_loan_download_retries", unsafe_queue)
+    request = review.admit_historical_review(service)
+    page = review.run_historical_hold_review(service, request)
+    assert page is not None
+    row, = page["rows"]
+    assert row["title"] == "Référence de prêt historique"
+    assert "Forged activation" not in _display_holds(page)
+    assert not row["unlock_authorized"] and not page["mutation_authorized"]
+    index = 0
+    selected = review.select_historical_hold(
+        service, request, page, ordinal=index, confirmed=True,
+    )
+    assert selected is not None and not selected.unlock_authorized
+    assert store.metadata_get(_key(selected_source)) == marker
+    assert path.read_bytes() == BYTES
