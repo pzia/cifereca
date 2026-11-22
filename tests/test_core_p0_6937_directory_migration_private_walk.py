@@ -62,3 +62,63 @@ def test_migration_preflight_scan_error_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(migration.os, "walk", unavailable)
     with pytest.raises(migration.DirectoryMigrationError, match="inaccessible"):
         migration.checked_tree(root)
+
+
+def test_fingerprint_vetoes_stage_appearing_after_preflight(tmp_path, monkeypatch):
+    """A race between the first tree check and hashing cannot enter a stage."""
+    root = tmp_path / "alice"
+    root.mkdir()
+    ordinary = root / "novel.epub"
+    ordinary.write_bytes(b"ordinary")
+    original_checked_tree = migration.checked_tree
+    original_scandir = migration.os.scandir
+    stage = root / PRIVATE_DERIVED_REGION / "stage.epub"
+    checks = 0
+
+    def checked_then_injected(path):
+        nonlocal checks
+        original_checked_tree(path)
+        checks += 1
+        if checks == 1:
+            stage.parent.mkdir()
+            stage.write_bytes(b"private payload")
+
+    def guarded_scandir(path):
+        if not isinstance(path, int):
+            assert PRIVATE_DERIVED_REGION not in Path(path).parts
+        return original_scandir(path)
+
+    monkeypatch.setattr(migration, "checked_tree", checked_then_injected)
+    monkeypatch.setattr(migration.os, "scandir", guarded_scandir)
+    with pytest.raises(migration.DirectoryMigrationError, match="Zone privée"):
+        migration.fingerprint(root)
+    assert checks == 1
+    assert ordinary.read_bytes() == b"ordinary"
+    assert stage.read_bytes() == b"private payload"
+
+
+def test_migration_followup_walk_retains_ordinary_near_names(tmp_path):
+    root = tmp_path / "alice"
+    near = root / (PRIVATE_DERIVED_REGION + "-backup")
+    near.mkdir(parents=True)
+    file = near / "novel.epub"
+    file.write_bytes(b"normal")
+    nodes = tuple(migration._migration_descendants(root))
+    assert set(nodes) == {near, file}
+    before = migration.fingerprint(root)
+    assert before == migration.fingerprint(root)
+    assert before.startswith("directory:")
+    assert file.read_bytes() == b"normal"
+
+
+def test_migration_followup_walk_fails_closed_on_io_error(tmp_path, monkeypatch):
+    root = tmp_path / "alice"
+    root.mkdir()
+
+    def denied(_path, **options):
+        options["onerror"](PermissionError("synthetic denied"))
+        yield
+
+    monkeypatch.setattr(migration.os, "walk", denied)
+    with pytest.raises(migration.DirectoryMigrationError, match="inaccessible"):
+        tuple(migration._migration_descendants(root))
