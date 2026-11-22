@@ -22,7 +22,8 @@ def test_bad_source_fence_is_local_to_its_contribution(error):
             raise error
         return (good_ref,)
 
-    with patch.object(web, "_decode", return_value=snapshot), \\
+    with patch.object(web, "_db_key", return_value="c-key"), \
+         patch.object(web, "_decode", return_value=snapshot), \
          patch.object(web, "_current_refs", side_effect=read):
         result, pairs = web._read(db, NS(source_key="canonical"))
     assert result is snapshot
@@ -35,7 +36,8 @@ def test_storage_error_is_not_mistaken_for_one_corrupt_source():
     from sqlite3 import OperationalError
     db = NS(execute=lambda *_args, **_kw: NS(fetchone=lambda: ("canonical",)))
     snapshot = NS(epoch=3, sources=(NS(source_ref="bad"),))
-    with patch.object(web, "_decode", return_value=snapshot), \\
+    with patch.object(web, "_db_key", return_value="c-key"), \
+         patch.object(web, "_decode", return_value=snapshot), \
          patch.object(web, "_current_refs", side_effect=OperationalError("offline")):
         with pytest.raises(OperationalError):
             web._read(db, NS(source_key="canonical"))
