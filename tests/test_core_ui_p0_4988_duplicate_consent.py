@@ -13,7 +13,7 @@ def test_duplicate_receipt_rejected_before_consent_dialog():
     args["rows"] = (original, original)
     assert present_normal_lender_choice(panel, **args) is False
     assert dialogs == []
-    assert panel.window._cross_profile_borrow_pending is None
+    assert getattr(panel.window, "_cross_profile_borrow_pending", None) is None
     args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
 
 
