@@ -204,6 +204,13 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         return getattr(host, "_route_display_token", None)
 
     requested_route = route_token()
+    # Public and authenticated menus have separate publication leases.
+    # A newer request for the same kind revokes an older queued read/click
+    # even if the panel and route are reused for the next detail.
+    token_name = ("_notice_c_authenticated_menu_generation" if authenticated
+                  else "_notice_c_public_menu_generation")
+    generation = object()
+    setattr(panel, token_name, generation)
     account_epoch = getattr(core, "_account_context_epoch", None)
     source_epoch = getattr(core, "_source_context_epoch", None)
 
@@ -211,6 +218,7 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         # Only plain context coordinates here. current(), get_mapped()
         # and widget state belong to GTK and must never run in this worker.
         return (not getattr(host, "_closed", False)
+                and getattr(panel, token_name, None) is generation
                 and getattr(host, "service", None) is core
                 and getattr(core, "storage", None) is storage
                 and getattr(core, "_account_context_epoch", None) == account_epoch
