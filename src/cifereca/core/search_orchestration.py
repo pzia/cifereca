@@ -2197,8 +2197,10 @@ def _public_catalog_url(
     if type(value) is not str or not 0 < len(value) <= 512:
         return None
     if (value != value.strip() or "\\" in value
-            or any(c.isspace() or ord(c) < 33 or ord(c) == 127
-                   for c in value)):
+            # The cover path returns before catalogue_notice_url. Apply the
+            # same invisible-control fence to both covers and book links.
+            or any(c.isspace() or unicodedata.category(c) in {"Cc", "Cf", "Cs"}
+                   or ord(c) < 33 or ord(c) == 127 for c in value)):
         return None
     try:
         parsed = urlsplit(value)
