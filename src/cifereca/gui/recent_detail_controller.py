@@ -18,7 +18,8 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     web_token = begin_local_public_web_selection(window, "recent")
     if not row:
         return
-    if getattr(row, "_recent_ambiguous_key", False) is True:
+    if (getattr(row, "_recent_ambiguous_key", False) is True
+            or row.key in getattr(window, "_recent_ambiguous_keys", ())):
         # The lookup intentionally keeps the last row for compatibility,
         # but a duplicate visual key cannot select an exact book/detail.
         window.recent_page.detail.empty(
