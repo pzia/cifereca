@@ -89,9 +89,18 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
         "title_concordant_author_divergent": 2,
         "title_related": 3,
     }
+    # C is public descriptive evidence, not an authority for a local
+    # origin label. Keep the C page/counts intact but do not display
+    # spoofed title/author fields as candidate matches.
+    def displayable(value):
+        return (value is None or (type(value) is str and
+                not any(unicodedata.category(ch) in
+                        ("Cc", "Cf", "Cs", "Zl", "Zp") for ch in value)))
+
     matches = tuple(
         DocumentarySuggestion(hit, _comparison(hit, title, author))
         for hit in found.hits
+        if displayable(hit.title) and displayable(hit.author)
     )
     ordered = tuple(sorted(
         matches, key=lambda item: evidence_rank.get(item.comparison, 4),
