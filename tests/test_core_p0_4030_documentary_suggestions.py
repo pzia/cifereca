@@ -160,3 +160,59 @@ def test_local_documentary_comparison_omits_spoofed_public_c_hit(
     assert tuple(x.hit.record_id for x in page.suggestions) == ("safe",)
     assert not page.provider_access_performed and not page.may_write_origin_or_right
     assert rows(store) == before and store.entitlements() == []
+
+@pytest.mark.parametrize("field", [
+    "provider_id", "record_id", "edition_id", "source_revision",
+    "medium", "media_format",
+])
+@pytest.mark.parametrize("control", ["\x85", "\u202e", "\u2028", "\u200d"])
+def test_local_documentary_comparison_omits_spoofed_c_coordinates(
+    store, monkeypatch, field, control,
+):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+
+    _seed(store, record_id="safe", title="Roman commun", author="Autrice")
+    before = rows(store)
+    public = search_public_notice_c(
+        store, "Roman commun", field="title", scope="all",
+        page=0, page_size=20, max_scan=2048, now=101,
+        group_by_document=False,
+    )
+    good, = public.hits
+    forged = replace(good, **{field: "forged" + control + "label"})
+    monkeypatch.setattr(documentary, "search_public_notice_c",
+                        lambda *_a, **_kw: replace(public, hits=(good, forged),
+                                                    known_matches=2))
+    observed = suggest_known_public_documents(
+        store, title="Roman commun", author="Autrice", now=101)
+    assert observed.status == "partial" and observed.known_matches == 2
+    assert tuple(item.hit for item in observed.suggestions) == (good,)
+    assert not observed.provider_access_performed
+    assert not observed.may_write_origin_or_right
+    assert rows(store) == before and store.entitlements() == []
+
+
+@pytest.mark.parametrize("bad", [None, object(), "", 42])
+def test_local_documentary_comparison_refuses_malformed_public_hit_title(
+    store, monkeypatch, bad,
+):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+
+    _seed(store, record_id="safe", title="Roman commun", author="Autrice")
+    before = rows(store)
+    public = search_public_notice_c(
+        store, "Roman commun", field="title", scope="all",
+        page=0, page_size=20, max_scan=2048, now=101,
+        group_by_document=False,
+    )
+    good, = public.hits
+    forged = replace(good, title=bad)
+    monkeypatch.setattr(documentary, "search_public_notice_c",
+                        lambda *_a, **_kw: replace(public, hits=(good, forged)))
+    observed = suggest_known_public_documents(store, title="Roman commun", now=101)
+    assert tuple(item.hit for item in observed.suggestions) == (good,)
+    assert rows(store) == before
