@@ -134,3 +134,50 @@ def test_choice_pins_exact_reviewed_file_and_sql_evidence(rig, change):
     assert new_report is not None and new_report.provider_access_performed
     assert len(calls) == 1
     assert calls[0][0] == ("Autre titre privé" if change == "new_artifact" else "Roman commun")
+
+
+@pytest.mark.parametrize("failure,status,label", [
+    ("401", "auth_required", "Authentification requise"),
+    ("403", "access_denied", "Accès refusé"),
+    ("429", "rate_limited", "Limite de requêtes atteinte"),
+    ("timeout", "timeout", "Délai de réponse dépassé"),
+    ("cancel", "cancelled", "Comparaison annulée"),
+    ("transport403", "access_denied", "Accès refusé"),
+    ("opaque", "unavailable", "Comparaison publique indisponible"),
+])
+def test_supplier_failure_is_partial_refusal_not_zero_or_retry(rig, failure, status, label):
+    import httpx
+    from cifereca.plugin_api import Cancelled, TemporaryUnavailable
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, session, request, calls, path = rig
+    before, data = rows(service.storage), path.read_bytes()
+    def fail(*args, **kwargs):
+        calls.append(args)
+        req = httpx.Request("GET", "https://example.invalid/PRIVATE")
+        if failure in ("401", "403", "429"):
+            raise httpx.HTTPStatusError("PRIVATE", request=req,
+                response=httpx.Response(int(failure), request=req))
+        if failure == "timeout":
+            raise httpx.ReadTimeout("PRIVATE", request=req)
+        if failure == "cancel":
+            raise Cancelled("PRIVATE")
+        if failure == "transport403":
+            raise TemporaryUnavailable("transport.http: access_denied")
+        raise RuntimeError("transport.http: access_denied PRIVATE")
+    session.search_with_response_facets = fail
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    assert actions["preview"][2]()
+    deliver(tasks)
+    search = actions["public-0"][2]
+    assert search()
+    work, done = tasks[-1]
+    result = work()
+    assert result.status == status and result.provider_access_performed
+    assert result.matches == () and not result.coverage_complete
+    assert not result.association_authorized and not result.fresh_network_verified
+    done(result)
+    done(result)
+    assert not search() and len(calls) == 1 and len(groups) == 1
+    assert len(toasts) == 1 and label in toasts[0]
+    assert "aucune absence attestée" in toasts[0] and "PRIVATE" not in toasts[0]
+    assert rows(service.storage) == before and path.read_bytes() == data

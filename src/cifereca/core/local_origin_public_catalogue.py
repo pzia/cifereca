@@ -8,6 +8,9 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 import re
+import httpx
+
+from ..plugin_api import AuthenticationRequired, Cancelled, TemporaryUnavailable
 
 from ..plugin_api import ProviderSearchResponse, PublicSearchNotice, ProviderSearchWithFacets
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
@@ -126,6 +129,26 @@ def _comparison(title, authors, local, row, remote):
     return "title_related" if not title_match else "title_concordant_author_unverified"
 
 
+def _public_failure_status(exc):
+    """Fixed transport outcomes, not supplier message forwarding or absence."""
+    if isinstance(exc, Cancelled):
+        return "cancelled"
+    if isinstance(exc, AuthenticationRequired):
+        return "auth_required"
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return {401: "auth_required", 403: "access_denied", 429: "rate_limited"}.get(
+            exc.response.status_code, "unavailable")
+    if type(exc) is TemporaryUnavailable and len(exc.args) == 1 and type(exc.args[0]) is str:
+        return {
+            "transport.http: auth_required": "auth_required",
+            "transport.http: access_denied": "access_denied",
+            "transport.http: rate_limited": "rate_limited",
+        }.get(exc.args[0], "unavailable")
+    return "unavailable"
+
+
 def search_local_public_catalogue(service, request, *, provider_id, confirmed=False,
                                   choice=None, still_current=lambda: True):
     """One synchronous typed call; send title only, never path/bytes/ISBN.
@@ -184,9 +207,12 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 return report("excluded")
             title, authors, isbns = details
             called = True
-            response = session.search_with_response_facets(
-                title, scope, field=field, content_types=(),
-            )
+            try:
+                response = session.search_with_response_facets(
+                    title, scope, field=field, content_types=(),
+                )
+            except Exception as exc:
+                return report(_public_failure_status(exc) if live() else "scope_changed")
             if not live():
                 return report("scope_changed")
             if (type(response) is not ProviderSearchResponse
