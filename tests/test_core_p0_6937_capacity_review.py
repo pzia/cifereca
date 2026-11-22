@@ -156,3 +156,43 @@ def test_native_capacity_line_click_and_duplicate_delivery(tmp_path, stale):
         assert db.metadata_get(reservation.key) is not None
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("directory", [
+    "library\\n", "library\\x7f", "library\\x00",
+    "x" * 257, ".", "..", "library/sub",
+])
+def test_capacity_never_recognizes_untrusted_profile_directory_names(
+    tmp_path, directory,
+):
+    # A corrupt identity binding must not become an active capacity witness.
+    # Neither receipt, staged inode nor authoritative original is modified.
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        service.config.identities = lambda: [
+            {"id": "id1", "directory_name": directory},
+        ]
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE identities SET directory_name=? WHERE identity_id='id1'",
+                (directory,),
+            )
+        scope = NS(storage=db, config=service.config, root=tmp_path,
+                   identity_id="id1", directory="library")
+        snapshot = core._snapshot(scope)
+        assert not core._valid_profile_directory(directory)
+        assert snapshot[1] == (("id1", None),)
+        assert snapshot[2]["unbound"] == 1
+        assert snapshot[2]["active_pending"] == 0
+        assert snapshot[2]["active_committed"] == 0
+        assert db.metadata_get(reservation.key) is not None
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_capacity_directory_guard_preserves_existing_valid_names():
+    assert core._valid_profile_directory("library")
+    assert core._valid_profile_directory("Bibliothèque privée")
+    assert core._valid_profile_directory("z" * 256)
