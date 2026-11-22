@@ -22,12 +22,17 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         ) and (row._session is None or possible_lender_session_matches(
             row, row._session,
         )))
+    def roster_current():
+        # The original N-way receipt remains indivisible through consent
+        # and a queued worker, not only while the chooser is displayed.
+        return (possible_lender_claims_distinct(
+                    rows, item, requesting_identity_id=identity_id)
+                and all(lender_current(row) for row in rows))
+
     if (not callable(execute) or not current()
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or len({id(row) for row in rows}) != len(rows)
-            or not possible_lender_claims_distinct(
-                rows, item, requesting_identity_id=identity_id)
-            or any(not lender_current(row) for row in rows)
+            or not roster_current()
             or getattr(window, "_cross_profile_borrow_pending", None) is not None):
         return False
     token = object()
@@ -71,7 +76,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         if not owns("confirm"):
             return
         if (type(response) is not str or response != "borrow" or not dialog_current()
-                or not lender_current(candidate)):
+                or not lender_current(candidate) or not roster_current()):
             release()
             return
         stage = "submitted"
@@ -89,7 +94,8 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                 dispatched = True
             # No widget reads on the worker. Core revalidates exact candidate,
             # requester object, epochs, lender/session and at-most-once claim.
-            if (not route_current() or not lender_current(candidate)):
+            if (not route_current() or not lender_current(candidate)
+                    or not roster_current()):
                 return {"status": "blocked"}
             return execute(
                 captured_candidate=candidate, exact_notice=item,
@@ -134,7 +140,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         nonlocal stage
         if not owns("choose"):
             return False
-        if not dialog_current() or not lender_current(candidate):
+        if not dialog_current() or not lender_current(candidate) or not roster_current():
             release()
             return False
         stage = "confirm"
@@ -151,7 +157,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             # Constructing/connecting a native GTK dialog can re-enter the
             # detail route and even rewrite a lender in place. Never paint
             # confirmation for a revoked account/edition.
-            if not dialog_current() or not lender_current(candidate):
+            if not dialog_current() or not lender_current(candidate) or not roster_current():
                 release()
                 return False
             menu.present()
@@ -171,9 +177,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         # the selected candidate. Do not turn a stale N-way roster into a
         # seemingly valid one-account confirmation.
         if (not dialog_current()
-                or not possible_lender_claims_distinct(
-                    rows, item, requesting_identity_id=identity_id)
-                or any(not lender_current(row) for row in rows)):
+                or not roster_current()):
             release()
             return
         present_confirmation(choices.get(response) if type(response) is str else None)
@@ -190,9 +194,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         # Do not display an obsolete N-way choice if GTK construction
         # changed the original borrower, provider claim or source notice.
         if (not dialog_current()
-                or not possible_lender_claims_distinct(
-                    rows, item, requesting_identity_id=identity_id)
-                or any(not lender_current(row) for row in rows)):
+                or not roster_current()):
             release()
             return False
         menu.present()
