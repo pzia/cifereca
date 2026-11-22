@@ -41,6 +41,12 @@ def case(private_rig, tmp_path, monkeypatch):
     return service, request, account, session, path, calls, choice, observed
 
 
+def _legacy_groups(groups):
+    """Preserve legacy action assertions while allowing the read-only rank overlay."""
+    return [group for group in groups
+            if group[0] != "Classement documentaire — lecture seule"]
+
+
 def test_remote_loan_review_only_sends_selected_account_and_never_persists(case):
     service, request, account, session, path, calls, choice, observed = case
     before, data = rows(service.storage), path.read_bytes()
@@ -169,16 +175,16 @@ def test_remote_inventory_has_own_one_use_action_in_detail_and_revocation(case, 
         result = work()
         if change == "after_worker":
             active[0] = False
-        count = len(groups)
+        count = len(_legacy_groups(groups))
         done(result)
         done(result)
         if change == "none":
-            assert len(groups) == count + 1
-            text = repr(groups[-1])
+            assert len(_legacy_groups(groups)) == count + 1
+            text = repr(_legacy_groups(groups)[-1])
             assert "Occurrence : fresh-loan" in text and "Branche canonique non attestée" in text
             assert "titre et fichier locaux non transmis" in text
         else:
-            assert len(groups) == count
+            assert len(_legacy_groups(groups)) == count
     assert calls == (["typed_inventory"] if change in ("none", "after_worker") else [])
     assert c.broker.compare_remote_loan(token=remote_choice.token, confirmed=True) is None
     assert rows(service.storage) == before and path.read_bytes() == data
