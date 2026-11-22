@@ -52,8 +52,8 @@ def test_public_lookup_requires_second_click_and_is_not_replayed(rig):
     done(result)
     done(result)
     assert len(groups) == 2
-    assert "ISBN déclaré, titre et auteur concordants" in repr(groups[1])
-    assert "ISBN déclaré ambigu" in repr(groups[1])
+    assert "ISBN déclaré, titre et auteur concordants" not in repr(groups[1])
+    assert repr(groups[1]).count("ISBN déclaré ambigu") == 2
     assert "aucune origine ni droit attestés" in repr(groups[1])
     button.callback(button)
     assert len(tasks) == 2 and len(calls) == 1
