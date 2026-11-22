@@ -29,6 +29,9 @@ def _sensitive_parameters(text):
         # notice coordinates and must not reach the browser-link renderer.
         'clientsecret', 'oauthcode', 'authorizationcode', 'codeverifier',
         'samlresponse', 'samlrequest', 'assertion',
+        # Catalogue URLs cannot transport bearer-style access/SSO keys
+        # disguised as field-name aliases either.
+        'accesskey', 'secretkey', 'authcode', 'ssoticket',
     }:
         return True
     return any(
