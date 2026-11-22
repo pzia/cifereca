@@ -167,7 +167,8 @@ def test_native_dialog_builder_failure_is_retryable_without_worker(
 @pytest.mark.parametrize("malformed", [
     "none_entries", "list_entries", "text_entries", "bad_entry",
     "none_current", "newline_current", "del_proposed",
-    "oversized_proposed", "empty_proposed",
+    "oversized_proposed", "empty_proposed", "bidi_current",
+    "c1_proposed", "zero_width_current", "unicode_line_proposed",
 ])
 def test_native_review_refuses_malformed_or_unsafe_plugin_advice_without_dialog(
     malformed,
@@ -193,6 +194,10 @@ def test_native_review_refuses_malformed_or_unsafe_plugin_advice_without_dialog(
         "del_proposed": (replace(advice, proposed="new\x7ffile.epub"),),
         "oversized_proposed": (replace(advice, proposed="x" * 4097),),
         "empty_proposed": (replace(advice, proposed=""),),
+        "bidi_current": (replace(advice, current="old\u202efile.epub"),),
+        "c1_proposed": (replace(advice, proposed="new\x85file.epub"),),
+        "zero_width_current": (replace(advice, current="old\u200dfile.epub"),),
+        "unicode_line_proposed": (replace(advice, proposed="new\u2028file.epub"),),
     }
     ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
     ui.observe(replace(page, dry_run_entries=changes[malformed]))
