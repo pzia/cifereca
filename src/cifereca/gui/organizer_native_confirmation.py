@@ -7,6 +7,29 @@ from ..plugin_api.library_organizer import OrganizerPageAdvice, OrganizerDryRunA
 from ..task_queue import TaskPriority
 
 
+def has_native_organizer_review(manager, resolved):
+    """Select the existing activated read port, not a concrete plugin ID."""
+    from ..core.activation_scoped_broker import ActivationBrokerResolver, _ActivationReadLease
+    from ..core.library_organizer_broker import LibraryOrganizerReadBrokerImpl
+    try:
+        if (manager._registry_generation != resolved.registry_generation
+                or manager.service(resolved.plugin_id) is not resolved.service):
+            return False
+        record = manager._records.get(resolved.plugin_id)
+        if record is None or record.service is not resolved.service:
+            return False
+        resolver = record.activation_brokers
+        if type(resolver) is not ActivationBrokerResolver or not resolver.current():
+            return False
+        with resolver._lock:
+            lease = resolver._scoped.get("library.organizer.read")
+        return (type(lease) is _ActivationReadLease
+                and type(lease._reader) is LibraryOrganizerReadBrokerImpl
+                and resolver.current() is True)
+    except Exception:
+        return False
+
+
 class NativeOrganizerConfirmation:
     def __init__(self, window, resolved, lease, *, Gtk):
         self.window, self.resolved, self.lease = window, resolved, lease
