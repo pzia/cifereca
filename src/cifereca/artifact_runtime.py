@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from .library_files import sha256_file
+from .core.derived_variant_region_paths import private_derived_path
 from .plugin_api import (
     ArtifactFormat, ArtifactInput, ArtifactPlacementRef, ArtifactPossessionRef, ArtifactRef,
     ArtifactRoutePlan, ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult,
@@ -534,6 +535,9 @@ class ArtifactExecutionBrokerImpl:
             raise _VariantConflict("Profil actif distinct du placement",
                            code="artifact_source_identity_mismatch")
         path = Path(str(row.get("path") or ""))
+        if private_derived_path(path):
+            raise _VariantConflict("Zone privée de publication dérivée",
+                                   code="artifact_source_private_region")
         if (type(row.get("identity_id")) is not str
                 or not row["identity_id"] or not path.is_absolute()
                 or _variant_file_stamp(path) is None
@@ -1684,6 +1688,8 @@ class LibraryMaintenanceBrokerImpl:
             entry=entries[0] if entries else {}
             from .filename_suffixes import split_filename_suffix
             old = Path(str(row.get("path") or ""))
+            if private_derived_path(old):
+                raise _LibraryFilenameConflict("Zone privée de publication dérivée")
             stem, suffix = split_filename_suffix(old)
             ext = suffix.lstrip(".") or str(entry.get("media_format") or "epub")
             new_name = self.service.preview_library_filename(
