@@ -1184,7 +1184,7 @@ class DocumentCoverService:
                             or below_floor
                             or self.decisions.peek(
                                 document, revision=snapshot.revision,
-                            ) is decision
+                            ) == decision
                         )
                     )
 
