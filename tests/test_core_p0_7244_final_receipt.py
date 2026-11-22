@@ -1,4 +1,5 @@
 """Actual isolated completed-receipt observation, never a replay permit."""
+import json
 import pytest
 from cifereca.core import adept_historical_maintenance as review
 from cifereca.core import canonical_adept_attempt as marker
@@ -10,7 +11,8 @@ from tests.test_core_p0_976_historical_maintenance import _setup, store
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, target, SHA, BYTES
 
 
-@pytest.mark.parametrize("case", ["exact", "other_offer", "tampered", "missing", "no_opt_in"])
+@pytest.mark.parametrize("case", ["exact", "other_offer", "tampered", "missing", "no_opt_in",
+                                  "wrong_key", "wrong_body_source", "invalid_offer"])
 def test_exact_final_receipt_observation_precedes_replay(store, tmp_path, monkeypatch, case):
     service, _, _, _ = _setup(store, tmp_path)
     source, snapshot = new_source(kind="loan", branch="loans", right="pending")
@@ -30,6 +32,22 @@ def test_exact_final_receipt_observation_precedes_replay(store, tmp_path, monkey
     else:
         with InterProcessLock(lock_path):
             pass
+    if case in ("wrong_key", "wrong_body_source", "invalid_offer"):
+        checkpoint = recovery._stage_id(source, offer)
+        with store._lock, store._connect() as sql:
+            if case == "wrong_key":
+                sql.execute("UPDATE acquisition_ledger SET acquisition_id=? WHERE acquisition_id=?",
+                            ("corrupted-checkpoint-key", checkpoint))
+            else:
+                body, = sql.execute("SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=?",
+                                    (checkpoint,)).fetchone()
+                data = json.loads(body)
+                if case == "wrong_body_source":
+                    data["source"] = {}
+                else:
+                    data["offer_id"] = None
+                sql.execute("UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+                            (json.dumps(data), checkpoint))
     raw = marker._value(offer, "a" * 32)
     store.metadata_set(marker._key(source), raw)
     if case == "tampered":
@@ -46,6 +64,7 @@ def test_exact_final_receipt_observation_precedes_replay(store, tmp_path, monkey
         "exact": "verified_final_receipt_observed",
         "other_offer": "not_observed", "tampered": "unverified",
         "missing": "not_observed", "no_opt_in": "not_checked",
+        "wrong_key": "unverified", "wrong_body_source": "unverified", "invalid_offer": "unverified",
     }[case]
     assert store.metadata_get(marker._key(source)) == raw
     assert (final.read_bytes(), lock_path.read_bytes()) == before
