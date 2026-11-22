@@ -312,6 +312,7 @@ class HistoricalHoldSelection:
     witness: object
     stamp: tuple
     copy_evidence: str
+    final_receipt_evidence: str = "not_checked"
     unlock_authorized: bool = False
 
     def current(self):
@@ -375,8 +376,15 @@ def select_historical_hold(service, request, page, *, ordinal, confirmed=False):
         if (not request.bound()
                 or sqlite_source_stamp(request.database) != anchor.stamp):
             return None
+        # Explicit physical verification is opt-in; never hash final receipt
+        # bytes during passive review or merely selecting the report by default.
+        final_receipt = "not_checked"
+        if anchor.verified:
+            from .adept_historical_final_receipt import observe_final_receipt
+            final_receipt = observe_final_receipt(request, source, marker, anchor.stamp)
         selection = HistoricalHoldSelection(
-            request, source, marker, witness, anchor.stamp, row["local_copy_evidence"])
+            request, source, marker, witness, anchor.stamp, row["local_copy_evidence"],
+            final_receipt_evidence=final_receipt)
         return selection if selection.current() else None
     except Exception:
         return None

@@ -102,6 +102,9 @@ def _selected_hold_summary(value):
         return "Sélection périmée ou indisponible. Relancer la revue."
     source = value.source
     reason = (
+        "Un reçu final et ses octets ont été vérifiés pour l’offre historique exacte ; "
+        "privilégier la reprise canonique sans GET."
+        if value.final_receipt_evidence == "verified_final_receipt_observed" else
         "Une copie locale vérifiée a été observée ; privilégier la récupération locale."
         if value.copy_evidence == "verified_local_copy_observed" else
         "Témoin exact de non-soumission enregistré ; activation historique non attestée."
