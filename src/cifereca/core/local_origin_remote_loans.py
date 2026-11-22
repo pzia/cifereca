@@ -8,6 +8,7 @@ remote comparisons therefore cannot be consumed as SourceReferences.
 from collections import Counter
 from dataclasses import dataclass
 from inspect import getattr_static
+from unicodedata import category
 
 from ..locking import InterProcessLock
 from ..models import Account, Loan
@@ -48,8 +49,11 @@ class RemoteLoanDocumentaryMatch:
 
 
 def _text(value, *, empty=False):
+    # IDs (account/provider, edition and loan occurrence) are rendered by
+    # the local review; supplier responses may contain bidi/C1 controls.
     return (type(value) is str and (empty or bool(value)) and len(value) <= 256
-            and all(32 <= ord(c) != 127 for c in value))
+            and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for ch in value))
 
 
 def _reader(session):
