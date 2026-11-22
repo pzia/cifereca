@@ -133,6 +133,20 @@ class NativeOrganizerConfirmation:
             except Exception:
                 completed(None)
 
-        dialog.connect("response", response)
-        dialog.present()
+        try:
+            dialog.connect("response", response)
+            dialog.present()
+        except Exception:
+            # A GTK mount/presentation failure must not strand the exact
+            # one-shot review with a disabled button or queue Core work.
+            # No response has been accepted: preserve the production fence.
+            self._dialog = None
+            try:
+                close = getattr(dialog, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                pass
+            self.button.set_sensitive(self._current(page) and page is not self._used)
+            return False
         return True
