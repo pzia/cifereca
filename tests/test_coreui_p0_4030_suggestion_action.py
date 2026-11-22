@@ -139,3 +139,34 @@ def test_unusable_c_timestamp_never_exposes_raw_value(untrusted):
     assert action._known_c_observation_label(untrusted) == (
         "Dernière observation C : date indisponible"
     )
+
+
+def test_known_c_native_detail_disambiguates_editions_and_revisions(store, tmp_path):
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist, verified_public
+
+    host, panel, row, item, token, tasks, buttons, groups, _ = _host(store, tmp_path)
+    persist(store, verified_public(
+        record_id="second-edition", revision_id="rev-other",
+        title="Roman commun", author="Autrice",
+    ), at=100)
+    assert action.add_local_origin_suggestion_action(host, panel, row, item, token=token)
+    assert not tasks and not groups
+    button, = buttons
+    button.callback(button)
+    result = tasks[0][0]()
+    assert result["status"] == "partial"
+    hits = [entry.hit for entry in result["suggestions"].suggestions]
+    assert len(hits) == 2 and len({hit.edition_id for hit in hits}) == 2
+    tasks[0][1](result)
+    assert len(groups) == 1
+    displayed = [value for title, value in groups[0][1] if title == "Roman commun"]
+    assert len(displayed) == 2
+    for hit in hits:
+        matches = [value for value in displayed
+                   if hit.record_id in value and ("Édition C : " + hit.edition_id) in value]
+        assert len(matches) == 1
+        assert "Support C : " + hit.medium in matches[0]
+        if hit.source_revision:
+            assert "Révision C : " + hit.source_revision in matches[0]
+    assert "aucune origine ni droit attestés" in repr(groups)
+    assert not store.entitlements()
