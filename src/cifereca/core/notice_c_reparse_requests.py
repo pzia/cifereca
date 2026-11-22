@@ -46,6 +46,17 @@ def _spec(source, receipt, implementation_digest):
 
 def request_public_reparse(storage, source, receipt, body, *,
                            implementation_digest, now, expected_generation):
+    """Compatibility entry point through the common typed Core admission."""
+    from .notice_c_enrichment_intent import CatalogueReparseIntent, request_notice_enrichment
+    admission = request_notice_enrichment(
+        storage, CatalogueReparseIntent(source, receipt, body, implementation_digest,
+                                        expected_generation), now=now,
+    )
+    return admission.refs[0]
+
+
+def _request_public_reparse(storage, source, receipt, body, *,
+                            implementation_digest, now, expected_generation):
     """Request a cache-only parser version, atomically with its input CAS.
 
     Caller is a trusted Core producer, never an arbitrary plugin or GTK
