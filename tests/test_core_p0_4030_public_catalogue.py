@@ -241,3 +241,24 @@ def test_public_catalogue_rejects_unprintable_comparison_labels_without_losing_s
     assert not result["association_authorized"] and not result["may_write_origin_or_right"]
     assert not result["fresh_network_verified"] and not result["coverage_complete"]
     assert (rows(service.storage), path.read_bytes()) == (before, data)
+
+
+@pytest.mark.parametrize("field", ["record_id", "docbase", "format"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_public_comparison_drops_spoofed_source_coordinates_but_keeps_valid_hits(
+    rig, field, spoof,
+):
+    service, session, request, calls, path = rig
+    safe = _row("safe")
+    forged = _row("forged", **{field: "misleading" + spoof + "SOURCE"})
+    session.search_with_response_facets = lambda *_a, **_kw: ProviderSearchResponse(
+        [safe, forged],
+        public_notices=(PublicSearchNotice(safe), PublicSearchNotice(forged)),
+    )
+    before, original = rows(service.storage), path.read_bytes()
+    report = _run(service, request)
+    assert report["status"] == "partial"
+    assert tuple(item.record_id for item in report["candidates"]) == ("safe",)
+    assert report["provider_access_performed"]
+    assert not report["association_authorized"] and not report["may_write_origin_or_right"]
+    assert rows(service.storage) == before and path.read_bytes() == original

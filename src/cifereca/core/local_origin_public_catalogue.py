@@ -103,6 +103,16 @@ def available_local_public_catalogues(service, request, *, evidence=None):
         return ()
 
 
+def _displayable_coordinate(value, *, optional=False):
+    """Untrusted public coordinates are shown as origin hints in local UI."""
+    if value is None:
+        return optional
+    return (type(value) is str and (optional or bool(value))
+            and len(value) <= 512
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def _isbns(metadata):
     values = []
     for field in ("isbn", "isbns"):
@@ -244,7 +254,14 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                         # an origin label in a local consent/comparison view.
                         or any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
                                for value in (projected.title, projected.author)
-                               if value is not None for ch in value)):
+                               if value is not None for ch in value)
+                        # These source coordinates are also rendered by the
+                        # local comparison. General public C projection is
+                        # deliberately unchanged: only this view rejects
+                        # spoofed local provenance labels.
+                        or not all(_displayable_coordinate(value) for value in (
+                            projected.docbase, projected.record_id, projected.medium))
+                        or not _displayable_coordinate(projected.format, optional=True)):
                     continue
                 remote = _isbns(projected.metadata)
                 candidates.append(PublicCatalogueCandidate(
