@@ -109,6 +109,7 @@ def test_choice_pins_exact_reviewed_file_and_sql_evidence(rig, change):
             "catalog_entry_id": "later-description", "artifact_id": "sha256:" + digest,
             "placement_id": request.placement_id, "identity_id": request.identity_id,
             "title": "Roman commun", "author": "Autrice", "local_state": "local",
+            "provider_id": "local",
         })
     else:
         data = _book(META.replace("Roman commun", "Autre titre privé")).getvalue()
