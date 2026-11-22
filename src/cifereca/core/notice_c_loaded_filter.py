@@ -40,6 +40,29 @@ def _native_group_document(document):
     return is_notice_cover_document(document)
 
 
+def _source_scalar_snapshot(hit):
+    """Seal every alternative's source scalars and native DocumentRef at admission.
+
+    Source evidence (classification/age/language) is separately frozen.
+    A frozen hit can still be mutated in place by a view or callback; the
+    grouped filter must never attribute that new title/provider/format to C.
+    """
+    from .notice_c_known_projection import (
+        _PRIMARY_HIT_SEAL_NAMES, _PRIMARY_DOCUMENT_SEAL_NAMES,
+    )
+
+    if type(hit) is not PublicNoticeCHit or not _native_group_document(hit.document):
+        return None
+    values = tuple(getattr(hit, name) for name in _PRIMARY_HIT_SEAL_NAMES)
+    document = tuple(getattr(hit.document, name) for name in _PRIMARY_DOCUMENT_SEAL_NAMES)
+    if (any(type(value) not in (str, int, bool, type(None))
+            or (type(value) is str and len(value) > 8192) for value in values)
+            or any(type(value) not in (str, type(None))
+                   or (type(value) is str and len(value) > 512) for value in document)):
+        return None
+    return values, document
+
+
 def attach_filter_sources(row, hits):
     # Construct the opaque packet only from an exact, internally consistent
     # Core group. Avoid indexing an empty tuple or invoking foreign equality
@@ -63,8 +86,10 @@ def attach_filter_sources(row, hits):
            and hit.document == first.document and hit.epoch == first.epoch
            for hit in hits):
         from .notice_c_known_projection import _source_evidence_snapshot
-        proofs = tuple(_source_evidence_snapshot(hit) for hit in hits)
-        if any(proof is None for proof in proofs):
+        proofs = tuple((
+            _source_evidence_snapshot(hit), _source_scalar_snapshot(hit),
+        ) for hit in hits)
+        if any(evidence is None or scalars is None for evidence, scalars in proofs):
             return
         row[_FIELD] = (
             _TOKEN, row["identity_id"], first.document, first.epoch, hits, proofs,
@@ -98,9 +123,14 @@ def _sources(row):
     from .notice_c_known_projection import (
         _source_evidence_snapshot, _same_source_evidence_snapshot,
     )
-    if any(not _same_source_evidence_snapshot(
-            _source_evidence_snapshot(hit), evidence)
-            for hit, evidence in zip(hits, packet[5])):
+    if any(
+        type(proof) is not tuple or len(proof) != 2
+        or not _same_source_evidence_snapshot(
+            _source_evidence_snapshot(hit), proof[0])
+        or not _same_source_evidence_snapshot(
+            _source_scalar_snapshot(hit), proof[1])
+        for hit, proof in zip(hits, packet[5])
+    ):
         return ()
     if (any(type(hit) is not PublicNoticeCHit
             or not _native_group_document(hit.document)
