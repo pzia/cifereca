@@ -475,9 +475,15 @@ def compute_recommendations(
                     provider_ids=(),
                 ) or ())[:max(10, int(per_query))]
                 for item in raw_known:
+                    # C can return multiple source branches for the same
+                    # public record. Object reuse within one ranking run is
+                    # safe only for the SAME exact original occurrence; a
+                    # credential/collection/ISBN variant must remain distinct
+                    # for Search/Recommendations detail and source actions.
                     key = tuple(str(get_field(item, field, "") or "") for field in (
-                        "id", "source_provider", "record_id", "docbase",
-                        "medium", "revision_id",
+                        "id", "source_provider", "source_credential",
+                        "source_collection", "record_id", "docbase",
+                        "medium", "revision_id", "isbn",
                     ))
                     known_rows.append(local_candidates.setdefault(key, item))
             except Exception:
