@@ -12,7 +12,7 @@ from typing import Any
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.notice_cover_repository import read_current_notice_cover
 from ..core.notice_c_cover_index import (
-    is_canonical_cover_document, read_consolidated_notice_cover,
+    is_canonical_cover_document, read_current_consolidated_public_cover,
 )
 from .document_cover_service import CoverSourceSnapshot
 
@@ -46,7 +46,7 @@ def cached_notice_cover_snapshot(
     if storage is None:
         return None
     if is_canonical_cover_document(document):
-        consolidated = read_consolidated_notice_cover(storage, document)
+        consolidated = read_current_consolidated_public_cover(storage, document)
         if consolidated is None:
             return None
         return CoverSourceSnapshot(
