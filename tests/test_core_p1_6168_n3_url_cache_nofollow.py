@@ -1,8 +1,12 @@
 """#6168 N3: a URL cache hit is physical bytes, not an arbitrary local symlink."""
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
+from threading import Event
+
+import httpx
 
 import pytest
 
@@ -88,3 +92,58 @@ def test_n3_url_cache_key_not_split_by_profile(loader):
     assert a == b
     assert a.name.endswith(".img")
     assert len(a.stem) == 64
+
+
+def test_data_image_publication_does_not_write_through_fixed_tmp_symlink(
+    loader, tmp_path,
+):
+    """An external file must survive a preplanted historical .tmp target."""
+    foreign = tmp_path / "private-outside-cache"
+    foreign.write_bytes(b"KEEP_PRIVATE_BYTES")
+    uri = "data:image/png;base64," + base64.b64encode(PNG).decode("ascii")
+    cache = loader._path(uri)
+    trap = cache.with_suffix(".tmp")
+    trap.symlink_to(foreign)
+    received = []
+    loader.load(uri, received.append)
+    assert received == [cache]
+    assert loader._valid_cache_file(cache)
+    assert cache.read_bytes() == PNG
+    assert trap.is_symlink()
+    assert foreign.read_bytes() == b"KEEP_PRIVATE_BYTES"
+
+
+def test_http_image_publication_does_not_write_through_fixed_tmp_symlink(
+    loader, tmp_path,
+):
+    """The worker takes the same exclusive atomic publication route."""
+    foreign = tmp_path / "other-profile-private-content"
+    foreign.write_bytes(b"DO_NOT_TOUCH")
+    cache = loader._path(URL)
+    trap = cache.with_suffix(".tmp")
+    trap.symlink_to(foreign)
+
+    original = loader.client
+    loader.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "image/png"},
+                content=PNG, request=request,
+            )
+        )
+    )
+    original.close()
+    completed = Event()
+    received = []
+
+    def callback(path):
+        received.append(path)
+        completed.set()
+
+    loader.load(URL, callback)
+    assert completed.wait(8), "N3 HTTP worker did not publish"
+    assert received == [cache]
+    assert loader._valid_cache_file(cache)
+    assert cache.read_bytes() == PNG
+    assert trap.is_symlink()
+    assert foreign.read_bytes() == b"DO_NOT_TOUCH"
