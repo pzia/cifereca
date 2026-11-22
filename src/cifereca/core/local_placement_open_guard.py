@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from .derived_variant_region_paths import private_derived_path
 
 
 def scoped_existing_placement_path(service, placement, *, identity_id: str) -> Path:
@@ -22,6 +23,8 @@ def scoped_existing_placement_path(service, placement, *, identity_id: str) -> P
     if type(stored) is not str or not stored:
         raise ValueError("local_placement_path_unavailable")
     raw = Path(stored).expanduser()
+    if private_derived_path(raw):
+        raise ValueError("local_placement_private_region")
     if not raw.is_absolute() or ".." in raw.parts:
         raise ValueError("local_placement_path_unavailable")
 
