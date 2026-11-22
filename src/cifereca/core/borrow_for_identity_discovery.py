@@ -131,6 +131,26 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             and candidate._captured_fields == fields)
 
 
+def possible_lender_claims_distinct(rows, notice, *, requesting_identity_id):
+    """One exact ordinary-borrow claim cannot be listed as multiple lenders.
+
+    Different dataclass receipts can refer to the same borrower/edition.
+    This is only a bounded read-only menu invariant, never admission.
+    """
+    if type(rows) is not tuple or not 1 <= len(rows) <= 64:
+        return False
+    seen = set()
+    for row in rows:
+        if not possible_lender_matches(
+                row, notice, requesting_identity_id=requesting_identity_id):
+            return False
+        claim = borrow_claim_key(row._account, notice)
+        if claim is None or claim in seen:
+            return False
+        seen.add(claim)
+    return True
+
+
 def possible_lender_session_matches(candidate, session):
     """Worker-only check of the original inert session receipt."""
     if (type(candidate) is not PossibleBorrowLender
@@ -460,4 +480,4 @@ def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLe
 
 
 __all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders",
-           "possible_lender_matches"]
+           "possible_lender_matches", "possible_lender_claims_distinct"]

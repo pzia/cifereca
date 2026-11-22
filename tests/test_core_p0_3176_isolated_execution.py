@@ -22,7 +22,7 @@ def test_exact_confirmed_rename_uses_existing_writer(store, tmp_path, monkeypatc
     accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
     new = old.with_name("Autrice - Roman commun.epub")
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     if case != "production":
         monkeypatch.setattr(execute, "_execution_fence_current",
                             lambda s, lock: s.root == root and s.storage is store)
@@ -62,7 +62,7 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
     entry, = accepted.entries
     new = root / scope.directory / entry.proposed
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     fence_checks = []
 
     def isolated_fence(s, lock):
@@ -148,7 +148,7 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
     page = broker.prepare_dry_run(token=page.token, confirmed=True, rename_only=True)
     page = broker.confirm_dry_run(token=page.token, confirmed=True)
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     with InterProcessLock(lock_path):
         pass
     lock_bytes = lock_path.read_bytes()
@@ -188,3 +188,51 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
         assert result == {"status": "blocked", "changed": 0}
         assert old.read_bytes() == data and not new.exists()
         assert store.placement_get(pid) == baseline
+
+
+def test_native_organizer_worker_missing_lock_never_provisions_state(
+    store, tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace as NS
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    original_bytes, original_row = old.read_bytes(), store.placement_get(pid)
+    service = _service(store, root)
+    resolver = ActivationBrokerResolver(
+        lambda _: None, maintenance_read_ports(service).get,
+        "organizer", ("library.organizer.read",),
+    )
+    plugin = object()
+    resolved = NS(plugin_id="organizer", service=plugin, registry_generation=1)
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"organizer": NS(service=plugin, activation_brokers=resolver)})
+    broker = resolver("library.organizer.read")
+    page = broker.preview(identity_id="A", confirmed=True)
+    page = broker.prepare_dry_run(token=page.token, confirmed=True, rename_only=True)
+    page = broker.confirm_dry_run(token=page.token, confirmed=True)
+    lock_path = tmp_path / "missing-state" / "local-acquisition.lock"
+    lookups = []
+
+    def existing_lock(*, create=True):
+        lookups.append(create)
+        if create:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+        return lock_path
+
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", existing_lock)
+    command = execute.admit_native_reviewed_rename(
+        manager, resolved, page, service=service, identity_id="A",
+        confirmed=True, view_current=lambda: True,
+    )
+    assert callable(command)
+    assert command() == {"status": "blocked", "changed": 0}
+    assert command() == {"status": "blocked", "changed": 0}
+    assert lookups == [False]
+    assert not lock_path.parent.exists()
+    assert old.read_bytes() == original_bytes
+    assert store.placement_get(pid) == original_row
+    resolver.close()

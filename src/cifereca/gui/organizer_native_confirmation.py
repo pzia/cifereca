@@ -5,6 +5,7 @@ scope, shared lock and production fence. A visible DTO is never authority.
 """
 from ..plugin_api.library_organizer import OrganizerPageAdvice, OrganizerDryRunAdvice
 from ..task_queue import TaskPriority
+from unicodedata import category
 
 
 def has_native_organizer_review(manager, resolved):
@@ -33,6 +34,7 @@ def has_native_organizer_review(manager, resolved):
 class NativeOrganizerConfirmation:
     def __init__(self, window, resolved, lease, *, Gtk):
         self.window, self.resolved, self.lease = window, resolved, lease
+        self._identity_id = getattr(lease, "identity_id", None)
         self._page = self._used = self._dialog = None
         self._disposed = False
         self.button = Gtk.Button(label="Confirmer le renommage…")
@@ -41,12 +43,15 @@ class NativeOrganizerConfirmation:
         self.button.connect("clicked", self._clicked)
 
     def _lease_current(self):
-        if self._disposed:
-            return False
         # Revocation is a negative-only guard. A disposed activation may
         # raise while GTK delivers a late response or worker completion.
         try:
-            return self.lease.is_current() is True
+            return (not self._disposed
+                    and type(self._identity_id) is str
+                    and 0 < len(self._identity_id) <= 1024
+                    and self._displayable_path(self._identity_id)
+                    and self.lease.identity_id == self._identity_id
+                    and self.lease.is_current() is True)
         except Exception:
             return False
 
@@ -58,13 +63,10 @@ class NativeOrganizerConfirmation:
         # Plugin advice is a presentation DTO, not a Core execution permit.
         # Refuse malformed/unsafe display text before enabling confirmation.
         return (type(value) is str and 0 < len(value) <= 4096
-                and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+                and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
 
     def observe(self, value):
-        # Disposal ends this exact UI lifetime permanently. Late queued
-        # worker results cannot mount a fresh native Apply after unmount.
-        if self._disposed:
-            return
         from ..core import library_organizer_execution as execution
         entries = value.dry_run_entries if type(value) is OrganizerPageAdvice else ()
         valid = (type(value) is OrganizerPageAdvice
@@ -94,10 +96,12 @@ class NativeOrganizerConfirmation:
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
 
     def dispose(self):
+        # Disposal is terminal for this widget. A queued observer callback
+        # must not re-arm a review even when the old lease still reports live.
+        self._disposed = True
         # A profile switch or unmount revokes even an already presented
         # confirmation. Close the native dialog before it can outlive the
         # owning view; its late response must never enqueue Core work.
-        self._disposed = True
         dialog = self._dialog
         self._dialog = None
         self._page = None
@@ -123,7 +127,7 @@ class NativeOrganizerConfirmation:
         try:
             dialog = Adw.MessageDialog.new(
                 self.window, "Confirmer le renommage ?",
-                "Profil : " + self.lease.identity_id + "\n"
+                "Profil : " + self._identity_id + "\n"
                 "Chemin actuel : " + entry.current + "\n"
                 "Nom proposé : " + entry.proposed + "\n\n"
                 "Un seul renommage, sans suppression de doublon ni changement de droit. "
@@ -154,6 +158,11 @@ class NativeOrganizerConfirmation:
             if answered:
                 return
             answered = True
+            # An old GTK signal may arrive after a replacement review has
+            # already opened its own dialog. Never clear or re-arm that
+            # newer dialog (and never enqueue the old Core command).
+            if self._dialog is not dialog:
+                return
             self._dialog = None
             if response_id != "apply" or not self._current(page):
                 self.button.set_sensitive(self._page is not None
@@ -172,7 +181,7 @@ class NativeOrganizerConfirmation:
                     return None
                 command = admit(
                     self.window.plugin_manager, self.resolved, page,
-                    service=self.window.service, identity_id=self.lease.identity_id,
+                    service=self.window.service, identity_id=self._identity_id,
                     confirmed=True, view_current=current)
                 return command() if callable(command) and current() else None
 

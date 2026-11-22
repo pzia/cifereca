@@ -161,6 +161,8 @@ def test_native_capacity_line_click_and_duplicate_delivery(tmp_path, stale):
 @pytest.mark.parametrize("directory", [
     "library\n", "library\x7f", "library\x00",
     "x" * 257, ".", "..", "library/sub",
+    "library\x85hidden", "library\u202ehidden",
+    "library\u2028hidden", "library\u200dhidden",
 ])
 def test_capacity_never_recognizes_untrusted_profile_directory_names(
     tmp_path, directory,
@@ -223,6 +225,46 @@ def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
         assert counts["other_bound"] == 0
         assert storage.metadata_get(reservation.key) == receipt
         assert stage.read_bytes() == before_stage
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("case", [
+    "empty", "too_many", "tuple_rows", "generator", "non_dict",
+    "no_id", "invalid_id", "invalid_id_del", "invalid_id_too_long",
+    "invalid_id_not_text", "no_directory",
+])
+def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
+    tmp_path, case,
+):
+    service, intent, reservation = _setup(tmp_path)
+    storage = service.storage
+    stage = Path(intent.staged_path)
+    prior = stage.read_bytes(), storage.metadata_get(reservation.key)
+    baseline = {"id": "id1", "directory_name": "library"}
+    variants = {
+        "empty": [],
+        "too_many": [baseline] * 129,
+        "tuple_rows": (baseline,),
+        "generator": (x for x in [baseline]),
+        "non_dict": [None],
+        "no_id": [{"directory_name": "library"}],
+        "invalid_id": [{"id": "id1\nforged", "directory_name": "library"}],
+        "invalid_id_del": [{"id": "id1\x7fforged", "directory_name": "library"}],
+        "invalid_id_too_long": [{"id": "x" * 1025, "directory_name": "library"}],
+        "invalid_id_not_text": [{"id": None, "directory_name": "library"}],
+        "no_directory": [{"id": "id1"}],
+    }
+    try:
+        service.config.identities = lambda: variants[case]
+        scope = NS(storage=storage, config=service.config, root=tmp_path,
+                   identity_id="id1", directory="library")
+        with pytest.raises(core.journal.DerivedJournalConflict,
+                           match="derived_capacity_config_unverified"):
+            core._snapshot(scope)
+        assert storage.metadata_get(reservation.key) == prior[1]
+        assert stage.read_bytes() == prior[0]
         assert stage.samefile(intent.candidate_path)
     finally:
         storage.close()
