@@ -119,16 +119,21 @@ def _matches(snapshot, choice, title, authors):
         return (), True
     counts, candidates = Counter(), []
     for loan in snapshot.loans:
-        if (type(loan) is not Loan or loan.medium != "digital"
+        if (type(loan) is not Loan
                 or (loan.identity_id, loan.source_provider, loan.source_credential,
                     loan.source_account_id) != _coords(choice.account)
-                or not _text(loan.id)
+                or not _text(loan.id)):
+            continue
+        # Count every occurrence in this exact scope BEFORE filtering the
+        # descriptive fields or medium. A malformed or physical twin cannot
+        # silently qualify the surviving digital occurrence as unique.
+        counts[loan.id] += 1
+        if (loan.medium != "digital"
                 or (loan.record_id not in (None, "") and not _text(loan.record_id))):
             continue
         # Do not replace a missing edition by the occurrence ID. The provider
         # did not report that relationship, nor a canonical branch.
         key = (loan.record_id or None, loan.id)
-        counts[loan.id] += 1
         pair = _descriptive_pair(loan.title, loan.author)
         if pair is None or _fold(pair[0]) != _fold(title):
             continue
