@@ -52,6 +52,7 @@ def measure(paths, cache):
     if epub_metadata.cover_cache_dir() != cache:
         raise RuntimeError("unexpected_cache")
     prepared = []
+    qualified_inodes = set()
     skipped = Counter()
     admitted_bytes = 0
     for number, path in enumerate(paths):
@@ -61,6 +62,12 @@ def measure(paths, cache):
                 if (not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_FILE
                         or stamp(os.stat(path, follow_symlinks=False)) != stamp(info)):
                     skipped["invalid_file"] += 1
+                    continue
+                # Distinct manifest names are not distinct physical EPUBs:
+                # hard links may select the same inode 16 or 256 times.
+                # Keep one measured archive per current physical identity.
+                if (info.st_dev, info.st_ino) in qualified_inodes:
+                    skipped["duplicate_physical_file"] += 1
                     continue
                 if admitted_bytes + info.st_size > MAX_TOTAL:
                     skipped["total_budget"] += 1
@@ -94,6 +101,7 @@ def measure(paths, cache):
                 source_key=f"benchmark:{number}",
                 artifact_id="sha256:" + sha, placement_id=f"benchmark:{number}",
             ), 1, sha, cover["member"], cover["cache_name"])
+            qualified_inodes.add((info.st_dev, info.st_ino))
             prepared.append((path, ref, info.st_size))
         except Exception:
             skipped["unqualified"] += 1
