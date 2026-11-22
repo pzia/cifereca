@@ -6,7 +6,9 @@ detail can consume its result; no eligibility, loan or copy is inferred.
 from __future__ import annotations
 
 from ..models import SearchResult
-from ..core.borrow_for_identity_discovery import possible_lender_matches
+from ..core.borrow_for_identity_discovery import (
+    possible_lender_matches, possible_lender_session_matches,
+)
 from ..task_queue import TaskPriority
 
 
@@ -62,6 +64,17 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
             pending = False
             return True
 
+        def lender_current(row):
+            # Revoke a real Core lender whose original session disconnected
+            # or changed account without bumping the UI navigation epoch.
+            # Legacy sessionless UI-only descriptors are non-executable;
+            # Core's borrow executor still requires a live session receipt.
+            return (possible_lender_matches(
+                row, item, requesting_identity_id=identity_id,
+            ) and (row._session is None or possible_lender_session_matches(
+                row, row._session,
+            )))
+
         def delivered(rows):
             if not consume():
                 return
@@ -70,9 +83,7 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
                         or type(rows) is not tuple or not 1 <= len(rows) <= 64
-                        or any(not possible_lender_matches(
-                                   row, item, requesting_identity_id=identity_id,
-                               ) for row in rows)):
+                        or any(not lender_current(row) for row in rows)):
                     return
                 details = [
                     (
@@ -88,9 +99,7 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 # append. Never install a choice under a new route.
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
-                        or any(not possible_lender_matches(
-                            row, item, requesting_identity_id=identity_id,
-                        ) for row in rows)):
+                        or any(not lender_current(row) for row in rows)):
                     # The group call may synchronously change the native
                     # source, account or edition without rotating GUI epochs.
                     # Never add a stale lender action after that reentrancy.
