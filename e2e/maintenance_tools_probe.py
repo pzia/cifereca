@@ -770,6 +770,66 @@ def main():
         assert tool.plan_calls == tool.run_calls == 0
         report["checks"]["P0_7407_native_adapter_navigation_revoked"] = True
 
+        # #7407: exercise the actual installed page and identity coordinator
+        # across A→B→A. Only the asynchronous identity reads are captured;
+        # neither provider traffic nor maintenance work is necessary here.
+        if args.width == 1366:
+            from cifereca.identities import Identity
+            service = w.service
+            original_identity = service.current_identity
+            assert original_identity is not None
+            first_id = original_identity.identity_id
+            second_id = "maintenance-aba-fixture"
+            assert service.identity_by_id(second_id) is None
+            synthetic = Identity(second_id, "Profil témoin Maintenance", directory_name=second_id)
+            service.identities.append(synthetic)
+
+            def current_hold():
+                row, = (node for node in walk(w._tools_box)
+                        if isinstance(node, Adw.ActionRow)
+                        and node.get_title() == "Verrous de téléchargements ADEPT")
+                button, = (node for node in walk(row) if isinstance(node, Gtk.Button)
+                           and getattr(node, "_cifereca_action_label", "") == "Verrous…")
+                return row, button
+
+            first_row, first_button = current_hold()
+            identity_jobs = []
+            original_submit = w.runner.submit
+            try:
+                w.runner.submit = lambda *a, **kw: identity_jobs.append((a, kw))
+                w._activate_identity(second_id)
+                assert service.current_identity.identity_id == second_id
+                assert w.view_stack.get_visible_child_name() == "tools"
+                assert w._plugin_page_widgets["tools"] is host_widget
+                second_row, second_button = current_hold()
+                assert second_row is not first_row and first_row.get_root() is None
+                before = len(identity_jobs)
+                first_button.emit("clicked")
+                assert len(identity_jobs) == before
+
+                w._activate_identity(first_id)
+                assert service.current_identity.identity_id == first_id
+                assert w.view_stack.get_visible_child_name() == "tools"
+                assert w._plugin_page_widgets["tools"] is host_widget
+                restored_row, _ = current_hold()
+                assert restored_row is not first_row and restored_row is not second_row
+                assert second_row.get_root() is None
+                before = len(identity_jobs)
+                first_button.emit("clicked")
+                second_button.emit("clicked")
+                assert len(identity_jobs) == before
+                assert all(action_titles().count(title) == 1 for title in titles.values())
+                assert action_titles().count("Téléchargements à reprendre") == 1
+                assert sum(kw.get("kind") == "identity" for _, kw in identity_jobs) == 2
+                assert not any(kw.get("kind") == "maintenance-plan" for _, kw in identity_jobs)
+                assert tool.plan_calls == tool.run_calls == 0
+            finally:
+                w.runner.submit = original_submit
+                if service.current_identity.identity_id != first_id:
+                    service.select_identity(first_id)
+                service.identities.remove(synthetic)
+            report["checks"]["P0_7407_real_host_profile_aba_revoked"] = True
+
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
