@@ -17,8 +17,11 @@ ne sont pas des capacités d'enrichissement documentaire.
   réelles. « Par défaut » ne vaut pas activation ni consentement.
 - Achat Numilog : port spécialisé reçu (#1072). Emprunt existant : port
   Core de réparation cache-only reçu (#7485), sous conditions ci-dessous.
-  Admission commune achat/catalogue (#7464) non reçue ; import local et
-  fetch documentaire non qualifié : aucun raccordement générique attesté.
+  Admission commune achat/catalogue (#7464) reçue (CI 44993027479,
+  AST 44993027430, installation 44993027427 SUCCESS ; squash caed0d56).
+  Le raccordement du port prêt à cette admission est proposé dans le présent
+  delta, à recevoir après CI ; import local et fetch documentaire non qualifié
+  restent sans port positif.
 
 | Provider | Observation / association disponible | Statut et reste à qualifier |
 | --- | --- | --- |
@@ -134,7 +137,9 @@ L'import local n'est pas un provider.library. Les liens existants dans
 `manual_import_display_admission.py`, `observed_import_provenance.py` et
 `local_import_display_links.py` ne sont que des preuves locales ou des
 indices d'affichage ; ils ne prouvent ni une édition distante ni un droit.
-L'admission générique import reste à recevoir, sans créer de faux fournisseur.
+L'admission générique refuse explicitement le déclencheur import non qualifié
+(`test_core_p0_3724_enrichment_intent.py`, y compris après restart). Aucun port
+positif sans preuve admissible, aucun faux fournisseur.
 La recette devra couvrir 0/1/N, ABA/révocation, retry/restart, absence
 de droits/placement nouveaux, parsing et GET non dupliqués.
 
