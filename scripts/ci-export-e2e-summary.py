@@ -305,6 +305,24 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         }
         if type(stage) is str and stage in local_stages:
             result["book_detail_local_c_stage"] = stage
+        # #3684: numerical-only native allocation diagnostics for the
+        # existing synthetic narrow scenario, on failure only.
+        if scenario == "book-detail-960":
+            routes = {"library", "recent", "search", "loans", "history", "recommendations"}
+            geometry = {}
+            for phase in ("cold", "offline"):
+                raw = data.get("notice_c_narrow_geometry_" + phase)
+                if (type(raw) is not dict or not raw or not set(raw) <= routes
+                        or not all(type(item) is dict
+                                   and set(item) == {"window_width", "page_width", "paned_max", "narrow"}
+                                   and type(item["narrow"]) is bool
+                                   and all(type(item[key]) is int and 0 <= item[key] <= 4096
+                                           for key in ("window_width", "page_width", "paned_max"))
+                                   for item in raw.values())):
+                    continue
+                geometry[phase] = raw
+            if geometry:
+                result["book_detail_narrow_geometry"] = geometry
         fallback_line = data.get("local_c_fallback_assertion_line")
         if stage == "epub_qualified_fallback" and type(fallback_line) is int:
             tree = ast.parse((ROOT / "e2e/notice_c_local_views_contract.py").read_text(encoding="utf-8"))
