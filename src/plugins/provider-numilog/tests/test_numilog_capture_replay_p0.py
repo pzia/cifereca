@@ -86,7 +86,7 @@ def test_invalid_digest_is_refused_without_body_or_link(tmp_path):
     bad["response_body"]["sha256"] = "0" * 64
     result = analyse_capture(_archive(tmp_path / "wrong.zip", [bad]))
     assert result["reasons"] == {"body_digest_mismatch": 1}
-    assert result["counts"]["parser_qualified"] if "parser_qualified" in result["counts"] else 0 == 0
+    assert result["counts"].get("parser_qualified", 0) == 0
 
 
 def test_brotli_transport_bytes_are_replayed_only_with_decoder(tmp_path):
