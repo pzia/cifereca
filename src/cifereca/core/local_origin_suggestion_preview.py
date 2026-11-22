@@ -9,8 +9,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+from unicodedata import category
 
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
+from .library_sqlite_freshness import sqlite_source_stamp
 
 from .derived_variant_publication import (
     DerivedPublicationConflict, _verified_variant_file,
@@ -35,6 +37,12 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
             or ".." in library_root.parts or not _text(identity_id, 256)
             or not _text(directory, 256) or directory in (".", "..")
             or "/" in directory or chr(92) in directory):
+        return None
+    # A name containing invisible formatting, direction overrides or
+    # Unicode line separators is not safe evidence for a user-selected file.
+    # Keep the exact persisted path unchanged; refuse, never normalize it.
+    if any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+           for name in (raw, directory) for ch in name):
         return None
     path = Path(raw)
     owner = library_root / directory
@@ -170,6 +178,13 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                        or (entry[5] is not None and type(entry[5]) is not str)
                        for entry in entries):
                     return "catalogue_evidence_unavailable", None
+                # Text that can redraw the confirmation line or reverse its
+                # apparent direction is not usable documentary evidence. The
+                # stored catalogue claim remains untouched and unattributed.
+                if any(category(char) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                       for entry in entries for field in entry[4:6]
+                       if field is not None for char in field):
+                    return "catalogue_evidence_unavailable", None
                 descriptions = {(entry[4], entry[5]) for entry in entries}
                 if len(descriptions) > 1:
                     return "catalogue_evidence_ambiguous", None
@@ -204,6 +219,12 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
     status, row = snapshot()
     if row is None:
         raise _CandidateRejected(status)
+    # Pin the DB/WAL generation after the initial read. Re-reading identical
+    # SQL values alone cannot detect an ABA rewrite while C is consulted.
+    database = Path(storage.path)
+    sql_stamp = sqlite_source_stamp(database)
+    if sql_stamp is None:
+        raise _CandidateRejected("scope_unverified")
     _, raw, _, digest, size, directory = row[:6]
     path = ordinary_suggestion_path(
         raw, library_root=library_root, identity_id=identity_id, directory=directory,
@@ -215,6 +236,8 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
     with _verified_variant_file(path, digest, expected_size=size) as recheck:
         signature = recheck()
         checked_status, checked = snapshot(signature)
+        if sqlite_source_stamp(database) != sql_stamp:
+            raise _CandidateRejected("evidence_changed")
         if checked is None:
             # An origin/receipt appearing after the first snapshot, or any
             # other lost SQL admission, is a change of evidence. A previously
@@ -231,7 +254,10 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         status, row = checked_status, checked
 
         def current():
-            if snapshot(signature) != (status, row) or recheck() != signature:
+            if (sqlite_source_stamp(database) != sql_stamp
+                    or snapshot(signature) != (status, row)
+                    or recheck() != signature
+                    or sqlite_source_stamp(database) != sql_stamp):
                 raise _CandidateRejected("evidence_changed")
 
         current()

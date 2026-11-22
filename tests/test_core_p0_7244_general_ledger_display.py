@@ -34,7 +34,7 @@ def test_ledger_ui_redacts_unsafe_historical_coordinate_without_mutating_row(fie
     row[field] = unsafe
     prior = dict(row)
     rendered = _display({"rows": (row,)})
-    assert "identifiant non affichable" in rendered
+    assert "valeur non affichable" in rendered
     assert "FORGED" not in rendered
     assert unsafe not in rendered
     assert "Horodatage historique (Unix) : 12345" in rendered

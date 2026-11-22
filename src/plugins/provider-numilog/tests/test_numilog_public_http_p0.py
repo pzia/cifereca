@@ -428,7 +428,7 @@ def test_retained_search_parser_upgrade_has_distinct_implementation(monkeypatch)
 
     old = sha256(b"numilog.public.search.html.v1").hexdigest()
     family = sha256(b"numilog.public.search.html").hexdigest()
-    new = sha256(b"numilog.public.search.html.v5").hexdigest()
+    new = sha256(b"numilog.public.search.html.v6").hexdigest()
     fake, _ = setup_public_client(monkeypatch)
     retained = public_client.fetch_public_search("jefferson", _retain_input=True)
     raw = retained.raw_input
@@ -473,5 +473,38 @@ def test_overlapping_unverified_layout_preserves_terminal_code(monkeypatch):
         assert search_failure_code(error.value) == "SearchProtocolUnverified"
         assert should_stop_search_variants(error.value)
         assert not public_service_unavailable(error.value)
+    assert len(fake.requests) == 1
+    assert not public_client._PUBLIC_SEARCH_FLIGHTS
+
+
+def test_invalid_utf8_public_html_is_not_projected_and_replay_agrees(monkeypatch):
+    # The attested fixture contains the target title; replacing one byte
+    # would otherwise silently create a plausible but corrupted book fact.
+    broken = HTML.replace(b"Jefferson", b"Jeffers\xffon", 1)
+    assert broken != HTML
+    url = public_client.public_search_url("jefferson")
+    fake, _ = setup_public_client(monkeypatch, FakeResponse(body=broken))
+    retained = public_client._retained_search_input(broken, url)
+    for operation in (lambda: public_client.fetch_public_search("jefferson"),
+                      lambda: public_client._parse_retained_search_input(retained)):
+        with pytest.raises(ProviderError) as raised:
+            operation()
+        assert str(raised.value) == "Numilog : public_catalog_layout_unverified:invalid_encoding"
+        assert raised.value.code == "search_protocol_unverified"
+    assert len(fake.requests) == 1
+
+
+def test_overlapping_invalid_encoding_flight_shares_failure_without_second_get(monkeypatch):
+    broken = HTML.replace(b"Jefferson", b"Jeffers\xffon", 1)
+    fake, first, second = _overlapping_readers(
+        monkeypatch, FakeResponse(body=broken),
+        lambda: public_client.fetch_public_search("jefferson"),
+        lambda: public_client.fetch_public_search("jefferson"),
+    )
+    for result in (first, second):
+        with pytest.raises(ProviderError) as raised:
+            result.result()
+        assert str(raised.value) == "Numilog : public_catalog_layout_unverified:invalid_encoding"
+        assert raised.value.code == "search_protocol_unverified"
     assert len(fake.requests) == 1
     assert not public_client._PUBLIC_SEARCH_FLIGHTS

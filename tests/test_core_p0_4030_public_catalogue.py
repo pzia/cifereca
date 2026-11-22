@@ -219,3 +219,25 @@ def test_public_rank_keeps_ambiguous_editions_and_supplier_tie_order(rig):
         ("z", "isbn_claim_ambiguous"), ("a", "isbn_claim_ambiguous"),
     ]
     assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+
+
+@pytest.mark.parametrize("field", ["title", "author"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_public_catalogue_rejects_unprintable_comparison_labels_without_losing_safe_hits(
+    rig, field, spoof,
+):
+    service, session, request, calls, path = rig
+    safe = _row("safe")
+    forged = _row("forged", **{field: "Roman" + spoof + "FORGED"})
+    session.search_with_response_facets = lambda *_a, **_kw: ProviderSearchResponse(
+        [safe, forged],
+        public_notices=(PublicSearchNotice(safe), PublicSearchNotice(forged)),
+    )
+    before, data = rows(service.storage), path.read_bytes()
+    result = _run(service, request)
+    assert result["status"] == "partial"
+    assert tuple(candidate.record_id for candidate in result["candidates"]) == ("safe",)
+    assert len(calls) == 0  # This custom response is purely local to the fixture.
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert not result["fresh_network_verified"] and not result["coverage_complete"]
+    assert (rows(service.storage), path.read_bytes()) == (before, data)

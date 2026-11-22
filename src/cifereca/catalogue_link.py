@@ -1,5 +1,23 @@
 """Public catalogue URLs only; delivery and signed links are not fallbacks."""
 from urllib.parse import urlsplit, parse_qsl, unquote
+import unicodedata
+
+
+def _unsafe_url_controls(value):
+    """Refuse invisible controls even when nested percent-encoded.
+
+    urlsplit can silently erase C0 controls, while percent-encoded bidi
+    markers can change the apparent source/record in a browser link.
+    Leave ordinary percent-encoded spaces and Unicode book titles intact.
+    """
+    for _ in range(4):
+        if any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value):
+            return True
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    return False
 
 
 def _sensitive_parameters(text):
@@ -29,6 +47,9 @@ def _sensitive_parameters(text):
         # notice coordinates and must not reach the browser-link renderer.
         'clientsecret', 'oauthcode', 'authorizationcode', 'codeverifier',
         'samlresponse', 'samlrequest', 'assertion',
+        # Catalogue URLs cannot transport bearer-style access/SSO keys
+        # disguised as field-name aliases either.
+        'accesskey', 'secretkey', 'authcode', 'ssoticket',
     }:
         return True
     return any(
@@ -54,7 +75,8 @@ def catalogue_url(row):
             continue
         # urlsplit can normalize away leading C0 and embedded tabs/newlines.
         # The exact URL passed to the browser must be the one validated here.
-        if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value) or '\\' in value:
+        if (_unsafe_url_controls(value) or any(c.isspace() for c in value)
+                or '\\' in value):
             continue
         try:
             parts = urlsplit(value)
@@ -127,7 +149,7 @@ def catalogue_notice_url(row, *, base=None, provider=None):
             continue
         # urljoin/urlsplit may silently remove whitespace or control
         # characters: reject the original value BEFORE relative resolution.
-        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        if _unsafe_url_controls(value) or any(char.isspace() for char in value):
             continue
         candidate = urljoin(base, value) if reference else value
         safe = catalogue_url({'friendly_url': candidate})
