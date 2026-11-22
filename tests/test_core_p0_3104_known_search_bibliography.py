@@ -64,8 +64,8 @@ def test_retained_primary_and_alternative_facts_render_separately(tmp_path):
         assert not any(field.value == alternative for field in fields)
         separate, = [section for section in presentation.sections
                      if section.id == "known-public-alternatives"]
-        field, = separate.fields
-        assert "Sujets : " + alternative in field.value
+        field, = [field for field in separate.fields if field.label.endswith(" · Sujet")]
+        assert field.value == alternative
         assert field.kind == "text"
         source = item["metadata"]["notice_c_source_alternatives"][0]
         assert field.provenance.source == "Notice C · observation de source"
@@ -76,9 +76,12 @@ def test_retained_primary_and_alternative_facts_render_separately(tmp_path):
         altered = deepcopy(item["metadata"])
         altered["notice_c_source_alternatives"][0]["subjects"] = ["Fait modifié"]
         forged = {**item, "metadata": altered}
-        forged_field, = known_public_alternative_section(altered, item=forged).fields
-        assert "Fait modifié" in forged_field.value
+        modified_fields = known_public_alternative_section(altered, item=forged).fields
+        forged_field, = [field for field in modified_fields if "Fait modifié" in field.value]
         assert forged_field.provenance is None
+        genre, = [field for field in modified_fields if field.label.endswith(" · Genre")]
+        assert genre.provenance.provider_id == source["provider_id"]
+        assert genre.provenance.source_id == source["record_id"]
         assert not presentation.actions and not presentation.links
         assert db.entitlements() == [] and db.acquisitions() == []
 

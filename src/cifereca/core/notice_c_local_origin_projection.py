@@ -139,6 +139,7 @@ def project_local_origin_public_c(
             # A self-C and a multi-source C for the same exact edition are compatible.
             exact_editions: dict[tuple[str, str], set[str]] = {}
             qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
+            corrupt_claims: set[tuple[str, str]] = set()
 
             present = set(db.execute(
                 "SELECT artifact_id,placement_id FROM placements "
@@ -165,10 +166,27 @@ def project_local_origin_public_c(
                 (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(relevant))),
             )
             for key, raw in cursor:
+                # SQL selected this row because it claims a relevant source.
+                # A broken canonical claim cannot make a sibling relation
+                # appear uniquely qualified by simply failing its decoder.
+                claimed = set()
                 try:
+                    untrusted = json.loads(raw)
+                    members = untrusted.get("sources", {})
+                    if type(members) is dict:
+                        for member in members.values():
+                            if type(member) is not dict:
+                                continue
+                            bio = member.get("public_bibliography")
+                            if type(bio) is not dict:
+                                continue
+                            coord = (member.get("provider"), bio.get("record_id"))
+                            if all(type(part) is str for part in coord) and coord in relevant:
+                                claimed.add(coord)
                     value = _json(raw)
                     document = canonical_cover_document_ref(value["edition_id"])
                     if key != _PREFIX + document.source_key.rsplit(":", 1)[-1]:
+                        corrupt_claims.update(claimed)
                         continue
                     c = _decode(raw, document)
                     sources = c.sources
@@ -189,7 +207,8 @@ def project_local_origin_public_c(
                     if len(set(coords)) != len(coords):
                         continue
                     qualified.append((c, coords))
-                except (ValueError, KeyError, TypeError, AttributeError):
+                except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
+                    corrupt_claims.update(claimed)
                     continue
 
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
@@ -199,7 +218,7 @@ def project_local_origin_public_c(
     for c, coords in qualified:
         # A provider + record shared by two distinct exact public catalogue
         # editions is insufficient to relate either to the local Artifact.
-        if any(len(exact_editions[coord]) != 1 for coord in coords):
+        if any(coord in corrupt_claims or len(exact_editions[coord]) != 1 for coord in coords):
             continue
         # Each completed OriginLink must belong to the same one Artifact,
         # independently of SHA matches or rights held by another identity.

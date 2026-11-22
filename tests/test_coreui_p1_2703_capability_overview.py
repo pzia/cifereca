@@ -276,3 +276,43 @@ def test_sync_and_backup_evidence_share_one_read_only_transversal_family():
     assert text.count("Transversal : ") == 1
     assert "Transversal : observation, action non autorisée (partielle ou mixte)" in text
     assert "synthetic.local.inventory/1" not in text
+
+
+@pytest.mark.parametrize(("family", "operation"), [
+    ("Catalogue", "catalog.search"),
+    ("Métadonnées", "metadata.enrichment"),
+    ("Droits", "personal_inventory.rights"),
+    ("Prêt", "loan.inventory"),
+    ("Acquisition", "acquisition.download"),
+    ("DRM", "drm.license"),
+    ("Transversal", "sync.remote_inventory"),
+])
+@pytest.mark.parametrize(("status", "source_kind", "expected"), [
+    ("supported", "account_observation", "observation, action non autorisée"),
+    ("partial", "account_observation",
+     "observation, action non autorisée (partielle ou mixte)"),
+    ("unsupported", "code", "non pris en charge (périmètres déclarés)"),
+    ("unverified", "code", "déclaré, non vérifié"),
+])
+def test_each_family_distinguishes_four_synthetic_evidence_states(
+    family, operation, status, source_kind, expected,
+):
+    """Exercise the UI contract, not live evidence or new provider capabilities."""
+    row = CapabilityEvidence(
+        "synthetic", operation, "account",
+        status=status, source_kind=source_kind,
+        implementation_state=("not_applicable" if status == "unsupported"
+                              else "implemented"),
+        evidence_ref=("fixture/1" if source_kind == "account_observation" else ""),
+        reason="synthetic_partial" if status == "partial" else "",
+        identity_id="private-identity", account_id="private-account",
+        credential_id="private-credential", edition_id="private-edition",
+        enabled=True, connected=True,
+    )
+    render, = source_capability_labels((CapabilityMatrix("synthetic", (row,)),))
+    assert f"{family} : {expected}" in render.split("\n", 1)[1].split(" · ")
+    assert not row.authorizes_mutation
+    assert "private-" not in render
+    assert "fixture/1" not in render
+    missing, = source_capability_labels((CapabilityMatrix("synthetic", ()),))
+    assert f"{family} : preuve indisponible" in missing.split("\n", 1)[1].split(" · ")

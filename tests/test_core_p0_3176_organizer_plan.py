@@ -143,3 +143,45 @@ def test_single_group_selection_preserves_page_conflicts(store, tmp_path, select
     else:
         assert selected is None
     assert rows(store) == before
+
+
+def test_rename_only_filters_after_collision_detection_and_rechecks_exact_selection(store, tmp_path):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    one, _ = _put_epub(store, root, "Acquisitions/one.epub")
+    two, _ = _put_epub(store, root, "Acquisitions/two.epub", metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
+    three, pid = _put_epub(store, root, "Acquisitions/three.epub",
+                           metadata=META.replace("Roman commun", "Roman unique"))
+    # The shared fixture uses a fixed catalogue title even for custom OPF.
+    # A distinct safe proposal needs matching independent catalogue evidence.
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE catalog_entries SET title=? WHERE placement_id=?", ("Roman unique", pid))
+    scope, page = _run(_service(store, root))
+    before = rows(store)
+    all_plan = prepare_organizer_dry_run(scope, page, confirmed=True)
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    assert plan.rename_only and not plan.executable and plan.group_index is None
+    assert plan.excluded_count == len(all_plan.entries) - 1 == 2
+    entry, = plan.entries
+    assert entry.placement_id == pid and entry.state == "review_only"
+    assert entry.operation == "rename" and entry.proposed.endswith("Autrice - Roman unique.epub")
+    assert prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=1) is None
+    assert prepare_organizer_dry_run(scope, page, confirmed=True,
+                                     rename_only=True, group_index=0) is None
+    accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
+    assert accepted.confirmed and accepted.rename_only and not accepted.executable
+    assert accepted.entries == plan.entries and accepted.excluded_count == 2
+    assert rows(store) == before and all(path.exists() for path in (one, two, three))
+    three.with_name("Autrice - Roman unique.epub").write_bytes(b"colliding target")
+    assert confirm_organizer_dry_run(scope, page, plan, confirmed=True) is None
+
+
+def test_rename_only_empty_never_has_confirmation(store, tmp_path):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    _put_epub(store, root, "Acquisitions/one.epub")
+    _put_epub(store, root, "Acquisitions/two.epub", metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
+    scope, page = _run(_service(store, root))
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    assert plan is not None and plan.rename_only and plan.entries == () and plan.excluded_count == 2
+    assert confirm_organizer_dry_run(scope, page, plan, confirmed=True) is None

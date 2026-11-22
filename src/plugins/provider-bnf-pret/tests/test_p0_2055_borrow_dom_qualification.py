@@ -127,6 +127,27 @@ class QualificationProbeTests(unittest.TestCase):
         self.assertEqual(result["pass_label"]["count"], 0)
         self.assert_no_authority(result)
 
+    def test_block_boundary_between_direct_text_chunks_is_not_a_marker(self):
+        html = (
+            '<html><body><main>'
+            '<div>Vous avez encore droit à <p>Unrelated</p>0 prêt</div>'
+            '<div>Pass BnF <section>Unrelated</section>lecture/culture valide</div>'
+            '<p>Vous avez encore droit à <span hidden>Other</span>0 prêt</p>'
+            '</main></body></html>'
+        )
+        result = qualify_bnf_borrow_dom(html, page="profile")
+        self.assertEqual(result["quota_label"]["count"], 0)
+        self.assertEqual(result["pass_label"]["count"], 0)
+        self.assert_no_authority(result)
+
+    def test_nested_inline_confirmation_counted_once(self):
+        html = CONFIRM.replace("Confirmer l'emprunt",
+                               "<span>Confirmer l'<em>emprunt</em></span>")
+        result = qualify_bnf_borrow_dom(html, page="confirmation")
+        self.assertEqual(result["confirmation_label"]["count"], 1)
+        self.assert_no_authority(result)
+        self.assert_private_not_exposed(result)
+
     def test_inline_formatted_copies_do_not_grant_an_edition_offer(self):
         detail = DETAIL.replace(
             '<p>Plusieurs exemplaires disponibles</p>',
