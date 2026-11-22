@@ -176,3 +176,39 @@ def test_retirement_reader_budget_or_scope_refusal_never_persists_checkpoint(
     assert journal.summarize_derived_journal(db) == before
     assert stage.samefile(final) and final.read_bytes() == data
     assert len(db.placements()) == 2 and len(db.artifact_variants()) == 1
+
+
+@pytest.mark.parametrize("references", [2, 513])
+def test_spine_references_cannot_multiply_reader_budget(tmp_path, monkeypatch, references):
+    path = tmp_path / "reader.epub"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml",
+                         '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                         '<rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>')
+        archive.writestr("OPS/book.opf",
+                         '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                         '<item id="p" href="p.xhtml" media-type="application/xhtml+xml"/>'
+                         '</manifest><spine>' + '<itemref idref="p"/>' * references +
+                         '</spine></package>')
+        archive.writestr("OPS/p.xhtml",
+                         '<html xmlns="http://www.w3.org/1999/xhtml"><body>Fixture</body></html>')
+    size = path.stat().st_size
+    with zipfile.ZipFile(path) as archive:
+        expected = prep._MAX_BYTES - size - sum(
+            archive.getinfo(name).file_size for name in
+            ("META-INF/container.xml", "OPS/book.opf", "OPS/p.xhtml"))
+    seen = []
+    def inspect(stream, kind, **options):
+        seen.append(options["max_bytes"])
+        assert kind == "epub" and options["max_bytes"] == expected
+        return "epub_structure_crc_ok"
+    monkeypatch.setattr(prep, "inspect_stream_structure", inspect)
+    with path.open("rb") as stream:
+        if references > prep._MAX_SPINE_REFERENCES:
+            with pytest.raises(journal.DerivedJournalConflict, match="reader_unverified"):
+                prep._inspect_epub_final(stream.fileno(), size)
+            assert not seen
+        else:
+            prep._inspect_epub_final(stream.fileno(), size)
+            assert seen == [expected]

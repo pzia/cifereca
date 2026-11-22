@@ -37,6 +37,7 @@ _SCHEMA = "derived.retention.prepared.v1"
 _MAX_RECORD_BYTES = 512
 _MAX_BYTES = 1024 ** 3
 _SECONDS = 3
+_MAX_SPINE_REFERENCES = 512
 
 
 def _require(ok, code="derived_retirement_preparation_unverified"):
@@ -57,6 +58,7 @@ def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: 
 
     _require(type(size) is int and 0 < size <= _MAX_BYTES and live(),
              "derived_retirement_reader_unverified")
+    read_budget = _MAX_BYTES - size
     with os.fdopen(os.dup(fd), "rb") as stream:
         _bounded_directory(stream)
         with zipfile.ZipFile(stream) as archive:
@@ -76,13 +78,23 @@ def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: 
             _require(len(names) == len(infos)
                      and "META-INF/encryption.xml" not in names,
                      "derived_retirement_reader_unverified")
-            container = _xml(_read(archive, "META-INF/container.xml", MAX_XML))
+            def read_xml(name):
+                nonlocal read_budget
+                _require(live() and archive.getinfo(name).file_size <= read_budget,
+                         "derived_retirement_reader_unverified")
+                data = _read(archive, name, MAX_XML)
+                read_budget -= len(data)
+                _require(live() and read_budget >= 0,
+                         "derived_retirement_reader_unverified")
+                return _xml(data)
+
+            container = read_xml("META-INF/container.xml")
             roots = [n.get("full-path") for n in container.iter()
                      if n.tag.rsplit("}", 1)[-1] == "rootfile"]
             _require(len(roots) == 1 and bool(roots[0]), "derived_retirement_reader_unverified")
             package_name = _member("", roots[0])
             _require(package_name == roots[0], "derived_retirement_reader_unverified")
-            package = _xml(_read(archive, package_name, MAX_XML))
+            package = read_xml(package_name)
             opf = "{http://www.idpf.org/2007/opf}"
             manifests, spines = package.findall(opf + "manifest"), package.findall(opf + "spine")
             _require(package.tag == opf + "package" and len(manifests) == len(spines) == 1,
@@ -95,30 +107,35 @@ def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: 
                          "derived_retirement_reader_unverified")
                 manifest[key] = item
             items = spines[0].findall(opf + "itemref")
-            _require(bool(items), "derived_retirement_reader_unverified")
+            _require(0 < len(items) <= _MAX_SPINE_REFERENCES,
+                     "derived_retirement_reader_unverified")
+            checked = set()
             for itemref in items:
                 _require(live(), "derived_retirement_reader_unverified")
                 item = manifest.get(itemref.get("idref"))
                 _require(item is not None and item.get("media-type") == "application/xhtml+xml",
                          "derived_retirement_reader_unverified")
                 member = _member(str(Path(package_name).parent), item.get("href"))
-                page = _xml(_read(archive, member, MAX_XML))
+                if member in checked:
+                    continue
+                page = read_xml(member)
                 _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
                          and page.find("{http://www.w3.org/1999/xhtml}body") is not None,
                          "derived_retirement_reader_unverified")
                 if media_format == "kepub":
                     _require(kepub_text_spans_observed(page),
                              "derived_retirement_reader_unverified")
+                checked.add(member)
             _require(live() and not _epub_encryption_protected(archive),
                      "derived_retirement_reader_unverified")
         # Reuse the guarded descriptor reader, rather than an uninterruptible
         # ZipFile.testzip pass, so CRC expansion shares a finite byte budget
         # and the same deadline as the container/spine checks.
         remaining = deadline - monotonic()
-        _require(live() and remaining > 0,
+        _require(live() and remaining > 0 and read_budget > 0,
                  "derived_retirement_reader_unverified")
         _require(inspect_stream_structure(
-            stream, "epub", max_bytes=_MAX_BYTES - size,
+            stream, "epub", max_bytes=read_budget,
             seconds=remaining, cancelled=lambda: not live(),
         ) == "epub_structure_crc_ok" and live(),
             "derived_retirement_reader_unverified")
