@@ -404,3 +404,55 @@ def test_revise_confirmed_plan_rotates_token_and_preserves_page(store, tmp_path,
     else:
         assert controller.page is None
     assert rows(store) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("change", ["none", "cancel", "revise", "registry", "activation", "sqlite"])
+def test_native_rename_handoff_is_one_exact_private_review(store, tmp_path, change):
+    from dataclasses import replace
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+    from cifereca.core.library_organizer_broker import take_native_organizer_rename
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    service = _service(store, root)
+    ports = maintenance_read_ports(service)
+    key = "library.organizer.read"
+    resolver = ActivationBrokerResolver(lambda _: None, ports.get, "organizer", (key,))
+    broker = resolver(key)
+    plugin = object()
+    resolved = NS(plugin_id="organizer", service=plugin, registry_generation=1)
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"organizer": NS(service=plugin, activation_brokers=resolver)})
+    before, content = rows(store), path.read_bytes()
+    initial = broker.preview(identity_id="A", confirmed=True)
+    prepared = broker.prepare_dry_run(token=initial.token, confirmed=True, rename_only=True)
+
+    def take(page, identity="A"):
+        return take_native_organizer_rename(manager, resolved, page,
+                                            service=service, identity_id=identity)
+
+    assert not hasattr(broker, "_take_native_rename")
+    assert take(prepared) is None
+    accepted = broker.confirm_dry_run(token=prepared.token, confirmed=True)
+    assert accepted.dry_run_state == "confirmed" and not accepted.mutation_authorized
+    assert take(replace(accepted)) is None and take(accepted, "B") is None
+    scope, report, plan, current = take(accepted)
+    assert plan.confirmed and not plan.executable and current()
+    assert plan.entries[0].placement_id == pid
+    assert take(accepted) is None
+    if change == "cancel":
+        broker.cancel(token=accepted.token)
+    elif change == "revise":
+        assert broker.revise_dry_run(token=accepted.token, confirmed=True) is not None
+    elif change == "registry":
+        manager._registry_generation += 1
+    elif change == "activation":
+        resolver.close()
+    elif change == "sqlite":
+        store.metadata_set("native-plan-drift", "changed")
+        before = rows(store)
+    assert current() is (change == "none")
+    assert rows(store) == before and path.read_bytes() == content
+    assert not path.with_name("Autrice - Roman commun.epub").exists()
