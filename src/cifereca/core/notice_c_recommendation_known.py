@@ -28,6 +28,12 @@ _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
 
 
+def _source_receipt(hit):
+    """Seal unprojected native edition and observation coordinates at admission."""
+    return (id(hit), hit.edition_id, hit.observed_at, hit.last_seen_at)
+
+
+
 def _native_canonical(document):
     # Frozen CoverDocumentScope can still have foreign attributes injected.
     # Refuse them before is_canonical_cover_document compares fields.
@@ -253,6 +259,12 @@ def known_public_notice_candidates(
         row._core_known_public_c_projection = (
             _TOKEN, id(row), hit.document, hit.epoch, snapshot, alternative_hits, hit,
         )
+        # These exact source coordinates are not all rendered as DTO fields.
+        # Freezing the dataclass does not prevent object.__setattr__ mutation.
+        row._core_known_public_c_primary_source_receipt = _source_receipt(hit)
+        row._core_known_public_c_alternative_source_receipts = tuple(
+            _source_receipt(source) for source in alternative_hits
+        )
         rows.append(row)
     return rows
 
@@ -294,6 +306,8 @@ def known_public_c_alternative_hits(item: object):
     if (type(hits) is not tuple or len(hits) >= _MAX_SOURCES
             or type(alternatives) is not list or len(hits) != len(alternatives)
             or any(not _native_hit(hit, binding) for hit in hits)
+            or getattr(item, "_core_known_public_c_alternative_source_receipts", None)
+               != tuple(_source_receipt(hit) for hit in hits)
             or [_source_alternative(hit) for hit in hits] != alternatives):
         return None
     return hits
@@ -310,6 +324,8 @@ def known_public_c_primary_hit(item: object):
         return None
     hit = item._core_known_public_c_projection[6]
     if (not _native_hit(hit, binding)
+            or getattr(item, "_core_known_public_c_primary_source_receipt", None)
+               != _source_receipt(hit)
             or (hit.provider_id, hit.record_id, hit.docbase, hit.medium,
                 hit.source_revision, hit.title, hit.author, hit.publisher,
                 hit.published_at, hit.media_format, hit.description) != (
