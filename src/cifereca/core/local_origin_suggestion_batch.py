@@ -133,6 +133,10 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
         deadline = monotonic() + _SECONDS
         total = 0
         entries = []
+        # Keep the exact page coordinates of a verification until delivery.
+        # A later file review must not cause an earlier candidate to be
+        # presented as still verified after its bytes or inode changed.
+        observed = []
         owner = scope.request.identity_id
         for pid, raw, size in candidates[:_PAGE]:
             if not active() or sqlite_source_stamp(scope.database) != stamp:
@@ -151,6 +155,10 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                 if (type(size) is int and size > 0
                         and total + 3 * size <= _MAX_BYTES and monotonic() < deadline):
                     total += 3 * size
+                    try:
+                        before = path.stat(follow_symlinks=False)
+                    except OSError:
+                        before = None
                     result = suggest_local_placement_documents(
                         scope.request.storage, library_root=scope.root,
                         identity_id=owner, placement_id=pid,
@@ -158,6 +166,11 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                         include_declared=scope.include_declared,
                     )
                     reason = result["reason"]
+                    if result.get("suggestions") is not None:
+                        if before is None:
+                            return None
+                        observed.append((path, (before.st_dev, before.st_ino, before.st_size,
+                                                before.st_mtime_ns, before.st_ctime_ns)))
             suggestions = result.get("suggestions") if result else None
             entries.append({
                 "file": label, "reason": reason,
@@ -171,6 +184,15 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
             })
         if (not active() or not scope.bound() or sqlite_source_stamp(scope.database) != stamp
                 or _rows(scope, after) != candidates):
+            return None
+        for path, expected in observed:
+            if not active():
+                return None
+            info = path.stat(follow_symlinks=False)
+            if (info.st_dev, info.st_ino, info.st_size,
+                    info.st_mtime_ns, info.st_ctime_ns) != expected:
+                return None
+        if not active() or sqlite_source_stamp(scope.database) != stamp:
             return None
         more = len(candidates) > _PAGE
         following = (BatchCursor(scope, stamp, candidates[_PAGE - 1][0], page + 1)
