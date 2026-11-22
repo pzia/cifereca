@@ -363,7 +363,18 @@ def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(
     from types import SimpleNamespace as NS
     from cifereca.core.canonical_adept_attempt import _key, _value
     from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
-    from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+    from tests.test_core_ui_1358_maintenance_preview_cancellation import (
+        Button as BaseButton, Container as BaseContainer,
+    )
+
+    class Button(BaseButton):
+        def set_label(self, label): self.label = label
+
+    class Container(BaseContainer):
+        def __init__(self):
+            super().__init__()
+            self.visible = True
+        def set_visible(self, visible): self.visible = visible
 
     class Label(Button):
         def __init__(self, **kwargs):
@@ -404,13 +415,15 @@ def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(
     examine, = prow.children
     blocked, = hrow.children
     assert examine.label == "Examiner…" and blocked.label == "Verrous…"
-    assert len(provenance.children) == 4 and len(recovery.children) == 3
+    assert len(provenance.children) == 4 and len(recovery.children) == 4
+    assert not provenance.children[2].visible and not recovery.children[2].visible
     assert not jobs
     blocked.click()
     args, kwargs = jobs[-1]
     assert kwargs["control"] is blocked
     args[2](args[1]())
     assert "Retéléchargement non autorisé" in recovery.children[-1].text
+    assert recovery.children[2].visible
     assert provenance.children[-1].text == ""
     examine.click()
     args, kwargs = jobs[-1]
