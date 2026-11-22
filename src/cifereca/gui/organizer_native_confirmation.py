@@ -34,6 +34,7 @@ class NativeOrganizerConfirmation:
     def __init__(self, window, resolved, lease, *, Gtk):
         self.window, self.resolved, self.lease = window, resolved, lease
         self._page = self._used = self._dialog = None
+        self._disposed = False
         self.button = Gtk.Button(label="Confirmer le renommage…")
         self.button.set_visible(False)
         self.button.set_sensitive(False)
@@ -48,7 +49,7 @@ class NativeOrganizerConfirmation:
             return False
 
     def _current(self, page):
-        return self._page is page and self._lease_current()
+        return not self._disposed and self._page is page and self._lease_current()
 
     @staticmethod
     def _displayable_path(value):
@@ -60,7 +61,8 @@ class NativeOrganizerConfirmation:
     def observe(self, value):
         from ..core import library_organizer_execution as execution
         entries = value.dry_run_entries if type(value) is OrganizerPageAdvice else ()
-        valid = (type(value) is OrganizerPageAdvice
+        valid = (not self._disposed
+                 and type(value) is OrganizerPageAdvice
                  and value.mutation_authorized is False
                  and value.dry_run_state == "confirmed"
                  and type(entries) is tuple and len(entries) == 1
@@ -90,6 +92,7 @@ class NativeOrganizerConfirmation:
         # A profile switch or unmount revokes even an already presented
         # confirmation. Close the native dialog before it can outlive the
         # owning view; its late response must never enqueue Core work.
+        self._disposed = True
         dialog = self._dialog
         self._dialog = None
         self._page = None
