@@ -757,6 +757,23 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
         if all(data["checks"].get("P0_3104_retained_private_series_real_gtk_" + phase) is True
                for phase in ("cold", "offline")):
             evidence["notice_c_private_series_cold_offline"] = True
+        # #3684: export only a closed receipt, not geometry, labels,
+        # focus widget names or the private per-route report.
+        routes = {"library", "recent", "search", "loans", "history", "recommendations"}
+        narrow_complete = True
+        for phase in ("cold", "offline"):
+            contexts = data.get("notice_c_narrow_context_" + phase)
+            if (data["checks"].get("P0_3684_narrow_six_views_" + phase) is not True
+                    or type(contexts) is not dict or set(contexts) != routes
+                    or not all(type(item) is dict
+                               and item.get("returned") is True
+                               and item.get("reopened_exact_selection") is True
+                               and item.get("native_focus_returned") is True
+                               for item in contexts.values())):
+                narrow_complete = False
+                break
+        if narrow_complete:
+            evidence["notice_c_narrow_six_views_cold_offline"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
