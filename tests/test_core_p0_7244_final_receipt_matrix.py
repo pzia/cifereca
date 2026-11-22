@@ -29,7 +29,7 @@ def test_final_receipt_offer_rotation_is_precise_and_read_only(
     source, snapshot = new_source(kind="loan", branch="loans", right="pending")
     persist_attested_source_references(store, snapshot)
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     final = target(tmp_path, "A")
     for offer in offers:
         with InterProcessLock(lock_path) as lock:
@@ -78,7 +78,7 @@ def test_other_account_checkpoint_cannot_satisfy_this_loan_hold(
         kind="loan", branch="loans", right="pending", account="another-account")
     persist_attested_source_references(store, foreign_snapshot)
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     final = target(tmp_path, "A")
     with InterProcessLock(lock_path) as lock:
         recovery.record_completed_delivery_for_recovery(
