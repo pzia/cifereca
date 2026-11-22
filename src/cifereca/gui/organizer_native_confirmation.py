@@ -5,6 +5,7 @@ scope, shared lock and production fence. A visible DTO is never authority.
 """
 from ..plugin_api.library_organizer import OrganizerPageAdvice, OrganizerDryRunAdvice
 from ..task_queue import TaskPriority
+from unicodedata import category
 
 
 def has_native_organizer_review(manager, resolved):
@@ -55,7 +56,8 @@ class NativeOrganizerConfirmation:
         # Plugin advice is a presentation DTO, not a Core execution permit.
         # Refuse malformed/unsafe display text before enabling confirmation.
         return (type(value) is str and 0 < len(value) <= 4096
-                and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+                and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
 
     def observe(self, value):
         from ..core import library_organizer_execution as execution
