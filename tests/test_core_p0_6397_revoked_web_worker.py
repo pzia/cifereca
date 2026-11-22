@@ -90,7 +90,17 @@ def test_worker_does_not_call_gtk_and_fresh_click_revalidates(tmp_path):
         host._route_display_token = object()
         run_worker()
         assert launches == [URL]
+        # The old GTK button cannot silently adopt a newer route, even if
+        # the caller's generic current() callback still returns True.
         button.callback(button)
+        assert pending == []
+        assert launches == [URL]
+        # A new menu is a distinct explicit action on the new route.
+        assert controller.request_public_web_actions(
+            host, panel, c.document, expected_epoch=c.epoch,
+            current=gtk_only, Gtk=GTK, Gio=gio)
+        run_worker()
+        actions[-1].callback(actions[-1])
         run_worker()
         assert launches == [URL, URL]
         assert db.entitlements() == [] and db.acquisitions() == []
