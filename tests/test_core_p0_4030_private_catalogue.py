@@ -528,3 +528,26 @@ def test_private_cached_descriptions_with_spoofed_author_are_not_local_candidate
     assert not result["provider_access_performed"]
     assert not result["association_authorized"] and not result["may_write_origin_or_right"]
     assert not calls and rows(service.storage) == before and path.read_bytes() == content
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+@pytest.mark.parametrize("coordinate", ["provider_id", "credential_id", "unique_id"])
+def test_private_scope_discovery_refuses_spoofed_display_coordinates_before_binding(
+    private_rig, monkeypatch, coordinate, spoof,
+):
+    service, request, account, session, calls, path, *_ = private_rig
+    malformed = replace(account, **{coordinate: getattr(account, coordinate) + spoof + "fake"})
+    service.accounts[:] = [malformed]
+    session.accounts[:] = [malformed]
+    before, data = rows(service.storage), path.read_bytes()
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Spoofed account coordinates must not reach private binding")
+    monkeypatch.setattr(private, "_binding", forbidden)
+    evidence = private._PublicComparisonEvidence(
+        request.storage, request.root, request.identity_id,
+        request.placement_id, (), (),
+    )
+    assert private.available_known_private_catalogues(
+        service, request, evidence=evidence,
+    ) == ()
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data

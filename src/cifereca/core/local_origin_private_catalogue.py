@@ -45,6 +45,17 @@ def _scope_coords(scope):
     return (scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id)
 
 
+def _displayable_scope_coordinate(value):
+    """Account selectors are shown on the explicit consent screen.
+
+    Do not allow bidirectional/invisible controls to masquerade as a
+    different account or provider in an otherwise legitimate C scope.
+    """
+    return (type(value) is str and len(value) <= 256
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def _descriptive_pair(title, author):
     if (not _public_bibliographic_text(title, required=True, limit=512)
             or not title.strip()
@@ -287,8 +298,7 @@ def available_known_private_catalogues(service, request, *, evidence=None):
                 # surfaces. This is a partial choice list, not coverage.
                 continue
             # Do not project arbitrary account metadata or control characters.
-            if not all(type(x) is str and len(x) <= 256
-                       and all(ord(ch) >= 32 and ord(ch) != 127 for ch in x)
+            if not all(_displayable_scope_coordinate(x)
                        for x in _scope_coords(scope)):
                 continue
             binding = _binding(service, request, account, scope)
