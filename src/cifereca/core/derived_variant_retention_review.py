@@ -36,8 +36,9 @@ def _directory(db, identity_id):
         (identity_id,),
     ).fetchall()
     directory = rows[0][0] if len(rows) == 1 else None
-    if (type(directory) is not str or not directory or directory in (".", "..")
-            or "/" in directory or chr(92) in directory or chr(0) in directory
+    if (type(directory) is not str or not 0 < len(directory) <= 256
+            or any(ord(char) < 32 or ord(char) == 127 for char in directory)
+            or directory in (".", "..") or "/" in directory or chr(92) in directory
             or db.execute(
                 "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
                 (directory,),

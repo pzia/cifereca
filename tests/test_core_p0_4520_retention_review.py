@@ -162,3 +162,24 @@ def test_recorded_inode_dependency_agrees_in_both_retention_reviews(tmp_path, re
         assert Path(intent.staged_path).samefile(intent.candidate_path)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("directory", ["profile\nunsafe", "profile\x7funsafe", "x" * 257])
+def test_retention_scope_rejects_malformed_profile_directory(tmp_path, directory):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        before = journal.summarize_derived_journal(db)
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE identities SET directory_name=? WHERE identity_id=?",
+                (directory, "id1"),
+            )
+        result = _review(db)
+        assert result["status"] == "unavailable"
+        assert not result["retention_authorized"]
+        assert not result["quota_refund_authorized"]
+        assert not result["destructive_cleanup_allowed"]
+        assert journal.summarize_derived_journal(db) == before
+    finally:
+        db.close()
