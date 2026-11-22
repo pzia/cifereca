@@ -20,6 +20,7 @@ from tests.test_core_p0_1023_grouped_c_source_filters import make, shared
     ("author", "FALSIFIED AUTHOR"),
     ("medium", "physical"),
     ("description", "FALSIFIED DESCRIPTION"),
+    ("publisher", "FALSIFIED PUBLISHER"),
     ("stale", True),
 ])
 def test_mutated_core_hit_cannot_be_a_primary_source_match(tmp_path, field, value):
@@ -53,5 +54,11 @@ def test_mutated_search_display_metadata_cannot_mint_primary_provenance(tmp_path
         assert known_public_primary_facts(row) is not None
         forged = {**row, "metadata": dict(row["metadata"])}
         forged["metadata"][name] = "FALSIFIED"
-        assert known_public_primary_facts(forged) is None
-        assert _sources(forged) == ()
+        if name in ("publisher", "description"):
+            # A changed displayed field loses only its own provenance; the
+            # immutable primary hit and other intact fields still qualify.
+            assert known_public_primary_facts(forged) is known_public_primary_facts(row)
+            assert _sources(forged) == _sources(row)
+        else:
+            assert known_public_primary_facts(forged) is None
+            assert _sources(forged) == ()
