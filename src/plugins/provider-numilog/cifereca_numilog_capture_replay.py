@@ -24,7 +24,7 @@ from cifereca_numilog_public_client import _parse_search_body
 
 _MAX_INDEX = 4 * 1024 * 1024
 _MAX_TRANSPORT = 4 * 1024 * 1024
-_REF = re.compile(r"[0-9a-f]{32}\\Z")
+_REF = re.compile(r"[0-9a-f]{32}\Z")
 _LAYOUT_PREFIX = "Numilog : public_catalog_layout_unverified:"
 
 
