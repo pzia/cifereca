@@ -308,3 +308,38 @@ def test_keeper_advice_rejects_unavailable_physical_recheck_without_exception(
     assert review.select_organizer_keeper_advice(scope, page, confirmed=True) is None
     assert rows(store) == before
     assert all(Path(store.placement_get(p.placement_id)["path"]).exists() for p in pair)
+
+
+@pytest.mark.parametrize("case", ["exact_local", "missing_source", "catalog_conflict", "remote"])
+def test_single_local_rename_observation_does_not_relax_shared_inventory(store, tmp_path, case):
+    from cifereca.core.canonical_placement_inventory import read_canonical_placement_inventory
+    from cifereca.core.library_organizer_plan import prepare_organizer_dry_run
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, pid = _put_epub(store, root, "Acquisitions/old.epub",
+                         provider_id="seller" if case == "remote" else "local")
+    if case in ("missing_source", "catalog_conflict"):
+        with store._lock, store._connect() as db:
+            if case == "missing_source":
+                db.execute("UPDATE placements SET source_item_id=NULL WHERE placement_id=?", (pid,))
+            else:
+                db.execute("UPDATE catalog_entries SET item_id='other' WHERE placement_id=?", (pid,))
+    before = rows(store)
+    inventory = read_canonical_placement_inventory(store, identity_id="A")
+    group, = inventory.groups
+    assert group.status == "blocked" and group.reason == "legacy_source_scope_unbound"
+    scope, page = _run(_service(store, root))
+    assert page["inventory_status"] == "partial"
+    assert page["keeper_advice"].eligible == ()
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    assert plan is not None and plan.executable is False
+    if case == "exact_local":
+        entry, = plan.entries
+        assert entry.placement_id == pid and entry.operation == "rename"
+        assert entry.state == "review_only"
+        file, = page["groups"][0]["files"]
+        assert file["classified_path_advice"] is None
+    else:
+        assert plan.entries == () and page["groups"][0]["status"] == "blocked"
+    assert rows(store) == before and path.is_file()
