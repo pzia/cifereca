@@ -1348,3 +1348,32 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
         row = module.safe_summary(source)["results"][0]
         assert "notice_c_cover_metrics" not in row
         assert "notice_c_catalogue_http_fallback" not in row
+
+
+def test_narrow_failure_exports_only_bounded_native_geometry():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-960"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        sample = {"window_width": 1024, "page_width": 864,
+                  "paned_max": 859, "narrow": False}
+        def read(value):
+            report.write_text(json.dumps({"notice_c_narrow_geometry_cold": value,
+                                          "error": "PRIVATE"}))
+            return module.safe_summary(source)["results"][0]
+        valid = {"library": sample}
+        result = read(valid)
+        assert result["book_detail_narrow_geometry"] == {"cold": valid}
+        for bad in ({"PRIVATE": sample}, {"library": {**sample, "label": "PRIVATE"}},
+                    {"library": {**sample, "window_width": True}},
+                    {"library": {**sample, "page_width": 4097}},
+                    {"library": {**sample, "paned_max": -1}},
+                    {"library": {**sample, "narrow": 1}}):
+            assert "book_detail_narrow_geometry" not in read(bad)
+            assert "PRIVATE" not in repr(read(bad))
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        assert "book_detail_narrow_geometry" not in read(valid)
