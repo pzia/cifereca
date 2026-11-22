@@ -8,6 +8,7 @@ from __future__ import annotations
 from ..models import SearchResult
 from ..core.borrow_for_identity_discovery import (
     possible_lender_matches, possible_lender_session_matches,
+    possible_lender_claims_distinct,
 )
 from ..task_queue import TaskPriority
 
@@ -86,6 +87,8 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                         # Repeated references to the same lender receipt are
                         # not distinct accounts. Refuse ambiguous N-way UI.
                         or len({id(row) for row in rows}) != len(rows)
+                        or not possible_lender_claims_distinct(
+                            rows, item, requesting_identity_id=identity_id)
                         or any(not lender_current(row) for row in rows)):
                     return
                 details = [
