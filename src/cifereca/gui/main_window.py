@@ -721,14 +721,14 @@ class MainWindow(Adw.ApplicationWindow):
         clear_box(box)
         from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
-        if not services:
-            label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
-            add_css(label, "dim-label"); box.append(label)
-            add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
-            return
+        from cifereca.gui.maintenance_sections import build_sections, presentation_group
         manager = self.plugin_manager
+        # The legacy callback harness retains a flat container; the opted-in
+        # page owns the grouped presentation. No service is activated here.
+        sections = build_sections(box, Gtk=Gtk) if _page_context is not None else None
         for resolved in services:
             tool = resolved.service
+            target = sections[presentation_group(getattr(resolved, "capabilities", ()))] if sections else box
 
             def tool_current(r=resolved):
                 if _page_context is None:
@@ -745,15 +745,15 @@ class MainWindow(Adw.ApplicationWindow):
                 continue
             if _page_context is not None:
                 from .maintenance_page_mount import mount_guided_tool
-                if mount_guided_tool(self, box, resolved, Gtk=Gtk, view_current=tool_current):
+                if mount_guided_tool(self, target, resolved, Gtk=Gtk, view_current=tool_current):
                     continue
             try: info = tool.describe()
             except Exception:
                 # Provider exceptions can contain account data, URLs or paths.
                 # Never put raw plugin exception text in a GTK maintenance row.
-                box.append(Gtk.Label(label="Outil de maintenance : description indisponible.", xalign=0))
+                target.append(Gtk.Label(label="Outil de maintenance : description indisponible.", xalign=0))
                 continue
-            group = Adw.PreferencesGroup(); box.append(group)
+            group = Adw.PreferencesGroup(); target.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
             label = "Prévisualiser…" if info.supports_dry_run else "Exécuter…"
             run = self.action_button(label, info.icon_name)
@@ -1160,8 +1160,34 @@ class MainWindow(Adw.ApplicationWindow):
         if _page_context is not None and (not _page_context.is_current() or self._tools_box is not box):
             return
         # ADEPT remains a bounded transitional adapter (#6777).
-        # The other three tools are optional registry contributions only.
-        add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
+        add_adept_historical_maintenance_line(
+            self, sections["provenance"] if sections else box, Gtk=Gtk, Adw=Adw,
+            mode="provenance" if sections is not None else "combined")
+        if sections is not None:
+            add_adept_historical_maintenance_line(
+                self, sections["recovery"], Gtk=Gtk, Adw=Adw, mode="holds")
+            from cifereca.gui.loan_download_retry_dialog import add_maintenance_retry_entry
+            add_maintenance_retry_entry(
+                self, sections["recovery"], _page_context, Gtk=Gtk, Adw=Adw)
+            from cifereca.gui.maintenance_sections import show_unavailable, finish_sections, add_section_links
+            disposers = self._guided_maintenance_disposers
+            registry = getattr(manager, "registry_generation", None)
+            add_section_links(
+                sections, services, Gtk=Gtk,
+                current=lambda: (
+                    not self._closed and self._tools_box is box
+                    and self._guided_maintenance_disposers is disposers
+                    and _page_context.is_current()
+                    and self.plugin_manager is manager
+                    and getattr(manager, "registry_generation", None) == registry),
+            )
+            statuses = getattr(manager, "statuses", None)
+            if callable(statuses):
+                show_unavailable(sections, statuses(), services, Gtk=Gtk)
+            finish_sections(sections, Gtk=Gtk)
+        elif not services:
+            label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
+            add_css(label, "dim-label"); box.append(label)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)

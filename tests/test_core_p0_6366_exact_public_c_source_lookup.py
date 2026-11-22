@@ -265,7 +265,9 @@ def test_exact_lookup_survives_large_catalogue_and_per_source_overflow(tmp_path,
         result = lookup.exact_public_source_c_many(db, [key])
         assert result[key].document == wanted.document
         assert seen == [wanted.document]
+        seen.clear()
         result = lookup.exact_public_source_c_many(db, [key, noisy_key])
+        assert len(seen) <= lookup._MAX_RESULTS + 2
         assert set(result) == {key}
         assert result[key].document == wanted.document
         assert db.entitlements() == [] and db.acquisitions() == []

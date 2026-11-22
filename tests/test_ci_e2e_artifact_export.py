@@ -1253,7 +1253,22 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
         def read(value):
             report.write_text(json.dumps(value))
             return module.safe_summary(source)["results"][0]
+        assert "notice_c_catalogue_http_fallback" not in read(data)
+        for value in (False, 1, "PRIVATE", None, {"status": True}):
+            bad = copy.deepcopy(data)
+            bad["checks"]["P0_4980_catalogue_http_fallback_real_gtk"] = value
+            assert "notice_c_catalogue_http_fallback" not in read(bad)
+        data["checks"]["P0_4980_catalogue_http_fallback_real_gtk"] = True
+        for phase in ("cold", "offline"):
+            data["checks"]["P0_3104_retained_private_series_real_gtk_" + phase] = True
+        for phase in ("cold", "offline"):
+            for value in (False, 1, "PRIVATE", None, {}):
+                bad = copy.deepcopy(data)
+                bad["checks"]["P0_3104_retained_private_series_real_gtk_" + phase] = value
+                assert "notice_c_private_series_cold_offline" not in read(bad)
         result = read(data)
+        assert result["notice_c_private_series_cold_offline"] is True
+        assert result["notice_c_catalogue_http_fallback"] is True
         safe = result["notice_c_cover_metrics"]
         assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
         assert safe["cold"]["n3"]["download_ok"] == 1
@@ -1283,10 +1298,24 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
                 del bad["notice_c_cover_metrics_offline"]
             assert "notice_c_cover_metrics" not in read(bad)
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        assert "notice_c_private_series_cold_offline" not in read(data)
         assert "notice_c_cover_metrics" not in read(data)
+        assert "notice_c_catalogue_http_fallback" not in read(data)
+        for value in ("catalogue_http_fallback", "catalogue_http_fallback_PRIVATE"):
+            bad = copy.deepcopy(data)
+            bad["local_c_stage"] = value
+            row = read(bad)
+            if value == "catalogue_http_fallback":
+                assert row["book_detail_local_c_stage"] == value
+            else:
+                assert "book_detail_local_c_stage" not in row
+            assert "notice_c_catalogue_http_fallback" not in row
+            assert "PRIVATE" not in repr(row)
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
         read(data)
         other = root / "private.json"
         report.rename(other)
         report.symlink_to(other)
-        assert "notice_c_cover_metrics" not in module.safe_summary(source)["results"][0]
+        row = module.safe_summary(source)["results"][0]
+        assert "notice_c_cover_metrics" not in row
+        assert "notice_c_catalogue_http_fallback" not in row

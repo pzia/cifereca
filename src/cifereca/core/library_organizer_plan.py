@@ -29,9 +29,10 @@ class OrganizerDryRunPlan:
     entries: tuple[OrganizerDryRunEntry, ...]
     confirmed: bool = False
     executable: bool = False
+    group_index: int | None = None
 
 
-def prepare_organizer_dry_run(scope, report, *, confirmed=False):
+def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=None):
     """Fresh explicit page selection. No filesystem or SQLite changes.
 
     Only the existing naming broker can supply a rename proposal.
@@ -40,7 +41,9 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False):
     blocked even if each independent preview saw a vacant destination.
     """
     if (confirmed is not True or type(scope) is not OrganizerScope
-            or type(report) is not dict or not scope.bound()):
+            or type(report) is not dict or not scope.bound()
+            or (group_index is not None and
+                (type(group_index) is not int or not 0 <= group_index < 4))):
         return None
     try:
         anchor = report.get("review_anchor")
@@ -51,6 +54,8 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False):
         fresh = run_organizer_review(scope.service, scope,
                                      cursor=anchor if anchor.offset else None)
         if fresh != report:
+            return None
+        if group_index is not None and group_index >= len(fresh["groups"]):
             return None
         from ..artifact_runtime import LibraryMaintenanceBrokerImpl
         from ..plugin_api import LibraryMutationRequest
@@ -107,7 +112,16 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False):
                 or run_organizer_review(scope.service, scope,
                                         cursor=anchor if anchor.offset else None) != fresh):
             return None
-        return OrganizerDryRunPlan(scope, anchor, entries)
+        # Resolve an ordinal against the freshly revalidated page, not a
+        # path or identifier provided by the caller. Detect collisions on
+        # the whole page BEFORE filtering, so selecting a single group
+        # cannot turn a contested destination into safe advice.
+        if group_index is not None:
+            selected_ids = {f["placement"] for f in fresh["groups"][group_index]["files"]}
+            entries = tuple(e for e in entries if e.placement_id in selected_ids)
+            if not entries:
+                return None
+        return OrganizerDryRunPlan(scope, anchor, entries, group_index=group_index)
     except Exception:
         return None
 
@@ -118,7 +132,9 @@ def confirm_organizer_dry_run(scope, report, plan, *, confirmed=False):
             or plan.scope is not scope or plan.confirmed is not False
             or plan.executable is not False):
         return None
-    fresh = prepare_organizer_dry_run(scope, report, confirmed=True)
+    fresh = prepare_organizer_dry_run(
+        scope, report, confirmed=True, group_index=plan.group_index)
     if fresh is None or fresh != plan:
         return None
-    return OrganizerDryRunPlan(scope, fresh.anchor, fresh.entries, confirmed=True)
+    return OrganizerDryRunPlan(scope, fresh.anchor, fresh.entries, confirmed=True,
+                               group_index=fresh.group_index)

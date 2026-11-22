@@ -97,9 +97,10 @@ def all_widgets(root):
         yield from all_widgets(child)
 
 
+@pytest.mark.parametrize("surface", ["sync", "maintenance"])
 @pytest.mark.parametrize("case", ["reset", "route_revoked", "adept_hold"])
 def test_sync_retry_dialog_exact_three_attempts_and_safe_individual_action(
-    rig, monkeypatch, case,
+    rig, monkeypatch, case, surface,
 ):
     gui = load_gui_without_gtk(monkeypatch)
     service, account, source, snap, root, lock_path = loan_snapshot(rig)
@@ -146,10 +147,25 @@ def test_sync_retry_dialog_exact_three_attempts_and_safe_individual_action(
     )
     refreshes = []
     window._refresh_sync_page = lambda: refreshes.append(True)
-    gui.open_loan_download_retry_dialog(
-        window, NS(identity_id="A"), Gtk=Gtk, Adw=Adw,
-        control=Widget(),
-    )
+    if surface == "sync":
+        gui.open_loan_download_retry_dialog(
+            window, NS(identity_id="A"), Gtk=Gtk, Adw=Adw, control=Widget(),
+        )
+    else:
+        from cifereca.plugin_api.page_lifecycle import PageViewContext
+        from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+        window._closed = False
+        window._identity_context_generation = 1
+        window._maintenance_mount_owner = object()
+        window._guided_maintenance_disposers = []
+        window.action_button = lambda label, icon: Button(label)
+        Adw.PreferencesGroup = Adw.ActionRow = Container
+        view = PageViewContext("tools", "A", None, 1, "show", lambda _: window.live)
+        box = Container()
+        assert gui.add_maintenance_retry_entry(window, box, view, Gtk=Gtk, Adw=Adw)
+        assert not actions
+        entry, = box.children[0].children[0].children
+        entry.click()
     dlg, = dialogs
     assert dlg.presented and dlg.title == "Téléchargements à reprendre"
     expected_pause = 0 if case == "adept_hold" else 1
@@ -166,7 +182,7 @@ def test_sync_retry_dialog_exact_three_attempts_and_safe_individual_action(
     if case == "reset":
         buttons[0].click()
         assert dlg.closed and messages == ["Tentatives réinitialisées"]
-        assert refreshes == [True]
+        assert refreshes == ([True] if surface == "sync" else [])
         assert read_loan_download_retry(service.storage, source).failures == 0
     elif case == "route_revoked":
         window.live = False
