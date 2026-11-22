@@ -510,7 +510,8 @@ def _verified_public_web_reference(row: SearchResult) -> dict | None:
             or witness[1] is not row._core_same_call_public_cover_witness
             or witness[2] != url or witness[3] != evidence
             or not _is_public_web_evidence(evidence, row.source_provider)
-            or _public_catalog_url(url, evidence=evidence, provider_id=row.source_provider) != url
+            or _public_catalog_url(url, evidence=evidence, provider_id=row.source_provider,
+                                   record_id=row.record_id) != url
             or type(url) is not str):
         return None
     return {"url": url, "evidence": evidence}
@@ -609,7 +610,7 @@ def _public_rows_from_response(
                     if _is_public_web_evidence(evidence, row.source_provider):
                         product = _public_catalog_url(
                             row.friendly_url, evidence=evidence,
-                            provider_id=row.source_provider,
+                            provider_id=row.source_provider, record_id=row.record_id,
                         )
                         if product is not None:
                             projected = replace(
@@ -2175,13 +2176,14 @@ def _is_public_web_evidence(evidence, provider_id):
             and evidence in (
                 f"{provider_id}.public_search_product_card",
                 f"{provider_id}.public_search_record_identifier",
+                f"{provider_id}.public_search_record_query",
                 f"{provider_id}.public_product_jsonld",
             ))
 
 
 def _public_catalog_url(
     value: Any, *, cover: bool = False, evidence: str | None = None,
-    provider_id: str | None = None,
+    provider_id: str | None = None, record_id: str | None = None,
 ) -> str | None:
     """Structurally validate public URLs without supplier-specific decisions.
 
@@ -2247,7 +2249,18 @@ def _public_catalog_url(
             ("", "ref=library") if evidence == f"{provider_id}.library_title_link"
             else ("",)
         )
-        if parsed.query not in allowed_queries:
+        if evidence == f"{provider_id}.public_search_record_query":
+            # Distinct ABI for a literal catalogue detail endpoint with
+            # one public numeric record argument. The legacy stable record
+            # coordinate is the digest of this exact observed URL.
+            # Neither a free-form query nor a different record is allowed.
+            from hashlib import sha256
+            if (not re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*details?\.(?:php|aspx)", parsed.path)
+                    or not re.fullmatch(r"(?:book|record|id)=[1-9][0-9]{0,15}", parsed.query)
+                    or type(record_id) is not str
+                    or record_id != sha256(value.encode("utf-8")).hexdigest()[:24]):
+                return None
+        elif parsed.query not in allowed_queries:
             return None
         # A producer-qualified marker does not turn a generic search/feed
         # route or homepage into a book-specific HTML notice.
@@ -2622,6 +2635,7 @@ def _mirror_remote_results(
         product_url = _public_catalog_url(
             row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
             provider_id=row.source_provider,
+            record_id=row.record_id if _verified_public_web_reference(row) else None,
         )
         upserts.append({
             "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,

@@ -305,6 +305,19 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         }
         if type(stage) is str and stage in local_stages:
             result["book_detail_local_c_stage"] = stage
+        fallback_line = data.get("local_c_fallback_assertion_line")
+        if stage == "epub_qualified_fallback" and type(fallback_line) is int:
+            tree = ast.parse((ROOT / "e2e/notice_c_local_views_contract.py").read_text(encoding="utf-8"))
+            permitted = {
+                node.lineno
+                for function in ast.walk(tree)
+                if isinstance(function, ast.FunctionDef)
+                and function.name in {"verify_qualified_fallback", "fallback_painted"}
+                for node in ast.walk(function)
+                if isinstance(node, ast.Assert)
+            }
+            if fallback_line in permitted:
+                result["book_detail_local_c_fallback_assertion_line"] = fallback_line
         # Only individually reviewed, synthetic stages from the C-cover helper.
         cover_stage = data.get("notice_c_cover_stage")
         cover_stages = {"tie_setup", "tie_first", "tie_second", "setup", "seed", "complete"} | {

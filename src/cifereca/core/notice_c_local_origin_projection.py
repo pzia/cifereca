@@ -95,51 +95,60 @@ def project_local_origin_public_c(
     if not wanted:
         return
 
-    from .library_projection import _verified_provider_origin_coordinates
-    verified = _verified_provider_origin_coordinates(
-        storage, identity_id=identity_id, with_kind=True,
-    )
-    if not verified:
-        return
+    from .library_projection import _read_provider_origin_coordinates
 
-    # The v14 projector has already checked a present owner Placement,
-    # completed provider OriginLink, positive source response, artifact
-    # structure and delivery receipt; it returns no private URLs.
-    by_artifact: dict[str, set[tuple[str, str]]] = {}
-    origin_memberships: dict[tuple[str, str], set[str]] = {}
-    for artifact, owner, provider, _credential, _account, edition, kind in verified:
-        # A completed *loan* acquisition also proves the source-to-Artifact
-        # relationship. C remains descriptive, never a borrowing entitlement;
-        # an unmaterialized/remote loan still has no Placement and cannot join.
-        if owner != identity_id or kind not in ("purchase", "loan"):
-            continue
-        coord = (provider, edition)
-        by_artifact.setdefault(artifact, set()).add(coord)
-        origin_memberships.setdefault(coord, set()).add(artifact)
-
-    eligible_artifacts = {artifact for artifact, _placement in wanted}
-    if not (eligible_artifacts & by_artifact.keys()):
-        return
-    relevant = {
-        coord for artifact in eligible_artifacts
-        for coord in by_artifact.get(artifact, ())
-    }
-    if not relevant:
-        return
-    # The completed OriginLink only attests provider + upstream record ID.
-    # It cannot identify a distinct docbase/medium/revision of that record.
-    # Across ALL durable public C records, require those coarse coordinates
-    # to designate exactly one independently admitted source edition.
-    # A self-C and a multi-source C for the same exact edition are compatible.
-    exact_editions: dict[tuple[str, str], set[str]] = {}
-    qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
     try:
-        present = {
-            (item.get("artifact_id"), item.get("placement_id"))
-            for item in storage.placements(state="present")
-            if type(item) is dict and item.get("identity_id") == identity_id
-        }
         with storage._lock, storage._connect() as db:
+            # One SQLite snapshot for positive origin evidence, present
+            # placement and documentary C. No mixed-epoch proof can be
+            # assembled from individually valid but disjoint reads.
+            db.execute("BEGIN")
+            verified = _read_provider_origin_coordinates(
+                db, identity_id=identity_id, with_kind=True,
+            )
+            if not verified:
+                return
+            # The v14 projector has already checked a present owner Placement,
+            # completed provider OriginLink, positive source response, artifact
+            # structure and delivery receipt; it returns no private URLs.
+            by_artifact: dict[str, set[tuple[str, str]]] = {}
+            origin_memberships: dict[tuple[str, str], set[str]] = {}
+            for artifact, owner, provider, _credential, _account, edition, kind in verified:
+                # A completed *loan* acquisition also proves the source-to-Artifact
+                # relationship. C remains descriptive, never a borrowing entitlement;
+                # an unmaterialized/remote loan still has no Placement and cannot join.
+                if owner != identity_id or kind not in ("purchase", "loan"):
+                    continue
+                coord = (provider, edition)
+                by_artifact.setdefault(artifact, set()).add(coord)
+                origin_memberships.setdefault(coord, set()).add(artifact)
+
+            eligible_artifacts = {artifact for artifact, _placement in wanted}
+            if not (eligible_artifacts & by_artifact.keys()):
+                return
+            relevant = {
+                coord for artifact in eligible_artifacts
+                for coord in by_artifact.get(artifact, ())
+            }
+            if not relevant:
+                return
+            # The completed OriginLink only attests provider + upstream record ID.
+            # It cannot identify a distinct docbase/medium/revision of that record.
+            # Across ALL durable public C records, require those coarse coordinates
+            # to designate exactly one independently admitted source edition.
+            # A self-C and a multi-source C for the same exact edition are compatible.
+            exact_editions: dict[tuple[str, str], set[str]] = {}
+            qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
+
+            present = set(db.execute(
+                "SELECT artifact_id,placement_id FROM placements "
+                "WHERE identity_id=? AND state='present' "
+                "AND json_array(artifact_id,placement_id) IN "
+                "(SELECT json(value) FROM json_each(?))",
+                (identity_id, json.dumps(sorted(wanted))),
+            ).fetchall())
+            if not present:
+                return
             # Select every canonical row claiming any relevant coarse
             # provider/record, including conflicting editions and groups.
             # JSON is only a prefilter; the Core decoder remains authoritative.

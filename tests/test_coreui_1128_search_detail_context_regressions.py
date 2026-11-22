@@ -97,7 +97,7 @@ def _extract_search_detail_callback(name):
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == name
     )
-    scope = {}
+    scope = {"__name__": "cifereca.gui.search_details", "__package__": "cifereca.gui"}
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), function],
         type_ignores=[],
