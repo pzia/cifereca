@@ -268,7 +268,13 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                 ) if part)
                 lines.append((hit.title, text))
             if not page.suggestions:
-                lines.append(("Résultat", "Aucune correspondance connue ; absence non prouvée."))
+                # C may contain known matches excluded from this local view
+                # because their labels/coordinates are not displayable. An
+                # empty rendered window is not zero C evidence.
+                verdict = ("Correspondances C connues, aucune fiche présentable sur cette page ; "
+                           "absence non prouvée." if page.known_matches > 0 else
+                           "Aucune correspondance connue ; absence non prouvée.")
+                lines.append(("Résultat", verdict))
             if deliverable():
                 detail.add_group("Suggestions de provenance — lecture seule", lines)
                 next_request = following
