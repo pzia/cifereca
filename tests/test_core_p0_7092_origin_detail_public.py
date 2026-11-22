@@ -208,13 +208,20 @@ def test_public_comparison_shows_distinct_formats_for_the_same_isbn_and_record(r
     assert "Dernière observation C" in repr(groups[0])
     assert actions["public-0"][2]()
     deliver(tasks)
-    report = repr(groups[-1])
+    report = repr(next(g for g in groups if g[0] == "Catalogue public — new-catalogue"))
+    ranked = repr(next(g for g in groups
+                       if g[0] == "Classement documentaire — lecture seule"))
+    # The individual public report AND the cross-surface ranking must retain
+    # the edition distinction; the earlier C review makes ranking available.
     assert report.count("ISBN déclaré ambigu") == 2
     assert report.count("Référence catalogue : same") == 2
     assert report.count("Collection catalogue : CATALOGUE") == 2
     assert report.count("Format catalogue : EPUB") == 1
     assert report.count("Format catalogue : PDF") == 1
     assert "ISBN déclarés par le catalogue : 9780306406157" in report
+    assert ranked.count("Format catalogue : EPUB") == 1
+    assert ranked.count("Format catalogue : PDF") == 1
+    assert "Collection catalogue : CATALOGUE" in ranked
     assert not toasts and len(calls) == 1
     assert rows(service.storage) == before and path.read_bytes() == content
     dispose()
