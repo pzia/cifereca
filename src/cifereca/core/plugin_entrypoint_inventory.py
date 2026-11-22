@@ -15,6 +15,9 @@ from pathlib import Path
 # Classification is deliberately explicit: a newly detected direct executable
 # is marked "unclassified" until an owner reviews its actual side effects.
 CLASSIFIED: dict[str, tuple[str, str]] = {
+    "src/plugins/provider-numilog/cifereca_numilog_capture_replay.py": (
+        "F", "lecture locale bornée d'une capture HTTP ZIP ; compteurs fermés sans réseau",
+    ),
     "src/plugins/provider-numilog/numilog_delivery_diagnose.py": (
         "F", "lecture hors réseau d'un ZIP journal existant",
     ),
