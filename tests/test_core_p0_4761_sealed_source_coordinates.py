@@ -47,3 +47,28 @@ def test_alternative_unprojected_coordinates_remain_exact(tmp_path, field, value
         assert known_public_c_alternative_hits(candidate) is None
         assert known_public_c_primary_hit(candidate) is not None
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+@pytest.mark.parametrize("field,values", [
+    ("docbase", ("wrong-docbase",)),
+    ("medium", ("digital", "physical", "unknown")),
+    ("media_format", ("PDF", "EPUB", "MOBI")),
+    ("cover_state", ("available", "missing", "pending")),
+    ("stale", (True, False)),
+])
+def test_alternative_hidden_document_coordinates_cannot_be_rebound(tmp_path, field, values):
+    with closing(Storage(tmp_path / "alternative-hidden.sqlite")) as db:
+        first = make(db, "bnf", "a", "Deux sources A", "Astronomie", "fr", "EPUB")
+        second = make(db, "numilog-catalog", "b", "Deux sources B", "Cuisine", "en", "PDF")
+        shared(db, first, second)
+        candidate, = known_public_notice_candidates(db, "Deux sources")
+        original, = known_public_c_alternative_hits(candidate)
+        old_visible = candidate.metadata["notice_c_source_alternatives"][0].copy()
+        replacement = next(value for value in values if value != getattr(original, field))
+        object.__setattr__(original, field, replacement)
+        # The displayed summary is unchanged; the original Core receipt
+        # must still refuse a rewritten edition/source attribute.
+        assert candidate.metadata["notice_c_source_alternatives"][0] == old_visible
+        assert known_public_c_alternative_hits(candidate) is None
+        assert known_public_c_primary_hit(candidate) is not None
+        assert db.entitlements() == [] and db.acquisitions() == []
