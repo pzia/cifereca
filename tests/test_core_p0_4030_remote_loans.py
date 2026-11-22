@@ -222,3 +222,17 @@ def test_remote_loan_choices_share_the_live_host_action_budget(case):
                     | {f"private-{i}" for i in range(16)}
                     | {f"remote-loan-{i}" for i in range(16)})
     assert not calls and not toasts
+
+
+@pytest.mark.parametrize("twin", ["physical", "invalid_edition", "other_title"])
+def test_remote_occurrence_ambiguity_survives_descriptive_filter(case, twin):
+    service, request, account, session, path, calls, choice, observed = case
+    scope = LoanInventoryScope.for_account(account)
+    other = (replace(observed, medium="physical") if twin == "physical"
+             else replace(observed, record_id="x" * 257) if twin == "invalid_edition"
+             else replace(observed, title="Different title"))
+    report = LoanInventorySnapshot(scope, (observed, other))
+    before, data = rows(service.storage), path.read_bytes()
+    matches, truncated = remote._matches(report, choice, "Roman commun", ("Autrice",))
+    assert matches == () and not truncated
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
