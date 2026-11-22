@@ -184,7 +184,12 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
     if (getattr(window, "_route_display_token", None) is not route
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or not callable(getattr(panel, "_actions", None))
-            or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))):
+            or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))
+            or any(not possible_lender_matches(
+                row, item, requesting_identity_id=identity_id,
+            ) or (row._session is not None and not possible_lender_session_matches(
+                row, row._session,
+            )) for row in rows)):
         return False
     try:
         ui_identity = window._identity_context_generation
