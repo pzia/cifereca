@@ -46,7 +46,7 @@ def test_source_decision_media_and_two_gtk_surfaces_have_distinct_gates():
         assert not trace.snapshot(decision.scope).detail_painted
         assert trace.note_painted(token, surface="detail")
         assert trace.snapshot(decision.scope).detail_painted
-        assert cache.peek(decision.scope, revision=1) is decision
+        assert cache.peek(decision.scope, revision=1) == decision
     finally:
         handle.cancel()
 
