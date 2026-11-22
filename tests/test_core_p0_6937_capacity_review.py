@@ -196,3 +196,33 @@ def test_capacity_directory_guard_preserves_existing_valid_names():
     assert core._valid_profile_directory("library")
     assert core._valid_profile_directory("Bibliothèque privée")
     assert core._valid_profile_directory("z" * 256)
+
+
+@pytest.mark.parametrize("second", ["library", "different-library"])
+def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
+    tmp_path, second,
+):
+    service, intent, reservation = _setup(tmp_path)
+    storage = service.storage
+    try:
+        service.config.identities = lambda: [
+            {"id": "id1", "directory_name": "library"},
+            {"id": "id1", "directory_name": second},
+        ]
+        receipt = storage.metadata_get(reservation.key)
+        stage = Path(intent.staged_path)
+        before_stage = stage.read_bytes()
+        scope = NS(storage=storage, config=service.config, root=tmp_path,
+                   identity_id="id1", directory="library")
+        snapshot = core._snapshot(scope)
+        assert snapshot[1] == (("id1", None),)
+        counts = snapshot[2]
+        assert counts["unbound"] == 1
+        assert counts["active_pending"] == 0
+        assert counts["active_committed"] == 0
+        assert counts["other_bound"] == 0
+        assert storage.metadata_get(reservation.key) == receipt
+        assert stage.read_bytes() == before_stage
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        storage.close()

@@ -88,7 +88,15 @@ def _compact_snapshot(db):
 
 def _snapshot(scope):
     """One bounded SQL snapshot; private digest witnesses never leave Core."""
-    configured = {row["id"]: row["directory_name"] for row in scope.config.identities()}
+    # Config may contain duplicate identity rows even when SQLite has one
+    # exact owner. A dict comprehension would silently accept the last
+    # directory as physical ownership evidence; mark that identity unbound.
+    configured = {}
+    for row in scope.config.identities():
+        identity = row["id"]
+        configured[identity] = (
+            row["directory_name"] if identity not in configured else None
+        )
     with scope.storage._lock:
         db = scope.storage._connect()
         if db.in_transaction:
