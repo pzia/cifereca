@@ -12,8 +12,8 @@ from tests.test_core_p0_4030_private_catalogue import private_rig, rig, store, n
 from tests.test_library_declared_links import records, rows
 
 
-@pytest.mark.parametrize("case", ["exact", "missing", "ambiguous", "wrong_kind", "conflicting",
-                                  "wrong_occurrence", "expiring"])
+@pytest.mark.parametrize("case", ["exact", "exact_native", "missing", "ambiguous", "ambiguous_right",
+                                  "wrong_kind", "conflicting", "wrong_occurrence", "expiring"])
 def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, tmp_path, monkeypatch, case):
     service, request, account, session, calls, path, _, _ = private_rig
     service.identities = [service.current_identity]
@@ -37,6 +37,11 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
             credential_id="card-A", account_id="buyer-A", item_id=key.edition_id,
             entitlement_type="loan" if case == "wrong_kind" else "owned",
             state="active", expires_at="2099-01-01" if case == "expiring" else None))
+    if case == "ambiguous_right":
+        service.storage.entitlement_put(dict(
+            entitlement_id="second-owned-right", identity_id="A", provider_id="seller",
+            credential_id="card-A", account_id="buyer-A", item_id=key.edition_id,
+            entitlement_type="owned", state="active"))
     known = run_local_origin_suggestion(service, request)
     choice = next(c for c in private.available_known_private_catalogues(
         service, request, evidence=known["public_comparison_evidence"]) if c.kind == "purchase")
@@ -50,10 +55,16 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
     data = path.read_bytes()
     preview = bridge.preview_private_purchase_declaration(
         service, choice=choice, candidate=candidate, confirmed=True)
-    if case == "exact":
-        from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    if case in ("exact", "exact_native"):
+        from cifereca.core.local_origin_detail_broker import (
+            LocalOriginDetailReadFactory, take_native_local_origin_declaration,
+        )
+        from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
         from cifereca.plugin_api.local_origin_detail import LocalOriginPurchaseDeclarationAdvice
-        broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+        port = "library.origin.detail.read"
+        factory = LocalOriginDetailReadFactory(service)
+        resolver = ActivationBrokerResolver(lambda _: None, lambda _: factory, "fixture", (port,))
+        broker = resolver(port)
         page = broker.preview(identity_id="A", placement_id=request.placement_id,
                               still_current=lambda: True, confirmed=True)
         selected = next(c for c in page.private_choices if c.kind == "purchase")
@@ -89,8 +100,34 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
         assert not toasts and records(service) == []
         assert preview is not None and preview.context["purchase"] == key.right_id
         assert bridge.admit_private_loan_declaration(service, preview, user_confirmed=True) is None
-        command = bridge.admit_private_purchase_declaration(service, preview, user_confirmed=True)
-        assert callable(command) and command().status == "declared" and command() is None
+        if case == "exact":
+            command = bridge.admit_private_purchase_declaration(service, preview, user_confirmed=True)
+            assert callable(command) and command().status == "declared" and command() is None
+        else:
+            from cifereca.gui.library_declaration_actions import show_private_origin_declaration
+            from tests.test_library_declaration_actions import Dialog, Runner
+            plugin = object()
+            manager = NS(_registry_generation=3, service=lambda _: plugin,
+                         _records={"fixture": NS(service=plugin, activation_brokers=resolver)})
+            resolved = NS(plugin_id="fixture", service=plugin, registry_generation=3)
+            pending = take_native_local_origin_declaration(
+                manager, resolved, advice, service=service, identity_id="A",
+                placement_id=request.placement_id)
+            assert pending is not None
+            native_preview, current = pending
+            Dialog.dialogs = []
+            messages, runner = [], Runner()
+            assert show_private_origin_declaration(
+                Adw=NS(MessageDialog=Dialog), window=NS(toast=messages.append),
+                runner=runner, service=service, preview=native_preview,
+                current=current, visible=current)
+            dialog, = Dialog.dialogs
+            assert "Achat : " + key.right_id in dialog.body
+            assert native_preview.token not in dialog.body
+            assert not records(service)
+            dialog.respond("apply")
+            dialog.respond("apply")
+            assert messages and len(records(service)) == 1
         record, = records(service)
         assert record["origin"] == "user_declaration"
     else:

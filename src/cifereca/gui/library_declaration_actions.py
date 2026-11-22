@@ -243,3 +243,85 @@ class DeclarationActions:
 
         dialog.connect('response', response)
         dialog.present()
+
+
+def show_private_origin_declaration(*, Adw, window, runner, service, preview,
+                                    current, visible):
+    """Native confirmation for an exact private comparison, never plugin authority.
+
+    Reuse the #2797 writer through the existing #4030 bridge. The click only
+    admits a worker; neither file hashing nor SQLite runs on GTK.
+    """
+    from ..core.local_origin_declaration_bridge import (
+        _DeclarationPreview, admit_private_loan_declaration,
+        admit_private_purchase_declaration,
+    )
+    if (type(preview) is not _DeclarationPreview or preview.service is not service
+            or visible() is not True):
+        return False
+    context = preview.context
+    kind = preview.choice.kind
+    if kind not in ("loan", "purchase"):
+        return False
+    resource_label = 'Prêt' if kind == "loan" else 'Achat'
+    resource = context[kind]
+    coordinates = '\n'.join((
+        'Profil : ' + context['identity'],
+        'Source déclarée : ' + context['provider'],
+        'Compte : ' + context['account'],
+        'Édition : ' + context['edition'],
+        resource_label + ' : ' + resource,
+        'Fichier : ' + context['path'],
+    ))
+    dialog = Adw.MessageDialog.new(
+        window, 'Déclarer cette correspondance ?',
+        coordinates + '\n\nModification : enregistrer uniquement cette correspondance '
+        'comme déclaration utilisateur, sans preuve fournisseur. '
+        'Aucun livre, droit, reçu ou placement fournisseur ne sera modifié. '
+        'Un prêt reste temporaire ; sa validité n’est pas attestée ici.',
+    )
+    dialog.set_body_use_markup(False)
+    dialog.add_response('cancel', 'Annuler')
+    dialog.add_response('apply', 'Confirmer la déclaration')
+    dialog.set_default_response('cancel')
+    dialog.set_close_response('cancel')
+    answered = False
+
+    def response(_dialog, response_id):
+        nonlocal answered
+        if answered:
+            return
+        answered = True
+        if response_id != 'apply' or visible() is not True:
+            return
+
+        def work():
+            if current() is not True:
+                return None
+            admit = (admit_private_loan_declaration if kind == "loan"
+                     else admit_private_purchase_declaration)
+            command = admit(service, preview, user_confirmed=True, still_current=current)
+            return command() if callable(command) else None
+
+        def completed(result):
+            if visible() is not True:
+                return
+            status = getattr(result, 'status', None)
+            if status == 'declared':
+                window.toast('Correspondance enregistrée comme déclaration utilisateur. '
+                             'Aucun droit ni lien attesté créé. Déclaration révocable.')
+            elif status == 'already_declared':
+                window.toast('Correspondance déjà déclarée. Aucune nouvelle écriture.')
+            else:
+                window.toast(declaration_refusal_message(getattr(result, 'reason_code', None)))
+
+        try:
+            runner.submit('Confirmation de déclaration locale', work, completed,
+                          lambda _error: completed(None), priority=TaskPriority.MAINTENANCE,
+                          kind='maintenance-inspection', origin='user')
+        except Exception:
+            completed(None)
+
+    dialog.connect('response', response)
+    dialog.present()
+    return True

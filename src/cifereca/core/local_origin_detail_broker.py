@@ -46,6 +46,7 @@ class LocalOriginDetailReadBrokerImpl:
         self._remote_loans = {}
         self._declaration_choices = {}
         self._declaration_window = None
+        self._native_preview = None
         self._lock = Lock()
         self._generation = 0
         self._active = None
@@ -133,6 +134,7 @@ class LocalOriginDetailReadBrokerImpl:
                 self._private = {token: (choice, view, generation, None) for token, choice in private_choices}
                 self._remote_loans = {token: (choice, view, generation) for token, choice in remote_loans}
                 self._declaration_choices.clear()
+                self._native_preview = None
             if not self._live(generation, view, request):
                 self.cancel(token=page.token)
                 return None
@@ -155,6 +157,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._private.clear()
             self._remote_loans.clear()
             self._declaration_choices.clear()
+            self._native_preview = None
         try:
             if still_current() is not True:
                 return None
@@ -182,6 +185,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._private.clear()
             self._remote_loans.clear()
             self._declaration_choices.clear()
+            self._native_preview = None
             self._generation += 1
             generation = self._generation
         return self._read(request, view, generation)
@@ -246,6 +250,7 @@ class LocalOriginDetailReadBrokerImpl:
                 return None
             choice, view, generation, continuation = selected
             self._declaration_choices.clear()
+            self._native_preview = None
             declaration_window = object()
             self._declaration_window = declaration_window
         request = choice.request
@@ -329,6 +334,7 @@ class LocalOriginDetailReadBrokerImpl:
                 with self._lock:
                     if self._declaration_window is declaration_window:
                         self._declaration_choices.clear()
+                        self._native_preview = None
                 return None
             return report
         except Exception:
@@ -350,6 +356,7 @@ class LocalOriginDetailReadBrokerImpl:
             if selected is None or selected[0].kind != kind:
                 return None
             self._declaration_choices.clear()
+            self._native_preview = None
             window = self._declaration_window
         choice, candidate, continuation, view, generation = selected
 
@@ -378,10 +385,32 @@ class LocalOriginDetailReadBrokerImpl:
             source, scope = candidate.source, candidate.source.scope
             advice = (LocalOriginDeclarationAdvice if kind == "loan"
                       else LocalOriginPurchaseDeclarationAdvice)
-            return advice(scope.provider_id, scope.credential_id, scope.account_id,
-                          source.edition_id, source.resource_id)
+            projected = advice(scope.provider_id, scope.credential_id, scope.account_id,
+                               source.edition_id, source.resource_id)
+            # Keep one exact private preview per activation. The DTO is
+            # deliberately inert and its identity is not an authorization.
+            with self._lock:
+                if (self._revoked or self._generation != generation
+                        or self._declaration_window is not window):
+                    return None
+                self._native_preview = (projected, preview, view_live)
+            return projected
         except Exception:
             return None
+
+    def _take_native_preview(self, advice, *, service, identity_id, placement_id):
+        """Native host only: consume the exact worker result, never a copied DTO."""
+        with self._lock:
+            pending = self._native_preview
+            if (pending is None or pending[0] is not advice or self._revoked
+                    or self._service is not service):
+                return None
+            _, preview, current = pending
+            request = preview.choice.request
+            if (request.identity_id != identity_id or request.placement_id != placement_id):
+                return None
+            self._native_preview = None
+        return (preview, current) if current() is True else None
 
     def preview_loan_declaration(self, *, token, confirmed=False):
         return self._preview_declaration(token=token, confirmed=confirmed, kind="loan")
@@ -446,6 +475,7 @@ class LocalOriginDetailReadBrokerImpl:
                 self._private.clear()
                 self._remote_loans.clear()
                 self._declaration_choices.clear()
+                self._native_preview = None
                 self._generation += 1
 
     def revoke(self):
@@ -457,6 +487,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._private.clear()
             self._remote_loans.clear()
             self._declaration_choices.clear()
+            self._native_preview = None
             self._generation += 1
 
 
@@ -474,3 +505,35 @@ class LocalOriginDetailReadFactory:
              "preview_loan_declaration", "preview_purchase_declaration", "cancel"),
         )
         return factory.for_activation(plugin_id, current=current)
+
+
+def take_native_local_origin_declaration(manager, resolved, advice, *, service,
+                                         identity_id, placement_id):
+    """Resolve the existing activation's private reader, never a new registry.
+
+    Only CoreUI receives this private handoff. A public broker lease has no
+    method for taking a preview, executing it or obtaining its writer token.
+    """
+    if type(advice) not in (LocalOriginDeclarationAdvice, LocalOriginPurchaseDeclarationAdvice):
+        return None
+    try:
+        from .activation_scoped_broker import ActivationBrokerResolver, _ActivationReadLease
+        if (manager._registry_generation != resolved.registry_generation
+                or manager.service(resolved.plugin_id) is not resolved.service):
+            return None
+        record = manager._records.get(resolved.plugin_id)
+        if record is None or record.service is not resolved.service:
+            return None
+        resolver = record.activation_brokers
+        if type(resolver) is not ActivationBrokerResolver or resolver.current() is not True:
+            return None
+        with resolver._lock:
+            lease = resolver._scoped.get("library.origin.detail.read")
+        if (type(lease) is not _ActivationReadLease
+                or type(lease._reader) is not LocalOriginDetailReadBrokerImpl
+                or resolver.current() is not True):
+            return None
+        return lease._reader._take_native_preview(
+            advice, service=service, identity_id=identity_id, placement_id=placement_id)
+    except Exception:
+        return None
