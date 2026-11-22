@@ -479,3 +479,26 @@ def test_declaration_choices_on_every_private_cache_page(private_rig, monkeypatc
     deliver(tasks)
     assert all(not callback() for callback in obsolete)
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("conflict", ["physical", "other_edition", "invalid_edition", "other_title"])
+def test_cached_occurrence_ambiguity_precedes_descriptive_filter(private_rig, conflict):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    service, request, account, session, calls, path, *_ = private_rig
+    original = service.last_loans[0]
+    other = {
+        "physical": replace(original, medium="physical"),
+        "other_edition": replace(original, record_id="other-edition"),
+        "invalid_edition": replace(original, record_id="x" * 257),
+        "other_title": replace(original, title="Other title"),
+    }[conflict]
+    service.last_loans.append(other)
+    before, content = rows(service.storage), path.read_bytes()
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: True, confirmed=True)
+    choice, = page.private_choices
+    report = broker.compare_private(token=choice.token, confirmed=True)
+    assert report.status == "partial" and report.matches == ()
+    assert not report.association_authorized and not report.provider_access_performed
+    assert not calls and rows(service.storage) == before and path.read_bytes() == content
