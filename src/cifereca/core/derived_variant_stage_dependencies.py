@@ -188,10 +188,18 @@ def scan_stage_references(db, selected):
                     or type(definition) is not str):
                 return unknown()
             remaining += length
+            # Reuse the same lexical checks used for stored path values:
+            # SQL literals may contain a relative name or an encoded file URI.
+            # This is an observation, not a SQL parser or an exclusivity proof.
+            literals = tuple(match.group(0)[1:-1].replace("''", "'")
+                             for match in re.finditer(r"'(?:[^']|'')*'", definition))
             for path in status:
-                # SQLite quotes literal apostrophes by doubling them.
-                if path in definition or path.replace("'", "''") in definition:
-                    status[path] = "referenced"
+                try:
+                    if (path in definition or path.replace("'", "''") in definition
+                            or any(_matches_stage(value, path) for value in literals)):
+                        status[path] = "referenced"
+                except (ValueError, UnicodeError):
+                    return unknown()
             if object_type == "view":
                 # There is no currently reviewed view contract; continue
                 # observing other definitions before returning unknown.
