@@ -13,9 +13,10 @@ from tests.test_core_p0_3176_organizer_review import _service, _put_epub, _run
 def test_exact_confirmed_rename_uses_existing_writer(store, tmp_path, monkeypatch, case):
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
-    old, pid = _put_epub(store, root, "Acquisitions/old.epub")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
     data = old.read_bytes()
     row = store.placement_get(pid)
+    assert row["provider_id"] == "local" and row["source_item_id"] == "Acquisitions/old.epub"
     scope, page = _run(_service(store, root))
     plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
     accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)

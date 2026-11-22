@@ -23,7 +23,8 @@ def _service(store, root):
                   f"{author} - {title}.{extension}" if author else f"{title}.{extension}")
 
 
-def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True):
+def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True,
+              provider_id=None):
     path = root / owner / name
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _book(metadata).getvalue()
@@ -32,12 +33,19 @@ def _put_epub(store, root, name, *, metadata=META, owner="A", catalogue=True):
     artifact = "sha256:" + digest
     store.artifact_put({"artifact_id": artifact, "sha256": digest,
                         "size": len(data), "media_format": "epub"})
+    # Mutating recipes need an explicitly scoped local occurrence; review-only
+    # fixtures may continue to exercise unqualified historical placements.
+    placement_scope = ({"provider_id": provider_id, "source_item_id": name}
+                       if provider_id is not None else {})
+    catalog_scope = ({"provider_id": provider_id, "item_id": name}
+                     if provider_id is not None else {})
     pid = store.placement_put({"artifact_id": artifact, "identity_id": owner,
-                               "state": "present", "path": str(path)})
+                               "state": "present", "path": str(path), **placement_scope})
     if catalogue:
         store.catalog_entry_put({
             "placement_id": pid, "artifact_id": artifact, "identity_id": owner,
             "title": "Roman commun", "author": "Autrice", "local_state": "local",
+            **catalog_scope,
         })
     return path, pid
 
