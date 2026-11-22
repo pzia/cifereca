@@ -236,3 +236,40 @@ def test_native_organizer_worker_missing_lock_never_provisions_state(
     assert old.read_bytes() == original_bytes
     assert store.placement_get(pid) == original_row
     resolver.close()
+
+
+@pytest.mark.parametrize("failing_guard", ["view", "lock", "fence"])
+def test_isolated_rename_preflight_guard_exceptions_are_blocked_without_writer(
+    store, tmp_path, monkeypatch, failing_guard,
+):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, placement_id = _put_epub(
+        store, root, "Acquisitions/old.epub", provider_id="local",
+    )
+    original_bytes = old.read_bytes()
+    original_placement = store.placement_get(placement_id)
+    scope, page = _run(_service(store, root))
+    draft = prepare_organizer_dry_run(
+        scope, page, confirmed=True, rename_only=True,
+    )
+    accepted = confirm_organizer_dry_run(scope, page, draft, confirmed=True)
+    assert accepted is not None and accepted.confirmed is True
+    proposed = old.with_name("Autrice - Roman commun.epub")
+
+    def failure(*_a, **_kw):
+        raise RuntimeError("revoked guard")
+
+    if failing_guard == "lock":
+        monkeypatch.setattr(execute, "_lock_ok", failure)
+    elif failing_guard == "fence":
+        monkeypatch.setattr(execute, "_execution_fence_current", failure)
+    view = failure if failing_guard == "view" else lambda: True
+    with InterProcessLock(tmp_path / "acquisition.lock") as lock:
+        result = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock,
+            confirmed=True, still_current=view,
+        )
+    assert result == {"status": "blocked", "changed": 0}
+    assert old.read_bytes() == original_bytes and not proposed.exists()
+    assert store.placement_get(placement_id) == original_placement
