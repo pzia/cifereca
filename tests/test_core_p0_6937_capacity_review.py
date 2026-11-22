@@ -233,7 +233,8 @@ def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
 @pytest.mark.parametrize("case", [
     "empty", "too_many", "tuple_rows", "generator", "non_dict",
     "no_id", "invalid_id", "invalid_id_del", "invalid_id_too_long",
-    "invalid_id_not_text", "no_directory",
+    "invalid_id_not_text", "no_directory", "invalid_id_c1",
+    "invalid_id_bidi", "invalid_id_line", "invalid_id_zwj",
 ])
 def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
     tmp_path, case,
@@ -255,6 +256,10 @@ def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
         "invalid_id_too_long": [{"id": "x" * 1025, "directory_name": "library"}],
         "invalid_id_not_text": [{"id": None, "directory_name": "library"}],
         "no_directory": [{"id": "id1"}],
+        "invalid_id_c1": [{"id": "id1\x85", "directory_name": "library"}],
+        "invalid_id_bidi": [{"id": "id1\u202e", "directory_name": "library"}],
+        "invalid_id_line": [{"id": "id1\u2028", "directory_name": "library"}],
+        "invalid_id_zwj": [{"id": "id1\u200d", "directory_name": "library"}],
     }
     try:
         service.config.identities = lambda: variants[case]
