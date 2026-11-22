@@ -380,7 +380,7 @@ def test_documentary_review_rejects_sqlite_aba_even_when_visible_rows_revert(
     assert path.read_bytes() == old_bytes
 
 
-@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d"])
+@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066", "\x1b"])
 def test_invisible_local_path_cannot_become_documentary_source(
     store, tmp_path, monkeypatch, hidden,
 ):
