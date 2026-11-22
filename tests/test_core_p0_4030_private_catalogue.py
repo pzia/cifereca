@@ -353,7 +353,7 @@ def test_private_broker_continuation_is_one_use_and_revocable(private_rig, monke
 
 
 @pytest.mark.parametrize("change", ["none", "sqlite", "view", "dispose"])
-def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, monkeypatch, change):
+def test_legacy_private_detail_uses_one_stable_action_for_following_pages(private_rig, monkeypatch, change):
     from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
     _populate_windows(private_rig)
     service, request, account, session, calls, path, *_ = private_rig
@@ -361,6 +361,10 @@ def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, 
     before, data = rows(service.storage), path.read_bytes()
     c, dispose, host, active, tasks, actions, groups, toasts = mounted(
         (service, session, request, calls, path))
+    # Explicit compatibility witness: exercise a host using the original
+    # read broker contract without the optional declaration preview method.
+    c.broker = NS(**{name: getattr(c.broker, name) for name in (
+        "preview", "next_page", "compare_private", "search_public", "cancel")})
     host.retire_action = lambda key: actions.pop(key, None) is not None
     issued = []
     original_add = host.add_action
@@ -435,3 +439,43 @@ def test_private_purchase_conflicting_facts_are_visible_without_arbitration(priv
         assert match.observed_at == (101 if case == "title" else 100)
         assert match.author == (None if case == "author" else "Autrice")
     assert not calls and rows(service.storage) == before and path.read_bytes() == content
+
+
+def test_declaration_choices_on_every_private_cache_page(private_rig, monkeypatch):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    before, data = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert actions["private-0"][2]()
+    deliver(tasks)
+    obsolete = []
+    for page in range(1, 4):
+        for callback in obsolete:
+            assert not callback()
+        assert "Occurrence à examiner" == groups[-1][0]
+        assert f"Prêt : loan-{2 * page - 1}" in repr(groups[-1])
+        assert f"Prêt : loan-{2 * page}" in repr(groups[-1])
+        assert f"Page', '{page}" in repr(groups[-2])
+        obsolete.append(actions["declare-preview-1"][2])
+        if page < 3:
+            advance = actions["declare-next-page"][2]
+            assert advance() and not advance()
+            obsolete.append(advance)
+            deliver(tasks)
+        else:
+            assert "declare-next-page" not in actions
+    assert actions["declare-back"][2]()
+    deliver(tasks)
+    assert all(not callback() for callback in obsolete)
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data

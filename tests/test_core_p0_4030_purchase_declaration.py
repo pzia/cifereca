@@ -12,7 +12,8 @@ from tests.test_core_p0_4030_private_catalogue import private_rig, rig, store, n
 from tests.test_library_declared_links import records, rows
 
 
-@pytest.mark.parametrize("case", ["exact", "missing", "ambiguous", "wrong_kind", "conflicting"])
+@pytest.mark.parametrize("case", ["exact", "missing", "ambiguous", "wrong_kind", "conflicting",
+                                  "wrong_occurrence", "expiring"])
 def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, tmp_path, monkeypatch, case):
     service, request, account, session, calls, path, _, _ = private_rig
     service.identities = [service.current_identity]
@@ -31,10 +32,11 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
     monkeypatch.setattr(private, "_read_descriptive_txn", reader)
     if case != "missing":
         service.storage.entitlement_put(dict(
-            entitlement_id="purchase-right", identity_id="A", provider_id="seller",
+            entitlement_id="other-purchase" if case == "wrong_occurrence" else key.right_id,
+            identity_id="A", provider_id="seller",
             credential_id="card-A", account_id="buyer-A", item_id=key.edition_id,
             entitlement_type="loan" if case == "wrong_kind" else "owned",
-            state="active"))
+            state="active", expires_at="2099-01-01" if case == "expiring" else None))
     known = run_local_origin_suggestion(service, request)
     choice = next(c for c in private.available_known_private_catalogues(
         service, request, evidence=known["public_comparison_evidence"]) if c.kind == "purchase")
@@ -66,6 +68,25 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
         assert advice.purchase_id == key.right_id and advice.association_authorized is False
         assert broker.preview_purchase_declaration(token=token, confirmed=True) is None
         assert records(service) == []
+        # The same exact typed choice is available in the contextual pane.
+        from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+        controller, dispose, host, active, tasks, actions, groups, toasts = mounted(
+            (service, session, request, calls, path))
+        host.retire_action = lambda name: actions.pop(name, None) is not None
+        assert actions["preview"][2]()
+        deliver(tasks)
+        purchase_action = next(v[2] for k, v in actions.items()
+                               if k.startswith("private-") and "achats" in v[0])
+        assert purchase_action()
+        deliver(tasks)
+        assert "Achat : " + key.right_id in repr(groups[-1])
+        selected_action = actions["declare-preview-1"][2]
+        assert selected_action()
+        deliver(tasks)
+        assert not selected_action()
+        assert any(g[0] == "Aperçu de déclaration utilisateur"
+                   and ("Achat", key.right_id) in g[1] for g in groups)
+        assert not toasts and records(service) == []
         assert preview is not None and preview.context["purchase"] == key.right_id
         assert bridge.admit_private_loan_declaration(service, preview, user_confirmed=True) is None
         command = bridge.admit_private_purchase_declaration(service, preview, user_confirmed=True)

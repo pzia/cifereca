@@ -72,7 +72,11 @@ def test_hold_covers_exact_shipped_unsafe_tools_and_not_recovery():
         for descriptor in json.loads(path.read_text(encoding="utf-8"))["plugins"]
         if descriptor["type"] == "maintenance.tool"
     }
-    assert shipped == SUSPENDED | {RECOVERY}
+    assert shipped == SUSPENDED | {RECOVERY, "maintenance.audit.metadata"}
+    # New aggregate-only tool does not release or replace any historical hold.
+    metadata, = (d for d in json.loads(AUDIT_MANIFEST.read_text())["plugins"]
+                 if d["id"] == "maintenance.audit.metadata")
+    assert metadata["requires_brokers"] == ["catalog"]
 
 
 def test_builtin_cache_tool_is_disabled_even_when_forced(tmp_path):

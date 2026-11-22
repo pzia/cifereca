@@ -55,10 +55,12 @@ def _right(db, source):
         if rights[0][1:4] != ("loan", "active", source.resource_id):
             return None
     elif source.kind == "purchase":
-        # A legacy owned entitlement is edition-scoped: accept only one
-        # exact observed purchase occurrence across all branches of this
-        # account, never arbitrate multiple purchases by description.
-        if rights[0][1:3] != ("owned", "active") or rights[0][3] not in (None, ""):
+        # Require the exact owned occurrence, not a title/edition join.
+        # Preserve the separate ambiguity guard across all account branches.
+        if (rights[0][0] != source.resource_id
+                or rights[0][1:3] != ("owned", "active")
+                or rights[0][3] not in (None, "")
+                or rights[0][4] not in (None, "")):
             return None
         occurrences = db.execute(
             "SELECT branch_id,right_id FROM source_references WHERE identity_id=? "
