@@ -535,6 +535,7 @@ def test_historical_hold_redacts_unsafe_borrowed_loan_title(
 @pytest.mark.parametrize("unsafe", [
     "prefix\nFORGED", "prefix\x85FORGED", "prefix\u202eFORGED",
     "prefix\u2028FORGED", "prefix\u200dFORGED",
+    "prefix\u2066FORGED", "prefix\x1bFORGED",
 ])
 def test_historical_ledger_display_redacts_unprintable_source_and_evidence(
     store, tmp_path, unsafe,
