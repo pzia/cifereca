@@ -97,6 +97,27 @@ def known_public_primary_facts(row):
         supplied = row.get(name)
         if type(expected) is not str or type(supplied) is not str or supplied != expected:
             return None
+    # The source hit is a frozen dataclass, but object.__setattr__ can still
+    # replace its scalar fields after the C-first row was projected. The
+    # grouped Search source filter must not attribute the other author's,
+    # medium's or descriptive facts to this primary edition simply because
+    # provider/record/title still match the original receipt.
+    for supplied, expected in (
+        (row.get("author"), hit.author),
+        (row.get("published_at"), hit.published_at),
+        (row.get("media_format"), hit.media_format),
+        (row.get("medium"), hit.medium),
+        (meta.get("publisher"), hit.publisher),
+        (meta.get("description"), hit.description),
+        (meta.get("notice_c_cover_state"), hit.cover_state),
+    ):
+        if (type(expected) not in (str, type(None))
+                or type(supplied) is not type(expected)
+                or supplied != expected):
+            return None
+    if (type(hit.stale) is not bool
+            or meta.get("notice_c_stale") is not hit.stale):
+        return None
     return hit
 
 
