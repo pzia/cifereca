@@ -19,13 +19,17 @@ def _text(value, maximum):
 class GuidedBookReviewLease:
     __slots__ = ("_lease", "_placement", "_ui_current", "_thread", "_action",
                  "_group", "_toast", "_buttons", "_ids", "_dispose",
-                 "_phase", "_pending", "_group_disposers", "_issued", "_retire")
+                 "_phase", "_pending", "_group_disposers", "_issued", "_retire",
+                 "_native_result", "_submission_generation")
 
-    def __init__(self, lease, placement, ui_current, add_action, add_group, toast, retire=None):
+    def __init__(self, lease, placement, ui_current, add_action, add_group, toast,
+                 retire=None, native_result=None):
         self._lease, self._placement = lease, placement
         self._ui_current, self._thread = ui_current, get_ident()
         self._action, self._group, self._toast = add_action, add_group, toast
         self._retire = retire
+        self._native_result = native_result
+        self._submission_generation = 0
         self._buttons, self._ids = {}, set()
         self._issued = 0
         self._dispose = None
@@ -58,6 +62,11 @@ class GuidedBookReviewLease:
         # At most one submission per explicit mapped click, even when a
         # runner synchronously delivers a result or refuses admission.
         self._phase = "submitted"
+        self._submission_generation += 1
+        generation = self._submission_generation
+
+        def current():
+            return self._submission_generation == generation and self.is_current()
 
         def deliver(result):
             if not self._ui_live():
@@ -66,6 +75,9 @@ class GuidedBookReviewLease:
             self._phase = "delivery"
             try:
                 done(result)
+                if callable(self._native_result) and current() and self._ui_live():
+                    self._native_result(result, current,
+                                        lambda: current() and self._ui_live())
             finally:
                 self._phase = previous
 
@@ -259,10 +271,28 @@ def admit_guided_book_review(window, detail, row, item, *, token, resolved):
             detail.add_actions([button])
             return button
 
+        def native_result(value, current, visible):
+            # Ordinary review data cannot trigger a native confirmation.
+            # Resolve only the exact private preview already owned by Core.
+            from ..core.local_origin_detail_broker import take_native_local_origin_declaration
+            pending = take_native_local_origin_declaration(
+                manager, resolved, value, service=service,
+                identity_id=identity, placement_id=placement)
+            if pending is None or not visible():
+                return
+            from gi.repository import Adw
+            from .library_declaration_actions import show_private_origin_declaration
+            preview, preview_current = pending
+            show_private_origin_declaration(
+                Adw=Adw, window=window, runner=runner, service=service, preview=preview,
+                current=lambda: current() and preview_current(),
+                visible=lambda: visible() and preview_current())
+
         lease = GuidedBookReviewLease(
             GuidedMaintenanceHostLease(identity, valid, enqueue), placement,
             ui_current, add_action, detail.add_review_group, window.toast,
-            retire=getattr(detail, "remove_review_action", None))
+            retire=getattr(detail, "remove_review_action", None),
+            native_result=native_result)
         return lease if lease._ui_live() else None
     except Exception:
         return None

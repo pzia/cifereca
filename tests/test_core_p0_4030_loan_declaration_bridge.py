@@ -248,3 +248,77 @@ def test_declaration_selection_available_on_every_private_page(case, monkeypatch
     for index in range(1, 7):
         assert any(f"Prêt : loan-{index}" in row[1] for row in seen)
     assert records(service) == before and path.read_bytes() == data and calls == []
+
+
+@pytest.mark.parametrize("change", ["apply", "cancel", "navigation", "activation", "expired", "queued_stale"])
+def test_native_confirmation_consumes_only_exact_private_preview(case, change):
+    from types import SimpleNamespace as NS
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.local_origin_detail_broker import (
+        LocalOriginDetailReadFactory, take_native_local_origin_declaration,
+    )
+    from cifereca.gui.library_declaration_actions import show_private_origin_declaration
+    from tests.test_library_declaration_actions import Dialog, Runner
+
+    service, request, choice, candidate, right, path, calls = case
+    factory = LocalOriginDetailReadFactory(service)
+    port = "library.origin.detail.read"
+    resolver = ActivationBrokerResolver(lambda _: None, lambda _: factory, "fixture", (port,))
+    broker = resolver(port)
+    plugin = object()
+    resolved = NS(plugin_id="fixture", service=plugin, registry_generation=3)
+    manager = NS(_registry_generation=3, service=lambda _: plugin,
+                 _records={"fixture": NS(service=plugin, activation_brokers=resolver)})
+    live = [True]
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: live[0], confirmed=True)
+    selected = next(c for c in page.private_choices if c.kind == "loan")
+    report = broker.compare_private(token=selected.token, confirmed=True)
+    hit, = report.matches
+    advice = broker.preview_loan_declaration(token=hit.declaration_choice, confirmed=True)
+    assert advice is not None and not hasattr(broker, "_take_native_preview")
+
+    def take(value, placement=request.placement_id):
+        return take_native_local_origin_declaration(
+            manager, resolved, value, service=service, identity_id="A", placement_id=placement)
+
+    assert take(replace(advice)) is None
+    assert take(advice, "different-placement") is None
+    preview, preview_current = take(advice)
+    assert take(advice) is None
+    current = lambda: live[0] and preview_current()
+    names = ("entitlements", "source_references", "origin_links", "artifacts",
+             "placements", "catalog_entries", "acquisition_ledger")
+    before = {name: rows(service, name) for name in names}
+    data = path.read_bytes()
+    messages, runner = [], Runner()
+    runner.deferred = True
+    Dialog.dialogs = []
+    assert show_private_origin_declaration(
+        Adw=NS(MessageDialog=Dialog), window=NS(toast=messages.append), runner=runner,
+        service=service, preview=preview, current=current, visible=current)
+    dialog, = Dialog.dialogs
+    assert dialog.markup is False and dialog.default == dialog.close_response == "cancel"
+    assert candidate.source.resource_id in dialog.body and str(path) in dialog.body
+    assert preview.token not in dialog.body and not runner.queue and not records(service)
+    if change == "navigation":
+        live[0] = False
+    elif change == "activation":
+        resolver.close()
+    elif change == "expired":
+        service.storage.entitlement_put({**right, "state": "expired"})
+        before = {name: rows(service, name) for name in names}
+    dialog.respond("cancel" if change == "cancel" else "apply")
+    dialog.respond("apply")
+    if change in ("apply", "expired", "queued_stale"):
+        assert len(runner.queue) == 1 and not records(service)
+        if change == "queued_stale":
+            live[0] = False
+        runner.run()
+    else:
+        assert not runner.queue
+    assert len(records(service)) == (1 if change == "apply" else 0)
+    if change == "apply":
+        assert records(service)[0]["origin"] == "user_declaration"
+    assert {name: rows(service, name) for name in names} == before
+    assert path.read_bytes() == data and calls == []

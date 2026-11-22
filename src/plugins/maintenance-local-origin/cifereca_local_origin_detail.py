@@ -513,7 +513,7 @@ class DetailController:
                     ("Édition", value.edition_id), (resource_label, getattr(value, resource_field)),
                     ("Effet", "Déclaration utilisateur uniquement. Aucune origine attestée, "
                      "aucune modification de droit, de fichier ou de placement."),
-                    ("Disponibilité", "Confirmation native non raccordée ; aucune écriture."),
+                    ("Disponibilité", "Confirmation native distincte requise ; aucune écriture à l’aperçu."),
                 ))
             self._show_choice_window(original, 0)
 
