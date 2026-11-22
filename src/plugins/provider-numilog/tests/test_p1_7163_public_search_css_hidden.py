@@ -12,7 +12,7 @@ HTML = (Path(__file__).with_name("fixtures") / "public_search_jefferson_20261016
 URL = "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson"
 
 
-@pytest.mark.parametrize("klass", ["hidden", "d-none", "sr-only", "visually-hidden"])
+@pytest.mark.parametrize("klass", ["hidden", "d-none", "sr-only", "visually-hidden", "invisible"])
 def test_css_hidden_competing_author_is_never_published(klass):
     original = parse_public_search(HTML, URL)
     changed = HTML.replace(
@@ -35,3 +35,16 @@ def test_css_hidden_nested_title_text_fails_closed(klass):
     with pytest.raises(PublicSearchParseError, match="hidden_field") as exc:
         parse_public_search(changed, URL)
     assert "PRIVATE_SENTINEL" not in str(exc.value)
+
+
+@pytest.mark.parametrize("declaration", ["visibility:collapse", "visibility: collapse !important"])
+def test_collapsed_author_column_cannot_be_a_public_source_fact(declaration):
+    original = parse_public_search(HTML, URL)
+    changed = HTML.replace(
+        '<a class="Author"',
+        f'<a class="Author" style="{declaration}">PRIVATE_SENTINEL</a><a class="Author"', 1,
+    )
+    assert changed != HTML
+    result = parse_public_search(changed, URL)
+    assert result.items[0].metadata["authors"] == original.items[0].metadata["authors"]
+    assert "PRIVATE_SENTINEL" not in repr(result.items)
