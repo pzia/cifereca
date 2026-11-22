@@ -10,6 +10,7 @@ import json
 import sqlite3
 
 from .canonical_recovery import _unique_checkpoint_fields
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 
 _MAX_LEDGER_ROWS = 256
@@ -25,8 +26,7 @@ def _text(value, *, empty=False):
 
 def _recorded_binding(storage, source):
     scope = source.scope
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         rows = db.execute(
             "SELECT status,executor,CASE WHEN length(CAST(metadata_json AS BLOB))<=? "
             "THEN metadata_json ELSE NULL END FROM acquisition_ledger "
