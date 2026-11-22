@@ -105,7 +105,8 @@ def _snapshot(scope):
     for row in rows:
         if (type(row) is not dict or type(row.get("id")) is not str
                 or not 0 < len(row["id"]) <= 1024
-                or any(ord(ch) < 32 or ord(ch) == 127 for ch in row["id"])
+                or any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                       for ch in row["id"])
                 or "directory_name" not in row):
             raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
         identity = row["id"]
