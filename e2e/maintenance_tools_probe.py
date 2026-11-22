@@ -906,7 +906,7 @@ def main():
                 # Actual registered EPUB, no synthetic broker return.
                 book = corpus / "rename-opaque.epub"
                 fmt, title, author = "epub", "Roman témoin", "Autrice témoin"
-                from zipfile import ZIP_STORED
+                from zipfile import ZIP_STORED, ZipFile
                 with ZipFile(book, "w") as archive:
                     archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
                     archive.writestr("META-INF/container.xml",
@@ -1202,7 +1202,8 @@ def main():
 
                             def prepare_candidate():
                                 assert prepare.get_sensitive()
-                                assert selector.set_active_id("rename-only")
+                                selector.set_active_id("rename-only")
+                                assert selector.get_active_id() == "rename-only"
                                 prepare.emit("clicked")
                                 until(lambda: prepare.get_sensitive()
                                       and prepare.get_label() == "Confirmer la simulation",
