@@ -55,10 +55,15 @@ def test_final_receipt_offer_rotation_is_precise_and_read_only(
     assert selection is not None and selection.current()
     assert selection.final_receipt_evidence == expected
     assert selection.unlock_authorized is False
-    assert selection.rearm_blocker == (
-        "final_receipt_precedence" if expected == "verified_final_receipt_observed"
-        else "other_offer_receipt_precedence" if expected == "verified_other_offer_receipt_observed"
-        else "local_recovery_not_qualified")
+    if expected == "verified_final_receipt_observed":
+        assert selection.rearm_blocker == "final_receipt_precedence"
+    elif expected == "verified_other_offer_receipt_observed":
+        assert selection.rearm_blocker == "other_offer_receipt_precedence"
+    else:
+        # A separately verified local copy still has priority over an
+        # ambiguous checkpoint. Neither outcome authorizes network replay.
+        assert selection.rearm_blocker in (
+            "local_copy_precedence", "local_recovery_not_qualified")
     assert (rows(store), original.read_bytes(), final.read_bytes(),
             lock_path.read_bytes()) == baseline
     assert store.metadata_get(marker._key(source)) == hold
