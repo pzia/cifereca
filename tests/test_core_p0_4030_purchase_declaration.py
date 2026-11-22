@@ -49,6 +49,23 @@ def test_purchase_declaration_only_for_unique_existing_owned_right(private_rig, 
     preview = bridge.preview_private_purchase_declaration(
         service, choice=choice, candidate=candidate, confirmed=True)
     if case == "exact":
+        from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+        from cifereca.plugin_api.local_origin_detail import LocalOriginPurchaseDeclarationAdvice
+        broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+        page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                              still_current=lambda: True, confirmed=True)
+        selected = next(c for c in page.private_choices if c.kind == "purchase")
+        report = broker.compare_private(token=selected.token, confirmed=True)
+        hit, = report.matches
+        token = hit.declaration_choice
+        assert token and token not in repr(hit)
+        assert broker.preview_loan_declaration(token=token, confirmed=True) is None
+        assert broker.preview_purchase_declaration(token=token) is None
+        advice = broker.preview_purchase_declaration(token=token, confirmed=True)
+        assert type(advice) is LocalOriginPurchaseDeclarationAdvice
+        assert advice.purchase_id == key.right_id and advice.association_authorized is False
+        assert broker.preview_purchase_declaration(token=token, confirmed=True) is None
+        assert records(service) == []
         assert preview is not None and preview.context["purchase"] == key.right_id
         assert bridge.admit_private_loan_declaration(service, preview, user_confirmed=True) is None
         command = bridge.admit_private_purchase_declaration(service, preview, user_confirmed=True)
