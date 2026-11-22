@@ -48,8 +48,8 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
     return path
 
 
-def _declared_witness(db, *, identity, path, inode, include_declared):
-    """Reuse #2797's bounded strict decoder; never infer a statement by SHA."""
+def _declared_witness(db, *, identity, path, inode, include_declared, digest, size):
+    """Reuse #2797's strict decoder; never attach a stale declaration by path."""
     from .library_declared_links import DeclarationRejected, _records, _json
 
     try:
@@ -63,7 +63,12 @@ def _declared_witness(db, *, identity, path, inode, include_declared):
         return "declaration_evidence_unavailable", None
     if not matched:
         return None, ()
-    if (len(matched) != 1 or matched[0]["scope"]["identity_id"] != identity):
+    # A recorded path can be reused by a different book. Path/inode is a
+    # discovery coordinate, not evidence that a user statement describes
+    # the canonical Artifact currently verified at that location.
+    if (len(matched) != 1 or matched[0]["scope"]["identity_id"] != identity
+            or matched[0]["file"]["sha256"] != digest
+            or matched[0]["file"]["size"] != size):
         return "declaration_scope_unverified", None
     if not include_declared:
         return "declared_origin_requires_review", None
@@ -127,7 +132,7 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                 return "other_origin_requires_review", None
             reason, declaration = _declared_witness(
                 db, identity=identity, path=path, inode=inode,
-                include_declared=include_declared,
+                include_declared=include_declared, digest=digest, size=size,
             )
             if declaration is None:
                 return reason, None
