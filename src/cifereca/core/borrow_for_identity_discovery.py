@@ -360,6 +360,16 @@ def discover_possible_borrow_lenders(
                         requesting_identity_id) is not account):
                 return ()
         visible = _label_lenders([row for row in result.values() if row is not None])
+        # Label composition can rebuild a frozen DTO. Never re-admit mutated
+        # source/account receipts while preparing the final visible options.
+        if any(
+            not possible_lender_matches(
+                row, row._notice,
+                requesting_identity_id=requesting_identity_id,
+            ) or not possible_lender_session_matches(row, row._session)
+            for row in visible
+        ):
+            return ()
         if (service.identity_by_id(requesting_identity_id) is not requester
                 or service._account_context_epoch != context_epoch
                 or service._source_context_epoch != source_epoch):
@@ -367,6 +377,22 @@ def discover_possible_borrow_lenders(
         return visible
     except Exception:
         return ()
+
+
+def _relabel_preserving_receipt(
+    row: PossibleBorrowLender, label: str,
+) -> PossibleBorrowLender:
+    """Changing a public label cannot refresh an exact source receipt.
+
+    dataclasses.replace invokes __post_init__, which otherwise recaptures
+    mutable Account/SearchResult fields during a display-only operation.
+    """
+    renamed = replace(row, label=label)
+    object.__setattr__(renamed, "_captured_fields", row._captured_fields)
+    object.__setattr__(
+        renamed, "_captured_notice_binding", row._captured_notice_binding,
+    )
+    return renamed
 
 
 def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLender, ...]:
@@ -401,7 +427,7 @@ def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLe
         else:
             suffix = f" · {account_label}"
         safe_prefix = row.label[:max(1, 80 - len(suffix))].rstrip()
-        visible.append(replace(row, label=safe_prefix + suffix))
+        visible.append(_relabel_preserving_receipt(row, safe_prefix + suffix))
     # Composed public labels can collide with another profile's literal
     # name (or with another truncated prefix). Number the entire ordered
     # set only in that case, without ever displaying private route keys.
@@ -409,8 +435,8 @@ def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLe
         numbered = []
         for index, row in enumerate(visible, 1):
             prefix = f"Choix {index}/{len(visible)} · "
-            numbered.append(replace(
-                row, label=prefix + row.label[:80 - len(prefix)].rstrip(),
+            numbered.append(_relabel_preserving_receipt(
+                row, prefix + row.label[:80 - len(prefix)].rstrip(),
             ))
         visible = numbered
     return tuple(visible)
