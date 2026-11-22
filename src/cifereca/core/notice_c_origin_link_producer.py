@@ -136,12 +136,33 @@ def _admitted_public_sources_txn(
             (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(admitted))),
         )
         for key_string, raw in retained:
+            claimed = set()
             try:
+                # The SQL prefilter selects claims by provider/record.
+                # Retain those coordinates for a local veto even if the
+                # canonical row fails its authoritative decoder.
+                wire = json.loads(raw)
+                members = wire.get("sources") if type(wire) is dict else None
+                if type(members) is dict:
+                    for member in members.values():
+                        if type(member) is not dict:
+                            continue
+                        bio = member.get("public_bibliography")
+                        provider = member.get("provider")
+                        record = bio.get("record_id") if type(bio) is dict else None
+                        if type(provider) is str and type(record) is str:
+                            coords = (provider, record)
+                            if coords in admitted:
+                                claimed.add(coords)
+                if not claimed:
+                    continue
                 document = canonical_cover_document_ref(_json(raw)["edition_id"])
                 if _db_key(document) != key_string:
-                    continue
+                    raise ValueError("corrupt_canonical_cover")
                 consolidated = _decode(raw, document)
             except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+                for coords in claimed:
+                    admitted.pop(coords, None)
                 continue
             for member in consolidated.sources:
                 bio = member.public_bibliography

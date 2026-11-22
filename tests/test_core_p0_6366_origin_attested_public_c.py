@@ -534,3 +534,30 @@ def test_distinct_records_same_provider_require_independent_completed_origins(
         assert db.entitlements() == [] and db.acquisitions() == []
     with closing(Storage(path)) as db:
         assert read_consolidated_notice_cover(db, shared) == canonical
+
+
+def test_corrupt_retained_origin_claim_vetoes_only_relevant_record(tmp_path):
+    import json
+    from cifereca.core.notice_c_cover_index import _db_key
+    from cifereca.core.notice_c_origin_link_producer import _admitted_public_sources
+
+    with_db = Storage(tmp_path / "origin-corrupt-claim.sqlite")
+    try:
+        a, b = _source_rows()
+        assert _mirror(with_db, a, b) == 2
+        wanted = {("seller-a", "edition-a"), ("seller-b", "edition-b")}
+        assert set(_admitted_public_sources(with_db, wanted)) == wanted
+        own = a._core_notice_canonical_cover_document_ref
+        with with_db._lock, with_db._connect() as sql:
+            raw, = sql.execute("SELECT value FROM metadata WHERE key=?",
+                               (_db_key(own),)).fetchone()
+            wire = json.loads(raw)
+            wire["epoch"] = False
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (json.dumps(wire), _db_key(own)))
+        assert set(_admitted_public_sources(with_db, wanted)) == {
+            ("seller-b", "edition-b"),
+        }
+        assert with_db.entitlements() == [] and with_db.acquisitions() == []
+    finally:
+        with_db.close()
