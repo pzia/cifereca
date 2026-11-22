@@ -472,3 +472,65 @@ def test_three_completed_origins_expand_existing_c_without_competing_ref(tmp_pat
                 exact_public_source_c_many(reopened, keys).values()} == {ref}
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("second_owner", ["A", "B"])
+def test_distinct_records_same_provider_require_independent_completed_origins(
+    tmp_path, second_owner,
+):
+    from contextlib import closing
+    from cifereca.core.notice_c_origin_link_producer import reattest_exact_origin_group_txn
+
+    path = tmp_path / "same-provider-records.sqlite"
+    with closing(Storage(path)) as db:
+        register(db, "A", "seller-a", "card-a")
+        register(db, second_owner, "seller-a", "card-b")
+        root = tmp_path / "EBooks"
+        a_key, a_snapshot = new_source(
+            "A", provider="seller-a", credential="card-a",
+            edition="edition-a", right="right-a",
+        )
+        b_key, b_snapshot = new_source(
+            second_owner, provider="seller-a", credential="card-b",
+            edition="edition-b", right="right-b",
+        )
+        first = publish(db, root, target(tmp_path, "A"), a_key, a_snapshot)
+        second = publish(db, root, target(tmp_path, second_owner), b_key, b_snapshot)
+        assert first.artifact_id == second.artifact_id
+        assert first.source_reference_id != second.source_reference_id
+        a, _ = _source_rows()
+        b = witnessed(public_row(
+            source_provider="seller-a", record_id="edition-b",
+            thumbnail_url=B_URL, title="L'ouvrage commun",
+        ))
+        assert _mirror(db, a) == 1
+        own = a._core_notice_canonical_cover_document_ref
+        assert _mirror(db, b) == 1
+        shared = b._core_notice_canonical_cover_document_ref
+        canonical = read_consolidated_notice_cover(db, shared)
+        assert shared != own
+        if second_owner != "A":
+            assert len(canonical.sources) == 1
+            return
+        assert first.placement_id == second.placement_id
+        assert len(canonical.sources) == 2
+        assert {m.public_bibliography.record_id for m in canonical.sources} == {
+            "edition-a", "edition-b",
+        }
+        assert {m.provider_id for m in canonical.sources} == {"seller-a"}
+        assert {c.url for c in canonical.candidates} == {A_URL, B_URL}
+        sources = tuple(read_notice_cover(db, row._core_notice_cover_document_ref)
+                        for row in (a, b))
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            assert reattest_exact_origin_group_txn(sql, sources) == sources
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM origin_links WHERE source_reference_id=?",
+                        (second.source_reference_id,))
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            with pytest.raises(ValueError, match="relation_changed"):
+                reattest_exact_origin_group_txn(sql, sources)
+        assert db.entitlements() == [] and db.acquisitions() == []
+    with closing(Storage(path)) as db:
+        assert read_consolidated_notice_cover(db, shared) == canonical
