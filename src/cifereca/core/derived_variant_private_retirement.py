@@ -26,6 +26,7 @@ from .derived_variant_compact_receipt import _measure_compact_in_transaction
 from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_link import _regular, _require_named
 from .derived_variant_retention_review import _canonical
+from .derived_variant_reader_evidence import kepub_text_spans_observed
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _walk, _receipt_alias_verdict
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -121,9 +122,9 @@ def _transaction(storage):
 
 
 def _read_content(fd, intent):
-    # This first isolated recipe only admits a structurally openable EPUB.
-    # PDF header/EOF and KEPUB suffix alone are NOT equivalent reader proof.
-    _require(intent.media_format == "epub" and 0 < intent.output_size <= _MAX_CONTENT,
+    # EPUB and KEPUB require actual container/spine evidence. For KEPUB
+    # additionally require its text spans; PDF remains unqualified.
+    _require(intent.media_format in ("epub", "kepub") and 0 < intent.output_size <= _MAX_CONTENT,
              "derived_retirement_reader_unverified")
     os.lseek(fd, 0, os.SEEK_SET)
     content = bytearray()
@@ -177,8 +178,10 @@ def _read_content(fd, intent):
             page = _xml(document)
             _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
                      and page.find("{http://www.w3.org/1999/xhtml}body") is not None)
+            if intent.media_format == "kepub":
+                _require(kepub_text_spans_observed(page), "derived_retirement_reader_unverified")
             checked.add(name)
-    inspected = inspect_artifact_content(data, expected_format="epub", strict_structure=True)
+    inspected = inspect_artifact_content(data, expected_format=intent.media_format, strict_structure=True)
     _require(inspected.valid is True and inspected.media_format == "epub"
              and inspected.protected is False, "derived_retirement_reader_unverified")
 

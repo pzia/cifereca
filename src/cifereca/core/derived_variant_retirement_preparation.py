@@ -22,6 +22,7 @@ from . import derived_variant_compact_receipt as compact
 from . import derived_variant_private_region as region
 from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_retention_review import _canonical
+from .derived_variant_reader_evidence import kepub_text_spans_observed
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _receipt_alias_verdict, _walk
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -43,7 +44,7 @@ def _require(ok, code="derived_retirement_preparation_unverified"):
         raise journal.DerivedJournalConflict(code)
 
 
-def _inspect_epub_final(fd, size, *, still_current=lambda: True):
+def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: True):
     """Pinned, bounded EPUB container and spine readability, not rendering.
 
     PDFs are deliberately not accepted by this tranche: a PDF signature or
@@ -101,9 +102,13 @@ def _inspect_epub_final(fd, size, *, still_current=lambda: True):
                 _require(item is not None and item.get("media-type") == "application/xhtml+xml",
                          "derived_retirement_reader_unverified")
                 member = _member(str(Path(package_name).parent), item.get("href"))
-                _require(_xml(_read(archive, member, MAX_XML)).tag
-                         == "{http://www.w3.org/1999/xhtml}html",
+                page = _xml(_read(archive, member, MAX_XML))
+                _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
+                         and page.find("{http://www.w3.org/1999/xhtml}body") is not None,
                          "derived_retirement_reader_unverified")
+                if media_format == "kepub":
+                    _require(kepub_text_spans_observed(page),
+                             "derived_retirement_reader_unverified")
             _require(live() and not _epub_encryption_protected(archive),
                      "derived_retirement_reader_unverified")
         # Reuse the guarded descriptor reader, rather than an uninterruptible
@@ -267,7 +272,7 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
                     _require(_hash(parent_fd, original[2]) == intent.parent_sha256
                              and _hash(final_fd, output[2]) == intent.output_sha256)
                     _inspect_epub_final(
-                        final_fd, output[2],
+                        final_fd, output[2], media_format=intent.media_format,
                         still_current=lambda: (_lock_current(shared_lock)
                                                and scope_current(db) is True))
                     physical()
