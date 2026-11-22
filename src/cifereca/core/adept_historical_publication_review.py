@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 
 _MAX_ROWS = 256
@@ -37,8 +38,7 @@ def review_legacy_adept_publication(storage, *, source: SourceKey):
         return result("scope_unverified")
     scope = source.scope
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
+        with historical_read_snapshot(storage) as db:
             references = db.execute(
                 "SELECT source_reference_id FROM source_references "
                 "WHERE identity_id=? AND provider_id=? AND credential_id=? "

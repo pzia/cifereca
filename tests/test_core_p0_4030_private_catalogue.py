@@ -404,3 +404,34 @@ def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, 
         assert len(groups) == count and not following()
     assert issued.count("private-0") == 2 and not following()
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("case", ["title", "author", "unrelated"])
+def test_private_purchase_conflicting_facts_are_visible_without_arbitration(private_rig, monkeypatch, case):
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
+    service, request, account, session, calls, path, *_ = private_rig
+    key, snap = new_source()
+    persist_attested_source_references(service.storage, snap)
+    primary = (NS(field="title", value="Autre titre" if case != "author" else "Roman commun",
+                  observed_at=100), NS(field="author", value="Autrice", observed_at=100))
+    alternate = (NS(field="title", value="Roman commun" if case == "title" else "Sans rapport",
+                    observed_at=101),) if case != "author" else (
+        NS(field="author", value="Autre auteur", observed_at=101),)
+    monkeypatch.setattr(private, "_read_descriptive_txn", lambda *args: NS(
+        facts=primary, alternatives=alternate))
+    before, content = rows(service.storage), path.read_bytes()
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: True, confirmed=True)
+    choice = next(row for row in page.private_choices if row.kind == "purchase")
+    report = broker.compare_private(token=choice.token, confirmed=True)
+    assert report.status == "partial" and not report.association_authorized
+    if case == "unrelated":
+        assert report.matches == ()
+    else:
+        match, = report.matches
+        assert match.comparison == "purchase_description_conflicting"
+        assert match.title == "Roman commun" and match.resource_id == key.right_id
+        assert match.observed_at == (101 if case == "title" else 100)
+        assert match.author == (None if case == "author" else "Autrice")
+    assert not calls and rows(service.storage) == before and path.read_bytes() == content
