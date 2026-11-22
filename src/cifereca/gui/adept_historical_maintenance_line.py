@@ -1,6 +1,8 @@
 """#976: explicit local historical loan review in Outils/Maintenance."""
 from __future__ import annotations
 
+import unicodedata
+
 from ..core.adept_historical_maintenance import (
     admit_historical_review, run_historical_review, run_historical_hold_review,
     select_historical_hold,
@@ -19,8 +21,20 @@ def _display(result):
     for row in result["rows"]:
         def value(key):
             candidate = row.get(key)
-            return ("inconnu" if candidate is None
-                    else "(vide enregistré)" if candidate == "" else str(candidate))
+            if candidate is None:
+                return "inconnu"
+            if candidate == "":
+                return "(vide enregistré)"
+            if key == "inventory_checked_at":
+                return (str(candidate) if type(candidate) is int and candidate > 0
+                        else "inconnu")
+            # Historical ledger metadata is never display authority: it may
+            # contain invisible direction controls and fake line boundaries.
+            # Keep exact source coordinates in Core; redact only this label.
+            return (candidate if type(candidate) is str and 0 < len(candidate) <= 256
+                    and all(unicodedata.category(ch) not in
+                            ("Cc", "Cf", "Cs", "Zl", "Zp") for ch in candidate)
+                    else "(identifiant non affichable)")
         pub = row.get("publication") or {}
         physical = row.get("local_bytes") or {}
         evidence = physical.get("evidence") or {}
