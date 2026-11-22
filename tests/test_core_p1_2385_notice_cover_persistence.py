@@ -13,6 +13,7 @@ from cifereca.core.notice_source_observation import (
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import (
     PersistedNoticeCover, persist_notice_cover, read_notice_cover,
+    read_current_notice_cover,
     is_notice_cover_document,
 )
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
@@ -363,10 +364,21 @@ def test_exact_n2_checks_durable_source_fence_after_restart(tmp_path, damage, pr
     with closing(Storage(path)) as db:
         # Raw diagnostic body is retained; it is not N2 authority.
         assert read_notice_cover(db, source.document) == source
+        # Core must still check the durable fence for both source scopes.
+        # A private source is never admitted by the shared GTK loader (#7454),
+        # even when the Core record is valid or a historical fence is absent.
         if damage == "legacy":
+            assert read_current_notice_cover(db, source.document) == source
+        else:
+            with pytest.raises(ValueError, match="notice_c_source_fence_corrupt"):
+                read_current_notice_cover(db, source.document)
+        if private:
+            assert cached_notice_cover_snapshot(NS(storage=db), source.document) is None
+        elif damage == "legacy":
             assert cached_notice_cover_snapshot(NS(storage=db), source.document).revision == source.epoch
         else:
             with pytest.raises(ValueError, match="notice_c_source_fence_corrupt"):
                 cached_notice_cover_snapshot(NS(storage=db), source.document)
+        assert read_current_notice_cover(db, independent.document) == independent
         assert cached_notice_cover_snapshot(NS(storage=db), independent.document).revision == independent.epoch
         assert db.entitlements() == [] and db.acquisitions() == []

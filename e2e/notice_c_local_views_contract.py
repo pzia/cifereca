@@ -369,8 +369,18 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
         loader.preview_root = loader.root / "previews-v1"
         loader.preview_root.mkdir(exist_ok=True)
         reads = []
+        fallback_images = tuple(f"https://covers.example.test/fallback-{i}.png"
+                                for i in (1, 2, 3))
+        fallback_gets = []
 
         def serve(req):
+            address = str(req.url)
+            if address in fallback_images:
+                assert offline and state.get("catalogue_fallback") and req.method == "GET"
+                fallback_gets.append(address)
+                status = (404, 410, 200)[fallback_images.index(address)]
+                return httpx.Response(status, content=body if status == 200 else b"",
+                                      headers={"content-type": "image/png"}, request=req)
             gets.append(str(req.method))
             recovery = state.get("recover_n3") is True
             assert (not offline or recovery) and req.method == "GET" and str(req.url) == url
@@ -1250,15 +1260,79 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     assert window.service._source_context_epoch == source_epoch
                     capture("00-notice-c-epub-qualified-fallback")
                     report["checks"]["P0_4980_epub_qualified_fallback_real_gtk"] = True
-                    report["local_c_stage"] = "complete"
-                    cleanup()
-                    window.present()
-                    complete()
+                    verify_catalogue_http_fallback(list_cover, detail_cover)
 
                 later(40, guard(lambda: fallback_painted(monotonic() + 12)))
 
             pending = pool.submit(prepare)
             await_job(pending, show_embedded, monotonic() + 8)
+
+        def verify_catalogue_http_fallback(list_cover, detail_cover):
+            from cifereca.core.notice_c_cover_index import persist_consolidated_cover_source
+            from cifereca.core.notice_cover_repository import persist_notice_cover
+            from cifereca.core.notice_source_observation import NoticeSourceKey, admit_source_notice
+
+            report["local_c_stage"] = "catalogue_http_fallback"
+            original_gets = tuple(gets)
+
+            def prepare():
+                for index, address in enumerate(fallback_images, 1):
+                    provider = f"fixture-fallback-{index}"
+                    notice = admit_source_notice(
+                        key=NoticeSourceKey(
+                            provider_id=provider, visibility="public", identity_id=None,
+                            credential_id=None, account_id=None, branch_id="catalogue",
+                            record_id=provider, edition_id=provider, manifestation_role="digital",
+                        ),
+                        parser_id="fixture", parser_version="1", observed_at=1,
+                        status="complete", raw_fields={"cover": address},
+                    )
+                    source = persist_notice_cover(
+                        db, notice, field_path=("cover",), cover_inventory_complete=True,
+                    )
+                    aggregate = persist_consolidated_cover_source(
+                        db, canonical_edition_id="fixture:catalogue-http-fallback", source=source,
+                        relation_proof_id=f"fixture:catalogue-http-fallback:{index}",
+                    )
+                assert len(aggregate.sources) == 3
+                return aggregate
+
+            def show_fallback(aggregate):
+                state["catalogue_fallback"] = True
+                covers = (list_cover, detail_cover)
+                for variant, cover in zip(("list", "detail"), covers):
+                    cover.bind_document(n2, aggregate.document, variant=variant,
+                                        minimum_revision=aggregate.epoch)
+
+                def painted(deadline):
+                    if not all(
+                        cover.get_mapped() and cover._request is not None
+                        and cover._request.still_current
+                        and cover._request.source_uri == fallback_images[-1]
+                        and isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                        and not cover.placeholder.get_visible() and not cover.spinner.get_visible()
+                        for cover in covers
+                    ):
+                        assert monotonic() < deadline, "qualified catalogue HTTP fallback GTK timeout"
+                        later(40, guard(lambda: painted(deadline)))
+                        return
+                    for cover in covers:
+                        texture = cover.picture.get_paintable()
+                        with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                            assert image.convert("RGB").getpixel((0, 0)) == pixels
+                    assert tuple(fallback_gets) == fallback_images and tuple(gets) == original_gets
+                    assert window.service._account_context_epoch == account_epoch
+                    assert window.service._source_context_epoch == source_epoch
+                    capture("00-notice-c-catalogue-http-fallback")
+                    report["checks"]["P0_4980_catalogue_http_fallback_real_gtk"] = True
+                    report["local_c_stage"] = "complete"
+                    cleanup()
+                    window.present()
+                    complete()
+
+                later(40, guard(lambda: painted(monotonic() + 8)))
+
+            await_job(pool.submit(prepare), show_fallback, monotonic() + 8)
 
         stamp_value = 1794900000
         future = pool.submit(project)
