@@ -120,3 +120,60 @@ def test_isbn_overflow_does_not_choose_arbitrary_subset():
     stream = _book(META + '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/">'
                    'urn:isbn:9780306406157</dc:identifier>' * 33)
     assert read_epub_bibliography(stream) == ("Roman commun", ("Autrice",), ())
+
+
+def _identifier(value, ident="isbn", scheme=""):
+    namespace = 'xmlns:opf="http://www.idpf.org/2007/opf"'
+    return (f'<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            f'{namespace} id="{ident}" {scheme}>{value}</dc:identifier>')
+
+
+def _refinement(code="15", *, ref="#isbn", scheme="onix:codelist5"):
+    return f'<meta refines="{ref}" property="identifier-type" scheme="{scheme}">{code}</meta>'
+
+
+@pytest.mark.parametrize("value,code,expected", [
+    ("9780306406157", "15", ("9780306406157",)),
+    ("0-306-40615-2", "02", ("9780306406157",)),
+    ("0-306-40615-2", "15", ()),
+    ("9780306406157", "02", ()),
+    ("9780306406158", "15", ()),
+    ("9780306406157", "01", ()),
+])
+def test_epub3_refined_isbn_requires_exact_type_and_checksum(value, code, expected):
+    from cifereca.core.local_origin_epub_evidence import read_epub_bibliography
+    stream = _book(META + _identifier(value) + _refinement(code))
+    original = stream.getvalue()
+    assert read_epub_bibliography(stream) == ("Roman commun", ("Autrice",), expected)
+    assert stream.tell() == 3 and stream.getvalue() == original
+
+
+@pytest.mark.parametrize("metadata,attributes", [
+    (_identifier("9780306406157") + _refinement(ref="#other"), 'version="3.0"'),
+    (_identifier("9780306406157") + _refinement(scheme="custom:codelist5"), 'version="3.0"'),
+    (_identifier("9780306406157") + _refinement(), 'version="2.0"'),
+    (_identifier("9780306406157") + _refinement(), 'version="3.0" prefix="onix: urn:foreign#"'),
+    (_identifier("9780306406157", ident="p") + _refinement(ref="#p"), 'version="3.0"'),
+    (_identifier("9780306406157") + _identifier("9780140328721") + _refinement(), 'version="3.0"'),
+    (_identifier("9780306406157") + _refinement() + _refinement("02"), 'version="3.0"'),
+    (_identifier("urn:isbn:9780306406157", scheme='opf:scheme="UUID"'), 'version="3.0"'),
+    (_identifier("urn:isbn:9780306406157") + _refinement("01"), 'version="3.0"'),
+    (_identifier("9780306406157") + _refinement() * 257, 'version="3.0"'),
+])
+def test_epub3_refinements_do_not_upgrade_ambiguous_claims(metadata, attributes):
+    from cifereca.core.local_origin_epub_evidence import read_epub_bibliography
+    assert read_epub_bibliography(_book(META + metadata, package_attrs=attributes)) == (
+        "Roman commun", ("Autrice",), ())
+
+
+def test_refined_isbn_evidence_survives_exact_local_review_without_right(store, tmp_path):
+    root, path, pid = _local_epub(store, tmp_path,
+                                 META + _identifier("9780306406157") + _refinement())
+    before = path.read_bytes()
+    result = preview.suggest_local_placement_documents(
+        store, library_root=root, identity_id="A", placement_id=pid, explicitly_requested=True)
+    assert result["local_isbns"] == ("9780306406157",)
+    assert result["metadata_evidence"] == "verified_epub_opf_description"
+    assert not result["isbn_catalogue_comparison_performed"]
+    assert not result["provider_access_performed"] and not result["association_authorized"]
+    assert not result["may_write_origin_or_right"] and path.read_bytes() == before
