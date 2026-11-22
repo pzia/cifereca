@@ -116,7 +116,12 @@ def safe_document_link_url(value, *, relation='related'):
     # Explicit DocumentLink DTOs (including retained plugin detail) can
     # bypass the row projector. Apply the same notice-shape refusals at
     # the last render boundary; generic navigation remains distinct.
-    if str(relation or '').casefold() == 'notice':
+    # A malformed/space-padded notice relation must never fall through to
+    # generic navigation, where a catalogue root is otherwise allowed.
+    # Reject foreign relation objects instead of invoking their __str__ in GTK.
+    if type(relation) is not str or _unsafe_url_controls(relation):
+        return None
+    if relation.strip().casefold() == 'notice':
         return catalogue_notice_url({'friendly_url': value})
     return catalogue_url({'friendly_url': value})
 
