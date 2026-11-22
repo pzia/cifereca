@@ -100,7 +100,15 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
     matches = tuple(
         DocumentarySuggestion(hit, _comparison(hit, title, author))
         for hit in found.hits
-        if displayable(hit.title) and displayable(hit.author)
+        if (type(hit) is PublicNoticeCHit and type(hit.title) is str
+            and bool(hit.title) and displayable(hit.title)
+            and displayable(hit.author)
+            # These coordinates are rendered alongside the title in the
+            # local review; even a malformed C DTO must not spoof a label.
+            and all(displayable(getattr(hit, field)) for field in (
+                "provider_id", "record_id", "edition_id",
+                "source_revision", "medium", "media_format",
+            )))
     )
     ordered = tuple(sorted(
         matches, key=lambda item: evidence_rank.get(item.comparison, 4),
