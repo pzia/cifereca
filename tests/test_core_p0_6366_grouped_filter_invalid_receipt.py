@@ -49,7 +49,7 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
         assert matched[0]["key"] == primary["key"]
         assert matched[0]["_notice_c_matched_providers"] == (other_provider,)
 
-        for corruption in ("epoch", "identity", "document", "packet"):
+        for corruption in ("epoch", "identity", "document", "packet", "primary_receipt"):
             row = {**primary, "metadata": deepcopy(primary["metadata"])}
             if corruption == "epoch":
                 row["metadata"]["notice_c_epoch"] = True
@@ -57,6 +57,8 @@ def test_stale_group_packet_preserves_primary_but_never_matches_alternative(tmp_
                 row["identity_id"] = "bob"
             elif corruption == "document":
                 row["_cover_document_ref"] = None
+            elif corruption == "primary_receipt":
+                row.pop("_core_notice_c_primary_facts")
             else:
                 row.pop("_core_notice_c_filter_sources")
             rows, originals = expand_filter_sources([row], scope="all")
