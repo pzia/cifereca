@@ -11,6 +11,7 @@ from ..plugin_api.downloadable_resources import SourceReference
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_adept_attempt import (
     _key as _adept_key, review_loan_adept_marker_in_transaction,
+    review_loan_adept_unsubmitted_in_transaction, _unsubmitted_row,
 )
 from .canonical_recovery import _exact_borrower_bound_in_db
 from .canonical_runtime_attempt import RUNTIME_ATTEMPT_PREFIX, read_runtime_attempt_in_db
@@ -39,6 +40,8 @@ class LoanDownloadRetryRow:
     local_state_invalid: bool = False
     adept_hold_origin: str = ""
     adept_marker_state: str = ""
+    adept_unsubmitted_state: str = ""
+    adept_unsubmitted_reason: str = ""
 
     @property
     def can_reset(self) -> bool:
@@ -117,6 +120,8 @@ def _ledger_hold(db, source, scopes):
 def _adept_hold_origin(db, source, scopes):
     if db.execute("SELECT 1 FROM metadata WHERE key=?", (_adept_key(source),)).fetchone() is not None:
         return "marker_recorded"
+    if _unsubmitted_row(db, source) is not None:
+        return "unsubmitted_witness_orphan"
     return "historical_ledger" if _ledger_hold(db, source, scopes) else ""
 
 
@@ -173,6 +178,8 @@ def review_loan_download_retries(service, *, identity_id: str):
             hold = bool(hold_origin)
             marker_state = (review_loan_adept_marker_in_transaction(db, source).state
                             if hold_origin == "marker_recorded" else "")
+            witness = (review_loan_adept_unsubmitted_in_transaction(db, source=source)
+                       if hold_origin in ("marker_recorded", "unsubmitted_witness_orphan") else None)
             try:
                 refused_at = read_adept_intervention(db, source)
             except ValueError:
@@ -202,7 +209,8 @@ def review_loan_download_retries(service, *, identity_id: str):
             result.append(LoanDownloadRetryRow(
                 source, title, retry, hold, state != "active", refused_at,
                 runtime_hold, runtime_started_at, runtime_phase, invalid, hold_origin,
-                marker_state,
+                marker_state, witness.state if witness is not None else "",
+                witness.reason if witness is not None else "",
             ))
     if not current():
         raise ValueError("loan_download_review_scope_changed")

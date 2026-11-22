@@ -191,3 +191,32 @@ def test_retired_owned_gtk_fixture_cannot_resurrect_historical_entitlements():
                and isinstance(node.args[1], ast.Name)
                and node.args[1].id == "component_summaries"
                for node in ast.walk(verify))
+
+
+@pytest.mark.parametrize("mode", ["valid", "wrong_stage", "bool", "text",
+                                  "other_line", "successful"])
+def test_fallback_diagnostic_exports_only_reviewed_assertion_coordinate(mode):
+    mod = exporter()
+    tree = ast.parse((ROOT / "e2e/notice_c_local_views_contract.py").read_text(encoding="utf-8"))
+    fallback = next(node for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == "fallback_painted")
+    permitted = [node.lineno for node in ast.walk(fallback) if isinstance(node, ast.Assert)]
+    assert permitted
+    line = permitted[0]
+    with TemporaryDirectory() as tmp:
+        source, private = write_case(
+            Path(tmp), "book-detail-1280", returncode=0 if mode == "successful" else 1)
+        value = {"bool": True, "text": "SECRET", "other_line": 1}.get(mode, line)
+        private.write_text(json.dumps({
+            "local_c_stage": "epub_priority_warm" if mode == "wrong_stage" else "epub_qualified_fallback",
+            "local_c_fallback_assertion_line": value,
+            "error": "PRIVATE SECRET /home/private",
+            "traceback": ["SECRET"],
+        }), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        key = "book_detail_local_c_fallback_assertion_line"
+        if mode == "valid":
+            assert result[key] == line
+        else:
+            assert key not in result
+        assert "SECRET" not in repr(result)
