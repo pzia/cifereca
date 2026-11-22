@@ -304,3 +304,28 @@ def test_declared_origin_must_match_exact_pinned_file_fingerprint(
     assert not confirmed["association_authorized"]
     assert not confirmed["may_write_origin_or_right"]
     assert rows(store) == before and path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("wrong_provider", ["seller", "kobo", "", None])
+def test_catalogue_claim_must_be_from_exact_local_provider(
+    store, tmp_path, monkeypatch, wrong_provider,
+):
+    root, path, pid, _ = _setup(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE catalog_entries SET provider_id=? WHERE catalog_entry_id=?",
+            (wrong_provider, "synthetic-local"),
+        )
+    prior = rows(store)
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("foreign catalogue metadata must not query C"),
+    )
+    for included in (False, True):
+        result = _request(store, root, pid, include_declared=included)
+        assert result["status"] == "excluded"
+        assert result["reason"] == "catalogue_evidence_unavailable"
+        assert result["suggestions"] is None
+        assert result["association_authorized"] is False
+        assert result["provider_access_performed"] is False
+    assert rows(store) == prior and path.read_bytes() == BYTES
