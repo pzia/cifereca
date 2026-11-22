@@ -597,3 +597,46 @@ def test_malformed_borrower_author_does_not_abort_sibling_projection(
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_borrower_public_fiche_without_cover_survives_eviction_and_restart(tmp_path):
+    from contextlib import closing
+    from cifereca.core.notice_source_observation import admit_source_notice
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+    from cifereca.core.notice_cover_repository import persist_notice_cover, evict_notice_cover
+    path = tmp_path / "borrower-fiche.sqlite"
+    uri = "https://books.example.org/title/book-42"
+    with closing(Storage(path)) as db:
+        row = verified_public(source_provider="bnf-pret", record_id="book-42",
+                              title="Livre source", author="Autrice",
+                              docbase="BNF_PRET", thumbnail_url=None)
+        initial = admit_public_search_catalogue(
+            row, identity_id="alice", observed_at=100, public_cover_url=None,
+        )
+        assert initial is not None
+        raw = initial.fields_copy()
+        raw["search_result"]["public_web_references"] = {
+            "schema": 1, "links": [{
+                "url": uri, "evidence": "bnf-pret.public_search_product_card",
+            }],
+        }
+        observed = admit_source_notice(
+            key=initial.key, parser_id=initial.parser_id, parser_version=initial.parser_version,
+            observed_at=100, raw_fields=raw, status=initial.status,
+        )
+        saved = persist_notice_cover(db, observed,
+            field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
+        canonical = persist_exact_public_search_cover(db, saved)
+        assert not canonical.candidates and len(canonical.catalogue_web_references) == 1
+        assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+    with closing(Storage(path)) as db:
+        items = [loan(), history()]
+        assert admit(db, items) == 2
+        for item in items:
+            packet = borrower_public_c_receipt(item, identity_id="alice")
+            assert packet.document == canonical.document
+            assert not cached_notice_cover_snapshot(NS(storage=db), packet.document).candidates
+            assert [ref.url for ref in read_consolidated_notice_cover(
+                db, packet.document).catalogue_web_references] == [uri]
+            assert borrower_public_c_receipt(item, identity_id="bob") is None
+        assert db.entitlements() == [] and db.acquisitions() == []
