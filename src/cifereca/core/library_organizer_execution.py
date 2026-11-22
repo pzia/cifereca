@@ -67,8 +67,12 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
         if (not current or current.get("path") != str(new)
                 or current.get("artifact_id") != row.get("artifact_id")
                 or current.get("identity_id") != scope.identity
-                or not new.is_file() or old.exists() or old.is_symlink()
-                or result.warnings or result.changed != 1):
+                or current.get("provider_id") != row.get("provider_id")
+                or current.get("source_item_id") != row.get("source_item_id")
+                or current.get("state") != row.get("state")
+                or not new.is_file() or new.is_symlink()
+                or old.exists() or old.is_symlink()
+                or result.ok is not True or result.warnings or result.changed != 1):
             return {"status": "recovery_required", "changed": None}
         return {"status": "renamed", "changed": 1}
     except Exception:
