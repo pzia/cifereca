@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
+    LocalOriginRemoteLoanReport,
 )
 
 # The generic book-review host accepts 12 actions including preview.
@@ -87,6 +88,28 @@ def private_rows(report):
         lines.append(("Limite", "Fenêtre limitée ; d’autres correspondances peuvent exister."))
     if not report.matches:
         lines.append(("Résultat", "Aucune correspondance connue ; absence non prouvée."))
+    return tuple(lines)
+
+
+def remote_loan_rows(report):
+    lines = [
+        ("Portée", "Compte sélectionné : " + report.provider_id + " · "
+         + report.credential_id + " · " + (report.account_id or "principal")),
+        ("Surface", "Inventaire de prêts explicitement relu ; titre et fichier locaux non transmis."),
+        ("Couverture", "Partielle ; fraîcheur réseau non vérifiée. Aucune origine ni droit attestés."),
+        ("Date de l’inventaire", report.observed_at or "Non renseignée"),
+    ]
+    for hit in report.matches:
+        lines.append((hit.title, " · ".join(x for x in (
+            hit.author, "Édition : " + hit.edition_id if hit.edition_id else "Édition non renseignée",
+            "Occurrence : " + hit.loan_id,
+            "Branche canonique non attestée",
+            _LABELS.get(hit.comparison, "Comparaison descriptive"),
+        ) if x)))
+    if report.window_truncated:
+        lines.append(("Limite", "Résultats limités ; d’autres correspondances peuvent exister."))
+    if not report.matches:
+        lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))
     return tuple(lines)
 
 
@@ -184,11 +207,26 @@ class DetailController:
                         "Cache local, aucune transmission. " + coordinates,
                         lambda selected=choice, original=value: self.compare_private(selected, original),
                     )
-                if value.private_choices:
+                remote_choices = value.remote_loan_choices[:remaining - len(private_choices)]
+                for index, choice in enumerate(remote_choices):
+                    if not self.current():
+                        return
+                    label = f"Relire les prêts — compte {index + 1}"
+                    coordinates = ("Fournisseur : " + choice.provider_id
+                                   + " · Connexion : " + choice.credential_id
+                                   + " · Compte : " + (choice.account_id or "principal"))
+                    accounts.append((label, coordinates))
+                    self.host.add_action(
+                        "remote-loan-" + str(index), label,
+                        "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates,
+                        lambda selected=choice, original=value: self.compare_remote_loan(selected, original),
+                    )
+                if value.private_choices or value.remote_loan_choices:
                     accounts.append(("Couverture",
                         "Choix partiels ; d’autres comptes ou surfaces peuvent exister."))
                 hidden = (len(value.public_choices) - len(public_choices)
-                          + len(value.private_choices) - len(private_choices))
+                          + len(value.private_choices) - len(private_choices)
+                          + len(value.remote_loan_choices) - len(remote_choices))
                 if hidden:
                     accounts.append(("Limite de la fiche",
                         f"{hidden} choix supplémentaires connus ne sont pas affichés "
@@ -209,8 +247,9 @@ class DetailController:
         self.choice_actions = ()
         self.choice_window = ()
         self.private_next.clear()
-        choices = tuple(("public", x) for x in original.public_choices) + tuple(
-            ("private", x) for x in original.private_choices)
+        choices = (tuple(("public", x) for x in original.public_choices)
+                   + tuple(("private", x) for x in original.private_choices)
+                   + tuple(("remote-loan", x) for x in original.remote_loan_choices))
         # Ten choices + an optional continuation + the permanent preview.
         count = 10 if len(choices) - offset > 11 else 11
         window = choices[offset:offset + count]
@@ -221,12 +260,14 @@ class DetailController:
             if not self.current():
                 return
             key = ("public-" + str(index - 1) if kind == "public"
-                   else "private-" + str(index - 1 - len(original.public_choices)))
+                   else "private-" + str(index - 1 - len(original.public_choices))
+                   if kind == "private" else "remote-loan-" + str(
+                       index - 1 - len(original.public_choices) - len(original.private_choices)))
             if kind == "public":
                 title = "Envoyer le titre à " + choice.provider_id
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
                 action = lambda selected=choice: self.search(selected, original)
-            else:
+            elif kind == "private":
                 surface = "achats" if choice.kind == "purchase" else "prêts"
                 title = f"Comparer {surface} — compte {index - len(original.public_choices)}"
                 coordinates = ("Fournisseur : " + choice.provider_id
@@ -235,6 +276,15 @@ class DetailController:
                 tooltip = "Cache local, aucune transmission. " + coordinates
                 accounts.append((title, coordinates))
                 action = lambda selected=choice: self.compare_private(selected, original)
+            else:
+                ordinal = index - len(original.public_choices) - len(original.private_choices)
+                title = f"Relire les prêts — compte {ordinal}"
+                coordinates = ("Fournisseur : " + choice.provider_id
+                               + " · Connexion : " + choice.credential_id
+                               + " · Compte : " + (choice.account_id or "principal"))
+                tooltip = "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates
+                accounts.append((title, coordinates))
+                action = lambda selected=choice: self.compare_remote_loan(selected, original)
             self.host.add_action(key, title, tooltip, action)
             keys.append(key)
         following = offset + len(window)
@@ -342,6 +392,31 @@ class DetailController:
 
         return self._submit(
             lambda: self.broker.compare_private(token=token, confirmed=True), display)
+
+    def compare_remote_loan(self, choice, original):
+        if (self.busy or not self.current() or self.page is not original
+                or not any(item is choice for item in original.remote_loan_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
+                or choice.token in self.used
+                or not callable(getattr(self.broker, "compare_remote_loan", None))):
+            return False
+        self.used.add(choice.token)
+
+        def display(value):
+            if (type(value) is not LocalOriginRemoteLoanReport or value.status != "partial"
+                    or (value.provider_id, value.credential_id, value.account_id)
+                    != (choice.provider_id, choice.credential_id, choice.account_id)
+                    or value.provider_read_requested is not True
+                    or any(flag is not False for flag in (
+                        value.coverage_complete, value.fresh_network_verified,
+                        value.association_authorized, value.local_description_transmitted))):
+                self.host.toast("Inventaire privé indisponible ; aucune absence attestée.")
+                return
+            self.host.add_group("Inventaire privé de prêts — lecture seule", remote_loan_rows(value))
+
+        return self._submit(
+            lambda: self.broker.compare_remote_loan(token=choice.token, confirmed=True), display)
 
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original

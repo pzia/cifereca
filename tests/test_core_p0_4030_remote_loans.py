@@ -126,3 +126,99 @@ def test_missing_edition_is_not_inferred_and_typed_only_has_no_legacy_fallback(c
     del session.loan_inventory_snapshot
     assert read_loan_inventory(session, account, typed_only=True).status == "failed"
     assert calls == []
+
+
+@pytest.mark.parametrize("change", ["none", "view", "activation", "new_preview", "cancel",
+                                    "before_worker", "after_worker"])
+def test_remote_inventory_has_own_one_use_action_in_detail_and_revocation(case, change):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, request, account, session, path, calls, choice, observed = case
+    before, data = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    assert set(actions) == {"preview"} and not calls and not tasks
+    assert actions["preview"][2]()
+    deliver(tasks)
+    original = c.page
+    remote_choice, = original.remote_loan_choices
+    title, tooltip, invoke = actions["remote-loan-0"]
+    assert "Relire les prêts" in title and "aucun titre local transmis" in tooltip
+    assert "seller" in tooltip and "card-A" in tooltip and "buyer-A" in tooltip
+    assert not calls and len(tasks) == 1
+    assert c.broker.compare_remote_loan(token=remote_choice.token) is None
+    assert c.broker.compare_remote_loan(token="forged", confirmed=True) is None
+    if change == "view":
+        host.live = False
+    elif change == "activation":
+        active[0] = False
+    elif change == "new_preview":
+        new = c.broker.preview(identity_id=request.identity_id,
+                               placement_id=request.placement_id,
+                               still_current=lambda: True, confirmed=True)
+        assert new.remote_loan_choices[0].token != remote_choice.token
+    elif change == "cancel":
+        c.broker.cancel(token=original.token)
+    invoked = invoke()
+    if change in ("view", "activation"):
+        assert not invoked
+    else:
+        assert invoked and not invoke()
+        work, done = tasks[-1]
+        if change == "before_worker":
+            host.live = False
+        result = work()
+        if change == "after_worker":
+            active[0] = False
+        count = len(groups)
+        done(result)
+        done(result)
+        if change == "none":
+            assert len(groups) == count + 1
+            text = repr(groups[-1])
+            assert "Occurrence : fresh-loan" in text and "Branche canonique non attestée" in text
+            assert "titre et fichier locaux non transmis" in text
+        else:
+            assert len(groups) == count
+    assert calls == (["typed_inventory"] if change in ("none", "after_worker") else [])
+    assert c.broker.compare_remote_loan(token=remote_choice.token, confirmed=True) is None
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_remote_loan_choices_share_the_live_host_action_budget(case):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    from cifereca.plugin_api.local_origin_detail import (
+        LocalOriginRemoteLoanChoice, LocalOriginPrivateChoice, LocalOriginPublicChoice,
+    )
+    service, request, account, session, path, calls, choice, observed = case
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    page = c.broker.preview(identity_id=request.identity_id, placement_id=request.placement_id,
+                            still_current=lambda: True, confirmed=True)
+    public = tuple(LocalOriginPublicChoice(f"pub-{i}", f"provider-{i}") for i in range(8))
+    private = tuple(LocalOriginPrivateChoice(f"cache-{i}", "seller", "card",
+                                             f"account-{i}", "loan") for i in range(16))
+    remote_choices = tuple(LocalOriginRemoteLoanChoice(f"remote-{i}", "seller", "card",
+                                                        f"account-{i}") for i in range(16))
+    c.broker = NS(preview=lambda **kw: replace(
+        page, public_choices=public, private_choices=private,
+        remote_loan_choices=remote_choices))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12 and len(title) <= 256 and len(tooltip) <= 1024
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    assert actions["preview"][2]()
+    deliver(tasks)
+    seen = set()
+    for _ in range(5):
+        seen.update(k for k in actions if k.startswith(("public-", "private-", "remote-loan-")))
+        more = [v[2] for k, v in actions.items() if k.startswith("catalogue-more-")]
+        if not more:
+            break
+        assert more[0]()
+        deliver(tasks)
+    assert seen == ({f"public-{i}" for i in range(8)}
+                    | {f"private-{i}" for i in range(16)}
+                    | {f"remote-loan-{i}" for i in range(16)})
+    assert not calls and not toasts
