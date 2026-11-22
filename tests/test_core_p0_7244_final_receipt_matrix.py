@@ -60,10 +60,9 @@ def test_final_receipt_offer_rotation_is_precise_and_read_only(
     elif expected == "verified_other_offer_receipt_observed":
         assert selection.rearm_blocker == "other_offer_receipt_precedence"
     else:
-        # A separately verified local copy still has priority over an
-        # ambiguous checkpoint. Neither outcome authorizes network replay.
-        assert selection.rearm_blocker in (
-            "local_copy_precedence", "local_recovery_not_qualified")
+        # No valid uniquely selected completed receipt can prove absence or
+        # authorize replay; the v1 hold's phase remains ambiguous.
+        assert selection.rearm_blocker == "historical_phase_ambiguous"
     assert (rows(store), original.read_bytes(), final.read_bytes(),
             lock_path.read_bytes()) == baseline
     assert store.metadata_get(marker._key(source)) == hold
