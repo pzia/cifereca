@@ -225,3 +225,37 @@ def test_public_comparison_shows_distinct_formats_for_the_same_isbn_and_record(r
     assert not toasts and len(calls) == 1
     assert rows(service.storage) == before and path.read_bytes() == content
     dispose()
+
+
+def test_untrusted_known_c_collection_label_cannot_spoof_both_review_surfaces():
+    import importlib.util
+    from dataclasses import replace
+    from pathlib import Path
+    from cifereca.plugin_api.local_origin_detail import (
+        LocalOriginDetailMatch, LocalOriginDetailPage,
+    )
+
+    plugin = (Path(__file__).resolve().parents[1] / "src/plugins"
+              / "maintenance-local-origin/cifereca_local_origin_detail.py")
+    spec = importlib.util.spec_from_file_location("origin_spoof_render", plugin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    good = LocalOriginDetailMatch(
+        "seller", "same", "PUBLIC", "edition", "Roman commun", "Autrice",
+        "title_author_concordant", False, 100,
+    )
+    page = LocalOriginDetailPage(
+        "page", 1, (good,), 1, False, False, "partial",
+        "verified_epub_opf_description",
+    )
+    for value in (None, "PUBLIC" + "\u202e" + "FAKE", "PUBLIC" + "\x85" + "FAKE"):
+        poisoned = replace(page, matches=(replace(good, docbase=value),))
+        local = repr(module.known_rows(poisoned))
+        ranked = repr(module.ranked_documentary_rows((("known-c", poisoned),)))
+        assert "Collection C :" not in local and "Collection C :" not in ranked
+        assert "Roman commun" in local and "Roman commun" in ranked
+        assert "FAKE" not in local and "FAKE" not in ranked
+    assert "Collection C : PUBLIC" in repr(module.known_rows(page))
+    assert "Collection C : PUBLIC" in repr(
+        module.ranked_documentary_rows((("known-c", page),))
+    )
