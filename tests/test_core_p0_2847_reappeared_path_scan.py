@@ -33,10 +33,17 @@ def _case(tmp_path):
 
 def _late_change(monkeypatch, file, write):
     original_walk = os.walk
+    walks = 0
 
     def during_verification(*args, **kwargs):
+        nonlocal walks
+        walks += 1
         yield from original_walk(*args, **kwargs)
-        write(file)
+        # The first pass discovers bundles; the second observes ordinary
+        # files. Mutate only after the last scan, before the negative SQLite
+        # transition, to exercise the same post-inventory race as before.
+        if walks == 2:
+            write(file)
 
     monkeypatch.setattr("cifereca.catalog.os.walk", during_verification)
 

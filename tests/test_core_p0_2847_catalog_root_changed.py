@@ -47,8 +47,15 @@ def _assert_not_marked_missing(store, placement_id):
 def test_root_disappears_during_walk_without_scandir_error(tmp_path, monkeypatch):
     root, store, placement_id = _existing_placement(tmp_path)
 
+    calls = 0
+
     def disappearing_walk(*_args, **_kwargs):
-        root.rmdir()
+        nonlocal calls
+        calls += 1
+        # Catalogue scans bundle manifests and ordinary files separately.
+        # Unmount only after the last inventory traversal has begun.
+        if calls == 2:
+            root.rmdir()
         if False:
             yield
 
