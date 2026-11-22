@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
+from .library_sqlite_freshness import sqlite_source_stamp
 
 from .derived_variant_publication import (
     DerivedPublicationConflict, _verified_variant_file,
@@ -204,6 +205,12 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
     status, row = snapshot()
     if row is None:
         raise _CandidateRejected(status)
+    # Pin the DB/WAL generation after the initial read. Re-reading identical
+    # SQL values alone cannot detect an ABA rewrite while C is consulted.
+    database = Path(storage.path)
+    sql_stamp = sqlite_source_stamp(database)
+    if sql_stamp is None:
+        raise _CandidateRejected("scope_unverified")
     _, raw, _, digest, size, directory = row[:6]
     path = ordinary_suggestion_path(
         raw, library_root=library_root, identity_id=identity_id, directory=directory,
@@ -215,6 +222,8 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
     with _verified_variant_file(path, digest, expected_size=size) as recheck:
         signature = recheck()
         checked_status, checked = snapshot(signature)
+        if sqlite_source_stamp(database) != sql_stamp:
+            raise _CandidateRejected("evidence_changed")
         if checked is None:
             # An origin/receipt appearing after the first snapshot, or any
             # other lost SQL admission, is a change of evidence. A previously
@@ -231,7 +240,10 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
         status, row = checked_status, checked
 
         def current():
-            if snapshot(signature) != (status, row) or recheck() != signature:
+            if (sqlite_source_stamp(database) != sql_stamp
+                    or snapshot(signature) != (status, row)
+                    or recheck() != signature
+                    or sqlite_source_stamp(database) != sql_stamp):
                 raise _CandidateRejected("evidence_changed")
 
         current()
