@@ -29,7 +29,7 @@ def observe_final_receipt(request, source, reviewed_marker, stamp):
         if not live():
             return "unverified"
         # Never create/truncate the acquisition lock for a read-only review.
-        with InterProcessLock(recovery.acquisition_lock_file(),
+        with InterProcessLock(recovery.acquisition_lock_file(create=False),
                               existing_nofollow=True) as lock:
             with historical_read_snapshot(storage) as db:
                 if not marker.matches_reviewed_loan_adept_marker_in_transaction(
