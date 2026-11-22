@@ -140,3 +140,39 @@ def test_changed_consumer_never_reuses_prepared_checkpoint(rig):
         prep.prepare_private_retirement_review(db, **options)
     assert db.metadata_get(key) == before
     assert Path(intent.staged_path).samefile(intent.candidate_path)
+
+
+@pytest.mark.parametrize("case", ["deadline", "cancelled", "crc_refused"])
+def test_retirement_reader_budget_or_scope_refusal_never_persists_checkpoint(
+        rig, monkeypatch, case):
+    db, intent, receipt, options = _committed(rig)
+    stage, final = Path(intent.staged_path), Path(intent.candidate_path)
+    key = prep._PREFIX + receipt.receipt_sha256
+    before = journal.summarize_derived_journal(db)
+    data = final.read_bytes()
+    calls = []
+
+    def bounded(stream, media_format, **kwargs):
+        calls.append((media_format, kwargs["max_bytes"], kwargs["seconds"]))
+        assert media_format == "epub"
+        assert 0 < kwargs["max_bytes"] < prep._MAX_BYTES
+        assert 0 < kwargs["seconds"] <= prep._SECONDS
+        if case == "deadline":
+            monkeypatch.setattr(prep, "monotonic", lambda: float("inf"))
+            assert kwargs["cancelled"]()
+            return "structure_cancelled"
+        if case == "cancelled":
+            live[0] = False
+            assert kwargs["cancelled"]()
+            return "structure_cancelled"
+        return "epub_structure_invalid"
+
+    live = [True]
+    options["scope_current"] = lambda _db: live[0]
+    monkeypatch.setattr(prep, "inspect_stream_structure", bounded)
+    with pytest.raises(journal.DerivedJournalConflict, match="reader_unverified"):
+        prep.prepare_private_retirement_review(db, **options)
+    assert len(calls) == 1 and db.metadata_get(key) is None
+    assert journal.summarize_derived_journal(db) == before
+    assert stage.samefile(final) and final.read_bytes() == data
+    assert len(db.placements()) == 2 and len(db.artifact_variants()) == 1

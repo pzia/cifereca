@@ -14,7 +14,8 @@ from xml.etree import ElementTree
 import zipfile
 import zlib
 
-from ..artifact_inspection import _epub_encryption_protected, _validate_epub_archive
+from ..artifact_inspection import _epub_encryption_protected
+from .library_structure import inspect_stream_structure
 from ..epub_metadata import MAX_XML, _bounded_directory, _member, _read, _xml
 from . import derived_variant_journal as journal
 from . import derived_variant_compact_receipt as compact
@@ -42,19 +43,26 @@ def _require(ok, code="derived_retirement_preparation_unverified"):
         raise journal.DerivedJournalConflict(code)
 
 
-def _inspect_epub_final(fd, size):
+def _inspect_epub_final(fd, size, *, still_current=lambda: True):
     """Pinned, bounded EPUB container and spine readability, not rendering.
 
     PDFs are deliberately not accepted by this tranche: a PDF signature or
     EOF marker is not a reader proof and Core has no qualified PDF reader.
     """
+    deadline = monotonic() + _SECONDS
+
+    def live():
+        return still_current() is True and monotonic() < deadline
+
+    _require(type(size) is int and 0 < size <= _MAX_BYTES and live(),
+             "derived_retirement_reader_unverified")
     with os.fdopen(os.dup(fd), "rb") as stream:
         _bounded_directory(stream)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             # Bound expansion before any full CRC pass. Reject symlink and
             # ambiguous archive entries; parse XML using the safe shared reader.
-            _require(sum(i.file_size for i in infos) + size <= _MAX_BYTES
+            _require(live() and sum(i.file_size for i in infos) + size <= _MAX_BYTES
                      and all(i.file_size <= _MAX_BYTES
                              and i.file_size <= 1000 * max(i.compress_size, 1)
                              and not i.flag_bits & 1
@@ -80,6 +88,7 @@ def _inspect_epub_final(fd, size):
                      "derived_retirement_reader_unverified")
             manifest = {}
             for item in manifests[0].findall(opf + "item"):
+                _require(live(), "derived_retirement_reader_unverified")
                 key, href = item.get("id"), item.get("href")
                 _require(bool(key) and bool(href) and key not in manifest,
                          "derived_retirement_reader_unverified")
@@ -87,6 +96,7 @@ def _inspect_epub_final(fd, size):
             items = spines[0].findall(opf + "itemref")
             _require(bool(items), "derived_retirement_reader_unverified")
             for itemref in items:
+                _require(live(), "derived_retirement_reader_unverified")
                 item = manifest.get(itemref.get("idref"))
                 _require(item is not None and item.get("media-type") == "application/xhtml+xml",
                          "derived_retirement_reader_unverified")
@@ -94,9 +104,19 @@ def _inspect_epub_final(fd, size):
                 _require(_xml(_read(archive, member, MAX_XML)).tag
                          == "{http://www.w3.org/1999/xhtml}html",
                          "derived_retirement_reader_unverified")
-            _require(_validate_epub_archive(archive) is None
-                     and not _epub_encryption_protected(archive),
+            _require(live() and not _epub_encryption_protected(archive),
                      "derived_retirement_reader_unverified")
+        # Reuse the guarded descriptor reader, rather than an uninterruptible
+        # ZipFile.testzip pass, so CRC expansion shares a finite byte budget
+        # and the same deadline as the container/spine checks.
+        remaining = deadline - monotonic()
+        _require(live() and remaining > 0,
+                 "derived_retirement_reader_unverified")
+        _require(inspect_stream_structure(
+            stream, "epub", max_bytes=_MAX_BYTES - size,
+            seconds=remaining, cancelled=lambda: not live(),
+        ) == "epub_structure_crc_ok" and live(),
+            "derived_retirement_reader_unverified")
 
 
 def _checkpoint(raw, key):
@@ -246,7 +266,10 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
                              "derived_retirement_dependency_unverified")
                     _require(_hash(parent_fd, original[2]) == intent.parent_sha256
                              and _hash(final_fd, output[2]) == intent.output_sha256)
-                    _inspect_epub_final(final_fd, output[2])
+                    _inspect_epub_final(
+                        final_fd, output[2],
+                        still_current=lambda: (_lock_current(shared_lock)
+                                               and scope_current(db) is True))
                     physical()
                     current_sql()
                     _require(_walk(library_root, (str(stage),), deadline=deadline) == witness,
