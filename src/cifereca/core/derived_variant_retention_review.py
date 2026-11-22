@@ -6,6 +6,7 @@ Filesystem, external dependency and retention-policy proofs remain separate.
 from __future__ import annotations
 
 import sqlite3
+from unicodedata import category
 
 from .derived_variant_journal import (
     _read_logical_receipt,
@@ -37,7 +38,8 @@ def _directory(db, identity_id):
     ).fetchall()
     directory = rows[0][0] if len(rows) == 1 else None
     if (type(directory) is not str or not 0 < len(directory) <= 256
-            or any(ord(char) < 32 or ord(char) == 127 for char in directory)
+            or any(category(char) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for char in directory)
             or directory in (".", "..") or "/" in directory or chr(92) in directory
             or db.execute(
                 "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",

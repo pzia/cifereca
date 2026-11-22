@@ -37,8 +37,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                      and _lock_ok(shared_lock)
                      and _execution_fence_current(scope, shared_lock))
     except Exception:
-        # Activation/lock/fence callbacks are not writer permissions. An
-        # exception before admission must not escape or reach the broker.
+        # An exception from a revoked view/lock/fence never authorizes a write.
         return {"status": "blocked", "changed": 0}
     if not permitted:
         return {"status": "blocked", "changed": 0}

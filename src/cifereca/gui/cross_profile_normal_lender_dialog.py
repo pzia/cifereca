@@ -232,5 +232,13 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
         identity=identity, identity_id=identity_id, account_epoch=account_epoch,
         source_epoch=source_epoch, Adw=Adw, TaskPriority=TaskPriority, control=control,
     ))
+    # Creating a GTK control can re-enter navigation or change a live
+    # lender/notice before the action is attached. Reject a stale widget
+    # BEFORE painting it, not only when the user eventually clicks.
+    if (not current() or not possible_lender_claims_distinct(
+            rows, item, requesting_identity_id=identity_id)
+            or any(row._session is not None and not possible_lender_session_matches(
+                row, row._session) for row in rows)):
+        return False
     panel._actions([button])
     return True

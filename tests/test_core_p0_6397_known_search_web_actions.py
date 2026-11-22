@@ -139,11 +139,19 @@ def test_route_aba_revokes_in_flight_menu_and_browser_launch(tmp_path):
         context.host._route_display_token = object()
         deliver(pending)
         assert not launches and not toasts
-        # Returning to the same rendered detail is not a permanent veto;
-        # the new deliberate click receives a fresh exact C validation.
+        # A route change permanently revokes the old menu. An old button
+        # cannot be reused merely because the same detail appears again.
         button.callback(button)
+        assert not pending and not launches
+        # The freshly mounted detail may request a new, independently
+        # scoped menu. Only that new button can start a fresh C validation.
+        pending, actions, launches, _, toasts = request(db, c, context=context)
         deliver(pending)
-        assert launches == [URL]
+        button, = actions
+        button.callback(button)
+        assert len(pending) == 1
+        deliver(pending)
+        assert launches == [URL] and not toasts
         button.callback(button)
         context.mapped = False
         deliver(pending)
