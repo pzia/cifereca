@@ -135,8 +135,10 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
             if catalogue:
                 entries = db.execute(
                     "SELECT catalog_entry_id,artifact_id,identity_id,local_state,"
-                    "CASE WHEN length(CAST(title AS BLOB))<=2048 THEN title ELSE NULL END,"
-                    "CASE WHEN length(CAST(author AS BLOB))<=2048 THEN author ELSE NULL END "
+                    "CASE WHEN title IS NULL OR (typeof(title)='text' "
+                    "AND length(CAST(title AS BLOB))<=2048) THEN title ELSE X'00' END,"
+                    "CASE WHEN author IS NULL OR (typeof(author)='text' "
+                    "AND length(CAST(author AS BLOB))<=2048) THEN author ELSE X'00' END "
                     "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 33",
                     (placement_id,),
                 ).fetchall()
@@ -146,6 +148,7 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                 # a convenient title from an ambiguous or foreign catalogue row.
                 if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
                     return "catalogue_evidence_unavailable", None
+                # An oversized claim is an invalid BLOB sentinel, never a missing value.
                 # SQLite's TEXT affinity does not guarantee a native TEXT
                 # value: BLOB/integer titles or authors are corrupt local
                 # catalogue evidence, even when the EPUB OPF is independently
