@@ -182,3 +182,39 @@ def test_supplier_failure_is_partial_refusal_not_zero_or_retry(rig, failure, sta
     assert len(toasts) == 1 and label in toasts[0]
     assert "aucune absence attestée" in toasts[0] and "PRIVATE" not in toasts[0]
     assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_public_comparison_shows_distinct_formats_for_the_same_isbn_and_record(rig):
+    from dataclasses import replace
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    from tests.test_core_p0_4030_public_catalogue import _row
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+
+    service, session, request, calls, path = rig
+    a = _row("same")
+    b = replace(_row("same"), id="public:same:pdf", format="PDF")
+    envelope = ProviderSearchResponse(
+        [a, b], public_notices=(PublicSearchNotice(a), PublicSearchNotice(b)),
+    )
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return envelope
+    session.search_with_response_facets = search
+    before, content = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert "Collection C :" in repr(groups[0])
+    assert "Dernière observation C" in repr(groups[0])
+    assert actions["public-0"][2]()
+    deliver(tasks)
+    report = repr(groups[-1])
+    assert report.count("ISBN déclaré ambigu") == 2
+    assert report.count("Référence catalogue : same") == 2
+    assert report.count("Collection catalogue : CATALOGUE") == 2
+    assert report.count("Format catalogue : EPUB") == 1
+    assert report.count("Format catalogue : PDF") == 1
+    assert "ISBN déclarés par le catalogue : 9780306406157" in report
+    assert not toasts and len(calls) == 1
+    assert rows(service.storage) == before and path.read_bytes() == content
+    dispose()
