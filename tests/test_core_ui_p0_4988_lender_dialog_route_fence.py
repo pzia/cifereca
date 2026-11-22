@@ -14,19 +14,29 @@ def aba(window):
 
 
 @pytest.mark.parametrize("stage", ["choice", "confirmation", "queued", "delivery"])
-def test_route_aba_revokes_only_old_lender_intent(stage):
+@pytest.mark.parametrize("change", ["route", "_identity_context_generation", "_account_context_generation"])
+def test_route_aba_revokes_only_old_lender_intent(stage, change):
     panel, args, dialogs = setup()
     window = panel.window
     window._route_display_token = object()
+    window._identity_context_generation = 1
+    window._account_context_generation = 1
+
+    def invalidate():
+        if change == "route":
+            aba(window)
+        else:
+            setattr(window, change, getattr(window, change) + 2)
+
     execute = args["service"].execute_normal_lender_borrow_for_current_identity
     assert present_normal_lender_choice(panel, **args)
     if stage == "choice":
-        aba(window)
+        invalidate()
         dialogs[0].respond("choice-0")
     else:
         dialogs[0].respond("choice-0")
         if stage == "confirmation":
-            aba(window)
+            invalidate()
         dialogs[1].respond("borrow")
     if stage in ("choice", "confirmation"):
         window.runner.submit.assert_not_called()
@@ -34,14 +44,14 @@ def test_route_aba_revokes_only_old_lender_intent(stage):
     else:
         _, work, done, _ = window.runner.submit.call_args.args
         if stage == "queued":
-            aba(window)
+            invalidate()
             assert work() == {"status": "blocked"}
             execute.assert_not_called()
             done({"status": "blocked"})
         else:
             result = work()
             execute.assert_called_once()
-            aba(window)
+            invalidate()
             done(result)
         window._activity_result.assert_not_called()
         window.show_error.assert_not_called()
