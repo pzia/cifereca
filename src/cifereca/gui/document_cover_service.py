@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import time
 from time import perf_counter
@@ -332,6 +332,34 @@ class DocumentCoverService:
         ] = OrderedDict()
         self._closed = False
 
+    @staticmethod
+    def _snapshot_evidence(snapshot: CoverSourceSnapshot) -> CoverSourceSnapshot:
+        """Own the N1 source and every mutable frozen receipt before N2 admission.
+
+        A producer can mutate a dataclass with object.__setattr__ after
+        publishing it. N2 keys, the selected N1 URL and the EPUB resource
+        must keep the exact revision and coordinates admitted at that time.
+        """
+        snapshot.__post_init__()
+        scope = CoverDecisionCache._snapshot_scope(snapshot.scope)
+        embedded = snapshot.embedded
+        if embedded is not None:
+            from ..core.epub_cover_materialization import ExactEpubCoverResource
+            if type(embedded.resource) is not ExactEpubCoverResource:
+                raise TypeError("invalid embedded EPUB resource")
+            embedded = AttestedEmbeddedCover(
+                candidate=replace(embedded.candidate),
+                resource=replace(
+                    embedded.resource,
+                    scope=CoverDecisionCache._snapshot_scope(embedded.resource.scope),
+                ),
+            )
+        return replace(
+            snapshot, scope=scope,
+            candidates=tuple(replace(value) for value in snapshot.candidates),
+            embedded=embedded,
+        )
+
     def register(self, snapshot: CoverSourceSnapshot) -> None:
         """Install a newer exact source snapshot; notify viewers after unlock."""
         self._register_snapshot(snapshot, only_if_absent=False)
@@ -346,6 +374,7 @@ class DocumentCoverService:
         """
         if type(snapshot) is not CoverSourceSnapshot:
             raise TypeError("expected attested source inventory")
+        snapshot = self._snapshot_evidence(snapshot)
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
@@ -1030,6 +1059,7 @@ class DocumentCoverService:
         """
         if type(document) is not CoverDocumentScope:
             raise TypeError("expected exact DocumentRef")
+        document = CoverDecisionCache._snapshot_scope(document)
         if variant not in ("list", "detail"):
             raise ValueError("unknown cover variant")
         if not callable(callback):
