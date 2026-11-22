@@ -71,8 +71,20 @@ def test_filter_contributions_after_real_sqlite_restart(tmp_path):
         # independent from the initial SQLite canonical revision number.
         from cifereca.core.notice_c_loaded_filter import _sources, attach_filter_sources
         epoch_one_hits = tuple(replace(hit, epoch=1) for hit in page.matching_sources)
-        strict = dict(row, metadata={**row["metadata"], "notice_c_epoch": 1})
-        attach_filter_sources(strict, epoch_one_hits)
+        # Re-stamping only the group must fail: its original primary receipt
+        # still refers to the prior hit object, not the replacement.
+        forged = dict(row, metadata={**row["metadata"], "notice_c_epoch": 1})
+        attach_filter_sources(forged, epoch_one_hits)
+        assert _sources(forged) == ()
+
+        # Exercise the native projector so both the primary receipt and the
+        # group packet are issued from the same exact epoch-one hit objects.
+        strict_page = replace(
+            page, hits=tuple(replace(hit, epoch=1) for hit in page.hits),
+            matching_sources=epoch_one_hits,
+        )
+        strict, = merge_public_notice_c_known_rows([], strict_page, identity_id="alice")
+        assert strict["metadata"]["notice_c_epoch"] == 1
         assert _sources(strict) == epoch_one_hits
         coerced = dict(strict, metadata={**strict["metadata"], "notice_c_epoch": True})
         assert _sources(coerced) == ()

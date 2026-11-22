@@ -100,6 +100,12 @@ def _sources(row):
             or hits[0].provider_id != row["provider_id"]
             or hits[0].record_id != row["item_id"]):
         return ()
+    # A group is bound to the same admitted primary observation, not
+    # merely to an equal-looking provider/record pair. Do not allow a
+    # replaced presentation or primary receipt to authorize alternatives.
+    from .notice_c_known_projection import known_public_primary_facts
+    if known_public_primary_facts(row) is not hits[0]:
+        return ()
     return hits
 
 

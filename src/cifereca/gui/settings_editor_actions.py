@@ -1,6 +1,7 @@
 """Settings editor loading and actions; explicit host, dirty and directory ports."""
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from .settings_accounts_section import (build_identity_settings_header, build_provider_accounts_header, build_provider_account_buttons)
@@ -503,6 +504,9 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "Enregistrer les modifications avant de tester le compte.")
                     record("blocked_unsaved", "warning")
                     return
+                # Keep the admitted persisted values independent of later
+                # in-place configuration edits, including nested options.
+                admitted_account = deepcopy(current)
                 probe_method = admitted_core.explicit_provider_diagnostic
                 e["_probe_pending"] = True
                 button = e["explicit_probe_button"]
@@ -516,7 +520,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         button.set_sensitive(True)
 
                 def callback_current():
-                    return (
+                    if not (
                         self.service is admitted_core
                         and not getattr(self, "_closed", False)
                         and not e.get("deleted")
@@ -525,7 +529,27 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                             getattr(self, "_identity_context_generation", None),
                             getattr(self, "_account_context_generation", None),
                         )
+                    ):
+                        return False
+                    # Editing this form need not change either navigation
+                    # generation. Nor does a persisted credential/option
+                    # replacement necessarily recreate the Settings page.
+                    # Never attach an old connection result to a new draft
+                    # or to a changed/removed/ambiguous saved account.
+                    persisted = _current_probe_account(
+                        self.config, provider_id=pid,
+                        account_id=admitted_account["id"],
                     )
+                    if persisted != admitted_account:
+                        return False
+                    try:
+                        return (
+                            not _probe_has_unsaved_draft(e, saved, descriptor)
+                            if unchanged_original else
+                            _probe_form_matches_saved(e, admitted_account, descriptor)
+                        )
+                    except (AttributeError, KeyError, TypeError, ValueError):
+                        return False
 
                 def done(result):
                     release()

@@ -353,7 +353,7 @@ def test_private_broker_continuation_is_one_use_and_revocable(private_rig, monke
 
 
 @pytest.mark.parametrize("change", ["none", "sqlite", "view", "dispose"])
-def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, monkeypatch, change):
+def test_legacy_private_detail_uses_one_stable_action_for_following_pages(private_rig, monkeypatch, change):
     from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
     _populate_windows(private_rig)
     service, request, account, session, calls, path, *_ = private_rig
@@ -361,6 +361,10 @@ def test_private_detail_uses_one_stable_action_for_following_pages(private_rig, 
     before, data = rows(service.storage), path.read_bytes()
     c, dispose, host, active, tasks, actions, groups, toasts = mounted(
         (service, session, request, calls, path))
+    # Explicit compatibility witness: exercise a host using the original
+    # read broker contract without the optional declaration preview method.
+    c.broker = NS(**{name: getattr(c.broker, name) for name in (
+        "preview", "next_page", "compare_private", "search_public", "cancel")})
     host.retire_action = lambda key: actions.pop(key, None) is not None
     issued = []
     original_add = host.add_action

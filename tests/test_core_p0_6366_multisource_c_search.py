@@ -377,3 +377,35 @@ def test_source_pages_keep_exact_edition_order_across_eviction_and_restart(tmp_p
 
     with closing(Storage(filename)) as reopened:
         check_pages(reopened)
+
+
+def test_public_search_never_groups_sources_through_mixed_private_relation(tmp_path):
+    from contextlib import closing
+    from tests.test_core_p1_6168_canonical_multi_provider_covers import _store
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    filename = tmp_path / "mixed-authority.sqlite"
+    with closing(Storage(filename)) as db:
+        a, b = sources(db)
+        own_a = persist_exact_public_search_cover(db, a)
+        own_b = persist_exact_public_search_cover(db, b)
+        private = _store(db, "private-fixture", "https://private.example.org/cover.jpg",
+                         identity="private-owner")
+        for member in (a, b, private):
+            mixed = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:mixed-relation",
+                source=member, relation_proof_id="strong:fixture:mixed",
+            )
+        assert len(mixed.sources) == 3
+        def check(storage):
+            page = search_public_notice_c(storage, "deux sources",
+                                          group_by_document=True, now=100)
+            assert page.known_documents == 2
+            assert {hit.document for hit in page.hits} == {own_a.document, own_b.document}
+            assert all(hit.document != mixed.document for hit in page.hits)
+        check(db)
+        for source in (a, b, private):
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        check(db)
+    with closing(Storage(filename)) as db:
+        check(db)
+        assert db.entitlements() == [] and db.acquisitions() == []

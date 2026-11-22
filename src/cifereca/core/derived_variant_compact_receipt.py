@@ -1,8 +1,8 @@
 """#6937: lossless v1 logical receipt codec and separate capacity preflight.
 
-No live writer, quota refund, retirement, physical exclusivity or replay
-authorization. A compact witness is a *representation* of the old committed
-receipt, not proof that its historical coordinates are currently valid.
+No live writer, quota refund, physical exclusivity or replay authorization.
+An authorized compact-only representation reconstructs the exact old receipt;
+its historical coordinates are not thereby proven currently valid.
 """
 from dataclasses import fields
 import json
@@ -15,6 +15,11 @@ from .derived_variant_journal import (
 
 _PREFIX = "derived.publication.compact.v1:"
 _END = _PREFIX[:-1] + ";"
+_RETIRED_PREFIX = "derived.publication.compact-retired.v1:"
+_RETIRED_END = _RETIRED_PREFIX[:-1] + ";"
+# Exactly one 64-byte witness SHA per compact-only original, at most one
+# original per existing compact record. Separate bounded logical trace.
+_MAX_RETIREMENT_BYTES = _MAX_RECORDS * 64
 # Separate budget sized for one lossless witness per maximum-sized original
 # receipt in a single generation. Every accepted encoding is <= its original
 # byte size. This bounds a full shadow generation without increasing or
@@ -100,13 +105,60 @@ def decode_committed_witness(key, raw):
         raise DerivedJournalConflict("derived_compact_unverified") from None
 
 
+def _retired_receipt(db, original_key):
+    """Resolve one authorized compact-only row, never an orphan shadow."""
+    _require(db.in_transaction and type(original_key) is str
+             and original_key.startswith(_COMMITTED)
+             and _digest(original_key[len(_COMMITTED):]))
+    digest = original_key[len(_COMMITTED):]
+    marker_key = _RETIRED_PREFIX + digest
+    row = db.execute("SELECT CASE WHEN length(CAST(value AS BLOB))=64 "
+                     "THEN value END FROM metadata WHERE key=?", (marker_key,)).fetchone()
+    if row is None:
+        return None
+    _require(_digest(row[0]), "derived_compact_retirement_unverified")
+    proof_key = _PREFIX + digest
+    proof = db.execute("SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND ? "
+                       "THEN value END FROM metadata WHERE key=?",
+                       (_MAX_PROOF_BYTES, proof_key)).fetchone()
+    _require(proof is not None and type(proof[0]) is str
+             and _receipt_digest(proof[0]) == row[0]
+             and db.execute("SELECT 1 FROM metadata WHERE key=?", (original_key,)).fetchone() is None,
+             "derived_compact_retirement_unverified")
+    key, original = decode_committed_witness(proof_key, proof[0])
+    _require(key == original_key and _raw_size(proof[0]) + 64 < _raw_size(original),
+             "derived_compact_retirement_unverified")
+    return original
+
+
+def _retired_receipts(db):
+    """Installation-wide bounded marker validation; return logical originals."""
+    _require(db.in_transaction)
+    rows = db.execute("SELECT key,length(CAST(value AS BLOB)) FROM metadata "
+                      "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
+                      (_RETIRED_PREFIX, _RETIRED_END, _MAX_PROOFS + 1)).fetchall()
+    _require(len(rows) <= _MAX_PROOFS
+             and 64 * len(rows) <= _MAX_RETIREMENT_BYTES,
+             "derived_compact_retirement_capacity")
+    result = {}
+    for key, size in rows:
+        _require(type(key) is str and _digest(key[len(_RETIRED_PREFIX):]) and size == 64,
+                 "derived_compact_retirement_unverified")
+        original_key = _COMMITTED + key[len(_RETIRED_PREFIX):]
+        original = _retired_receipt(db, original_key)
+        _require(original is not None, "derived_compact_retirement_unverified")
+        result[original_key] = original
+    return result
+
+
 def _measure_compact_in_transaction(db, *, require_paired=False):
     """Bounded separate namespace, inside the caller's SQL snapshot.
 
-    Admission requires each shadow to retain its original: no authorized
-    retirement format exists yet. Reports may still inspect orphan shadows.
+    Admission requires each witness to retain its original or a validated
+    atomic retirement marker. Reports may still inspect orphan shadows.
     """
     _require(db.in_transaction, "derived_compact_snapshot_required")
+    retired = _retired_receipts(db)
     rows = db.execute(
         "SELECT key,length(CAST(value AS BLOB)) FROM metadata "
         "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
@@ -126,7 +178,8 @@ def _measure_compact_in_transaction(db, *, require_paired=False):
                 "THEN value ELSE NULL END FROM metadata WHERE key=?",
                 (_MAX_RECORD_BYTES, original_key),
             ).fetchone()
-            _require(record == (original,), "derived_compact_original_unverified")
+            _require(record == (original,) or retired.get(original_key) == original,
+                     "derived_compact_original_unverified")
     return len(rows), total
 
 

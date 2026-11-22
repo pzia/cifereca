@@ -13,6 +13,7 @@ import stat
 import time
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, _decode, _measure, _PREFIX, _receipt_digest,
 )
 from .library_inventory import _open_root
@@ -44,7 +45,7 @@ def _snapshot(storage, identity_id):
             rows, _ = _measure(db)
             records = []
             for key, _ in rows:
-                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 if intent.identity_id == identity_id:
                     records.append((key, _receipt_digest(raw), intent))

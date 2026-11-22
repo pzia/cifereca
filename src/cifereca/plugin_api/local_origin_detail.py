@@ -65,6 +65,7 @@ class LocalOriginPrivateMatch:
     observed_at: int | None
     branch: str = ""
     resource_id: str = ""
+    declaration_choice: str | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -159,3 +160,21 @@ class LocalOriginRemoteLoanReadBroker(LocalOriginDetailReadBroker, Protocol):
     """Optional typed private inventory comparison; no local title upload."""
     def compare_remote_loan(self, *, token: str,
                             confirmed: bool = False) -> LocalOriginRemoteLoanReport | None: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginDeclarationAdvice:
+    """Preview only; no command, raw path, writer token or rights authority."""
+    provider_id: str
+    credential_id: str
+    account_id: str
+    edition_id: str
+    loan_id: str
+    trust: str = "user_declaration"
+    association_authorized: bool = False
+
+
+@runtime_checkable
+class LocalOriginDeclarationReviewBroker(LocalOriginDetailReadBroker, Protocol):
+    def preview_loan_declaration(self, *, token: str,
+                                 confirmed: bool = False) -> LocalOriginDeclarationAdvice | None: ...
