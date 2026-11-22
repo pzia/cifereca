@@ -34,9 +34,11 @@ def _epoch(value):
 
 
 def _native_source_document(document):
-    # Frozen scope DTOs are still mutable through object.__setattr__; a
-    # foreign nested hash/equals must not run when checking duplicate refs.
-    return (type(document) is CoverDocumentScope
+    # A frozen scope may be mutated after issuance. Validate native scalar
+    # members BEFORE invoking even the DTO's own __post_init__ (which uses
+    # membership/equality), then recheck the model's kind/owner invariants.
+    # A printable "loan" on a former catalogue scope is not a valid lease.
+    if not (type(document) is CoverDocumentScope
             and all(type(getattr(document, name)) is str
                     and len(getattr(document, name)) <= 512
                     and getattr(document, name).isprintable() for name in (
@@ -50,7 +52,13 @@ def _native_source_document(document):
             and (document.account_id is None
                  or (type(document.account_id) is str
                      and len(document.account_id) <= 512
-                     and document.account_id.isprintable())))
+                     and document.account_id.isprintable()))):
+        return False
+    try:
+        document.__post_init__()
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _native_reader_scope(scope, service):
