@@ -560,7 +560,17 @@ class DetailController:
                     or any(flag is not False for flag in (
                         value.coverage_complete, value.fresh_network_verified,
                         value.association_authorized))):
-                self.host.toast("Comparaison publique indisponible ; aucune absence attestée.")
+                reason = ({
+                        "auth_required": "Authentification requise",
+                        "access_denied": "Accès refusé",
+                        "rate_limited": "Limite de requêtes atteinte",
+                        "timeout": "Délai de réponse dépassé",
+                        "cancelled": "Comparaison annulée",
+                    }.get(value.status)
+                          if type(value) is LocalOriginPublicReport
+                          and value.provider_id == choice.provider_id else None)
+                self.host.toast((reason or "Comparaison publique indisponible") +
+                                " ; aucune absence attestée. Nouvelle revue nécessaire.")
                 return
             self.host.add_group("Catalogue public — " + choice.provider_id, public_rows(value))
 
