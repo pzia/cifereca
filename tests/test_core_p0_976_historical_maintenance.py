@@ -494,6 +494,7 @@ def test_historical_hold_reports_correlated_non_submission_without_permit(store,
 
 @pytest.mark.parametrize("unsafe", [
     "line\nForged activation", "escape\x1b[2J", "", " " * 4, "x" * 1025, None,
+    "left\x85right", "left\u202eright", "left\u2028right", "left\u200dright",
 ])
 def test_historical_hold_redacts_unsafe_borrowed_loan_title(
     store, tmp_path, monkeypatch, unsafe,
