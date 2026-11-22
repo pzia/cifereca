@@ -68,9 +68,19 @@ class NativeOrganizerConfirmation:
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
 
     def dispose(self):
+        # A profile switch or unmount revokes even an already presented
+        # confirmation. Close the native dialog before it can outlive the
+        # owning view; its late response must never enqueue Core work.
+        dialog = self._dialog
+        self._dialog = None
         self._page = None
         self.button.set_visible(False)
         self.button.set_sensitive(False)
+        if dialog is not None:
+            try:
+                dialog.close()
+            except Exception:
+                pass
 
     def _clicked(self, _button):
         from gi.repository import Adw

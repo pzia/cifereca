@@ -206,3 +206,44 @@ def test_native_review_refuses_malformed_or_unsafe_plugin_advice_without_dialog(
     assert ui.open(NS(MessageDialog=Dialog))
     Dialog.dialogs[-1].respond("cancel")
     assert not runner.queue and ui._used is None
+
+
+@pytest.mark.parametrize("closure", ["normal", "raises", "late_apply"])
+def test_native_dialog_is_revoked_and_closed_on_organizer_disposal(
+    monkeypatch, closure,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    calls, closed = [], []
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Disposed view cannot receive a result"))
+    lease = NS(identity_id="A", is_current=lambda: True)
+    advice = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(advice,),
+    )
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        pytest.fail("Revoked dialog must not admit Core work")
+    monkeypatch.setattr(execution, "admit_native_reviewed_rename", forbidden)
+    def close(dialog):
+        closed.append(dialog)
+        if closure == "raises":
+            raise RuntimeError("native close failed")
+        if closure == "normal":
+            dialog.respond("cancel")
+    monkeypatch.setattr(Dialog, "close", close, raising=False)
+
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    dialog, = Dialog.dialogs
+    ui.dispose()
+    assert closed == [dialog]
+    assert ui._dialog is None and ui._page is None and ui._used is None
+    assert not ui.button.visible and not ui.button.sensitive
+    if closure == "late_apply":
+        dialog.respond("apply")
+    assert not runner.queue and not calls
