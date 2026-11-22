@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+from unicodedata import category
 
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 from .library_sqlite_freshness import sqlite_source_stamp
@@ -36,6 +37,12 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
             or ".." in library_root.parts or not _text(identity_id, 256)
             or not _text(directory, 256) or directory in (".", "..")
             or "/" in directory or chr(92) in directory):
+        return None
+    # A name containing invisible formatting, direction overrides or
+    # Unicode line separators is not safe evidence for a user-selected file.
+    # Keep the exact persisted path unchanged; refuse, never normalize it.
+    if any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+           for name in (raw, directory) for ch in name):
         return None
     path = Path(raw)
     owner = library_root / directory
