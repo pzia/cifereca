@@ -74,7 +74,7 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
         group_by_document=False,
     )
     # Ranking is advisory only. Do not infer origin/right from similarity,
-    reorder across pagination windows, or collapse source editions.
+    # reorder across pagination windows, or collapse source editions.
     evidence_rank = {
         "title_author_concordant": 0,
         "title_concordant_author_unknown": 1,
