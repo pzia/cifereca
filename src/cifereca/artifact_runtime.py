@@ -1691,7 +1691,16 @@ class LibraryMaintenanceBrokerImpl:
                 author=str(entry.get("author") or ""), extension=ext,
             )
             _require_epub_filename_convention(old, Path(new_name))
-            return LibraryMutationPlan(op, f"Renommer {old.name} en {new_name}", request, changes=(old.name,new_name), facts={"new_filename":new_name})
+            # A filename alone cannot identify the displayed Placement. Bind
+            # its current coordinates without putting a private path in the
+            # public plan facts. Existing plan/run remains the sole writer.
+            binding = hashlib.sha256(repr(tuple(row.get(key) for key in (
+                "placement_id", "identity_id", "provider_id", "source_item_id",
+                "artifact_id", "path", "state",
+            ))).encode("utf-8")).hexdigest()
+            return LibraryMutationPlan(op, f"Renommer {old.name} en {new_name}", request,
+                changes=(old.name,new_name),
+                facts={"new_filename":new_name, "placement_binding":binding})
         if op == "move_placement":
             if not request.target_identity_id: raise ValueError("target_identity_id required")
             row=self.service.storage.placement_get(request.placement_id)
@@ -1959,6 +1968,15 @@ class LibraryMaintenanceBrokerImpl:
         _enforce_ordinary_dedup_hold(self.service, request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
+            def require_current_plan():
+                fresh = self.plan(request)
+                if (plan.operation != "normalize_filename" or plan.destructive is not False
+                        or plan.changes != fresh.changes or plan.facts != fresh.facts):
+                    raise _LibraryFilenameConflict("Plan de renommage périmé")
+                if control is not None:
+                    control.check_cancelled()
+
+            require_current_plan()
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             # A recorded placement may have been replaced by a symlink
@@ -2050,6 +2068,16 @@ class LibraryMaintenanceBrokerImpl:
                 # If the destination is already attested with identical bytes,
                 # preserve its inode: it already satisfies the new DB path.
                 # Never replace an existing unrelated or symlinked target.
+                # Hashing and target validation may be slow. Repeat the exact
+                # naming/placement check and cancellation before creating any
+                # additional filesystem name (no change to the safety hold).
+                require_current_plan()
+                try:
+                    current = os.stat(old, follow_symlinks=False)
+                    if any(getattr(current, attr) != getattr(before, attr) for attr in attrs):
+                        raise _LibraryFilenameConflict("Fichier source modifié")
+                except OSError:
+                    raise _LibraryFilenameConflict("Source locale non vérifiable") from None
                 created_target = False
                 if not new.exists():
                     try:

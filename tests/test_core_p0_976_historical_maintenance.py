@@ -142,9 +142,9 @@ def test_native_maintenance_hook_exists_with_or_without_tools():
     calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)
              and isinstance(node.func, ast.Name)
              and node.func.id == "add_adept_historical_maintenance_line"]
-    assert len(calls) == 1
-    # One unconditional call after the service loop covers both empty and populated registries.
-    assert any(isinstance(node, ast.Expr) and node.value is calls[0] for node in method.body)
+    assert len(calls) == 2
+    assert any(any(k.arg == 'mode' and isinstance(k.value, ast.Constant)
+                   and k.value.value == 'holds' for k in call.keywords) for call in calls)
 
 
 def test_hold_review_includes_marker_without_ledger_and_never_unlocks(store, tmp_path):
@@ -358,6 +358,75 @@ def test_historical_ledger_review_rejects_changed_branch_snapshot(
     row, = review.run_historical_review(service, request)["rows"]
     assert row["canonical_status"] == "ambiguous_branch"
 
+
+def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(store, tmp_path):
+    from types import SimpleNamespace as NS
+    from cifereca.core.canonical_adept_attempt import _key, _value
+    from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
+    from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+
+    class Label(Button):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.text = ""
+        def set_wrap(self, _): pass
+        def set_selectable(self, _): pass
+        def set_text(self, text): self.text = text
+
+    class Combo(Button):
+        def __init__(self):
+            super().__init__()
+            self.active = -1
+            self.items = []
+        def remove_all(self): self.items.clear()
+        def append_text(self, text): self.items.append(text)
+        def set_active(self, active): self.active = active
+        def get_active(self): return self.active
+
+    service, held, path, _ = _setup(store, tmp_path)
+    marker = _value("offer", "a" * 32)
+    store.metadata_set(_key(held), marker)
+    baseline = rows(store)
+    jobs = []
+    host = NS(service=service, _closed=False, _route_display_token=object(),
+              _identity_context_generation=1,
+              action_button=lambda label, _icon: Button(label),
+              runner=NS(submit=lambda *args, **kwargs: jobs.append((args, kwargs))))
+    gtk = NS(Box=lambda **kw: Container(), Button=Button, Label=Label,
+             ComboBoxText=Combo, Orientation=NS(HORIZONTAL=1, VERTICAL=2))
+    adw = NS(PreferencesGroup=Container, ActionRow=Container)
+    provenance, recovery = Container(), Container()
+    assert add_adept_historical_maintenance_line(host, provenance, Gtk=gtk, Adw=adw, mode="provenance")
+    assert add_adept_historical_maintenance_line(host, recovery, Gtk=gtk, Adw=adw, mode="holds")
+    prow, hrow = provenance.children[0].children[0], recovery.children[0].children[0]
+    assert prow.title == "Provenances de prêts historiques"
+    assert hrow.title == "Verrous de téléchargements ADEPT"
+    examine, = prow.children
+    blocked, = hrow.children
+    assert examine.label == "Examiner…" and blocked.label == "Verrous…"
+    assert len(provenance.children) == 4 and len(recovery.children) == 3
+    assert not jobs
+    blocked.click()
+    args, kwargs = jobs[-1]
+    assert kwargs["control"] is blocked
+    args[2](args[1]())
+    assert "Retéléchargement non autorisé" in recovery.children[-1].text
+    assert provenance.children[-1].text == ""
+    examine.click()
+    args, kwargs = jobs[-1]
+    assert kwargs["control"] is examine
+    args[2](args[1]())
+    assert "history-0" in provenance.children[-1].text
+    assert "Retéléchargement non autorisé" in recovery.children[-1].text
+    # A new explicit hash request stays in the recovery surface.
+    verify = recovery.children[1].children[0]
+    verify.click()
+    args, _ = jobs[-1]
+    host._identity_context_generation += 1
+    args[2](args[1]())
+    assert not recovery.children[-1].visible
+    assert rows(store) == baseline and store.metadata_get(_key(held)) == marker
+    assert path.read_bytes() == BYTES
 
 @pytest.mark.parametrize("case", ["exact", "changed", "orphan"])
 def test_historical_hold_reports_correlated_non_submission_without_permit(store, tmp_path, case):

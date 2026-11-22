@@ -420,10 +420,19 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         # Production services expose storage and still require exact C proof.
         storage = getattr(service, "storage", None)
         if storage is not None:
+            descriptors = borrower_public_c_descriptors(service, source_epoch=source_epoch)
+            # #3724: the existing refresh can repair a missing initial C
+            # from already admitted public cache evidence only.
+            from cifereca.core.notice_c_loan_enrichment import request_existing_loan_cache_repairs
+            request_existing_loan_cache_repairs(
+                service, rows, identity_id=identity_id,
+                account_epoch=account_epoch, source_epoch=source_epoch,
+                descriptors=descriptors,
+            )
             attach_borrower_public_c(
                 storage, rows, identity_id=identity_id,
                 account_epoch=account_epoch, source_epoch=source_epoch,
-                descriptors=borrower_public_c_descriptors(service, source_epoch=source_epoch),
+                descriptors=descriptors,
             )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads

@@ -205,7 +205,11 @@ def attach_borrower_public_c(
     for coords in wanted:
         provider, record, medium, docbase, revision = coords
         canonical = resolved.get((provider, record, docbase, medium, revision))
-        if canonical is None or not canonical.candidates:
+        # A retained exact public fiche remains useful even when the
+        # same C has no cover. The existing borrower detail uses the
+        # canonical reference for the independently validated web menu.
+        # Do not promote an empty C with neither image nor web evidence.
+        if canonical is None or not (canonical.candidates or canonical.catalogue_web_references):
             continue
         sources = [
             source for source in canonical.sources

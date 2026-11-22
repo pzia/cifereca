@@ -96,3 +96,29 @@ def test_verified_original_normalizes_without_changing_artifact_proof(tmp_path):
     assert service.storage.placement_get(placement_id)["path"] == str(new)
     assert service.storage.placement_get(placement_id)["artifact_id"] == source.artifact_id
     assert service.storage.artifact_get(source.artifact_id)["sha256"] == source.sha256
+
+
+@pytest.mark.parametrize("drift", ["title", "directory", "forged_name"])
+def test_native_rename_plan_rejects_changed_placement_or_naming_policy(tmp_path, drift):
+    from dataclasses import replace
+    service, source, pid, old, new, broker, plan = _case(tmp_path)
+    if drift == "title":
+        service.preview_library_filename = lambda **kw: "Different.epub"
+    elif drift == "directory":
+        other = old.parent / "other" / old.name
+        other.parent.mkdir()
+        os.link(old, other)
+        service.storage.relocate_local_path(old, other, identity_id="id1", provider_id="local")
+        old.unlink()
+        old = other
+        new = other.with_name(new.name)
+    else:
+        plan = replace(plan, facts={**plan.facts, "new_filename": "arbitrary.epub"},
+                       changes=(old.name, "arbitrary.epub"))
+    with pytest.raises(Conflict) as caught:
+        broker.run(plan, Control())
+    assert caught.value.code == "library_filename_conflict"
+    assert old.read_bytes() == b"book-data" and not new.exists()
+    assert not old.with_name("arbitrary.epub").exists()
+    assert service.storage.placement_get(pid)["path"] == str(old)
+    assert service.storage.placement_get(pid)["artifact_id"] == source.artifact_id

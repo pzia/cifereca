@@ -763,8 +763,18 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 alternative = alternative_rows[0]
                 assert alternative.get_mapped()
                 subtitle = alternative.get_subtitle()
-                assert "Sujets : Cuisine" in subtitle and "Genre : Essai" in subtitle
+                assert "Sujets : Cuisine" not in subtitle and "Genre : Essai" not in subtitle
                 assert "Astronomie" not in subtitle and "Roman" not in subtitle
+                for field, value in (("Sujet", "Cuisine"), ("Genre", "Essai")):
+                    qualified, = [
+                        widget for widget in walk(page.detail.content)
+                        if isinstance(widget, Adw.ActionRow)
+                        and widget.get_title() == "Source 2 · fixture-c-b · " + field
+                    ]
+                    assert qualified.get_mapped()
+                    assert qualified.get_subtitle() == value
+                    assert "Fournisseur déclaré : fixture-c-b" in (qualified.get_tooltip_text() or "")
+                    assert "Référence déclarée : edition-b" in (qualified.get_tooltip_text() or "")
                 assert not alternative.has_css_class("detail-metadata-actions")
                 # The alternative is an exact retained source summary, not
                 # a field-level parser proof or a reconciled canonical value.
