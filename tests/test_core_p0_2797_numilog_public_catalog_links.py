@@ -64,6 +64,20 @@ def test_unattested_or_weak_product_evidence_does_not_persist(evidence):
     ) is None
 
 
+@pytest.mark.parametrize("control", ["\\u200b", "\\u202e", "\\u2066", "\\u0080", "\\ud800"])
+def test_public_cover_and_attested_book_link_reject_hidden_unicode_controls(control):
+    """A covert path character cannot be admitted as a stable N1 origin."""
+    for url in (
+        "https://cdn.another-publisher.org/cover/" + control + "book.webp",
+        "https://cdn.another-publisher.org/" + control + "cover.webp",
+    ):
+        assert project_public_url(url, cover=True) is None
+    assert project_public_url(
+        "https://books.new-publisher.org/title/" + control + "book",
+        evidence=PROOF,
+    ) is None
+
+
 def test_query_free_public_covers_remain_generic_but_signed_covers_do_not():
     assert project_public_url(
         "https://cdn.another-publisher.org/cover/abc.webp", cover=True,
