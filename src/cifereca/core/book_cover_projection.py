@@ -46,7 +46,8 @@ class CoverDocumentScope:
     placement_id: str = ""
 
     def __post_init__(self) -> None:
-        if self.kind not in ("catalogue", "public_catalogue", "loan", "placement"):
+        if (type(self.kind) is not str
+                or self.kind not in ("catalogue", "public_catalogue", "loan", "placement")):
             raise ValueError("invalid cover scope kind")
         for field_name in (
             "source_key", "provider_id", "credential_id",
@@ -116,6 +117,9 @@ def resolve_book_cover(
 
     if type(scope) is not CoverDocumentScope:
         raise TypeError("expected an exact CoverDocumentScope")
+    # Frozen dataclasses can be altered with object.__setattr__ after admission.
+    # Revalidate the complete exact source/authority before N1 resolution.
+    scope.__post_init__()
     if type(revision) is not int or revision < 0:
         raise ValueError("source revision must be a nonnegative integer")
     if type(snapshot_complete) is not bool:
