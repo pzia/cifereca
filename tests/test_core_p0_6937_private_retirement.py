@@ -322,3 +322,30 @@ def test_pdf_reader_refusal_never_claims_readability(tmp_path, monkeypatch, case
     finally:
         os.close(fd)
     assert path.read_bytes().startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize("case", ["encrypted", "late_revocation"])
+def test_real_pdf_reader_negative_boundary(tmp_path, case):
+    pymupdf = pytest.importorskip("pymupdf")
+    from cifereca.core.derived_variant_pdf_reader import pdf_reader_observed
+
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((36, 36), "Readable fixture")
+        kwargs = (dict(encryption=pymupdf.PDF_ENCRYPT_AES_256,
+                       owner_pw="fixture-owner", user_pw="fixture-user")
+                  if case == "encrypted" else {})
+        content = pdf.tobytes(**kwargs)
+    path = tmp_path / "receipt.pdf"
+    path.write_bytes(content)
+    calls = []
+    def current():
+        calls.append(True)
+        return case != "late_revocation" or len(calls) == 1
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        assert not pdf_reader_observed(fd, len(content), still_current=current)
+    finally:
+        os.close(fd)
+    assert path.read_bytes() == content
+    assert len(calls) >= 2
