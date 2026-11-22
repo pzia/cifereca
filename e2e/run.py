@@ -528,8 +528,8 @@ def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Runner E2E GTK reproductible CIFERECA")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS))
-    # Private #774 review can explicitly capture the SAME GTK appearance
-    # in Search and Recommendations without changing CI's default mode.
+    # Private #774/#4980 reviews can select a GTK appearance without
+    # changing CI's default mode.
     parser.add_argument("--appearance", choices=("light", "dark"))
     parser.add_argument("--plugin", help="Ne lancer que les scénarios associés à ce plugin/domaine")
     parser.add_argument("--out", type=Path, default=ROOT / "e2e-artifacts")
@@ -539,9 +539,9 @@ def main() -> int:
 
     if args.appearance is not None and (
         args.scenario is None
-        or SCENARIOS[args.scenario]["runner"] not in ("gtk-probe", "gtk-recommendations")
+        or SCENARIOS[args.scenario]["runner"] not in ("gtk-probe", "gtk-recommendations", "gtk-detail")
     ):
-        parser.error("--appearance requires a Search/Recommendations GTK scenario")
+        parser.error("--appearance requires a Search, Recommendations or Book Detail GTK scenario")
 
     xvfb = shutil.which("xvfb-run")
     if not xvfb:
@@ -721,6 +721,7 @@ def main() -> int:
                     xvfb, "-a", "-s", f"-screen 0 {width}x{display_height}x24",
                     args.python, str(ROOT / "e2e/book_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    *([] if args.appearance is None else ["--appearance", args.appearance]),
                     *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
                     *(["--plugin-scroll-only"] if scenario.get("plugin_scroll_only") else []),
                 ]
