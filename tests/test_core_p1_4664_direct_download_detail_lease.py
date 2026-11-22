@@ -143,6 +143,9 @@ def test_cached_extension_refresh_retains_live_core_action_but_revokes_removed_o
     removed = NS(_cifereca_action_id="book-cache:old:action")
     kept = []
     panel = NS(
+        # The real DetailPanel always has a mounted window; model that
+        # owner even when the cached extension contributes zero actions.
+        window=NS(service=NS(current_identity=NS(identity_id="alice"))),
         _cached_section_widgets=[],
         _cached_action_ids={"book-cache:old:action"},
         _action_buttons=[base, removed],
