@@ -852,6 +852,41 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     assert page._documentary_summary.get_text() == "2 notices témoins"
                     page.set_documentary_summary(receipt.pop("original_summary"))
                 receipt["returned"] = True
+                # Returning preserves selection, so activating that exact row
+                # again must reopen it via the native ListView signal, not a
+                # second selection notification or a fresh source request.
+                def focus_within(widget):
+                    focused = window.get_focus()
+                    return focused is not None and (
+                        focused is widget or focused.is_ancestor(widget)
+                    )
+
+                assert focus_within(page.listview), "narrow return focus: " + route
+                selection_events = []
+                handler = page.selection.connect(
+                    "notify::selected-item",
+                    lambda *_args: selection_events.append(True),
+                )
+                try:
+                    page.listview.emit("activate", 0)
+                    assert page._narrow_detail_visible
+                    assert page.selection.get_selected_item() is row
+                    assert not selection_events
+                    assert not page.page_header.get_visible()
+                    assert not page.toolbar.get_visible()
+                    assert focus_within(page.detail) or focus_within(page.detail_back), (
+                        "narrow reopened detail focus: " + route
+                    )
+                    assert reads == [doc] and gets == ["GET"]
+                    page.detail_back.emit("clicked")
+                    assert not page._narrow_detail_visible
+                    assert page.selection.get_selected_item() is row
+                    assert not selection_events
+                    assert focus_within(page.listview), "narrow second return focus: " + route
+                finally:
+                    page.selection.disconnect(handler)
+                receipt["reopened_exact_selection"] = True
+                receipt["native_focus_returned"] = True
             elif page._narrow_master_detail and page._narrow_detail_visible:
                 page.detail_back.emit("clicked")
             index = routes.index(route)
@@ -873,7 +908,11 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             # A wide geometry is not evidence of the narrow transition.
             report["notice_c_narrow_context_" + label] = narrow_context
             if set(narrow_context) == set(routes):
-                assert all(value["returned"] for value in narrow_context.values())
+                assert all(
+                    value["returned"] and value["reopened_exact_selection"]
+                    and value["native_focus_returned"]
+                    for value in narrow_context.values()
+                )
                 report["checks"]["P0_3684_narrow_six_views_" + label] = True
             # Real GdkPixbuf preview worker, not the Pillow baseline adapter.
             # A single C and a fixed preview size: creation only on cold N3,
