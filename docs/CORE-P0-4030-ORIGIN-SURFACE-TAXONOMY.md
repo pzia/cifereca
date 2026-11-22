@@ -37,8 +37,9 @@ qualification de `catalog.refresh` : ce dernier demeure non pris en charge.
    ou reçu historique même partiellement contradictoire est un veto ;
    aucun fichier privé n'est transmis à un catalogue.
 2. **Preuve documentaire** : OPF EPUB ou titre/auteur C local vérifiés.
-   Le système existant permet uniquement de comparer avec des notices C
-   **publiques déjà connues**. Le résultat paginé/partiel ou périmé reste
+   Le système compare les notices C **publiques déjà connues**, et propose
+   sur sélection explicite une recherche publique et une comparaison des
+   inventaires privés conservés. Le résultat paginé/partiel ou périmé reste
    explicitement partiel ; zéro correspondance ne prouve aucune origine.
 3. **Recherches futures** : une surface distante n'est interrogée que si le
    plugin déclare et implémente le champ et le budget, si l'utilisateur
@@ -79,11 +80,15 @@ qualification de `catalog.refresh` : ce dernier demeure non pris en charge.
 Le contrôleur Core `local_origin_suggestion_preview.py`, les pages de
 `local_origin_suggestion_batch.py`, l'extension Maintenance
 `maintenance-local-origin` et les notices C publiques vérifiées satisfont
-la **comparaison locale hors réseau et sans mutation**. Le package
+la **comparaison locale hors réseau et sans mutation**. Le détail peut aussi
+interroger explicitement une surface publique et comparer, après consentement
+spécifique, une fenêtre d'achats/prêts en cache du compte connecté, avec pages
+et révocation. Les descriptions divergentes d'un achat restent des candidats
+ambigus ; aucune valeur canonique choisie. Le package
 indépendant #7092 est réceptionné ; cela ne clôt **pas** #4030.
 
-Restent à développer et qualifier explicitement : consentement privé par
-surface, recherche de catalogues distants en budgets/pages, projection
+Restent à développer et qualifier explicitement : recherche privée distante
+qualifiée en budgets/pages, projection
 multi-sources avec provenance de valeur et fraîcheur, déclaration volontaire
 réversible dans Core et son UX, cas d'éditions équivoques. Aucun lien provider
 attesté ou droit n'est créé par l'implémentation documentaire actuelle.

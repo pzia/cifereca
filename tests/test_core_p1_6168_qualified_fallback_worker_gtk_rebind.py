@@ -266,3 +266,68 @@ def test_actual_coverview_bind_restarts_on_gtk_main_with_new_origin_token(prepar
     assert host._generation == 2
     assert host._request.source_uri == ORIGIN
     assert host._request.still_current
+
+
+@pytest.mark.parametrize("second_state", ["pending", "cancelled", "waiting"])
+def test_qualified_fallback_notifies_old_token_before_late_n3_callback(
+        prepared, monkeypatch, second_state):
+    import cifereca.gui.document_cover_service as module
+
+    _, scope, embedded, origin, loader, svc = prepared
+    image = epub_metadata.cover_cache_dir() / embedded.resource.cache_name
+    image.unlink(missing_ok=True)
+    _register(prepared, member="OPS/no-such-cover.png")
+    callbacks, calls = [], []
+    first_notified, second_notified = Event(), Event()
+    release, started = Event(), Event()
+    changes, paths = [], []
+
+    def pending(_resource, *, source_path, callback, **_kw):
+        callbacks.append(callback)
+        return NS(cancel=lambda: None)
+
+    def verifier(resource, *, source_path):
+        calls.append(resource)
+        started.set()
+        assert release.wait(5)
+        return EpubCoverPhysicalAssessment(
+            resource, "definitive_unusable", "member_missing_or_ambiguous",
+        )
+
+    def notify_first():
+        changes.append("list")
+        first_notified.set()
+
+    def notify_second():
+        changes.append("detail")
+        second_notified.set()
+
+    monkeypatch.setattr(loader, "load_exact_epub", pending)
+    monkeypatch.setattr(module, "qualify_failed_epub_cover", verifier)
+    first = svc.get_cover(scope, "list", paths.append,
+                          on_source_changed=notify_first)
+    second = svc.get_cover(scope, "detail", paths.append,
+                           on_source_changed=notify_second)
+    assert len(callbacks) == 2
+    try:
+        callbacks[0](None)
+        assert started.wait(5)
+        if second_state == "cancelled":
+            second.cancel()
+        elif second_state == "waiting":
+            callbacks[1](None)
+    finally:
+        release.set()
+    assert first_notified.wait(5)
+    if second_state != "cancelled":
+        assert second_notified.wait(5)
+    if second_state != "waiting":
+        callbacks[1](None)
+    assert sorted(changes) == (["list"] if second_state == "cancelled"
+                               else ["detail", "list"])
+    assert len(calls) == 1
+    assert not first.still_current and not second.still_current
+    assert svc.decisions.peek(scope, revision=7).uri == ORIGIN
+    assert paths == ([None, None] if second_state == "waiting" else [None])
+    fresh = svc.get_cover(scope, "detail", paths.append)
+    assert fresh.source_uri == ORIGIN and fresh.still_current

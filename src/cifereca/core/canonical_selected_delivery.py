@@ -36,7 +36,7 @@ from .canonical_runtime_attempt import (
     begin_runtime_attempt, pending_runtime_attempt, release_unsubmitted_runtime_attempt,
 )
 from .canonical_adept_attempt import (
-    begin_loan_adept_attempt, pending_loan_adept_attempt, release_unsubmitted_attempt,
+    begin_loan_adept_attempt, pending_loan_adept_attempt, release_proven_unsubmitted_attempt,
 )
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
 from .adept_runtime_preflight import AdeptProfileUnavailable, require_fresh_acsm_capability
@@ -378,9 +378,10 @@ def complete_selected_delivery(
             # the installed runtime's explicit non-submission contract.
             require_adept_profile(profile_name, profile_id)
         except Exception:
-            release_unsubmitted_attempt(
+            release_proven_unsubmitted_attempt(
                 storage, source=source, offer_id=offer.delivery_offer_id,
                 operation_id=operation, shared_lock=shared_lock,
+                reason="core_pre_dispatch_refusal",
             )
             raise
         adept_attempt_id[0] = operation
@@ -390,9 +391,10 @@ def complete_selected_delivery(
             return service.execute_acquisition_request(request)
         except AdeptFulfillmentNotSubmitted as error:
             if type(error) is AdeptFulfillmentNotSubmitted and adept_attempt_id[0]:
-                release_unsubmitted_attempt(
+                release_proven_unsubmitted_attempt(
                     storage, source=source, offer_id=offer.delivery_offer_id,
                     operation_id=adept_attempt_id[0], shared_lock=shared_lock,
+                    reason="runtime_attested_not_submitted",
                 )
                 adept_attempt_id[0] = ""
             if (type(error) is AdeptFulfillmentNotSubmitted

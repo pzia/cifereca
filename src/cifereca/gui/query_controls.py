@@ -482,6 +482,21 @@ class LocalQueryControls(QueryControls):
         except (AttributeError, IndexError, KeyError, TypeError, ValueError):
             return ()
 
+    def matches_known_public_notice(self, item):
+        """Optional local-filter extension for exact retained public C.
+
+        Ordinary plugin candidates return None and keep legacy filtering.
+        The widget supplies its current read-only filter state to Core.
+        """
+        from ..core.notice_c_loaded_filter import matches_known_public_c_filters
+
+        state = self.state()
+        return matches_known_public_c_filters(
+            item, query=state.text, field=self.filter_field(), scope=state.scope,
+            providers=state.providers, content_types=state.types,
+            languages=state.languages,
+        )
+
     def matches_document(self, item):
         selected = self.scope.get_selected()
         if type(selected) is not int or not 0 <= selected < len(self._scope_values):
