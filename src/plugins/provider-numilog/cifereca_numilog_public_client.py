@@ -94,9 +94,9 @@ def public_search_url(query: str, page: int = 0) -> str:
 _MAX_RETAINED_BYTES = 2 * 1024 * 1024
 _PARSER_FAMILY_DIGEST = sha256(b"numilog.public.search.html").hexdigest()
 # Bump with changes to the replay parser and its dependent HTML helpers.
-# v2: strict counter/card/layout and inert-text boundaries (#7163, #7396).
-# Keep the family digest: retained v1 inputs can be evaluated by v2.
-_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v2").hexdigest()
+# v3: reject CSS-hidden search evidence before publication (#7163).
+# Keep the family digest: retained earlier inputs can be evaluated by v3.
+_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v3").hexdigest()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
