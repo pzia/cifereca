@@ -378,3 +378,41 @@ def test_repeat_exact_page_does_not_close_presented_dialog(monkeypatch):
     assert ui._dialog is original and not ui.button.sensitive
     original.respond("cancel")
     assert not runner.queue
+
+
+@pytest.mark.parametrize("dispose_with_dialog", [False, True])
+def test_disposed_native_widget_cannot_rearm_from_late_observation(
+    monkeypatch, dispose_with_dialog,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Disposed widget cannot report"))
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),),
+    )
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_args, **_kwargs: pytest.fail("Disposed widget cannot admit Core"),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.button.visible
+    if dispose_with_dialog:
+        assert ui.open(NS(MessageDialog=Dialog))
+        prior = Dialog.dialogs[-1]
+    ui.dispose()
+    assert ui._disposed and not ui._lease_current()
+    # A queued observer can still deliver the very same consent DTO.
+    ui.observe(page)
+    ui.observe(replace(page, token="later-review"))
+    assert not ui.button.visible and not ui.button.sensitive
+    assert not ui.open(NS(MessageDialog=Dialog))
+    if dispose_with_dialog:
+        prior.respond("apply")
+    assert not runner.queue and ui._page is None and ui._dialog is None
