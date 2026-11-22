@@ -178,6 +178,13 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False,
                        or (entry[5] is not None and type(entry[5]) is not str)
                        for entry in entries):
                     return "catalogue_evidence_unavailable", None
+                # Text that can redraw the confirmation line or reverse its
+                # apparent direction is not usable documentary evidence. The
+                # stored catalogue claim remains untouched and unattributed.
+                if any(category(char) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                       for entry in entries for field in entry[4:6]
+                       if field is not None for char in field):
+                    return "catalogue_evidence_unavailable", None
                 descriptions = {(entry[4], entry[5]) for entry in entries}
                 if len(descriptions) > 1:
                     return "catalogue_evidence_ambiguous", None

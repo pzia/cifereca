@@ -380,7 +380,7 @@ def test_documentary_review_rejects_sqlite_aba_even_when_visible_rows_revert(
     assert path.read_bytes() == old_bytes
 
 
-@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d"])
+@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066", "\x1b"])
 def test_invisible_local_path_cannot_become_documentary_source(
     store, tmp_path, monkeypatch, hidden,
 ):
@@ -420,3 +420,30 @@ def test_readable_unicode_local_filename_remains_admissible(store, tmp_path):
     assert result["status"] == "partial"
     assert result["suggestions"] is not None
     assert not result["may_write_origin_or_right"]
+
+
+@pytest.mark.parametrize("field", ["title", "author"])
+@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d"])
+def test_invisible_catalogue_text_cannot_trigger_documentary_comparison(
+    store, tmp_path, monkeypatch, field, hidden,
+):
+    root, path, pid, _ = _setup(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            f"UPDATE catalog_entries SET {field}=? WHERE catalog_entry_id=?",
+            ("prefix" + hidden + "FORGED", "synthetic-local"),
+        )
+    before, original_bytes = rows(store), path.read_bytes()
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invisible catalogue evidence cannot query known C"),
+    )
+    outcome = _request(store, root, pid)
+    assert outcome["status"] == "excluded"
+    assert outcome["reason"] == "catalogue_evidence_unavailable"
+    assert outcome["suggestions"] is None
+    assert not outcome["may_write_origin_or_right"]
+    assert not outcome["association_authorized"]
+    assert not outcome["provider_access_performed"]
+    assert rows(store) == before and path.read_bytes() == original_bytes
