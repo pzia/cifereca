@@ -296,3 +296,80 @@ def test_native_confirmation_handles_activation_lease_exception_without_core_wor
     assert not runner.queue and not messages
     assert ui._used is (page if phase == "worker" else None)
     assert not ui._lease_current()
+
+
+@pytest.mark.parametrize("refresh", ["revoked", "different", "invalid", "close_raises"])
+def test_refresh_closes_superseded_native_dialog_and_old_apply_is_inert(monkeypatch, refresh):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    closed, calls = [], []
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _message: pytest.fail("Stale native review cannot notify"))
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: calls.append("admitted"),
+    )
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    old, = Dialog.dialogs
+
+    def close(dialog):
+        closed.append(dialog)
+        if refresh == "close_raises":
+            raise RuntimeError("GTK close failed")
+        dialog.respond("cancel")
+    monkeypatch.setattr(Dialog, "close", close, raising=False)
+
+    if refresh == "revoked":
+        next_page = None
+    elif refresh == "invalid":
+        next_page = replace(page, dry_run_entries=())
+    else:
+        next_page = replace(page, dry_run_entries=(
+            replace(entry, proposed="newer.epub"),))
+    ui.observe(next_page)
+    assert closed == [old] and ui._dialog is None
+    assert ui._page is (next_page if refresh in ("different", "close_raises") else None)
+    old.respond("apply")
+    assert not calls and not runner.queue
+    if refresh in ("different", "close_raises"):
+        assert ui.button.visible and ui.button.sensitive
+        assert ui.open(NS(MessageDialog=Dialog))
+        assert len(Dialog.dialogs) == 2
+        Dialog.dialogs[-1].respond("cancel")
+    else:
+        assert not ui.button.visible and not ui.button.sensitive
+
+
+def test_repeat_exact_page_does_not_close_presented_dialog(monkeypatch):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _message: None)
+    ui = NativeOrganizerConfirmation(
+        window, object(), NS(identity_id="A", is_current=lambda: True),
+        Gtk=NS(Button=Widget),
+    )
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    original = Dialog.dialogs[-1]
+    monkeypatch.setattr(Dialog, "close", lambda _dialog: pytest.fail(
+        "same exact page must not discard active confirmation"), raising=False)
+    ui.observe(page)
+    assert ui._dialog is original and not ui.button.sensitive
+    original.respond("cancel")
+    assert not runner.queue
