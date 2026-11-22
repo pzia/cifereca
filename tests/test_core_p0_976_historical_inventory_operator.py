@@ -108,3 +108,32 @@ def test_exact_inventory_absence_is_not_absence_of_right(store, tmp_path):
     assert result["inventory_comparison"] == "not_found_in_supplied_inventory"
     assert result["provider_loan_state"] == "not_checked"
     assert result["may_reacquire"] is False and result["may_rebind_or_return"] is False
+
+
+@pytest.mark.parametrize("extras", [255, 256, 1024])
+def test_historical_inventory_adapter_capabilities_have_bounded_receipt(
+    store, tmp_path, extras,
+):
+    service, request, row, path, calls, _runtime, manager, status = _fixture(
+        store, tmp_path,
+    )
+    before = rows(store), path.read_bytes()
+    status.descriptor.capabilities = (
+        "loan.inventory.readonly",
+        *(f"synthetic.capability.{i}" for i in range(extras)),
+    )
+    operation = admit_inventory_comparison(
+        service, request, row, explicitly_requested=True,
+    )
+    assert operation is not None
+    result = operation()
+    assert operation() is None
+    if extras == 255:
+        assert result is not None
+        assert result["inventory_comparison"] == "exact_profile_and_loan_reported"
+        assert calls == [("historical-adobe", True, True)]
+        assert result["may_reacquire"] is False
+    else:
+        assert result is None
+        assert calls == []
+    assert (rows(store), path.read_bytes()) == before

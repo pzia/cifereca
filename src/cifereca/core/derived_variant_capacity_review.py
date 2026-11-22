@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from unicodedata import category
 
 from . import derived_variant_journal as journal
 from . import derived_variant_compact_receipt as compact
@@ -24,7 +25,8 @@ def _valid_profile_directory(value):
     return (type(value) is str and 0 < len(value) <= 256
             and value not in (".", "..") and "/" not in value
             and chr(92) not in value
-            and not any(ord(char) < 32 or ord(char) == 127 for char in value))
+            and not any(category(char) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for char in value))
 
 
 def _receipt_witness(raw):
@@ -91,22 +93,31 @@ def _snapshot(scope):
     # Config may contain duplicate identity rows even when SQLite has one
     # exact owner. A dict comprehension would silently accept the last
     # directory as physical ownership evidence; mark that identity unbound.
+    rows = scope.config.identities()
+    # The configured-owner inventory is a bounded, native snapshot. A
+    # generator, truncated list or malformed row is not ownership evidence.
+    if type(rows) is not list or not 1 <= len(rows) <= 128:
+        raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
     configured = {}
     owners_by_directory = {}
     ambiguous_directories = set()
-    for row in scope.config.identities():
-        identity, directory = row["id"], row["directory_name"]
-        configured[identity] = directory if identity not in configured else None
-        # A second *different* configured profile claiming this directory
-        # contradicts its ownership even when SQLite has only one binding.
-        # Do not infer physical quota from an ambiguous configuration.
+    for row in rows:
+        if (type(row) is not dict or type(row.get("id")) is not str
+                or not 0 < len(row["id"]) <= 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in row["id"])
+                or "directory_name" not in row):
+            raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
+        identity = row["id"]
+        configured[identity] = (
+            row["directory_name"] if identity not in configured else None
+        )
+        directory = row["directory_name"]
         if type(directory) is str:
-            if directory in owners_by_directory and owners_by_directory[directory] != identity:
+            owner = owners_by_directory.setdefault(directory, identity)
+            if owner != identity:
                 ambiguous_directories.add(directory)
-            else:
-                owners_by_directory[directory] = identity
     for identity, directory in configured.items():
-        if directory in ambiguous_directories:
+        if type(directory) is str and directory in ambiguous_directories:
             configured[identity] = None
     with scope.storage._lock:
         db = scope.storage._connect()

@@ -339,6 +339,10 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         root._cifereca_action_id = ("open-c-authenticated-web" if authenticated
                                      else "open-c-public-web")
         root._cifereca_action_priority = 30
+        # GTK construction and signal setup can re-enter navigation. A
+        # stale menu must never be published after that route change.
+        if not root_current():
+            return
         panel.add_actions([root])
 
     def read_menu():
