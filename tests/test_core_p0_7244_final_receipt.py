@@ -95,3 +95,37 @@ def test_rearm_disposition_never_equates_non_submission_or_profile_with_permissi
         recorded_inactive=inactive)
     assert selected.rearm_blocker == expected and selected.unlock_authorized is False
     assert "Retéléchargement non autorisé" in _selected_hold_summary(selected)
+
+
+def test_historical_final_receipt_read_never_creates_lock_parent(
+    store, tmp_path, monkeypatch,
+):
+    service, source, path, _ = _setup(store, tmp_path)
+    raw = marker._value("historical-offer", "a" * 32)
+    store.metadata_set(marker._key(source), raw)
+    lock_path = tmp_path / "missing-state" / "local-acquisition.lock"
+    looked_up = []
+
+    def forbidden_create(*, create=True):
+        looked_up.append(create)
+        if create:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+        return lock_path
+
+    monkeypatch.setattr(recovery, "acquisition_lock_file", forbidden_create)
+    request = review.admit_historical_review(service)
+    page = review.run_historical_hold_review(
+        service, request, verify_local_bytes=True,
+    )
+    ordinal = next(i for i, row in enumerate(page["rows"])
+                   if row["provider_loan_id"] == source.right_id)
+    selected = review.select_historical_hold(
+        service, request, page, ordinal=ordinal, confirmed=True,
+    )
+    assert selected is not None
+    assert selected.final_receipt_evidence == "unverified"
+    assert not selected.unlock_authorized
+    assert looked_up == [False]
+    assert not lock_path.parent.exists()
+    assert store.metadata_get(marker._key(source)) == raw
+    assert path.read_bytes() == BYTES
