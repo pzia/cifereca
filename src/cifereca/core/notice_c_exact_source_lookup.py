@@ -100,7 +100,17 @@ def _resolve_public_source_c_many(
             # Keep the Python validator authoritative. The SQL predicate
             # is only a prefilter, never a document or access proof.
             for key, raw in cursor:
+                claimed = set()
                 try:
+                    # Decode only the opaque claimed source keys first.
+                    # The canonical decoder remains the positive authority.
+                    wire = json.loads(raw)
+                    members = wire.get("sources", {})
+                    if type(members) is dict:
+                        claimed = {source_refs[ref] for ref in members
+                                   if ref in source_refs}
+                    if not claimed - rejected:
+                        continue
                     parsed = _json(raw)
                     # Once a coordinate exceeds its ambiguity budget, do
                     # not repeatedly decode thousands of additional claims
@@ -114,9 +124,12 @@ def _resolve_public_source_c_many(
                         continue
                     document = canonical_cover_document_ref(parsed["edition_id"])
                     if _db_key(document) != key:
-                        continue
+                        raise ValueError("corrupt_canonical_cover")
                     consolidated = _decode(raw, document)
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, AttributeError, RecursionError):
+                    rejected.update(claimed)
+                    for coords in claimed:
+                        matches.pop(coords, None)
                     continue
                 sources = consolidated.sources
                 if not sources or any(
