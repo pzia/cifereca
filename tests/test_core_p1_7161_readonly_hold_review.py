@@ -216,3 +216,61 @@ def test_missing_invalid_or_unreadable_marker_never_supplies_review_fingerprint(
         assert db.in_transaction
     finally:
         db.rollback()
+
+
+@pytest.mark.parametrize("reason", ["core_pre_dispatch_refusal", "runtime_attested_not_submitted"])
+def test_exact_unsubmitted_witness_survives_interrupted_release(store, tmp_path, monkeypatch, reason):
+    source, _ = new_source(kind="loan", branch="dilicom")
+    register(store, "A", "seller", "card-A")
+    sibling = replace(source, right_id="sibling")
+    lock = tmp_path / "acquisition.lock"
+    monkeypatch.setattr("cifereca.core.canonical_recovery.acquisition_lock_file", lambda: lock)
+    with InterProcessLock(lock) as lease:
+        operation = marker.begin_loan_adept_attempt(store, source=source, offer_id="offer", shared_lock=lease)
+        assert marker.review_loan_adept_unsubmitted(store, source=source).state == "not_recorded"
+        def interrupted(*args, **kwargs):
+            raise OSError("synthetic crash after first commit")
+        monkeypatch.setattr(marker, "_consume_proven_unsubmitted", interrupted)
+        with pytest.raises(OSError):
+            marker.release_proven_unsubmitted_attempt(
+                store, source=source, offer_id="offer", operation_id=operation,
+                shared_lock=lease, reason=reason)
+        restored = Storage(store.path)
+        try:
+            fact = marker.review_loan_adept_unsubmitted(restored, source=source)
+            assert fact.state == "non_submission_recorded" and fact.reason == reason
+            assert fact.marker_fingerprint == marker.review_loan_adept_marker(restored, source).fingerprint
+            assert not fact.unlock_authorized and fact.marker_fingerprint not in repr(fact)
+            assert marker.pending_loan_adept_attempt(restored, source)
+            assert marker.review_loan_adept_unsubmitted(restored, source=sibling).state == "not_recorded"
+            with pytest.raises(ValueError, match="unsubmitted_pending"):
+                marker.begin_loan_adept_attempt(restored, source=source, offer_id="new", shared_lock=lease)
+            with pytest.raises(ValueError, match="unsubmitted_conflict"):
+                marker.release_unsubmitted_attempt(restored, source=source, offer_id="offer",
+                                                   operation_id=operation, shared_lock=lease)
+            db = restored._connect()
+            with restored._lock, db:
+                db.execute("UPDATE metadata SET value=? WHERE key=?", (
+                    marker._value("offer", "a" * 32), marker._key(source)))
+            assert marker.review_loan_adept_unsubmitted(restored, source=source).state == "unverified"
+            assert marker.pending_loan_adept_attempt(restored, source)
+        finally:
+            restored.close()
+
+
+def test_live_success_consumes_proof_and_fence_together(store, tmp_path, monkeypatch):
+    source, _ = new_source(kind="loan", branch="dilicom")
+    register(store, "A", "seller", "card-A")
+    lock = tmp_path / "acquisition.lock"
+    monkeypatch.setattr("cifereca.core.canonical_recovery.acquisition_lock_file", lambda: lock)
+    with InterProcessLock(lock) as lease:
+        op = marker.begin_loan_adept_attempt(store, source=source, offer_id="offer", shared_lock=lease)
+        with pytest.raises(ValueError, match="changed"):
+            marker.release_proven_unsubmitted_attempt(store, source=source, offer_id="other",
+                operation_id=op, shared_lock=lease, reason="core_pre_dispatch_refusal")
+        assert marker.review_loan_adept_unsubmitted(store, source=source).state == "not_recorded"
+        marker.release_proven_unsubmitted_attempt(store, source=source, offer_id="offer",
+            operation_id=op, shared_lock=lease, reason="core_pre_dispatch_refusal")
+        assert not marker.pending_loan_adept_attempt(store, source)
+        assert marker.review_loan_adept_unsubmitted(store, source=source).state == "not_recorded"
+        assert marker.begin_loan_adept_attempt(store, source=source, offer_id="new", shared_lock=lease) != op

@@ -42,6 +42,60 @@ def _isbn13(value):
     return None
 
 
+def _explicit_isbns(package, metadata, opf, dc, *, allow_refinements):
+    """EPUB 2 scheme/URN and EPUB 3 reserved ONIX identifier-type.
+
+    Only standard local ID refinements are read. Unknown/custom schemes,
+    duplicate IDs or conflicting refinements never create a stronger claim.
+    Checksums alone cannot turn an untyped identifier into an ISBN.
+    """
+    identifiers = metadata.findall(dc + "identifier")
+    if len(identifiers) > 32:
+        return ()
+    # EPUB 3 reserves this scheme prefix. Reject refinements altogether if
+    # the package declares it again (checked by the caller).
+    refinements = metadata.findall(opf + "meta")
+    if len(refinements) > 256:
+        return ()
+    counts = {}
+    for node in package.iter():
+        identifier = node.get("id")
+        if identifier:
+            counts[identifier] = counts.get(identifier, 0) + 1
+    isbns = set()
+    for node in identifiers:
+        raw = (node.text or "").strip()
+        if len(node) or len(raw) > 64:
+            continue
+        scheme = node.get(opf + "scheme", "")
+        identifier = node.get("id", "")
+        if identifier and counts.get(identifier) != 1:
+            continue
+        types = [meta for meta in refinements
+                 if identifier and meta.get("refines") == "#" + identifier
+                 and meta.get("property") == "identifier-type"]
+        typed = scheme.casefold() == "isbn" or raw.casefold().startswith("urn:isbn:")
+        if scheme and scheme.casefold() != "isbn":
+            # An explicit incompatible EPUB 2 scheme is a contradiction.
+            continue
+        if types:
+            if not allow_refinements:
+                continue
+            if len(types) != 1 or len(types[0]) or types[0].get("scheme") != "onix:codelist5":
+                continue
+            code = (types[0].text or "").strip()
+            length = {"02": 10, "15": 13}.get(code)
+            number = raw[9:] if raw.casefold().startswith("urn:isbn:") else raw
+            if length is None or len(number.replace("-", "").replace(" ", "")) != length:
+                continue
+            typed = True
+        if typed:
+            value = _isbn13(raw)
+            if value is not None:
+                isbns.add(value)
+    return tuple(sorted(isbns))
+
+
 # Explicit controlled URI claims only; generic Text, genre and filename
 # do not distinguish a book, comic or document. Audio is a separate bundle.
 _DOCUMENTARY_TYPES = {
@@ -120,19 +174,13 @@ def _read_epub_details(stream):
                     or any(not _public_bibliographic_text(a, required=True, limit=512)
                            for a in authors)):
                 return None
-            identifiers = metadata[0].findall(dc + "identifier")
-            isbns = set()
-            if len(identifiers) <= 32:
-                for node in identifiers:
-                    raw = node.text or ""
-                    scheme = node.get(opf + "scheme", "")
-                    if (len(node) or not (scheme.casefold() == "isbn"
-                            or raw.strip().casefold().startswith("urn:isbn:"))):
-                        continue
-                    value = _isbn13(raw)
-                    if value is not None:
-                        isbns.add(value)
-            return title, authors, tuple(sorted(isbns)), _documentary_nature(metadata[0], dc)
+            # Reserved ONIX vocabulary only, never a redefined package
+            # prefix (or an EPUB 2 meta that merely resembles a refinement).
+            prefix = package.get("prefix", "")
+            allow_refinements = (package.get("version", "").startswith("3.")
+                                 and "onix:" not in prefix.casefold())
+            isbns = _explicit_isbns(package, metadata[0], opf, dc, allow_refinements=allow_refinements)
+            return title, authors, isbns, _documentary_nature(metadata[0], dc)
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
             zlib.error, ElementTree.ParseError):

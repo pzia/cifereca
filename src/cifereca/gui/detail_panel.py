@@ -103,6 +103,7 @@ class DetailPanel(Gtk.Box):
 
     def empty(self, title: str, description: str, icon: str = "book-open-symbolic") -> None:
         self._rendered_search_detail = None
+        self._private_series_request_token = None
         self._cancel_meta_request()
         self._pending_action_focus_key = ""
         clear_box(self.content)
@@ -728,6 +729,7 @@ class DetailPanel(Gtk.Box):
         trace = current_detail_trace()
         started = trace.clock() if trace else None
         self._rendered_search_detail = None
+        self._private_series_request_token = None
         self._cancel_meta_request()
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
@@ -897,6 +899,19 @@ class DetailPanel(Gtk.Box):
 
     def add_group(self, title: str, rows: list[tuple[str, str]]) -> None:
         self._group(title, rows)
+
+    def add_retained_search_series(self, relation) -> None:
+        """Passive historical catalogue evidence, not a fresh search or offer."""
+        from cifereca.core.public_search_projection import PublicSeriesRelation
+        from cifereca.book_detail_metadata import safe_detail_value
+        if type(relation) is not PublicSeriesRelation:
+            return
+        label = safe_detail_value(relation.label)
+        source = safe_detail_value(relation.source_field)
+        if label and source:
+            self._group("Catalogue · observation conservée", [
+                ("Série", label), ("Champ source", source),
+            ], field_actions=False)
 
     def add_review_group(self, title: str, rows: list[tuple[str, str]]):
         """Own one detachable plugin result, without metadata action buttons."""

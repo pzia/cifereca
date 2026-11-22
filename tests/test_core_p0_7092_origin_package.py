@@ -235,3 +235,26 @@ def test_explicit_declaration_filter_is_read_only_and_restart_scoped(store, tmp_
     assert "origine déclarée, non attestée" not in selected_text
     assert c.broker.next_page(token=first.token, confirmed=True) is None
     assert rows(store) == before and path.read_bytes() == before_bytes
+
+
+@pytest.mark.parametrize("include_declared", [False, True])
+def test_restart_revokes_previous_page_before_queued_worker(store, tmp_path, include_declared):
+    service, root, _ = _service(store, tmp_path)
+    for i in range(5):
+        _extra(store, root, f"restart-token-{i}.pdf")
+    _, _, _, controller, tasks, _ = rig(service)
+    before = rows(store)
+    assert controller.request(restart=True)
+    work, done = tasks[-1]
+    old = work()
+    done(old)
+    assert old.can_continue
+    assert controller.request(restart=True, include_declared=include_declared)
+    # The new worker has not run: the old cursor must already be revoked.
+    assert controller.broker.next_page(token=old.token, confirmed=True) is None
+    work, done = tasks[-1]
+    fresh = work()
+    done(fresh)
+    assert controller.page is fresh and fresh.page == 1 and fresh.can_continue
+    assert fresh.token != old.token
+    assert rows(store) == before
