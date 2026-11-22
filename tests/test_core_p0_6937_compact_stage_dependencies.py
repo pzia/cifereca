@@ -102,3 +102,26 @@ def test_unclassified_sql_consumers_never_look_clear(committed, kind):
         assert result[stage] == ("referenced" if kind in ("title", "extension") else "unverified")
     assert db.metadata_get(key) == raw
     assert Path(stage).samefile(intent.candidate_path)
+
+
+@pytest.mark.parametrize("case", ["literal", "dynamic", "temp", "trigger"])
+def test_sql_schema_consumers_are_never_silently_ignored(committed, case):
+    db, intent, _placement, key, raw, pk, proof, args = committed
+    stage = intent.staged_path
+    literal = "'" + stage.replace("'", "''") + "'"
+    with db._lock, db._connect() as sql:
+        if case == "literal":
+            sql.execute(f"CREATE VIEW deferred_reader AS SELECT {literal} AS path")
+        elif case == "dynamic":
+            sql.execute("CREATE VIEW deferred_reader AS SELECT value AS path FROM metadata WHERE 0")
+        elif case == "temp":
+            sql.execute("CREATE TEMP VIEW deferred_reader AS SELECT 1 AS path")
+        else:
+            sql.execute(f"CREATE TRIGGER deferred_reader AFTER UPDATE ON identities "
+                        f"BEGIN SELECT {literal}; END")
+        if not sql.in_transaction:
+            sql.execute("BEGIN")
+        observed = dependencies.scan_stage_references(sql, {stage: key})
+    assert observed[stage] == ("referenced" if case in ("literal", "trigger") else "unverified")
+    assert db.metadata_get(key) == raw
+    assert Path(stage).samefile(intent.candidate_path)
