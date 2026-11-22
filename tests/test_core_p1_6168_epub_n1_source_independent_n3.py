@@ -72,7 +72,7 @@ def test_epub_wins_n1_when_n3_image_missing_but_catalog_url_is_hot(attested):
     cache = CoverDecisionCache()
     token = cache.begin(scope, revision=5)
     assert cache.publish_resolved(token, decision)
-    assert cache.peek(scope, revision=5) is decision
+    assert cache.peek(scope, revision=5) == decision
 
     media = EpubCoverPhysicalCache()
     try:
@@ -80,7 +80,7 @@ def test_epub_wins_n1_when_n3_image_missing_but_catalog_url_is_hot(attested):
         assert result == physical.as_uri()
         assert epub_metadata.valid_cached_cover_path(physical)
         # N3 rehydration neither clears N2 nor reselects an URL.
-        assert cache.peek(scope, revision=5) is decision
+        assert cache.peek(scope, revision=5) == decision
         assert cache.selected_token(scope, revision=5, uri=origin.url) is None
         assert cache.selected_token(scope, revision=5, uri=physical.as_uri()) == token
     finally:
