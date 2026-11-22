@@ -36,6 +36,7 @@ class NativeOrganizerConfirmation:
         self.window, self.resolved, self.lease = window, resolved, lease
         self._identity_id = getattr(lease, "identity_id", None)
         self._page = self._used = self._dialog = None
+        self._review_witness = None
         self._disposed = False
         self.button = Gtk.Button(label="Confirmer le renommage…")
         self.button.set_visible(False)
@@ -55,8 +56,23 @@ class NativeOrganizerConfirmation:
         except Exception:
             return False
 
+    @staticmethod
+    def _advice_witness(page):
+        # The DTO is frozen by convention, but Python can still replace its
+        # attributes through object.__setattr__. Pin the exact visible text.
+        if (type(page) is not OrganizerPageAdvice
+                or type(page.dry_run_entries) is not tuple
+                or len(page.dry_run_entries) != 1
+                or type(page.dry_run_entries[0]) is not OrganizerDryRunAdvice):
+            return None
+        entry = page.dry_run_entries[0]
+        return (page.token, page.mutation_authorized, page.dry_run_state,
+                entry.operation, entry.state, entry.current, entry.proposed)
+
     def _current(self, page):
-        return self._page is page and self._lease_current()
+        return (self._page is page and self._review_witness is not None
+                and self._advice_witness(page) == self._review_witness
+                and self._lease_current())
 
     @staticmethod
     def _displayable_path(value):
@@ -83,9 +99,12 @@ class NativeOrganizerConfirmation:
         # A newly displayed or revoked DTO supersedes the exact consent
         # shown in a mounted native dialog. Dismiss it now, not only on
         # disposal: an old Apply signal can never target the new review.
+        witness = self._advice_witness(value) if valid else None
         old_dialog = self._dialog if self._dialog is not None and (
-            self._page is not value or not valid) else None
+            self._page is not value or not valid
+            or self._review_witness != witness) else None
         self._page = value if valid else None
+        self._review_witness = witness
         if old_dialog is not None:
             self._dialog = None
             try:
@@ -105,6 +124,7 @@ class NativeOrganizerConfirmation:
         dialog = self._dialog
         self._dialog = None
         self._page = None
+        self._review_witness = None
         self.button.set_visible(False)
         self.button.set_sensitive(False)
         if dialog is not None:
@@ -123,6 +143,7 @@ class NativeOrganizerConfirmation:
                 or not self._current(page)):
             return False
         entry, = page.dry_run_entries
+        shown_witness = self._review_witness
         dialog = None
         try:
             dialog = Adw.MessageDialog.new(
@@ -164,7 +185,8 @@ class NativeOrganizerConfirmation:
             if self._dialog is not dialog:
                 return
             self._dialog = None
-            if response_id != "apply" or not self._current(page):
+            if (response_id != "apply" or not self._current(page)
+                    or self._review_witness != shown_witness):
                 self.button.set_sensitive(self._page is not None
                                           and self._page is not self._used
                                           and self._lease_current())
@@ -172,7 +194,8 @@ class NativeOrganizerConfirmation:
             self._used = page
 
             def current():
-                return self._current(page)
+                return (self._review_witness == shown_witness
+                        and self._current(page))
 
             def work():
                 from ..core import library_organizer_execution as execution
