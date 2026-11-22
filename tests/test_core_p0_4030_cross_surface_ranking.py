@@ -102,10 +102,13 @@ def test_plugin_comparative_review_requires_two_explicit_sources_and_preserves_s
     assert actions["private-0"][2]()
     deliver(tasks)
     ranked = [g for g in groups if g[0] == "Classement documentaire — lecture seule"]
-    assert len(ranked) == 1
-    lines = ranked[0][1]
+    # Known C was reviewed on the first page, so the public lookup already
+    # adds a comparative snapshot; the private lookup adds the next one.
+    assert len(ranked) == 2
+    lines = ranked[-1][1]
     labels = [detail.split(" · ")[0] for _, detail in lines[3:]
-    assert labels == ["Prêt en cache", "Catalogue public", "Catalogue public"]
+    assert labels == ["Notice C déjà connue", "Prêt en cache",
+                      "Catalogue public", "Catalogue public"]
     assert "jamais attribution" in repr(lines[0])
     assert rows(service.storage) == before and path.read_bytes() == data
     dispose()
