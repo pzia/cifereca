@@ -33,10 +33,13 @@ def test_manifest_benchmark_reports_aggregate_without_touching_inputs(tmp_path, 
         [sys.executable, str(script), "--size", "16", "--manifest", str(manifest)],
         capture_output=True, text=True, timeout=90,
     )
-    assert proc.returncode == 0
+    # 15 valid EPUBs out of the requested 16 are measurable, but must
+    # never certify a complete representative baseline.
+    assert proc.returncode == 1
     assert "PRIVATE" not in proc.stdout and "PRIVATE" not in proc.stderr
     report = json.loads(proc.stdout)
     assert report["selected"] == 16 and report["qualified"] == 15
+    assert report["complete_manifest"] is False and report["valid"] is False
     assert sum(report["skipped"].values()) == 1
     assert report["distinct_cover_media"] == 15
     assert report["phases"]["n3_cache_cold"]["n3_miss"] == 15
@@ -46,3 +49,23 @@ def test_manifest_benchmark_reports_aggregate_without_touching_inputs(tmp_path, 
     assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest
                for path, digest in before.items())
     assert invalid.is_symlink()
+
+
+    # After replacing the rejected symlink with a real, independently
+    # readable EPUB, the exact same 16-path manifest can produce a PASS.
+    invalid.unlink()
+    monkeypatch.setattr(fixture, "PNG", _png(15))
+    before[invalid] = hashlib.sha256(_write_epub(invalid, epub3=True)).hexdigest()
+    proc_complete = subprocess.run(
+        [sys.executable, str(script), "--size", "16", "--manifest", str(manifest)],
+        capture_output=True, text=True, timeout=90,
+    )
+    assert proc_complete.returncode == 0
+    assert "PRIVATE" not in proc_complete.stdout + proc_complete.stderr
+    complete = json.loads(proc_complete.stdout)
+    assert complete["complete_manifest"] is True and complete["valid"] is True
+    assert complete["selected"] == complete["qualified"] == 16
+    assert complete["phases"]["n3_cache_cold"]["n3_miss"] == 16
+    assert complete["phases"]["n3_cache_warm"]["n3_hit"] == 16
+    assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest
+               for path, digest in before.items())
