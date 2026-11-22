@@ -438,3 +438,38 @@ def test_active_identity_change_during_transform_blocks_commit(tmp_path):
     assert not (tmp_path / "library" / "Optimized.epub").exists()
     assert service.storage.placement_get(original_id) is not None
     assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+
+
+def test_private_derived_stage_cannot_be_input_or_output_lease(tmp_path, monkeypatch):
+    from cifereca.core.derived_variant_region_paths import PRIVATE_DERIVED_REGION
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+    from cifereca.plugin_api import LibraryMutationRequest
+    service, source, pid, broker = _broker(tmp_path)
+    stage = tmp_path / "library" / PRIVATE_DERIVED_REGION / "book.epub"
+    stage.parent.mkdir()
+    stage.write_bytes(b"book-data")
+    try:
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("UPDATE placements SET path=? WHERE placement_id=?", (str(stage), pid))
+        before = service.storage.placement_get(pid)
+        monkeypatch.setattr("cifereca.artifact_runtime.sha256_file",
+                            lambda *_args: pytest.fail("private stage hashed"))
+        for action in (
+            lambda: broker.input_lease(source, identity_id="id1", placement_id=pid),
+            lambda: broker.output_lease(source, output_format=source.format,
+                                        identity_id="id1", placement_id=pid),
+            lambda: broker.execute_transform(TransformRequest(
+                source, "optimize", identity_id="id1", placement_id=pid), control=Control()),
+        ):
+            with pytest.raises(Conflict) as caught:
+                action()
+            assert caught.value.code == "artifact_source_private_region"
+        with pytest.raises(Conflict, match="Zone privée"):
+            LibraryMaintenanceBrokerImpl(service).plan(
+                LibraryMutationRequest("normalize_filename", placement_id=pid))
+        assert service.storage.placement_get(pid) == before
+        assert tuple(stage.parent.iterdir()) == (stage,)
+        assert stage.read_bytes() == b"book-data"
+        assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+    finally:
+        service.storage.close()
