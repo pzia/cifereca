@@ -311,3 +311,53 @@ def test_guided_simulation_selects_one_group_and_preserves_scope(store, tmp_path
     assert controller.page.dry_run_entries == prepared.dry_run_entries
     assert plugin.broker.confirm_dry_run(token=prepared.token, confirmed=True) is None
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("safe_count", [0, 1])
+def test_guided_rename_only_preserves_conflicts_and_can_reselect_empty(
+    store, tmp_path, safe_count,
+):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    _put_epub(store, root, "Acquisitions/one.epub")
+    _put_epub(store, root, "Acquisitions/two.epub", metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
+    if safe_count:
+        _put_epub(store, root, "Acquisitions/three.epub",
+                  metadata=META.replace("Roman commun", "Roman unique"))
+    if safe_count:
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE catalog_entries SET title=? WHERE placement_id IN "
+                       "(SELECT placement_id FROM placements WHERE path=?)",
+                       ("Roman unique", str(root / "A/Acquisitions/three.epub")))
+    module, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    c = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert c.request("preview")
+    _finish(tasks)
+    original = c.page
+    assert not c.request("prepare", group_index=0, rename_only=True)
+    assert not c.request("prepare", rename_only=1)
+    assert c.request("prepare", rename_only=True)
+    _finish(tasks)
+    prepared = c.page
+    assert prepared.token != original.token and prepared.dry_run_rename_only
+    assert prepared.dry_run_excluded == 2 and len(prepared.dry_run_entries) == safe_count
+    assert not prepared.mutation_authorized
+    assert "2 autre(s) avis non retenu(s)" in module.display(prepared)
+    assert plugin.broker.confirm_dry_run(token=original.token, confirmed=True) is None
+    if safe_count:
+        assert prepared.dry_run_state == "prepared"
+        assert c.request("confirm")
+        _finish(tasks)
+        assert c.page.dry_run_state == "confirmed" and c.page.dry_run_rename_only
+        assert c.page.dry_run_entries == prepared.dry_run_entries
+    else:
+        assert prepared.dry_run_state == "empty"
+        assert not c.request("confirm")
+        assert plugin.broker.confirm_dry_run(token=prepared.token, confirmed=True) is None
+        assert c.request("prepare")
+        _finish(tasks)
+        assert c.page.dry_run_state == "prepared" and not c.page.dry_run_rename_only
+        assert all(e.state == "destination_conflict" for e in c.page.dry_run_entries)
+    assert rows(store) == before and not c.page.mutation_authorized

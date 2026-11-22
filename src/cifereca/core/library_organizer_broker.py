@@ -133,7 +133,8 @@ class LibraryOrganizerReadBrokerImpl:
                 self._active = None
                 return None
 
-    def _review_dry_run(self, token, confirmed, *, confirm, group_index=None):
+    def _review_dry_run(self, token, confirmed, *, confirm, group_index=None,
+                        rename_only=False):
         if confirmed is not True:
             return None
         with self._lock:
@@ -147,28 +148,33 @@ class LibraryOrganizerReadBrokerImpl:
                         return None
                     plan = confirm_organizer_dry_run(scope, report, self._dry_run, confirmed=True)
                 else:
-                    if page.dry_run_state:
+                    if page.dry_run_state not in ("", "empty"):
                         return None
                     plan = prepare_organizer_dry_run(
-                        scope, report, confirmed=True, group_index=group_index)
-                if (plan is None or not plan.entries or plan.executable is not False
+                        scope, report, confirmed=True, group_index=group_index,
+                        rename_only=rename_only)
+                if (plan is None or (not plan.entries and not plan.rename_only)
+                        or plan.executable is not False
                         or plan.confirmed is not confirm or self._current(token) is None):
                     self._active = self._dry_run = None
                     return None
                 updated = replace(page, token=secrets.token_hex(32),
-                    dry_run_state="confirmed" if confirm else "prepared",
+                    dry_run_state=("confirmed" if confirm else "prepared" if plan.entries else "empty"),
                     dry_run_group=plan.group_index,
+                    dry_run_rename_only=plan.rename_only,
+                    dry_run_excluded=plan.excluded_count,
                     dry_run_entries=tuple(OrganizerDryRunAdvice(
                         e.operation, e.current, e.proposed, e.state) for e in plan.entries))
-                self._dry_run = None if confirm else plan
+                self._dry_run = None if confirm or not plan.entries else plan
                 self._active = (scope, report, stamp, updated)
                 return updated
             except Exception:
                 self._active = self._dry_run = None
                 return None
 
-    def prepare_dry_run(self, *, token, confirmed=False, group_index=None):
-        return self._review_dry_run(token, confirmed, confirm=False, group_index=group_index)
+    def prepare_dry_run(self, *, token, confirmed=False, group_index=None, rename_only=False):
+        return self._review_dry_run(token, confirmed, confirm=False, group_index=group_index,
+                                    rename_only=rename_only)
 
     def confirm_dry_run(self, *, token, confirmed=False):
         return self._review_dry_run(token, confirmed, confirm=True)
