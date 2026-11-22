@@ -361,6 +361,7 @@ def main():
             return (ResolvedPluginService(
                 "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
                 registry_generation=manager.registry_generation,
+                capabilities=("maintenance.group.organization",),
             ),) + tuple(original_services(category))
         return original_services(category)
     def fixture_service(key):
@@ -814,7 +815,7 @@ def main():
             # Find the exact plugin contribution, never another label with
             # coincidentally matching text from the host or another row.
             outer = row
-            while outer.get_parent() is not window[0]._tools_box:
+            while outer.get_parent().get_parent() is not window[0]._tools_box:
                 outer = outer.get_parent()
                 assert outer is not None
             assert not any(expected in node.get_text() for node in walk(outer)
@@ -1115,24 +1116,34 @@ def main():
     def cancel_scan():
         assert_line("Annulé")
         tool.plan_started.clear()
+        tool.release_plan.clear()
         physical(preview_button[0])
         until(lambda: tool.plan_started.is_set() and line_is("Analyse…"), cancel_pending_scan)
 
     def cancel_pending_scan():
-        cancel = next(w for w in walk(window[0]._tools_box)
+        row = line_widgets()[0]
+        cancel = next(w for w in walk(row)
                       if isinstance(w, Gtk.Button) and w.get_label() == "Annuler")
+        assert modal() is None and tool.run_calls == 0
         physical(cancel)
+
+        def release_cancelled_scan():
+            # XTEST queues input; wait for GTK to acknowledge the cancellation
+            # before allowing the off-thread plan to return.
+            assert not tool.plan_ready.is_set()
+            assert modal() is None and tool.run_calls == 0
+            tool.release_plan.set()
+            until(lambda: tool.plan_ready.is_set() and not cancel.get_visible()
+                  and preview_button[0].get_sensitive(), discarded, timeout=4.0)
+
         def discarded():
             assert modal() is None and tool.run_calls == 0
             assert_line("Annulé")
             report["checks"]["cancelled_scan_never_reopens_confirmation"] = True
-            until(lambda: preview_button[0].get_sensitive(), begin_stale)
-        # Cancellation completes asynchronously after the simulated plan worker
-        # has observed its cancellation token. A fixed 850 ms delay races
-        # runner scheduling (the fake scan itself takes 650 ms), so assert
-        # the eventual GTK state with an explicit upper bound instead.
-        # A broken cancellation still fails rather than being silently retried.
-        until(lambda: line_is("Annulé"), discarded, timeout=3.0)
+            begin_stale()
+
+        until(lambda: not cancel.get_sensitive() and line_is("Annulé"),
+              release_cancelled_scan, timeout=3.0)
 
     def begin_stale():
         tool.delay = 0.12
