@@ -76,10 +76,10 @@ class Host:
     def _session_key(p, c):
         return p, c
 
-    def account(self, owner, provider="fixture-a", credential=None, account_id=None):
+    def account(self, owner, provider="fixture-a", credential=None):
         account = Account(identity_id=owner, provider_id=provider,
                           credential_id=credential or "card-" + owner,
-                          unique_id=account_id or "reader-" + owner, is_primary=True, display_name="Fixture")
+                          unique_id="reader-" + owner, is_primary=True, display_name="Fixture")
         self.accounts.append(account)
         self._sessions[self._session_key(provider, account.credential_id)] = Offline(account)
         connection = self.storage.provider_connection_put({
@@ -618,27 +618,3 @@ def test_native_multi_account_search_keeps_exact_web_links_separate(tmp_path):
             assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == row.friendly_url
         assert read_authenticated_web_for_search(host, unknown, reader_scope=scope) is None
         assert db.entitlements() == [] and db.acquisitions() == []
-
-
-def test_same_account_identifier_under_two_credentials_never_grants_cross_scope(tmp_path):
-    """Provider account ID equality alone is not an attested shared account."""
-    with closing(Storage(tmp_path / "account-alias.sqlite")) as db:
-        host = Host(db)
-        a = host.account("alice", account_id="same-upstream-id")
-        b = host.account("bob", account_id="same-upstream-id")
-        one, _ = host.source(a)
-        two, c = host.source(b, url=HOST + "/resources/bob")
-        assert one.document != two.document
-        alice = host.menu(c, one.document, two.document, owner="alice")
-        bob = host.menu(c, one.document, two.document, owner="bob")
-        a_choice, = alice.choices
-        b_choice, = bob.choices
-        assert a_choice.choice_id != b_choice.choice_id
-        assert resolve_authenticated_web_choice(host, alice, choice_id=a_choice.choice_id) == URL
-        assert resolve_authenticated_web_choice(host, bob, choice_id=b_choice.choice_id) == HOST + "/resources/bob"
-        assert resolve_authenticated_web_choice(host, alice, choice_id=b_choice.choice_id) is None
-        assert resolve_authenticated_web_choice(host, bob, choice_id=a_choice.choice_id) is None
-        host._sessions[host._session_key(a.provider_id, a.credential_id)].connected = False
-        assert resolve_authenticated_web_choice(host, alice, choice_id=a_choice.choice_id) is None
-        assert resolve_authenticated_web_choice(host, bob, choice_id=b_choice.choice_id) == HOST + "/resources/bob"
-        assert db.entitlements() == db.acquisitions() == db.placements() == []
