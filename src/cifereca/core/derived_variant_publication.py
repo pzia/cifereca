@@ -121,7 +121,7 @@ def publish_derived_variant(
     profile_id: str | None, profile_version: str,
     options_fingerprint: str, book_id: str | None,
     warnings: tuple[str, ...] | list[str], facts: dict[str, Any],
-    scope_current=None, journal_reservation=None,
+    scope_current=None, journal_reservation=None, _private_guard=None,
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -141,6 +141,9 @@ def publish_derived_variant(
             or not parent_path.is_absolute() or not published_path.is_absolute()
             or published_path == parent_path):
         raise DerivedPublicationConflict("derived_variant_invalid_coordinates")
+    if _private_guard is not None and journal_reservation is None:
+        raise DerivedPublicationConflict("derived_journal_private_region_review_required")
+    private_options = {"_private_guard": _private_guard} if _private_guard is not None else {}
     artifact_id = "sha256:" + output_sha256
     recipe_id = storage._stable_id(
         "variant", parent_sha256, transformer_id, str(profile_id or ""),
@@ -208,7 +211,7 @@ def publish_derived_variant(
                         "options_fingerprint": options_fingerprint,
                         "variant_kind": variant_kind,
                         "media_format": media_format,
-                    },
+                    }, **private_options,
                 )
             except DerivedJournalConflict as exc:
                 raise DerivedPublicationConflict(str(exc)) from None
@@ -354,6 +357,7 @@ def publish_derived_variant(
                 commit_derived_reservation_in_transaction(
                     db, journal_reservation, intent=journal_intent,
                     placement_id=placement_id, origin_id=origin_id, recipe_id=recipe_id,
+                    **private_options,
                 )
             except DerivedJournalConflict as exc:
                 raise DerivedPublicationConflict(str(exc)) from None
