@@ -141,6 +141,11 @@ def catalogue_notice_url(row, *, base=None, provider=None):
         # catalogue_url guard already excludes private /pages/compte/ paths.
         path = unquote(unquote(parts.path)).casefold().rstrip('/')
         if (path.endswith(('.xml', '.atom', '.opds'))
+                # BiblioAccess-style tenant catalogue routes return search
+                # results or summaries, never an exact per-book HTML sheet.
+                # Check the route shape, not the provider identity; keep
+                # /<tenant>/Catalog/Book/<id> unaffected.
+                or path.endswith(('/catalog/search', '/catalog/searchresultsummary'))
                 or path in {'/feed', '/feed.php', '/fetch.php',
                             '/opds', '/opds/search', '/services/engine/search/opds',
                             # These are search/result endpoints, not a
