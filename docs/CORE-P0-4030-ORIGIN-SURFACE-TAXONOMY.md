@@ -87,11 +87,27 @@ et révocation. Les descriptions divergentes d'un achat restent des candidats
 ambigus ; aucune valeur canonique choisie. Le package
 indépendant #7092 est réceptionné ; cela ne clôt **pas** #4030.
 
-Restent à développer et qualifier explicitement : recherche privée distante
-qualifiée en budgets/pages, projection
-multi-sources avec provenance de valeur et fraîcheur, déclaration volontaire
-réversible dans Core et son UX, cas d'éditions équivoques. Aucun lien provider
-attesté ou droit n'est créé par l'implémentation documentaire actuelle.
+### Preuves intégrées au 22/11/2026
+
+- #7457 : relecture explicite de l'inventaire de prêts du compte exact, via
+  contrat typé uniquement, sans transmettre le titre local. La comparaison
+  reste descriptive ; branche canonique, couverture exhaustive et fraîcheur
+  réseau ne sont pas réputées prouvées par cette lecture.
+- #7471 et #7508 : choix sur les pages privées, aperçu typé de prêt ou d'achat
+  existant et vérification de l'occurrence exacte. Un droit owned actif
+  unique est nécessaire pour l'achat ; un droit temporaire, une édition
+  seule ou une ambiguïté ne permettent pas la déclaration d'un achat.
+  L'aperçu ne modifie ni droit, ni fichier, ni Placement, ni OriginLink.
+- Le bridge Core réutilise le writer de déclaration #2797, sans créer un
+  writer ou un port mutateur plugin supplémentaire. La déclaration reste
+  distincte de la provenance attestée et révocable par le parcours existant.
+
+La confirmation native de l'aperçu privé (#7523) est un reliquat de réception :
+ne pas la présenter comme livrée avant intégration et CI exacte. Les limites
+sur les recherches privées distantes, la couverture multi-sources, la
+fraîcheur et les ambiguïtés restent opposables ; aucune preuve terrain ni
+clôture #4030 n'est déduite de cette mise à jour documentaire. Aucun lien
+provider attesté ni droit n'est créé par les rapprochements.
 
 **Garde de production** : ni activation destructrice #6937/#3176, ni
 levée de marqueur ADEPT #7244, ni nouveau chemin de publication.
