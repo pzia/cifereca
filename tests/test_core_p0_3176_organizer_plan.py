@@ -20,6 +20,15 @@ def test_unified_review_confirms_existing_rename_proposal_without_writer(store, 
     scope, page = _run(service)
     before, content = rows(store), path.read_bytes()
     calls = []
+    lookups = []
+    original_entries = store.catalog_entries
+
+    def scoped_entries(**kwargs):
+        assert kwargs == {"placement_id": pid, "limit": 1}
+        lookups.append(kwargs)
+        return original_entries(**kwargs)
+
+    monkeypatch.setattr(store, "catalog_entries", scoped_entries)
     original = LibraryMaintenanceBrokerImpl.plan
 
     def observed(self, request):
@@ -39,6 +48,7 @@ def test_unified_review_confirms_existing_rename_proposal_without_writer(store, 
     accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
     assert accepted.confirmed and not accepted.executable
     assert calls == ["normalize_filename", "normalize_filename"]
+    assert len(lookups) == 2
     assert rows(store) == before and path.read_bytes() == content
     assert not (path.parent / Path(rename.proposed).name).exists()
 
@@ -93,3 +103,21 @@ def test_two_independent_renames_to_one_vacant_target_are_held(store, tmp_path):
     assert len(renames) == 2
     assert {e.state for e in renames} == {"destination_conflict"}
     assert not plan.executable
+
+
+
+def test_indexed_placement_scope_preserves_first_entry_order(store, tmp_path):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    path, pid = _put_epub(store, root, "Acquisitions/old.epub")
+    other, other_pid = _put_epub(store, root, "Acquisitions/other.epub",
+        metadata=META + '<dc:language xmlns:dc="http://purl.org/dc/elements/1.1/">fr</dc:language>')
+    original = store.catalog_entries()
+    expected = [entry for entry in original if entry["placement_id"] == pid][:1]
+    assert len(expected) == 1
+    assert store.catalog_entries(placement_id=pid, limit=1) == expected
+    assert store.catalog_entries(placement_id="no-such-placement", limit=1) == []
+    assert all(entry["placement_id"] == other_pid
+               for entry in store.catalog_entries(placement_id=other_pid))
+    with pytest.raises(ValueError):
+        store.catalog_entries(placement_id=True, limit=1)

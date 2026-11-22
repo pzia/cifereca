@@ -71,6 +71,10 @@ class BatchController:
             return False
         event = self.stop = Event()
         self.page = None
+        # A new explicit review supersedes the previous lease immediately,
+        # even if its worker is queued or never dispatched.
+        if restart and old is not None:
+            self._cancel_token(old.token)
         self.render(None, "busy")
         delivered = False
 

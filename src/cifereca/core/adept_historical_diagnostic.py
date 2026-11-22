@@ -14,6 +14,7 @@ from .adept_historical_inventory_join import review_legacy_adept_inventory
 from .adept_historical_publication_review import review_legacy_adept_publication
 from .canonical_publication import _stable
 from .canonical_recovery import _scope
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 
 
@@ -30,8 +31,7 @@ def _candidate(storage, source):
         return "scope_unverified", None
     identity = coords[0]
     reference_id = _stable("source", *coords)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         reference = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,branch_id,"
             "edition_id,right_id,reference_kind FROM source_references "
