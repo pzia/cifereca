@@ -607,11 +607,19 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
     }
     # Inspect hidden descendants too: a collapsed paginator or lazy loader
     # may not appear in the public presentation but still truncates coverage.
-    pending = [section]
+    pending = [(section, False)]
     while pending:
-        node = pending.pop()
-        pending.extend(child for child in node.children if isinstance(child, _Node))
+        node, ancestor_hidden = pending.pop()
         attrs = node.attrs
+        hidden = (ancestor_hidden or node.tag in _HIDDEN
+                  or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+        # The visible traversal cannot count hidden loan cards. If a
+        # collapsed/template card exists, visible positives remain usable
+        # but their count cannot attest exhaustive coverage.
+        if hidden and node.has_class("js-loan"):
+            return True
+        pending.extend((child, hidden) for child in node.children
+                       if isinstance(child, _Node))
         if attrs.get("aria-busy", "").lower() == "true":
             return True
         if attrs.get("data-has-more", "").lower() in {"true", "1", "yes"}:

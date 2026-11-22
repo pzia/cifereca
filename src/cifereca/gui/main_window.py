@@ -1161,7 +1161,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         # Native adapters must have the same mount/registry lease as plugin
         # rows and section navigation. A hidden rooted GTK row is not live.
-        disposers = self._guided_maintenance_disposers
+        disposers = getattr(self, "_guided_maintenance_disposers", None)
         registry = getattr(manager, "registry_generation", None)
 
         def native_current():

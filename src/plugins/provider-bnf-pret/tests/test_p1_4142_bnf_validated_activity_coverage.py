@@ -149,3 +149,29 @@ def test_no_forged_typed_completeness_when_v1_reader_is_replaced():
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("hidden_wrapper", [
+    '<div hidden>{card}</div>',
+    '<div aria-hidden="true">{card}</div>',
+    '<template>{card}</template>',
+])
+def test_hidden_cards_never_complete_visible_inventory(hidden_wrapper):
+    result = parsed(page(card() + hidden_wrapper.format(
+        card=card("loan-hidden", "book-hidden"),
+    )))
+    assert result.exhaustive is False
+    assert [row.loan_id for row in result.loans] == ["loan-1"]
+    only_hidden = parsed(page(hidden_wrapper.format(card=card())))
+    assert only_hidden.loans == ()
+    assert only_hidden.status == "partial"
+    assert only_hidden.exhaustive is False
+
+
+def test_hidden_loan_card_itself_never_completes_visible_inventory():
+    hidden = card("loan-hidden", "book-hidden").replace(
+        'class="js-loan"', 'class="js-loan" hidden',
+    )
+    result = parsed(page(card() + hidden))
+    assert len(result.loans) == 1
+    assert result.exhaustive is False

@@ -66,6 +66,9 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
         # Core's Search C-first row is a mutable mapping. Equal content
         # from a new projection cannot inherit the old cell's live witness.
         "_cover_known_public_c_source",
+        # Recent's detail and local actions also consume the original
+        # occurrence, even when the visible fields and N2 are unchanged.
+        "_recent_source_item",
     ):
         if getattr(old, field, None) is not getattr(new, field, None):
             return False
