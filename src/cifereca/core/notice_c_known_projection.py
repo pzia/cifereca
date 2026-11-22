@@ -22,6 +22,15 @@ from .notice_c_cover_index import _MAX_SOURCES
 _MAX = 50
 _PRIMARY_FACT_TOKEN = object()
 _PRIMARY_FACT_FIELD = "_core_notice_c_primary_facts"
+_PRIMARY_HIT_SEAL_FIELD = "_core_notice_c_primary_hit_seal"
+# This owner-only snapshot records the original hit, independently of the
+# mutable view mapping and its field-by-field presentation provenance.
+_PRIMARY_HIT_SEAL_NAMES = (
+    "provider_id", "record_id", "docbase", "medium", "source_revision",
+    "title", "author", "publisher", "published_at", "media_format",
+    "description", "stale", "cover_state", "edition_id", "epoch",
+    "observed_at", "last_seen_at",
+)
 
 
 def _native_c_source_ref(document):
@@ -70,6 +79,7 @@ def known_public_primary_facts(row):
             or row["source"] != "notice_c_public"):
         return None
     packet = row.get(_PRIMARY_FACT_FIELD)
+    seal = row.get(_PRIMARY_HIT_SEAL_FIELD)
     meta = row.get("metadata")
     identity = row.get("identity_id")
     if (type(packet) is not tuple or len(packet) != 3
@@ -81,6 +91,22 @@ def known_public_primary_facts(row):
             or any(type(name) is not str for name in meta)):
         return None
     hit = packet[2]
+    # Frozen dataclass fields can still be replaced using object.__setattr__.
+    # The original scalar receipt is independent from the mutable view row;
+    # inspect native types before comparing to avoid hostile __eq__.
+    if (type(seal) is not tuple or len(seal) != 3
+            or seal[0] is not _PRIMARY_FACT_TOKEN
+            or type(seal[1]) is not int or seal[1] != id(hit)
+            or type(seal[2]) is not tuple
+            or len(seal[2]) != len(_PRIMARY_HIT_SEAL_NAMES)
+            or any(type(original) not in (str, int, bool, type(None))
+                   or (type(original) is str and len(original) > 8192)
+                   for original in seal[2])):
+        return None
+    for name, original in zip(_PRIMARY_HIT_SEAL_NAMES, seal[2]):
+        current = getattr(hit, name)
+        if type(current) is not type(original) or current != original:
+            return None
     document = row.get("_cover_document_ref")
     if (not _native_c_source_ref(hit.document)
             or not _native_c_source_ref(document)
@@ -107,8 +133,9 @@ def known_public_primary_facts(row):
         (row.get("published_at"), hit.published_at),
         (row.get("media_format"), hit.media_format),
         (row.get("medium"), hit.medium),
-        (meta.get("publisher"), hit.publisher),
-        (meta.get("description"), hit.description),
+        # Publisher and description are independently qualified by their
+        # exact displayed value in the presentation layer. Altering one
+        # displayed field must not revoke unrelated intact provenances.
         (meta.get("notice_c_cover_state"), hit.cover_state),
     ):
         if (type(expected) not in (str, type(None))
@@ -315,6 +342,10 @@ def merge_public_notice_c_known_rows(
         # Keep the immutable primary contribution alongside its display
         # mapping. Never reconstruct per-field provenance from that mapping.
         rows[-1][_PRIMARY_FACT_FIELD] = (_PRIMARY_FACT_TOKEN, identity_id, hit)
+        rows[-1][_PRIMARY_HIT_SEAL_FIELD] = (
+            _PRIMARY_FACT_TOKEN, id(hit),
+            tuple(getattr(hit, name) for name in _PRIMARY_HIT_SEAL_NAMES),
+        )
         by_document[hit.document.source_key] = rows[-1]
     from .notice_c_loaded_filter import attach_filter_sources
     for key, group in source_groups.items():
