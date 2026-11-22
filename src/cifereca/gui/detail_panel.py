@@ -878,6 +878,32 @@ class DetailPanel(Gtk.Box):
                 button._cifereca_action_context_revoked = False
             self._actions(kept)
         buttons = []
+        window = self.window
+        service = getattr(window, "service", None)
+        identity = getattr(service, "current_identity", None)
+        account_epoch = getattr(service, "_account_context_epoch", None)
+        source_epoch = getattr(service, "_source_context_epoch", None)
+        route = getattr(window, "_route_display_token", None)
+        ui_identity = getattr(window, "_identity_context_generation", None)
+        ui_account = getattr(window, "_account_context_generation", None)
+        visible = getattr(self, "_rendered_search_detail", None)
+
+        def cached_action_revoked(clicked):
+            mapped = getattr(clicked, "get_mapped", None)
+            return (getattr(clicked, "_cifereca_action_context_revoked", False)
+                    or getattr(clicked, "_cifereca_action_state_blocked", False)
+                    or (callable(mapped) and not mapped())
+                    or getattr(window, "_closed", False)
+                    or self.window is not window
+                    or getattr(window, "service", None) is not service
+                    or getattr(service, "current_identity", None) is not identity
+                    or getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch
+                    or getattr(window, "_route_display_token", None) is not route
+                    or getattr(window, "_identity_context_generation", None) != ui_identity
+                    or getattr(window, "_account_context_generation", None) != ui_account
+                    or getattr(self, "_rendered_search_detail", None) is not visible)
+
         for contribution in contributions:
             plugin_id = str(contribution.plugin_id)[:100]
             cached = contribution.detail
@@ -900,19 +926,11 @@ class DetailPanel(Gtk.Box):
                     if not uri:
                         continue
                     button = Gtk.LinkButton(uri=uri, label=str(action.title))
-                    button.connect(
-                        "activate-link",
-                        lambda clicked: getattr(
-                            clicked, "_cifereca_action_context_revoked", False,
-                        ) is True or getattr(
-                            clicked, "_cifereca_action_state_blocked", False,
-                        ) is True,
-                    )
+                    button.connect("activate-link", cached_action_revoked)
                 elif callable(action.callback):
                     button = self.window.action_button(str(action.title), str(action.icon_name))
                     def activate_cached(clicked, cb=action.callback):
-                        if (getattr(clicked, "_cifereca_action_context_revoked", False)
-                                or getattr(clicked, "_cifereca_action_state_blocked", False)):
+                        if cached_action_revoked(clicked):
                             return
                         return cb()
                     button.connect("clicked", activate_cached)
