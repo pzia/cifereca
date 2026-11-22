@@ -251,3 +251,24 @@ def test_homonymous_lender_choices_and_exact_detail_worker_fence(replace_detail)
     else:
         assert execute.call_args.kwargs["captured_candidate"] is args["rows"][1]
     done(result)
+
+
+@pytest.mark.parametrize("tamper", ["account", "label", "session"])
+def test_unselected_lender_change_revokes_entire_n_way_chooser(tamper):
+    panel, args, dialogs = setup(multiple=True)
+    assert present_normal_lender_choice(panel, **args)
+    assert len(dialogs) == 1
+    second = args["rows"][1]
+    if tamper == "account":
+        second._account.unique_id += "-rebound"
+    elif tamper == "label":
+        object.__setattr__(second, "label", "Changed without new receipt")
+    else:
+        # A presenter must not silently accept a swapped original session.
+        object.__setattr__(second, "_session", object())
+    # The chosen first lender still matches, but the N-way receipt no longer does.
+    dialogs[0].respond("choice-0")
+    assert len(dialogs) == 1
+    assert panel.window._cross_profile_borrow_pending is None
+    panel.window.runner.submit.assert_not_called()
+    args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
