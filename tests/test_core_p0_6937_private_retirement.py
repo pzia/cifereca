@@ -17,7 +17,7 @@ from cifereca.storage import Storage
 from tests.test_core_p0_6937_private_admission import rig, _recover_args
 
 
-def _epub(stage, *, empty=False):
+def _epub(stage, *, empty=False, kepub=False, bad_span=False):
     with zipfile.ZipFile(stage, "w") as archive:
         archive.writestr("mimetype", b"application/epub+zip")
         archive.writestr("META-INF/container.xml",
@@ -28,13 +28,23 @@ def _epub(stage, *, empty=False):
             package += ('<manifest><item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>'
                         '</manifest><spine><itemref idref="body"/></spine>')
         archive.writestr("OEBPS/book.opf", package + '</package>')
+        body = '<p>Fixture</p>'
+        if kepub:
+            span_id = "invalid" if bad_span else "kobo.1.1"
+            body = f'<p><span class="koboSpan" id="{span_id}">Fixture</span></p>'
         archive.writestr("OEBPS/body.xhtml",
-                         '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Fixture</p></body></html>')
+                         '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + body + '</body></html>')
 
 
-def _published(rig, *, empty=False, media_format="epub"):
+def _published(rig, *, empty=False, media_format="epub", kepub=False, bad_span=False):
     db, intent, stage, args = rig
-    _epub(stage, empty=empty)
+    if media_format == "kepub":
+        new_stage = stage.with_name("unique.kepub.epub")
+        stage.rename(new_stage)
+        stage = new_stage
+        intent = replace(intent, staged_path=str(stage),
+                         candidate_path=str(Path(intent.candidate_path).with_name("variant.kepub.epub")))
+    _epub(stage, empty=empty, kepub=kepub, bad_span=bad_span)
     stamp = stage.stat()
     intent = replace(intent, output_sha256=hashlib.sha256(stage.read_bytes()).hexdigest(),
                      output_size=stamp.st_size, media_format=media_format,
@@ -215,3 +225,58 @@ def test_preparation_refuses_unverified_content_or_transaction(rig, isolated_fen
     finally:
         if sql.in_transaction:
             sql.rollback()
+
+
+@pytest.mark.parametrize("case", ["valid", "suffix_only", "bad_span", "no_fence"])
+def test_isolated_kepub_retirement_requires_text_spine_and_keeps_authority(
+        rig, isolated_fence, monkeypatch, case):
+    db, intent, stage, options = _published(
+        rig, media_format="kepub", kepub=case != "suffix_only",
+        bad_span=case == "bad_span")
+    quota = journal.summarize_derived_journal(db)
+    data = stage.read_bytes()
+    digest = options["receipt_sha256"]
+    key = retire._PREFIX + digest
+    if case == "no_fence":
+        monkeypatch.setattr(retire, "_exclusive_consumer_fence_current", lambda *_args: False)
+    if case != "valid":
+        with pytest.raises(journal.DerivedJournalConflict, match=(
+                "consumer_fence_unavailable" if case == "no_fence" else "reader_unverified")):
+            retire.prepare_private_stage_retirement(db, **options)
+        assert db.metadata_get(key) is None and stage.samefile(intent.candidate_path)
+        _unchanged(db, intent, quota, digest, data)
+        return
+    approved = _prepare(db, options)
+    other = Storage(db.path)
+    try:
+        result = retire.retire_private_stage(other, **approved)
+        assert result["status"] == "retired" and result["quota_refund_authorized"] is False
+        assert not stage.exists()
+        _unchanged(other, intent, quota, digest, data)
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("case", ["revoked", "deadline", "invalid_crc"])
+def test_commit_reader_proof_is_revocable_and_never_unlinks_on_refusal(
+        rig, isolated_fence, monkeypatch, case):
+    db, intent, stage, options = _published(rig)
+    approved = _prepare(db, options)
+    digest = options["receipt_sha256"]
+    trace = db.metadata_get(retire._PREFIX + digest)
+    quota, data = journal.summarize_derived_journal(db), stage.read_bytes()
+    from cifereca.core import derived_variant_retirement_preparation as preparation
+    def inspect(stream, kind, **kwargs):
+        if case == "revoked":
+            monkeypatch.setattr(retire, "_exclusive_consumer_fence_current", lambda *args: False)
+            assert kwargs["cancelled"]()
+        if case == "deadline":
+            monkeypatch.setattr(preparation, "monotonic", lambda: float("inf"))
+            assert kwargs["cancelled"]()
+        return "structure_invalid" if case == "invalid_crc" else "epub_structure_crc_ok"
+    monkeypatch.setattr(preparation, "inspect_stream_structure", inspect)
+    with pytest.raises(journal.DerivedJournalConflict):
+        retire.retire_private_stage(db, **approved)
+    assert db.metadata_get(retire._PREFIX + digest) == trace
+    assert stage.samefile(intent.candidate_path)
+    _unchanged(db, intent, quota, digest, data)

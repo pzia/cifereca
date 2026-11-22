@@ -7,7 +7,6 @@ the fence at its single internal boundary, using only synthetic FS/SQLite.
 """
 from contextlib import contextmanager, ExitStack
 import hashlib
-from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -17,8 +16,6 @@ import stat
 from time import monotonic
 import zipfile
 
-from ..artifact_inspection import inspect_artifact_content
-from ..epub_metadata import MAX_XML, _bounded_directory, _member, _read, _xml
 from xml.etree.ElementTree import ParseError
 from . import derived_variant_journal as journal
 from . import derived_variant_private_region as region
@@ -26,6 +23,7 @@ from .derived_variant_compact_receipt import _measure_compact_in_transaction
 from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_link import _regular, _require_named
 from .derived_variant_retention_review import _canonical
+from .derived_variant_retirement_preparation import _inspect_epub_final
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _walk, _receipt_alias_verdict
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -120,67 +118,28 @@ def _transaction(storage):
             db.execute(f"PRAGMA synchronous={int(previous)}")
 
 
-def _read_content(fd, intent):
-    # This first isolated recipe only admits a structurally openable EPUB.
-    # PDF header/EOF and KEPUB suffix alone are NOT equivalent reader proof.
-    _require(intent.media_format == "epub" and 0 < intent.output_size <= _MAX_CONTENT,
+def _read_content(fd, intent, *, deadline, still_current):
+    """Stream exact SHA, then the same bounded spine/CRC proof as preflight."""
+    def live():
+        return still_current() is True and monotonic() < deadline
+    _require(intent.media_format in ("epub", "kepub")
+             and 0 < intent.output_size <= _MAX_CONTENT and live(),
              "derived_retirement_reader_unverified")
     os.lseek(fd, 0, os.SEEK_SET)
-    content = bytearray()
-    while len(content) < intent.output_size:
-        block = os.read(fd, min(intent.output_size - len(content), 1024 * 1024))
+    digest = hashlib.sha256()
+    remaining = intent.output_size
+    while remaining:
+        _require(live(), "derived_retirement_reader_unverified")
+        block = os.read(fd, min(remaining, 1024 * 1024))
         _require(bool(block), "derived_retirement_reader_unverified")
-        content.extend(block)
-    _require(not os.read(fd, 1) and hashlib.sha256(content).hexdigest() == intent.output_sha256,
+        remaining -= len(block)
+        digest.update(block)
+    _require(live() and not os.read(fd, 1)
+             and digest.hexdigest() == intent.output_sha256,
              "derived_retirement_reader_unverified")
-    data = bytes(content)
-    stream = BytesIO(data)
-    _bounded_directory(stream)
-    with zipfile.ZipFile(stream) as archive:
-        infos = archive.infolist()
-        _require(sum(i.file_size for i in infos) <= _MAX_EXPANDED
-                 and all(0 <= i.file_size <= _MAX_EXPANDED
-                         and not i.flag_bits & 1
-                         and i.file_size <= 1000 * max(i.compress_size, 1)
-                         and not stat.S_ISLNK(i.external_attr >> 16)
-                         for i in infos), "derived_retirement_reader_unverified")
-        # The common strict inspector validates CRC/package XML but admits
-        # even an empty package. Require an actual bounded XHTML spine.
-        # Parse XML via the existing DTD/entity-refusing reader first.
-        ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
-        opf = "{http://www.idpf.org/2007/opf}"
-        container = _xml(_read(archive, "META-INF/container.xml", MAX_XML))
-        roots = container.findall(ocf + "rootfiles/" + ocf + "rootfile")
-        _require(container.tag == ocf + "container" and len(roots) == 1)
-        member = roots[0].get("full-path", "")
-        _require(bool(member) and not member.startswith("/")
-                 and _member("", member) == member)
-        package = _xml(_read(archive, member, MAX_XML))
-        manifests, spines = package.findall(opf + "manifest"), package.findall(opf + "spine")
-        _require(package.tag == opf + "package" and len(manifests) == len(spines) == 1)
-        items = manifests[0].findall(opf + "item")
-        by_id = {item.get("id"): item for item in items}
-        _require(None not in by_id and len(items) == len(by_id))
-        refs = spines[0].findall(opf + "itemref")
-        _require(0 < len(refs) <= 512)
-        checked = set()
-        total_spine = 0
-        for ref in refs:
-            item = by_id.get(ref.get("idref"))
-            _require(item is not None and item.get("media-type") == "application/xhtml+xml")
-            name = _member(str(Path(member).parent), item.get("href"))
-            if name in checked:
-                continue
-            document = _read(archive, name, MAX_XML)
-            total_spine += len(document)
-            _require(total_spine <= _MAX_CONTENT)
-            page = _xml(document)
-            _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
-                     and page.find("{http://www.w3.org/1999/xhtml}body") is not None)
-            checked.add(name)
-    inspected = inspect_artifact_content(data, expected_format="epub", strict_structure=True)
-    _require(inspected.valid is True and inspected.media_format == "epub"
-             and inspected.protected is False, "derived_retirement_reader_unverified")
+    _inspect_epub_final(
+        fd, intent.output_size, media_format=intent.media_format,
+        max_bytes=_MAX_EXPANDED, deadline=deadline, still_current=live)
 
 
 @contextmanager
@@ -298,7 +257,10 @@ def _evidence(storage, db, *, root, identity_id, receipt, binding, lock, current
             _require(_receipt_alias_verdict(walk, intent.staged_path) == "no_local_symlink_observed",
                      "derived_retirement_symlink_dependency")
             first = check_names()
-            _read_content(final_fd, intent)
+            def reader_current():
+                live()
+                return True
+            _read_content(final_fd, intent, deadline=deadline, still_current=reader_current)
             sql_and_region()
             _require(check_names() == first and _walk(root, (intent.staged_path,), deadline=deadline) == walk
                      and monotonic() < deadline, "derived_retirement_evidence_changed")

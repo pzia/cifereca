@@ -14,13 +14,15 @@ from xml.etree import ElementTree
 import zipfile
 import zlib
 
-from ..artifact_inspection import _epub_encryption_protected, _validate_epub_archive
+from ..artifact_inspection import _epub_encryption_protected
+from .library_structure import inspect_stream_structure
 from ..epub_metadata import MAX_XML, _bounded_directory, _member, _read, _xml
 from . import derived_variant_journal as journal
 from . import derived_variant_compact_receipt as compact
 from . import derived_variant_private_region as region
 from .derived_variant_compact_shadow import _read_committed, _journal_current
 from .derived_variant_retention_review import _canonical
+from .derived_variant_reader_evidence import kepub_text_spans_observed
 from .derived_variant_stage_dependencies import scan_stage_references
 from .derived_variant_stage_symlinks import _receipt_alias_verdict, _walk
 from .derived_variant_supervised_recovery import _exact_scope, _lock_current
@@ -35,6 +37,7 @@ _SCHEMA = "derived.retention.prepared.v1"
 _MAX_RECORD_BYTES = 512
 _MAX_BYTES = 1024 ** 3
 _SECONDS = 3
+_MAX_SPINE_REFERENCES = 512
 
 
 def _require(ok, code="derived_retirement_preparation_unverified"):
@@ -42,20 +45,30 @@ def _require(ok, code="derived_retirement_preparation_unverified"):
         raise journal.DerivedJournalConflict(code)
 
 
-def _inspect_epub_final(fd, size):
+def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: True,
+                        max_bytes=None, deadline=None):
     """Pinned, bounded EPUB container and spine readability, not rendering.
 
     PDFs are deliberately not accepted by this tranche: a PDF signature or
     EOF marker is not a reader proof and Core has no qualified PDF reader.
     """
+    deadline = min(deadline, monotonic() + _SECONDS) if deadline is not None else monotonic() + _SECONDS
+    budget = _MAX_BYTES if max_bytes is None else min(_MAX_BYTES, max_bytes)
+
+    def live():
+        return still_current() is True and monotonic() < deadline
+
+    _require(type(size) is int and 0 < size <= budget and live(),
+             "derived_retirement_reader_unverified")
+    read_budget = budget - size
     with os.fdopen(os.dup(fd), "rb") as stream:
         _bounded_directory(stream)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             # Bound expansion before any full CRC pass. Reject symlink and
             # ambiguous archive entries; parse XML using the safe shared reader.
-            _require(sum(i.file_size for i in infos) + size <= _MAX_BYTES
-                     and all(i.file_size <= _MAX_BYTES
+            _require(live() and sum(i.file_size for i in infos) + size <= budget
+                     and all(i.file_size <= budget
                              and i.file_size <= 1000 * max(i.compress_size, 1)
                              and not i.flag_bits & 1
                              and (i.external_attr >> 16) & 0o170000 != 0o120000
@@ -67,36 +80,71 @@ def _inspect_epub_final(fd, size):
             _require(len(names) == len(infos)
                      and "META-INF/encryption.xml" not in names,
                      "derived_retirement_reader_unverified")
-            container = _xml(_read(archive, "META-INF/container.xml", MAX_XML))
-            roots = [n.get("full-path") for n in container.iter()
-                     if n.tag.rsplit("}", 1)[-1] == "rootfile"]
-            _require(len(roots) == 1 and bool(roots[0]), "derived_retirement_reader_unverified")
-            package_name = _member("", roots[0])
-            _require(package_name == roots[0], "derived_retirement_reader_unverified")
-            package = _xml(_read(archive, package_name, MAX_XML))
+            def read_xml(name):
+                nonlocal read_budget
+                _require(live() and archive.getinfo(name).file_size <= read_budget,
+                         "derived_retirement_reader_unverified")
+                data = _read(archive, name, MAX_XML)
+                read_budget -= len(data)
+                _require(live() and read_budget >= 0,
+                         "derived_retirement_reader_unverified")
+                return _xml(data)
+
+            container = read_xml("META-INF/container.xml")
+            ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+            roots = container.findall(ocf + "rootfiles/" + ocf + "rootfile")
+            _require(container.tag == ocf + "container" and len(roots) == 1,
+                     "derived_retirement_reader_unverified")
+            root_name = roots[0].get("full-path", "")
+            _require(bool(root_name) and not root_name.startswith("/"),
+                     "derived_retirement_reader_unverified")
+            package_name = _member("", root_name)
+            _require(package_name == root_name, "derived_retirement_reader_unverified")
+            package = read_xml(package_name)
             opf = "{http://www.idpf.org/2007/opf}"
             manifests, spines = package.findall(opf + "manifest"), package.findall(opf + "spine")
             _require(package.tag == opf + "package" and len(manifests) == len(spines) == 1,
                      "derived_retirement_reader_unverified")
             manifest = {}
             for item in manifests[0].findall(opf + "item"):
+                _require(live(), "derived_retirement_reader_unverified")
                 key, href = item.get("id"), item.get("href")
                 _require(bool(key) and bool(href) and key not in manifest,
                          "derived_retirement_reader_unverified")
                 manifest[key] = item
             items = spines[0].findall(opf + "itemref")
-            _require(bool(items), "derived_retirement_reader_unverified")
+            _require(0 < len(items) <= _MAX_SPINE_REFERENCES,
+                     "derived_retirement_reader_unverified")
+            checked = set()
             for itemref in items:
+                _require(live(), "derived_retirement_reader_unverified")
                 item = manifest.get(itemref.get("idref"))
                 _require(item is not None and item.get("media-type") == "application/xhtml+xml",
                          "derived_retirement_reader_unverified")
                 member = _member(str(Path(package_name).parent), item.get("href"))
-                _require(_xml(_read(archive, member, MAX_XML)).tag
-                         == "{http://www.w3.org/1999/xhtml}html",
+                if member in checked:
+                    continue
+                page = read_xml(member)
+                _require(page.tag == "{http://www.w3.org/1999/xhtml}html"
+                         and page.find("{http://www.w3.org/1999/xhtml}body") is not None,
                          "derived_retirement_reader_unverified")
-            _require(_validate_epub_archive(archive) is None
-                     and not _epub_encryption_protected(archive),
+                if media_format == "kepub":
+                    _require(kepub_text_spans_observed(page),
+                             "derived_retirement_reader_unverified")
+                checked.add(member)
+            _require(live() and not _epub_encryption_protected(archive),
                      "derived_retirement_reader_unverified")
+        # Reuse the guarded descriptor reader, rather than an uninterruptible
+        # ZipFile.testzip pass, so CRC expansion shares a finite byte budget
+        # and the same deadline as the container/spine checks.
+        remaining = deadline - monotonic()
+        _require(live() and remaining > 0 and read_budget > 0,
+                 "derived_retirement_reader_unverified")
+        _require(inspect_stream_structure(
+            stream, "epub", max_bytes=read_budget,
+            seconds=remaining, cancelled=lambda: not live(),
+        ) == "epub_structure_crc_ok" and live(),
+            "derived_retirement_reader_unverified")
 
 
 def _checkpoint(raw, key):
@@ -246,7 +294,10 @@ def prepare_private_retirement_review(storage, *, library_root, identity_id,
                              "derived_retirement_dependency_unverified")
                     _require(_hash(parent_fd, original[2]) == intent.parent_sha256
                              and _hash(final_fd, output[2]) == intent.output_sha256)
-                    _inspect_epub_final(final_fd, output[2])
+                    _inspect_epub_final(
+                        final_fd, output[2], media_format=intent.media_format,
+                        still_current=lambda: (_lock_current(shared_lock)
+                                               and scope_current(db) is True))
                     physical()
                     current_sql()
                     _require(_walk(library_root, (str(stage),), deadline=deadline) == witness,
