@@ -92,3 +92,52 @@ def test_filter_contributions_after_real_sqlite_restart(tmp_path):
         negative = dict(strict, metadata={**strict["metadata"], "notice_c_epoch": False})
         assert _sources(negative) == ()
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_grouped_search_recommendations_full_filter_matrix_after_restart(tmp_path):
+    """Receive #4761 for the same exact C, not a second recommendation index."""
+    from cifereca.core.notice_c_loaded_filter import matches_known_public_c_filters
+    from cifereca.core.notice_c_recommendation_known import (
+        known_public_notice_candidates, known_public_c_binding_facts,
+    )
+
+    filename = tmp_path / "parity.sqlite"
+    with closing(Storage(filename)) as db:
+        a = make(db, "bnf", "a", "Deux sources A", "Astronomie", "fr", "EPUB")
+        b = make(db, "numilog-catalog", "b", "Deux sources B", "Cuisine", "en", "PDF")
+        canonical = shared(db, a, b)
+        for source in (a, b):
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    with closing(Storage(filename)) as db:
+        candidate, = known_public_notice_candidates(db, "deux sources")
+        assert known_public_c_binding_facts(candidate) == (canonical.document, canonical.epoch)
+        for identity in ("alice", "bob", "carol"):
+            page = search_public_notice_c(db, "deux sources", group_by_document=True)
+            row, = merge_public_notice_c_known_rows([], page, identity_id=identity)
+            base = QueryState(text="cuisine", field="subject", providers=("numilog-catalog",),
+                              types=("pdf",), languages=("en",), scope="digital")
+            for state, expected in (
+                (base, True),
+                (replace(base, providers=("bnf",)), False),
+                (replace(base, types=("epub",)), False),
+                (replace(base, languages=("fr",)), False),
+                (replace(base, scope="physical"), False),
+                (replace(base, text="", providers=(), types=(), languages=(), scope="all"), True),
+                (replace(base, text="astronomie", providers=("bnf",),
+                         types=("epub",), languages=("fr",)), True),
+                (replace(base, text="astronomie cuisine", field="all",
+                         providers=(), types=(), languages=()), False),
+            ):
+                search_rows = state.filter([row])
+                assert bool(search_rows) is expected
+                assert matches_known_public_c_filters(
+                    candidate, query=state.text, field=state.field, scope=state.scope,
+                    providers=state.providers, content_types=state.types,
+                    languages=state.languages,
+                ) is expected
+                if expected:
+                    assert search_rows[0]["_cover_document_ref"] == canonical.document
+                    assert search_rows[0]["provider_id"] == row["provider_id"]
+                assert known_public_c_binding_facts(candidate) == (canonical.document, canonical.epoch)
+            assert "_notice_c_matched_providers" not in row
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
