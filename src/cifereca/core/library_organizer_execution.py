@@ -15,7 +15,8 @@ def _execution_fence_current(scope, lock):
     return False
 
 
-def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=False):
+def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=False,
+                            still_current=lambda: True):
     """Isolated recipe for one exact rename, never keeper/classification.
 
     Delegate all writes to the existing maintenance broker. A postcheck
@@ -25,7 +26,8 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
     from ..artifact_runtime import LibraryMaintenanceBrokerImpl
     from ..plugin_api import LibraryMutationRequest
 
-    if (confirmed is not True or type(accepted) is not OrganizerDryRunPlan
+    if (confirmed is not True or not callable(still_current)
+            or still_current() is not True or type(accepted) is not OrganizerDryRunPlan
             or accepted.scope is not scope or accepted.confirmed is not True
             or accepted.executable is not False or len(accepted.entries) != 1
             or accepted.entries[0].operation != "rename"
@@ -58,6 +60,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or plan.facts.get("new_filename") != new.name
                 or not scope.bound()
                 or sqlite_source_stamp(scope.database) != accepted.anchor.stamp
+                or still_current() is not True
                 or not _lock_ok(shared_lock)
                 or not _execution_fence_current(scope, shared_lock)):
             return {"status": "blocked", "changed": 0}
@@ -78,3 +81,60 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
     except Exception:
         return {"status": "recovery_required" if invoked else "blocked",
                 "changed": None if invoked else 0}
+
+
+def admit_native_reviewed_rename(manager, resolved, page, *, service, identity_id,
+                                 confirmed=False, view_current):
+    """Core-only one-shot worker; explicit consent and exact mounted review.
+
+    No lock or database work on the UI thread: call the admission inside the
+    admitted worker. A missing independent fence still refuses all writes.
+    """
+    from threading import Lock
+    from ..locking import InterProcessLock
+    from .canonical_recovery import acquisition_lock_file
+    from .library_organizer_broker import take_native_organizer_rename
+
+    if confirmed is not True or not callable(view_current):
+        return None
+    try:
+        if view_current() is not True:
+            return None
+        pending = take_native_organizer_rename(
+            manager, resolved, page, service=service, identity_id=identity_id)
+        if pending is None:
+            return None
+        scope, report, plan, current = pending
+    except Exception:
+        return None
+
+    guard = Lock()
+    used = False
+
+    def live():
+        try:
+            return view_current() is True and current() is True
+        except Exception:
+            return False
+
+    def work():
+        nonlocal used
+        with guard:
+            if used:
+                return {"status": "blocked", "changed": 0}
+            used = True
+        if not live():
+            return {"status": "blocked", "changed": 0}
+        try:
+            # Do not create/truncate an acquisition lock during maintenance.
+            with InterProcessLock(acquisition_lock_file(), existing_nofollow=True) as lock:
+                def current_lock():
+                    return live() and lock.strict_current()
+                if not current_lock():
+                    return {"status": "blocked", "changed": 0}
+                return execute_reviewed_rename(
+                    scope, report, plan, shared_lock=lock, confirmed=True,
+                    still_current=current_lock)
+        except Exception:
+            return {"status": "blocked", "changed": 0}
+    return work if live() else None
