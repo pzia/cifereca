@@ -754,6 +754,9 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
         # not an inference from an overall PASS or from a generic texture.
         if data["checks"].get("P0_4980_catalogue_http_fallback_real_gtk") is True:
             evidence["notice_c_catalogue_http_fallback"] = True
+        if all(data["checks"].get("P0_3104_retained_private_series_real_gtk_" + phase) is True
+               for phase in ("cold", "offline")):
+            evidence["notice_c_private_series_cold_offline"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}

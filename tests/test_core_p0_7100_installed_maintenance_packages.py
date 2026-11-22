@@ -55,6 +55,13 @@ def routes(runtime):
     return tuple(page.route for page in runtime.page_contributions())
 
 
+CAPACITY = "maintenance.library.derived-capacity"
+
+
+def package_tools(spec):
+    return {spec[2], CAPACITY} if spec[0] == "maintenance-derived-variants" else {spec[2]}
+
+
 def tools(runtime):
     return {row.plugin_id for row in runtime.services("maintenance.tool")}
 
@@ -69,7 +76,7 @@ def test_actual_packages_are_independent_and_default_enabled(tmp_path):
         ids = set()
         for spec in TOOLS:
             runtime.install(archive(tmp_path, spec))
-            ids.add(spec[2])
+            ids.update(package_tools(spec))
             assert tools(runtime) == ids and routes(runtime) == ("tools",)
             assert runtime.service(PAGE[2]) is page
             assert isinstance(runtime.service(spec[2]), GuidedMaintenanceTool)
@@ -85,8 +92,13 @@ def test_actual_packages_are_independent_and_default_enabled(tmp_path):
             assert routes(runtime) == ("tools",) and tools(runtime) == ids - {key}
             runtime.set_enabled(key, True)
             assert tools(runtime) == ids
+            if CAPACITY in package_tools(spec):
+                runtime.set_enabled(CAPACITY, False)
+                assert tools(runtime) == ids - {CAPACITY}
+                runtime.set_enabled(CAPACITY, True)
+                assert tools(runtime) == ids
             runtime.remove_package(package)
-            ids.remove(key)
+            ids.difference_update(package_tools(spec))
             assert tools(runtime) == ids and routes(runtime) == ("tools",)
         runtime.remove_package(PAGE[1])
         assert routes(runtime) == () and not tools(runtime)
@@ -102,7 +114,7 @@ def test_missing_read_port_only_blocks_its_tool(tmp_path, missing):
             runtime.install(archive(tmp_path, spec))
         assert routes(runtime) == ("tools",)
         assert runtime.status(missing[2]).reason == "missing_broker"
-        assert tools(runtime) == {spec[2] for spec in TOOLS if spec != missing}
+        assert tools(runtime) == set().union(*(package_tools(spec) for spec in TOOLS if spec != missing))
     finally:
         runtime.close()
 
@@ -114,6 +126,6 @@ def test_missing_ui_capability_does_not_disable_independent_tools(tmp_path):
             runtime.install(archive(tmp_path, spec))
         assert routes(runtime) == ()
         assert runtime.status(PAGE[2]).reason == "missing_broker"
-        assert tools(runtime) == {spec[2] for spec in TOOLS}
+        assert tools(runtime) == set().union(*(package_tools(spec) for spec in TOOLS))
     finally:
         runtime.close()
