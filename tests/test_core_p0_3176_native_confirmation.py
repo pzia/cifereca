@@ -294,5 +294,5 @@ def test_native_confirmation_handles_activation_lease_exception_without_core_wor
             failure[0] = True
             runner.run()
     assert not runner.queue and not messages
-    assert ui._used is None if phase != "worker" else ui._used is page
+    assert ui._used is (page if phase == "worker" else None)
     assert not ui._lease_current()
