@@ -119,7 +119,11 @@ def _hidden(node):
             or bool(hidden_classes)
             or (type(aria) is str and aria.strip().casefold() == 'true')
             or 'display:none' in style or 'visibility:hidden' in style
-            or 'visibility:collapse' in style)
+            or 'visibility:collapse' in style
+            # Transparent elements do not provide independently visible
+            # public catalogue evidence. Match a complete CSS numeric value
+            # rather than accidentally treating opacity:0.5 as invisible.
+            or re.search(r'(?:^|;)opacity:0(?:\.0+)?(?:!important)?(?:;|$)', style) is not None)
 
 
 def _visible_walk(node):
