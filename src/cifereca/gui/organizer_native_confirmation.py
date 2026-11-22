@@ -61,12 +61,20 @@ class NativeOrganizerConfirmation:
         # Freeze what the user actually reviewed. Frozen DTOs can still be
         # mutated through object.__setattr__, including after GTK consent.
         if (type(page) is not OrganizerPageAdvice
+                # A frozen DTO may have had a mutable token installed through
+                # object.__setattr__. Equality against that same object would
+                # otherwise fail to detect in-place edits after consent.
+                or type(page.token) is not str or not 0 < len(page.token) <= 4096
+                or type(page.dry_run_group) not in (int, type(None))
+                or type(page.dry_run_rename_only) is not bool
+                or type(page.dry_run_excluded) is not int
                 or type(page.dry_run_entries) is not tuple
                 or len(page.dry_run_entries) != 1
                 or type(page.dry_run_entries[0]) is not OrganizerDryRunAdvice):
             return None
         entry = page.dry_run_entries[0]
         return (page.token, page.mutation_authorized, page.dry_run_state,
+                page.dry_run_group, page.dry_run_rename_only, page.dry_run_excluded,
                 entry.operation, entry.state, entry.current, entry.proposed)
 
     def _current(self, page):
@@ -100,6 +108,9 @@ class NativeOrganizerConfirmation:
         # shown in a mounted native dialog. Dismiss it now, not only on
         # disposal: an old Apply signal can never target the new review.
         witness = self._advice_witness(value) if valid else None
+        # An invalid fingerprint is not an admissible review, even if its
+        # visible rename text was otherwise well-formed.
+        valid = valid and witness is not None
         old_dialog = self._dialog if self._dialog is not None and (
             self._page is not value or not valid
             or self._review_witness != witness) else None
