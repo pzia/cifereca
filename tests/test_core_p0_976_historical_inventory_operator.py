@@ -174,3 +174,28 @@ def test_historical_runtime_inventory_accepts_bounded_inert_registry(
     assert result["may_reacquire"] is False
     assert calls == [("historical-adobe", True, True)]
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("capabilities", [
+    ("loan.inventory.readonly", "loan.inventory.readonly"),
+    ("loan.inventory.readonly", None),
+    ("loan.inventory.readonly", "x" * 129),
+    ("loan.inventory.readonly", 1),
+    (),
+])
+def test_historical_inventory_refuses_ambiguous_runtime_capability_claims(
+    store, tmp_path, capabilities,
+):
+    service, request, row, path, calls, _runtime, manager, status = _fixture(
+        store, tmp_path,
+    )
+    before = rows(store), path.read_bytes()
+    status.descriptor.capabilities = capabilities
+    operation = admit_inventory_comparison(
+        service, request, row, explicitly_requested=True,
+    )
+    assert operation is not None
+    assert operation() is None
+    assert operation() is None
+    assert calls == []
+    assert (rows(store), path.read_bytes()) == before

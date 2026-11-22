@@ -33,6 +33,16 @@ def _record(request, acquisition_id):
     return rows[0] if len(rows) == 1 else None
 
 
+def _readonly_capabilities(value):
+    # An adapter's self-description is not historical activation proof.
+    # Require a bounded native, unambiguous declaration before selection.
+    return (type(value) is tuple and 0 < len(value) <= 256
+            and all(type(item) is str and 0 < len(item) <= 128
+                    for item in value)
+            and len(set(value)) == len(value)
+            and "loan.inventory.readonly" in value)
+
+
 def _producer(manager):
     candidates = manager.candidates("runtime.adapter", ready_only=False)
     # A non-native or oversized runtime registry is not historical evidence.
@@ -43,9 +53,7 @@ def _producer(manager):
         row.descriptor.id for row in candidates
         if row.enabled is True and row.state == "ready"
         and row.descriptor.type == "runtime.adapter"
-        and type(row.descriptor.capabilities) is tuple
-        and len(row.descriptor.capabilities) <= 256
-        and "loan.inventory.readonly" in row.descriptor.capabilities
+        and _readonly_capabilities(row.descriptor.capabilities)
     ]
     if len(claimed) != 1 or not _text(claimed[0]):
         return None
@@ -53,9 +61,7 @@ def _producer(manager):
     row = manager.status(plugin_id)
     if (row.enabled is not True or row.state != "ready" or row.descriptor.id != plugin_id
             or row.descriptor.type != "runtime.adapter"
-            or type(row.descriptor.capabilities) is not tuple
-            or len(row.descriptor.capabilities) > 256
-            or "loan.inventory.readonly" not in row.descriptor.capabilities):
+            or not _readonly_capabilities(row.descriptor.capabilities)):
         return None
     runtime = manager.service(plugin_id)
     if not callable(getattr(runtime, "loan_inventory_readonly", None)):
