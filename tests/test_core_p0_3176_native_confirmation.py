@@ -705,3 +705,59 @@ def test_native_consent_witness_rejects_in_place_dto_mutation(
             runner.run()
             assert not runner.queue
     assert not messages
+
+
+@pytest.mark.parametrize("coordinate,updated", [
+    ("dry_run_group", 4),
+    ("dry_run_rename_only", True),
+    ("dry_run_excluded", 2),
+])
+def test_native_review_revokes_changed_dry_run_context_after_dialog(
+    monkeypatch, coordinate, updated,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Changed review cannot notify"))
+    lease = NS(identity_id="A", is_current=lambda: True)
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Changed review cannot admit Core"),
+    )
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    dialog, = Dialog.dialogs
+    object.__setattr__(page, coordinate, updated)
+    assert not ui._current(page)
+    dialog.respond("apply")
+    assert not runner.queue and not ui.button.sensitive
+
+
+def test_native_review_refuses_mutable_token_before_presenting_consent():
+    Dialog.dialogs = []
+    runner = Runner()
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Untrusted token cannot notify"))
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed",
+        dry_run_entries=(OrganizerDryRunAdvice(
+            "rename", "old.epub", "new.epub", "review_only"),),
+    )
+    object.__setattr__(page, "token", ["mutable"])
+    ui = NativeOrganizerConfirmation(
+        window, object(), NS(identity_id="A", is_current=lambda: True),
+        Gtk=NS(Button=Widget),
+    )
+    ui.observe(page)
+    assert not ui.button.visible and not ui.button.sensitive
+    assert not ui.open(NS(MessageDialog=Dialog))
+    assert not Dialog.dialogs and not runner.queue
