@@ -203,3 +203,48 @@ def test_detail_loan_declaration_preview_is_explicit_exact_and_read_only(case, c
         assert not select()
     assert any(g[0] == "Aperçu de déclaration utilisateur" for g in groups) == (change == "none")
     assert records(service) == before and path.read_bytes() == data and calls == []
+
+
+def test_declaration_selection_available_on_every_private_page(case, monkeypatch):
+    from cifereca.core import local_origin_private_catalogue as private
+    from tests.test_core_p0_4030_private_catalogue import _populate_windows
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    # case already holds a matching entitlement for loan-1. Other loans
+    # remain documentary only, even when a selection button is present.
+    service, request, choice, candidate, right, path, calls = case
+    _populate_windows((service, request, choice.account, None, calls, path))
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    controller, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, None, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    before, data = records(service), path.read_bytes()
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert next(v[2] for k, v in actions.items() if k.startswith("private-"))()
+    deliver(tasks)
+    seen = []
+    for page in range(1, 4):
+        group = next(g for g in reversed(groups) if g[0] == "Occurrence à examiner")
+        seen.extend(group[1])
+        old = actions["declare-preview-1"][2]
+        assert "declare-preview-2" in actions
+        if page < 3:
+            advance = actions["declare-next-page"][2]
+            assert advance()
+            deliver(tasks)
+            assert not old() and not advance()
+        else:
+            assert "declare-next-page" not in actions
+            # No exact existing right for this occurrence.
+            assert old()
+            deliver(tasks)
+            assert toasts and not any(g[0] == "Aperçu de déclaration utilisateur" for g in groups)
+    assert len(seen) == 6
+    for index in range(1, 7):
+        assert any(f"Prêt : loan-{index}" in row[1] for row in seen)
+    assert records(service) == before and path.read_bytes() == data and calls == []

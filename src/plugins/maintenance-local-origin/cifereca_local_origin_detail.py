@@ -371,10 +371,10 @@ class DetailController:
                 return
             self.host.add_group("Catalogue privé — lecture seule", private_rows(value))
             if (choice.kind == "loan"
-                    and following is None
                     and callable(getattr(self.host, "retire_action", None))
                     and callable(getattr(self.broker, "preview_loan_declaration", None))
-                    and any(getattr(hit, "declaration_choice", None) for hit in value.matches)):
+                    and (any(getattr(hit, "declaration_choice", None) for hit in value.matches)
+                         or any(key.startswith("declare-") for key in self.choice_actions))):
                 self._show_declaration_window(original, choice, value, 0)
                 return
             if following is None:
@@ -406,8 +406,8 @@ class DetailController:
     def _show_declaration_window(self, original, choice, report, offset):
         """Display the exact selections within the host's existing action budget.
 
-        Initially only the final cache page offers this window: continuations
-        retain their existing explicit navigation without displacing actions.
+        Each cache page offers its own lease and explicit continuation.
+        Going to another page expires the current selection.
         """
         if not self.current() or self.page is not original:
             return
@@ -422,7 +422,7 @@ class DetailController:
                         if type(hit.declaration_choice) is str
                         and len(hit.declaration_choice) == 64
                         and all(c in "0123456789abcdef" for c in hit.declaration_choice))
-        window = matches[offset:offset + 9]
+        window = matches[offset:offset + (8 if report.next_token else 9)]
         lease = object()
         self.declaration_view = lease
 
@@ -455,6 +455,18 @@ class DetailController:
             self.host.add_action("declare-more", "Autres occurrences",
                                  "Afficher les choix suivants sans requête.", more)
             keys.append("declare-more")
+
+        def next_page():
+            if not current() or report.next_token in self.used:
+                return False
+            self.declaration_view = None
+            return self._private_page(
+                choice, original, report.next_token, report.page + 1)
+
+        if report.next_token is not None:
+            self.host.add_action("declare-next-page", "Suite du cache privé",
+                                 "Relire la page suivante ; les anciens choix expirent.", next_page)
+            keys.append("declare-next-page")
 
         def back():
             if not current():
