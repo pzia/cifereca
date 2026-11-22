@@ -30,7 +30,8 @@ def _ledger_label(value):
 
 
 def _display(result):
-    if type(result) is not dict or type(result.get("rows")) is not tuple:
+    if (type(result) is not dict or type(result.get("rows")) is not tuple
+            or any(type(row) is not dict for row in result["rows"])):
         return "Revue indisponible ou contexte modifié. Aucun constat d’absence."
     lines = ["Acquisitions historiques enregistrées — aucun état fournisseur actuel vérifié."]
     if not result["rows"]:
@@ -38,9 +39,9 @@ def _display(result):
     for row in result["rows"]:
         def value(key):
             return _ledger_label(row.get(key))
-        pub = row.get("publication") or {}
-        physical = row.get("local_bytes") or {}
-        evidence = physical.get("evidence") or {}
+        pub = row.get("publication") if type(row.get("publication")) is dict else {}
+        physical = row.get("local_bytes") if type(row.get("local_bytes")) is dict else {}
+        evidence = physical.get("evidence") if type(physical.get("evidence")) is dict else {}
         lines.extend((
             "",
             f"Acquisition : {value('acquisition_id')} · {value('ledger_status')}",
