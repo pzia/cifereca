@@ -725,6 +725,15 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             capture("00-notice-c-" + route + "-" + variant + "-" + label)
             if variant == "list":
                 report["local_c_stage"] = label + "_" + route + "_detail"
+                # Closed geometry witness for the existing 960px acceptance.
+                # Record both the actual allocation and the native mode, even
+                # if the narrow transition is not entered.
+                report.setdefault("notice_c_narrow_geometry_" + label, {})[route] = {
+                    "window_width": int(window.get_width()),
+                    "page_width": int(page.get_width()),
+                    "paned_max": int(page.paned.get_property("max-position")),
+                    "narrow": bool(page._narrow_master_detail),
+                }
                 if page._narrow_master_detail:
                     assert page.page_header.get_visible()
                     assert page.toolbar.get_visible()
