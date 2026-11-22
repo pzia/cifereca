@@ -76,3 +76,22 @@ def test_ordinary_dedup_refuses_private_stage_names(tmp_path, subpath):
     options = dict(library_root=root, identity_id="A", owner_directory="A")
     assert ordinary_dedup_path_excluded(stage, **options)
     assert not ordinary_dedup_path_excluded(other, **options)
+
+
+def test_private_region_does_not_consume_ordinary_scan_entry_budget(tmp_path):
+    """A reserved stage cannot displace a real book under a tight scan budget."""
+    from cifereca.core.library_inventory import InventoryLimits
+
+    root = tmp_path / "identity"
+    private = root / PRIVATE_DERIVED_REGION
+    private.mkdir(parents=True)
+    stage = private / "pending.epub"
+    stage.write_bytes(BYTES)
+    ordinary = root / "book.pdf"
+    ordinary.write_bytes(b"%PDF-1.4\nsynthetic local book\n")
+    result = scan_identity_roots({"A": (root,)}, limits=InventoryLimits(entries=1))
+    assert result.entries == 1
+    assert result.files_started == 1
+    assert {Path(observed.path).name for observed in result.files} == {"book.pdf"}
+    assert "entry_budget" not in result.reasons
+    assert stage.read_bytes() == BYTES
