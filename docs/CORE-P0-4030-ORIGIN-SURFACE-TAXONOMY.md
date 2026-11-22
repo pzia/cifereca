@@ -102,8 +102,9 @@ indépendant #7092 est réceptionné ; cela ne clôt **pas** #4030.
   writer ou un port mutateur plugin supplémentaire. La déclaration reste
   distincte de la provenance attestée et révocable par le parcours existant.
 
-La confirmation native de l'aperçu privé (#7523) est un reliquat de réception :
-ne pas la présenter comme livrée avant intégration et CI exacte. Les limites
+La confirmation native de l'aperçu privé (#7523) est intégrée sur `main`
+(squash `027d329e`, quatre gates vertes). Le parcours opérateur est décrit
+dans le [guide du plugin](../src/plugins/maintenance-local-origin/README.md). Les limites
 sur les recherches privées distantes, la couverture multi-sources, la
 fraîcheur et les ambiguïtés restent opposables ; aucune preuve terrain ni
 clôture #4030 n'est déduite de cette mise à jour documentaire. Aucun lien
