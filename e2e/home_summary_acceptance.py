@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 def check_home_summary(window, *, later, capture, report, done):
     from gi.repository import Gtk
+    from cifereca.plugin_api import DigitalLoanAvailability
 
     path = Path(__file__).resolve().parents[1] / "src/plugins/home-page/cifereca_home.py"
     spec = importlib.util.spec_from_file_location("cifereca_home_acceptance", path)
@@ -35,6 +36,7 @@ def check_home_summary(window, *, later, capture, report, done):
     snapshot = []
     subscriptions = []
     calls = []
+    capacity_queries = []
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError("Rendering Accueil must never trigger an action")
@@ -51,8 +53,28 @@ def check_home_summary(window, *, later, capture, report, done):
         identity_overview=overview, subscribe_identity_overview=subscribe,
         open_identity_library=forbidden, synchronize=forbidden,
     )
+    def read_availability(identity_id):
+        capacity_queries.append(identity_id)
+        assert len(snapshot) == 1 and snapshot[0]['identity_id'] == identity_id
+        if identity_id not in ('synthetic-loans', 'synthetic-mixed'):
+            return ()
+        return tuple(DigitalLoanAvailability(
+            identity_id=identity_id, provider_id='synthetic-lender',
+            credential_id='PRIVATE-SYNTHETIC-' + str(index),
+            borrower_id='PRIVATE-BORROWER-' + label,
+            provider_label='Prêteur témoin', connection_label=f'Connexion {index}',
+            borrower_label=label, personal_ceiling=ceiling, observed_loans=count,
+            reason=reason,
+        ) for index, label, ceiling, count, reason in (
+            (1, 'Compte principal', 4, 2, 'inventory_unverified'),
+            (1, 'Compte lié', 0, None, 'inventory_unverified'),
+            (2, 'Compte principal', 99, None, 'account_disconnected'),
+        ))
+
+    broker = SimpleNamespace(identities=lambda: [],
+                             digital_loan_availability=read_availability)
     controllers = []
-    page = home.build_page(host, controllers)
+    page = home.build_page(host, controllers, identity_broker=broker)
     previous = window.view_stack.get_visible_child_name()
     window.view_stack.add_named(page, "acceptance-home-summary")
     window.view_stack.set_visible_child(page)
@@ -99,6 +121,30 @@ def check_home_summary(window, *, later, capture, report, done):
             assert bounds.get_y() + bounds.get_height() <= page.get_height() + 1
             assert node.get_layout().get_pixel_size()[0] <= node.get_width() + 1
             allocations.append({"width": node.get_width(), "height": node.get_height()})
+        # #6002: actual GTK widgets, exact profile and independent borrower
+        # rows. A zero personal ceiling is not a zero lender quota.
+        assert text.count("Prêts numériques — disponibles") == 1, text
+        if name in {"loans", "mixed"}:
+            expected_capacity = (
+                ("Connexion 1 · Compte principal", "plafond personnel 4", "2 prêt(s)"),
+                ("Connexion 1 · Compte lié", "plafond personnel 0", "non vérifiés"),
+                ("Connexion 2 · Compte principal", "plafond personnel 99", "connexion fournisseur non active"),
+            )
+            for scope, ceiling, fact in expected_capacity:
+                match, = [node for node in labels if scope in node.get_text()
+                          and "Reste inconnu" in node.get_text()]
+                assert ceiling in match.get_text() and fact in match.get_text()
+                assert "Éligibilité à emprunter : non vérifiée" in match.get_text()
+                assert match.get_mapped() and match.get_width() > 0
+                assert match.get_layout().get_pixel_size()[0] <= match.get_width() + 1
+            assert sum("Reste inconnu" in value for value in text) == 3
+            assert any("Total non calculable" in value for value in text)
+        else:
+            assert any("aucun compte emprunteur vérifié" in value for value in text)
+            assert not any("Prêteur témoin" in value for value in text)
+        assert not any("PRIVATE-" in value for value in text)
+        assert not any("2 disponibles" in value or "0 disponible" in value for value in text)
+        report["checks"]["P1_6002_home_real_gtk_" + name] = True
         assert not any("emprunts connus" in value for value in text)
         if no_lending_source:
             assert not any(
@@ -126,6 +172,7 @@ def check_home_summary(window, *, later, capture, report, done):
             render_next()
             return
         assert len(calls) == len(cases) + 1  # initial build + explicit snapshots
+        assert capacity_queries == ['synthetic-' + case[0] for case in cases]
         native_store_filters()
 
     def native_store_filters():
