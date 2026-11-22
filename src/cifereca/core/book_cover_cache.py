@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import math
 from threading import Lock
@@ -159,7 +159,9 @@ class CoverDecisionCache:
                 callback(CoverDecisionChange(
                     scope=CoverDecisionCache._snapshot_scope(change.scope),
                     revision=change.revision, generation=change.generation,
-                    kind=change.kind, decision=change.decision,
+                    kind=change.kind,
+                    decision=(CoverDecisionCache._snapshot_decision(change.decision)
+                              if change.decision is not None else None),
                     cause=change.cause, sequence=change.sequence,
                 ))
             except Exception:
@@ -204,6 +206,15 @@ class CoverDecisionCache:
             cls._snapshot_scope(token.scope), token.revision, token.generation,
         )
 
+    @classmethod
+    def _snapshot_decision(cls, decision: ResolvedBookCover) -> ResolvedBookCover:
+        """Isolate the cached N1 evidence from producers, UI readers and listeners.
+
+        Even a frozen dataclass and its nested scope can be mutated using
+        object.__setattr__. Never expose the internal N2 decision by identity.
+        """
+        return replace(decision, scope=cls._snapshot_scope(decision.scope))
+
     def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
         """Start a complete or partial observation, revoking older work."""
         scope = self._snapshot_scope(scope)
@@ -238,7 +249,7 @@ class CoverDecisionCache:
                 slot.decision = None
                 return None
             self._slots.move_to_end(scope)
-            return slot.decision
+            return self._snapshot_decision(slot.decision)
 
     def observe(
         self, scope: CoverDocumentScope, *, revision: int,
@@ -257,7 +268,8 @@ class CoverDecisionCache:
                     or not slot.published or slot.decision is None
                     or self._clock() >= slot.expires_at):
                 return None
-            return self._snapshot_token(slot.token), slot.decision
+            return (self._snapshot_token(slot.token),
+                    self._snapshot_decision(slot.decision))
 
     def selected_token(
         self, scope: CoverDocumentScope, *,
@@ -428,20 +440,22 @@ class CoverDecisionCache:
         """
         self._validate_token(token)
         self._validate_resolved_decision(decision)
-        if decision.scope != token.scope or decision.revision != token.revision:
+        sealed = self._snapshot_decision(decision)
+        self._validate_resolved_decision(sealed)
+        if sealed.scope != token.scope or sealed.revision != token.revision:
             raise ValueError("cover decision scope or revision mismatch")
         with self._lock:
             current = self._slots.get(token.scope)
             if current is None or current.token != token or current.published:
                 return False
             current.published = True
-            current.decision = decision
-            current.expires_at = self._clock() + self._ttl[decision.status]
+            current.decision = sealed
+            current.expires_at = self._clock() + self._ttl[sealed.status]
             self._slots.move_to_end(token.scope)
             callbacks = self._listeners(token.scope)
             event = CoverDecisionChange(
                 self._snapshot_scope(token.scope), token.revision, token.generation,
-                "resolved", decision=decision,
+                "resolved", decision=sealed,
                 sequence=self._next_event(),
             )
         self._notify(callbacks, event)

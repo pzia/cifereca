@@ -105,7 +105,7 @@ def test_source_exact_history_decision_shared_without_mutating_loan_occurrence()
     assert decision.status == "selected" and decision.uri == IMAGE
     assert cache.resolve(
         item, identity_id="alice", account_epoch=12, history_revision=7,
-    ) is decision
+    ) == decision
     assert item.thumbnail_url == original
 
 
@@ -226,7 +226,8 @@ def test_switch_account_epoch_and_back_drops_previous_n2_decision():
     third = bridge.resolve(
         item, identity_id="alice", account_epoch=13, history_revision=2,
     )
-    assert first is again and first.uri == second.uri == third.uri
+    assert first == again and first is not again
+    assert first.uri == second.uri == third.uri
     assert first.revision < second.revision < third.revision
 
 
