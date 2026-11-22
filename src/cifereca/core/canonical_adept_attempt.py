@@ -17,6 +17,8 @@ from .canonical_publication import _stable
 from .source_convergence import SourceKey
 
 _PREFIX = "canonical.adept_attempt.v1"
+_UNSUBMITTED_PREFIX = "canonical.adept_unsubmitted.v1"
+_UNSUBMITTED_REASONS = ("core_pre_dispatch_refusal", "runtime_attested_not_submitted")
 
 
 def _key(source: SourceKey) -> str:
@@ -25,6 +27,28 @@ def _key(source: SourceKey) -> str:
     s = source.scope
     return _stable(_PREFIX, s.identity_id, s.provider_id, s.credential_id,
                    s.account_id, source.branch, source.edition_id, source.right_id)
+
+
+def _unsubmitted_key(source):
+    return _stable(_UNSUBMITTED_PREFIX, _key(source))
+
+
+def _unsubmitted_value(source, marker, reason):
+    if _decode_marker(marker) is None or reason not in _UNSUBMITTED_REASONS:
+        raise ValueError("canonical_adept_unsubmitted_invalid")
+    return json.dumps({
+        "schema": 1,
+        "marker_fingerprint": _stable("canonical.adept_marker_review.v1", _key(source), marker),
+        "reason": reason,
+    }, sort_keys=True, separators=(",", ":"))
+
+
+def _unsubmitted_row(db, source):
+    return db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND 1024 "
+        "THEN value ELSE NULL END FROM metadata WHERE key=?",
+        (_unsubmitted_key(source),),
+    ).fetchone()
 
 
 def _value(offer_id: str, operation_id: str) -> str:
@@ -79,7 +103,12 @@ def pending_loan_adept_attempt(storage, source: SourceKey) -> bool:
         return False
     try:
         # Even malformed/empty stored values represent an unresolved hold.
-        return _read_marker(storage, source) is not None
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
+                return True
+            return (_marker_row(db, source) is not None
+                    or _unsubmitted_row(db, source) is not None)
     except Exception:
         return True
 
@@ -209,6 +238,8 @@ def begin_loan_adept_attempt(storage, *, source: SourceKey, offer_id: str,
     with _durable_marker_transaction(storage) as db:
         if not _exact_borrower_bound_in_db(db, source.scope):
             raise ValueError("canonical_adept_attempt_source_rebound")
+        if _unsubmitted_row(db, source) is not None:
+            raise ValueError("canonical_adept_unsubmitted_pending")
         cursor = db.execute(
             "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
             (key, value),
@@ -226,6 +257,8 @@ def release_completed_attempt_in_transaction(db, *, source: SourceKey,
     if not db.in_transaction:
         raise ValueError("canonical_adept_attempt_release_invalid")
     expected = _value(offer_id, operation_id)
+    if _unsubmitted_row(db, source) is not None:
+        raise ValueError("canonical_adept_unsubmitted_conflict")
     cursor = db.execute(
         "DELETE FROM metadata WHERE key=? AND value=?",
         (_key(source), expected),
@@ -251,3 +284,87 @@ def release_unsubmitted_attempt(storage, *, source: SourceKey, offer_id: str,
         release_completed_attempt_in_transaction(
             db, source=source, offer_id=offer_id, operation_id=operation_id,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LoanAdeptUnsubmittedReview:
+    """Exact local evidence only; no right, activation or replay authority."""
+    state: str
+    reason: str = ""
+    marker_fingerprint: str = field(default="", repr=False)
+
+    @property
+    def unlock_authorized(self):
+        return False
+
+
+def review_loan_adept_unsubmitted_in_transaction(db, *, source):
+    if not db.in_transaction or type(source) is not SourceKey or source.kind != "loan":
+        return LoanAdeptUnsubmittedReview("unreadable")
+    try:
+        witness = _unsubmitted_row(db, source)
+        if witness is None:
+            return LoanAdeptUnsubmittedReview("not_recorded")
+        marker = _marker_row(db, source)
+        reviewed = _marker_review(marker, source)
+        if reviewed.state != "held_phase_unknown":
+            return LoanAdeptUnsubmittedReview("unverified")
+        for reason in _UNSUBMITTED_REASONS:
+            if witness == (_unsubmitted_value(source, marker[0], reason),):
+                return LoanAdeptUnsubmittedReview(
+                    "non_submission_recorded", reason, reviewed.fingerprint)
+        return LoanAdeptUnsubmittedReview("unverified")
+    except Exception:
+        return LoanAdeptUnsubmittedReview("unreadable")
+
+
+def review_loan_adept_unsubmitted(storage, *, source):
+    """Read marker and witness in one SQLite snapshot, after restart too."""
+    try:
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
+                return LoanAdeptUnsubmittedReview("unreadable")
+            with db:
+                db.execute("BEGIN")
+                return review_loan_adept_unsubmitted_in_transaction(db, source=source)
+    except Exception:
+        return LoanAdeptUnsubmittedReview("unreadable")
+
+
+def _consume_proven_unsubmitted(storage, *, source, expected, witness):
+    with _durable_marker_transaction(storage) as db:
+        if (_marker_row(db, source) != (expected,)
+                or _unsubmitted_row(db, source) != (witness,)):
+            raise ValueError("canonical_adept_attempt_changed")
+        for key, value in ((_key(source), expected), (_unsubmitted_key(source), witness)):
+            deleted = db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, value))
+            if deleted.rowcount != 1:
+                raise ValueError("canonical_adept_attempt_changed")
+
+
+def release_proven_unsubmitted_attempt(storage, *, source, offer_id, operation_id,
+                                       shared_lock, reason):
+    """Record the already-live dispatch's actual refusal before consuming it.
+
+    FIRST commit exact evidence with synchronous FULL. THEN consume both
+    rows atomically under the same acquisition lock. A crash between commits
+    retains the original fence and correlated evidence. This deliberately
+    does not authorize a later operator to replay anything. Normal success
+    leaves no extra row; old markers are not retrospectively upgraded.
+    """
+    from .canonical_recovery import _lock_ok
+    if not _lock_ok(shared_lock):
+        raise ValueError("canonical_adept_attempt_core_lock_required")
+    expected = _value(offer_id, operation_id)
+    witness = _unsubmitted_value(source, expected, reason)
+    with _durable_marker_transaction(storage) as db:
+        if _marker_row(db, source) != (expected,):
+            raise ValueError("canonical_adept_attempt_changed")
+        inserted = db.execute(
+            "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+            (_unsubmitted_key(source), witness),
+        )
+        if inserted.rowcount != 1:
+            raise ValueError("canonical_adept_unsubmitted_pending")
+    _consume_proven_unsubmitted(storage, source=source, expected=expected, witness=witness)

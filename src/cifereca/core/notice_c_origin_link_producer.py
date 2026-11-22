@@ -116,6 +116,43 @@ def _admitted_public_sources_txn(
             admitted[coords] = source
     for coords in collisions:
         admitted.pop(coords, None)
+    if admitted:
+        # Eviction of a short-lived source is not evidence that another
+        # edition ceased to exist. Retained C provides only a collision
+        # veto here; it never supplies a missing positive source input.
+        from .notice_c_cover_index import (
+            _PREFIX, _json, _decode, _db_key, canonical_cover_document_ref,
+        )
+        retained = db.execute(
+            "SELECT m.key,m.value FROM metadata AS m "
+            "WHERE m.key>=? AND m.key<? AND EXISTS ("
+            "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+            "THEN m.value ELSE '{}' END, '$.sources') AS src WHERE "
+            "json_array(json_extract(CASE WHEN src.type='object' "
+            "THEN src.value ELSE '{}' END, '$.provider'),"
+            "json_extract(CASE WHEN src.type='object' "
+            "THEN src.value ELSE '{}' END, '$.public_bibliography.record_id')) "
+            "IN (SELECT json(value) FROM json_each(?))) ORDER BY m.key",
+            (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(admitted))),
+        )
+        for key_string, raw in retained:
+            try:
+                document = canonical_cover_document_ref(_json(raw)["edition_id"])
+                if _db_key(document) != key_string:
+                    continue
+                consolidated = _decode(raw, document)
+            except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+                continue
+            for member in consolidated.sources:
+                bio = member.public_bibliography
+                if member.visibility != "public" or bio is None or bio.medium != "digital":
+                    continue
+                coords = (member.provider_id, bio.record_id)
+                current = admitted.get(coords)
+                if current is not None and bio.edition_id != current.observation.key.edition_id:
+                    admitted.pop(coords)
+            if not admitted:
+                break
     return admitted
 
 

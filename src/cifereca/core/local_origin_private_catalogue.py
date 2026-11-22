@@ -73,6 +73,39 @@ def _loan_titles(service, scope):
     return {key: entry for key, entry in matched.items() if counts[key] == 1}
 
 
+def _purchase_description(notice, title):
+    """Select a matching literal *for presentation*, not a canonical value.
+
+    Retained catalogue/detail alternatives for this exact purchase can
+    disagree. Expose a candidate with a distinct ambiguity reason rather
+    than silently discard it or select a winning author. Only safe decoded
+    text is returned; other fields and all acquisition authority stay out.
+    """
+    title_facts = tuple(f for f in notice.facts + notice.alternatives
+                        if f.field == "title")
+    author_facts = tuple(f for f in notice.facts + notice.alternatives
+                         if f.field == "author")
+    if (not 1 <= len(title_facts) <= 16 or len(author_facts) > 16
+            or any(_descriptive_pair(f.value, None) is None for f in title_facts)
+            or any(type(f.value) is not str or not _public_bibliographic_text(
+                f.value, required=True, limit=512) or not f.value.strip()
+                   for f in author_facts)):
+        return None
+    matching = tuple(f for f in title_facts if _fold(f.value) == _fold(title))
+    if not matching:
+        return None
+    title_values = {f.value for f in title_facts}
+    author_values = {f.value for f in author_facts}
+    conflicting = len(title_values) > 1 or len(author_values) > 1
+    # Do not select a winning author from conflicting declarations. The
+    # displayed title is one matching observation, never a consolidated title.
+    # Its date belongs to that observation, not the receipt's refresh time.
+    author = next(iter(author_values)) if len(author_values) == 1 else None
+    selected = matching[0]
+    pair = _descriptive_pair(selected.value, author)
+    return (pair, selected.observed_at, conflicting) if pair is not None else None
+
+
 def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
     """Reuse exact existing C reader; do not manufacture a private Notice."""
     with storage._lock:
@@ -102,18 +135,15 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
                     # valid neighbours in this explicitly partial window.
                     continue
                 observed_at = None
+                conflicting = False
                 if kind == "purchase":
                     notice = _read_descriptive_txn(db, source)
                     if notice is None:
                         continue
-                    titles = tuple(f for f in notice.facts if f.field == "title")
-                    author_facts = tuple(f for f in notice.facts if f.field == "author")
-                    if (len(titles) != 1 or len(author_facts) > 1
-                            or any(f.field in ("title", "author") for f in notice.alternatives)):
+                    observed = _purchase_description(notice, title)
+                    if observed is None:
                         continue
-                    pair = _descriptive_pair(titles[0].value,
-                                             author_facts[0].value if author_facts else None)
-                    observed_at = titles[0].observed_at
+                    pair, observed_at, conflicting = observed
                     evidence = "cached_public_purchase_description"
                 else:
                     # The legacy loan projection has no branch. Reject
@@ -131,7 +161,9 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
                 if pair is None or _fold(pair[0]) != _fold(title):
                     continue
                 author = pair[1]
-                if len(authors) != 1 or not author:
+                if conflicting:
+                    comparison = "purchase_description_conflicting"
+                elif len(authors) != 1 or not author:
                     comparison = "title_concordant_author_unknown"
                 elif _fold(author) == _fold(authors[0]):
                     comparison = "title_author_concordant"

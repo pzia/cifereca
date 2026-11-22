@@ -355,3 +355,36 @@ def test_historical_ledger_review_rejects_changed_branch_snapshot(
     monkeypatch.setattr(review, "_row", original)
     row, = review.run_historical_review(service, request)["rows"]
     assert row["canonical_status"] == "ambiguous_branch"
+
+
+@pytest.mark.parametrize("case", ["exact", "changed", "orphan"])
+def test_historical_hold_reports_correlated_non_submission_without_permit(store, tmp_path, case):
+    from cifereca.core import canonical_adept_attempt as marker
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.adept_historical_maintenance_line import _display_holds
+    from cifereca.core.loan_download_retry_review import review_loan_download_retries
+    service, _, path, _ = _setup(store, tmp_path)
+    pending, snapshot = new_source(kind="loan", branch="loans", right="blocked-witness")
+    persist_attested_source_references(store, snapshot)
+    raw = marker._value("synthetic-offer", "f" * 32)
+    proof = marker._unsubmitted_value(pending, raw, "core_pre_dispatch_refusal")
+    store.metadata_set(marker._unsubmitted_key(pending), proof)
+    if case != "orphan":
+        store.metadata_set(marker._key(pending),
+            raw if case == "exact" else marker._value("other-offer", "a" * 32))
+    retry, = review_loan_download_retries(service, identity_id="A")
+    assert retry.adept_hold and not retry.can_reset
+    request = review.admit_historical_review(service)
+    page = review.run_historical_hold_review(service, request)
+    row, = page["rows"]
+    assert row["non_submission_evidence"] == (
+        "non_submission_recorded" if case == "exact" else "unverified")
+    assert row["hold_origin"] == (
+        "unsubmitted_witness_orphan" if case == "orphan" else "marker_recorded")
+    assert row["replay_proof"] == "not_established" and not row["unlock_authorized"]
+    rendered = _display_holds(page)
+    assert "non autorisé" in rendered
+    assert ("Refus Core avant appel runtime enregistré" in rendered) == (case == "exact")
+    assert proof not in repr(page) and raw not in repr(page) and "fingerprint" not in repr(page)
+    assert path.read_bytes() == BYTES
+    assert store.metadata_get(marker._unsubmitted_key(pending)) == proof
