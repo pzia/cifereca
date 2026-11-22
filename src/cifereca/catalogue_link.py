@@ -10,7 +10,9 @@ def _unsafe_url_controls(value):
     markers can change the apparent source/record in a browser link.
     Leave ordinary percent-encoded spaces and Unicode book titles intact.
     """
-    for _ in range(4):
+    # Bound work even for deliberately nested escapes. Twelve levels cover
+    # repeated quoting without silently accepting a control at depth five.
+    for _ in range(12):
         if any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value):
             return True
         decoded = unquote(value)
