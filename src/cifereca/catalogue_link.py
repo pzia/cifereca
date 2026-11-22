@@ -145,7 +145,8 @@ def catalogue_notice_url(row, *, base=None, provider=None):
                 # results or summaries, never an exact per-book HTML sheet.
                 # Check the route shape, not the provider identity; keep
                 # /<tenant>/Catalog/Book/<id> unaffected.
-                or path.endswith(('/catalog/search', '/catalog/searchresultsummary'))
+                or path.endswith(('/catalog/search', '/catalog/searchresultsummary',
+                                  '/pages/recherche/resultatrecherche.aspx'))
                 or path in {'/feed', '/feed.php', '/fetch.php',
                             '/opds', '/opds/search', '/services/engine/search/opds',
                             # These are search/result endpoints, not a
