@@ -12,6 +12,7 @@ import uuid
 from cifereca.plugin_api import BUNDLE_MANIFEST_NAME
 from cifereca.library_files import safe_library_component, sha256_file
 from cifereca.filename_suffixes import split_filename_suffix
+from cifereca.core.derived_variant_region_paths import private_derived_path
 
 JOURNAL_KEY = 'identity-directory-migration-v1'
 
@@ -20,12 +21,19 @@ class DirectoryMigrationError(RuntimeError):
 
 
 def checked_tree(path: Path):
+    if private_derived_path(path):
+        raise DirectoryMigrationError("Zone privée de publication dérivée : migration non qualifiée.")
     if path.is_symlink():
         raise DirectoryMigrationError(f'Lien symbolique refusé pour la migration : {path}')
     if not path.exists():
         return
     nodes = [path] + list(path.rglob('*')) if path.is_dir() else [path]
     for node in nodes:
+        # The private receipt pins the profile/region inode and exact path.
+        # The legacy directory migration cannot rebind that receipt. Never
+        # copy, fingerprint or remove a reserved subtree as ordinary stock.
+        if private_derived_path(node):
+            raise DirectoryMigrationError("Zone privée de publication dérivée : migration non qualifiée.")
         if node.is_symlink() or not (node.is_dir() or node.is_file()):
             raise DirectoryMigrationError(f'Entrée non régulière refusée : {node}')
 
@@ -237,6 +245,9 @@ class DirectoryMigration:
                 for path in source.rglob('*') if source.exists() else []:
                     if path.is_file() and not any(path.is_relative_to(Path(e['old'])) for e in plan['entries']):
                         raise DirectoryMigrationError('Nouveau fichier dans la source ; annulez puis relancez la migration.')
+            for change in plan['changes']:
+                checked_tree(Path(change['old']))
+                checked_tree(Path(change['new']))
             self.storage.commit_directory_migration(plan)
             plan['state'] = 'committed'
         self.config.set('identities', plan['new_identities'])
@@ -266,6 +277,7 @@ class DirectoryMigration:
         for change in plan['changes']:
             source = Path(change['old'])
             if source.exists():
+                checked_tree(source)
                 for directory in sorted((p for p in source.rglob('*') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
                     try: directory.rmdir()
                     except OSError: pass
