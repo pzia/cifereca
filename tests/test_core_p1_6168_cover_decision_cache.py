@@ -487,10 +487,11 @@ def test_mutated_admitted_n1_decision_cannot_rewrite_n2_evidence():
     assert cache.publish_resolved(producer, decision)
     object.__setattr__(decision, "uri", ALT)
     object.__setattr__(decision.scope, "loan_id", "another-valid-loan")
-    hit = cache.peek(scope, revision=3)
-    assert hit.uri == URL and hit.scope == scope
-    assert cache.selected_token(scope, revision=3, uri=URL) == producer
-    assert cache.selected_token(scope, revision=3, uri=ALT) is None
+    original_scope = loan()
+    hit = cache.peek(original_scope, revision=3)
+    assert hit is not None and hit.uri == URL and hit.scope == original_scope
+    assert cache.selected_token(original_scope, revision=3, uri=URL) == producer
+    assert cache.selected_token(original_scope, revision=3, uri=ALT) is None
     assert events[-1].decision.uri == URL
     assert events[-1].decision.scope == scope
     assert cache.stats()["scopes"] == 1
