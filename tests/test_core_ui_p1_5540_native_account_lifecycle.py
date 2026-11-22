@@ -27,7 +27,7 @@ def test_native_multi_account_settings_save_reopen_delete(width):
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gtk, Adw
+    from gi.repository import Gtk, Adw, GLib
     Adw.init()
 
     rig = harness.SaveSettings()
@@ -118,6 +118,13 @@ def test_native_multi_account_settings_save_reopen_delete(width):
             ed["option_fields"]["ceiling"].set_text(ceiling)
         assert not config.path.exists()
         window.present()
+        loop = GLib.MainLoop()
+        GLib.timeout_add(250, lambda: (loop.quit(), False)[1])
+        loop.run()
+        for ed in editors:
+            group = ed["group"]
+            assert group.get_mapped() and group.get_width() > 0
+            assert group.get_width() <= container.get_width()
         saved = save()
         assert set(saved) == {"conn-a", "conn-b", "conn-c"}
         assert [saved[key]["identity_id"] for key in saved] == [a, a, b]
