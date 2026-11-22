@@ -83,8 +83,10 @@ def qualified_public_web_source(source, *, inventory_complete):
             or set(fields) != {"thumbnail_url", "public_bibliography", FIELD}):
         return False
     return (
-        (obs.status == "complete" and attr.state == "available"
-         and bool(attr.candidates))
+        (obs.status == "complete" and (
+            (attr.state == "available" and bool(attr.candidates))
+            or (attr.state == "missing" and not attr.candidates
+                and fields["thumbnail_url"] is None)))
         or (obs.status == "partial" and attr.state == "pending"
             and not attr.candidates and fields["thumbnail_url"] is None)
     )
