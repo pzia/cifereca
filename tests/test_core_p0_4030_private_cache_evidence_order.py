@@ -4,7 +4,7 @@ from dataclasses import replace
 from cifereca.core import local_origin_private_catalogue as private
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
 from tests.test_core_p0_4030_private_catalogue import private_rig, _run, rows
-from tests.test_core_p0_4030_public_catalogue import rig  # required fixture dependency
+from tests.test_core_p0_4030_public_catalogue import rig, store  # transitive pytest fixtures
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source
 
 
