@@ -314,3 +314,33 @@ def test_unencodable_unicode_receipt_is_closed_conflict_not_raw_codec_error(raw)
         journal._decode(key, raw)
     with pytest.raises(journal.DerivedJournalConflict, match="derived_capacity_receipt_unverified"):
         core._receipt_witness(raw)
+
+@pytest.mark.parametrize("other_directory,unbound", [
+    ("library", True),
+    ("other-profile", False),
+])
+def test_capacity_cross_identity_directory_alias_never_proves_exclusive_owner(
+    tmp_path, other_directory, unbound,
+):
+    service, intent, reservation = _setup(tmp_path)
+    storage = service.storage
+    try:
+        service.config.identities = lambda: [
+            {"id": "id1", "directory_name": "library"},
+            {"id": "other-profile", "directory_name": other_directory},
+        ]
+        original_receipt = storage.metadata_get(reservation.key)
+        stage = Path(intent.staged_path)
+        original_bytes = stage.read_bytes()
+        scope = NS(storage=storage, config=service.config, root=tmp_path,
+                   identity_id="id1", directory="library")
+        snapshot = core._snapshot(scope)
+        assert snapshot[1] == (("id1", None if unbound else "library"),)
+        assert snapshot[2]["unbound"] == int(unbound)
+        assert snapshot[2]["active_pending"] == int(not unbound)
+        assert snapshot[2]["active_committed"] == 0
+        assert storage.metadata_get(reservation.key) == original_receipt
+        assert stage.read_bytes() == original_bytes
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        storage.close()

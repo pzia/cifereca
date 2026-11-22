@@ -102,6 +102,8 @@ def _snapshot(scope):
     if type(rows) is not list or not 1 <= len(rows) <= 128:
         raise journal.DerivedJournalConflict("derived_capacity_config_unverified")
     configured = {}
+    owners_by_directory = {}
+    ambiguous_directories = set()
     for row in rows:
         if (type(row) is not dict or type(row.get("id")) is not str
                 or not 0 < len(row["id"]) <= 1024
@@ -113,6 +115,16 @@ def _snapshot(scope):
         configured[identity] = (
             row["directory_name"] if identity not in configured else None
         )
+        # Conflicting owners of the same physical profile cannot give an
+        # exclusive private-region witness to either identity.
+        directory = row["directory_name"]
+        if type(directory) is str:
+            owner = owners_by_directory.setdefault(directory, identity)
+            if owner != identity:
+                ambiguous_directories.add(directory)
+    for identity, directory in configured.items():
+        if type(directory) is str and directory in ambiguous_directories:
+            configured[identity] = None
     with scope.storage._lock:
         db = scope.storage._connect()
         if db.in_transaction:
