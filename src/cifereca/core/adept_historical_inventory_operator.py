@@ -35,7 +35,10 @@ def _record(request, acquisition_id):
 
 def _producer(manager):
     candidates = manager.candidates("runtime.adapter", ready_only=False)
-    if type(candidates) not in (tuple, list):
+    # A runtime registry is a bounded inert discovery surface, not proof of
+    # a historical activation. Refuse oversized snapshots before scanning
+    # (including a unique eligible adapter hidden after hundreds of entries).
+    if type(candidates) not in (tuple, list) or len(candidates) > 256:
         return None
     claimed = [
         row.descriptor.id for row in candidates
