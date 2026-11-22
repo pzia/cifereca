@@ -446,3 +446,65 @@ def test_audit_n2_observation_does_not_refresh_lru_or_mutate_expired_slot(prepar
     now[0] = 2
     assert cache.observe(second, revision=7) is None
     assert cache._slots[second].decision is before
+
+
+def test_n2_gateway_owns_registered_n1_proofs_after_producer_mutation(prepared):
+    """Producer-owned frozen dataclasses cannot rekey C or change EPUB priority."""
+    b = prepared
+    original = replace(b["scope"])
+    original_embedded_uri = b["embedded"].candidate.url
+    original_origin_uri = b["origin"].url
+    snapshot = _register(b)
+    stable = b["service"]._snapshots[original]
+    assert stable is not snapshot
+    assert stable.scope is not b["scope"]
+    assert stable.embedded is not b["embedded"]
+    assert stable.embedded.resource is not b["embedded"].resource
+    assert stable.embedded.resource.scope is not b["scope"]
+
+    object.__setattr__(b["scope"], "placement_id", "placement:another-valid")
+    object.__setattr__(b["embedded"].candidate, "url", "https://other.example.org/forged.jpg")
+    object.__setattr__(b["origin"], "url", "https://other.example.org/changed.jpg")
+    object.__setattr__(snapshot, "revision", 999)
+
+    assert original in b["service"]._snapshots
+    assert b["scope"] not in b["service"]._snapshots
+    stored = b["service"]._snapshots[original]
+    assert stored.revision == 7
+    assert stored.embedded.resource.scope == original
+    assert stored.embedded.candidate.url == original_embedded_uri
+    assert stored.candidates[1].url == original_origin_uri
+    assert stored.embedded.resource.scope.placement_id == original.placement_id
+    assert len(b["service"]._snapshots) == 1
+
+
+def test_n2_gateway_get_cover_captures_document_before_gtk_recycle(prepared):
+    """A later caller mutation does not poison N2 source subscriptions."""
+    b = prepared
+    source = replace(b["scope"])
+    original = replace(source)
+    notifications = []
+    handle = b["service"].get_cover(
+        source, "list", lambda _path: None,
+        on_source_changed=lambda: notifications.append(True),
+    )
+    try:
+        assert original in b["service"]._source_subscriptions
+        object.__setattr__(source, "placement_id", "placement:recycled")
+        assert original in b["service"]._source_subscriptions
+        assert source not in b["service"]._source_subscriptions
+    finally:
+        handle.cancel()
+    assert b["service"]._source_subscriptions == {}
+    assert notifications == []
+
+
+def test_n2_gateway_revalidates_mutated_snapshot_before_cache_key(prepared):
+    b = prepared
+    snapshot = CoverSourceSnapshot(
+        scope=b["scope"], revision=7, candidates=(b["origin"],),
+    )
+    object.__setattr__(b["scope"], "kind", "public_catalogue")
+    with pytest.raises(ValueError):
+        b["service"].register(snapshot)
+    assert b["service"]._snapshots == {}
