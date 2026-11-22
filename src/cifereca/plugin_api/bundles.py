@@ -91,7 +91,13 @@ def _safe_relative_path(root: Path, value: str) -> Path:
     rel = Path(str(value or ""))
     if not value or rel.is_absolute() or ".." in rel.parts:
         raise BundleError(f"unsafe bundle member path: {value!r}")
+    # An existing manifest is not a Core stage receipt. Veto both its
+    # declared path and a symlink-resolved alias before any member stat/hash.
+    if _PRIVATE_DERIVED_REGION in root.parts or _PRIVATE_DERIVED_REGION in rel.parts:
+        raise BundleError("reserved Core derived region is not a bundle member")
     path = (root / rel).resolve()
+    if _PRIVATE_DERIVED_REGION in path.parts:
+        raise BundleError("reserved Core derived region is not a bundle member")
     try:
         path.relative_to(root.resolve())
     except ValueError as exc:
@@ -218,6 +224,10 @@ def write_bundle_manifest(
 
 def load_bundle_manifest(root: Path, *, verify: bool = True) -> BundleManifest:
     root = Path(root).expanduser().resolve()
+    # A manifest placed directly under the private region is not ordinary
+    # stock even if it was created by an older writer.
+    if _PRIVATE_DERIVED_REGION in root.parts:
+        raise BundleError("reserved Core derived region is not a bundle")
     manifest_path = root / BUNDLE_MANIFEST_NAME
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
