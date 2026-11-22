@@ -133,7 +133,7 @@ class LibraryOrganizerReadBrokerImpl:
                 self._active = None
                 return None
 
-    def _review_dry_run(self, token, confirmed, *, confirm):
+    def _review_dry_run(self, token, confirmed, *, confirm, group_index=None):
         if confirmed is not True:
             return None
         with self._lock:
@@ -149,13 +149,15 @@ class LibraryOrganizerReadBrokerImpl:
                 else:
                     if page.dry_run_state:
                         return None
-                    plan = prepare_organizer_dry_run(scope, report, confirmed=True)
+                    plan = prepare_organizer_dry_run(
+                        scope, report, confirmed=True, group_index=group_index)
                 if (plan is None or not plan.entries or plan.executable is not False
                         or plan.confirmed is not confirm or self._current(token) is None):
                     self._active = self._dry_run = None
                     return None
                 updated = replace(page, token=secrets.token_hex(32),
                     dry_run_state="confirmed" if confirm else "prepared",
+                    dry_run_group=plan.group_index,
                     dry_run_entries=tuple(OrganizerDryRunAdvice(
                         e.operation, e.current, e.proposed, e.state) for e in plan.entries))
                 self._dry_run = None if confirm else plan
@@ -165,8 +167,8 @@ class LibraryOrganizerReadBrokerImpl:
                 self._active = self._dry_run = None
                 return None
 
-    def prepare_dry_run(self, *, token, confirmed=False):
-        return self._review_dry_run(token, confirmed, confirm=False)
+    def prepare_dry_run(self, *, token, confirmed=False, group_index=None):
+        return self._review_dry_run(token, confirmed, confirm=False, group_index=group_index)
 
     def confirm_dry_run(self, *, token, confirmed=False):
         return self._review_dry_run(token, confirmed, confirm=True)

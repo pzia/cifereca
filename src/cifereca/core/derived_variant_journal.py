@@ -323,7 +323,7 @@ def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
     return reserve_derived_publication(storage, intent).key
 
 
-def _read_pending_reservation(db, reservation):
+def _read_pending_reservation(db, reservation, *, _private_guard=None):
     if (not db.in_transaction or type(reservation) is not DerivedReservation
             or type(reservation.key) is not str
             or not reservation.key.startswith(_PREFIX)
@@ -342,17 +342,25 @@ def _read_pending_reservation(db, reservation):
             or _receipt_digest(row[0]) != reservation.receipt_sha256):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     intent = _decode(reservation.key, row[0])
-    # The existing link/publication/recovery writers have no pinned region
-    # binding guard. A v3 row is visible and quota-accounted, but these
-    # legacy writers may not publish or recover it.
-    if json.loads(row[0], object_pairs_hook=_unique_pairs)["schema"] != _LEGACY_SCHEMA:
+    record = json.loads(row[0], object_pairs_hook=_unique_pairs)
+    if record["schema"] != _LEGACY_SCHEMA:
+        # Only the isolated v3 recovery controller can supply the typed
+        # exact guard. A generic callback, receipt digest or legacy caller
+        # cannot turn admission into publication authority.
+        from .derived_variant_private_recovery import _PrivateRecoveryGuard
+        if (type(_private_guard) is not _PrivateRecoveryGuard
+                or _private_guard.verify(db, reservation, intent, record) is not True):
+            raise DerivedJournalConflict("derived_journal_private_region_review_required")
+    elif _private_guard is not None:
         raise DerivedJournalConflict("derived_journal_private_region_review_required")
     return row[0], intent
 
 
-def require_derived_reservation_in_transaction(db, reservation, *, expected):
+def require_derived_reservation_in_transaction(db, reservation, *, expected,
+                                               _private_guard=None):
     """Compare the private reservation with exact publication coordinates."""
-    _raw, intent = _read_pending_reservation(db, reservation)
+    _raw, intent = _read_pending_reservation(
+        db, reservation, **({"_private_guard": _private_guard} if _private_guard is not None else {}))
     if any(getattr(intent, key) != value for key, value in expected.items()):
         raise DerivedJournalConflict("derived_journal_reservation_mismatch")
     return intent
@@ -411,7 +419,7 @@ def _require_canonical_proof(db, intent, *, placement_id, origin_id, recipe_id):
 
 
 def commit_derived_reservation_in_transaction(
-    db, reservation, *, intent, placement_id, origin_id, recipe_id,
+    db, reservation, *, intent, placement_id, origin_id, recipe_id, _private_guard=None,
 ):
     """Move the exact receipt to history atomically with canonical B.
 
@@ -419,7 +427,8 @@ def commit_derived_reservation_in_transaction(
     The receipt payload is unchanged, counts against the same quota, and
     never authorizes a new publication by itself.
     """
-    raw, current = _read_pending_reservation(db, reservation)
+    raw, current = _read_pending_reservation(
+        db, reservation, **({"_private_guard": _private_guard} if _private_guard is not None else {}))
     if current != intent:
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     _require_canonical_proof(db, intent, placement_id=placement_id,

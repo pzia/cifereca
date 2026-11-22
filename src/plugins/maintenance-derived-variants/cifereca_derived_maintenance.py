@@ -58,9 +58,10 @@ def capacity_text(value):
 
 
 class DerivedController:
-    def __init__(self, broker, host, active, render):
+    def __init__(self, broker, host, active, render, *, capacity_only=False):
         self.broker, self.host, self.active, self.render = broker, host, active, render
         self.identity = host.identity_id
+        self.capacity_only = capacity_only
         self.page = self.reviewed = self.choice = None
         self.stop = None
         self.busy = self.disposed = False
@@ -73,10 +74,12 @@ class DerivedController:
         if self.busy or not self.current():
             return False
         page = self.page
-        if action == "overview":
-            operation = lambda: self.broker.overview(identity_id=self.identity, confirmed=True)
-        elif action == "capacity":
+        if self.capacity_only:
+            if action != "capacity" or choice is not None or confirmed is not False:
+                return False
             operation = lambda: self.broker.capacity(identity_id=self.identity, confirmed=True)
+        elif action == "overview":
+            operation = lambda: self.broker.overview(identity_id=self.identity, confirmed=True)
         elif action == "list":
             operation = lambda: self.broker.list_receipts(identity_id=self.identity, confirmed=True)
         elif action == "next" and page is not None and page.has_more:
@@ -207,7 +210,7 @@ class DerivedPlugin:
     def describe(self):
         return MaintenanceToolInfo(
             id="maintenance.library.derived-variants", title="Publications dérivées interrompues",
-            description="Journal, capacité et simulation supervisée. Lecture seule.",
+            description="Journal et simulation supervisée. Lecture seule.",
             icon_name="system-search-symbolic", scope="identity", danger_level="read-only",
             supports_dry_run=True, cancellable=True,
         )
@@ -234,7 +237,6 @@ class DerivedPlugin:
         controls = []
         for title, subtitle, label, action in (
             ("Publications dérivées interrompues", "Revue des reçus du profil actif, en lecture seule.", "Examiner…", "overview"),
-            ("Capacité du journal des variantes", "Réservations et stock nommé distincts.", "Mesurer…", "capacity"),
             ("Sélection des publications interrompues", "Coordonnées non vérifiées ; aucune reprise.", "Lister…", "list"),
         ):
             row = Adw.ActionRow()
@@ -291,8 +293,6 @@ class DerivedPlugin:
                 detail.set_text("Revue en cours…")
             elif action == "overview":
                 detail.set_text(overview_text(value))
-            elif action == "capacity":
-                detail.set_text(capacity_text(value))
             elif action in ("list", "next"):
                 detail.set_text(f"{len(controller.page.choices)} reçu(s) ; coordonnées non vérifiées. "
                                 "Aucune reprise ni suppression." if controller.page else
@@ -313,4 +313,54 @@ class DerivedPlugin:
         return GuidedMaintenanceView(outer, controller.dispose)
 
 
+class CapacityPlugin(DerivedPlugin):
+    def describe(self):
+        return MaintenanceToolInfo(
+            id="maintenance.library.derived-capacity", title="Capacité du journal des variantes",
+            description="Réservations déclarées, journal et stock nommé distincts. Lecture seule.",
+            icon_name="drive-harddisk-symbolic", scope="identity", danger_level="read-only",
+            supports_dry_run=True, cancellable=True,
+        )
+
+    def controller(self, host, render):
+        marker = self.activation
+        if marker is None or self.broker is None:
+            raise RuntimeError("derived_capacity_unavailable")
+        return DerivedController(self.broker, host, lambda: marker is self.activation, render,
+                                 capacity_only=True)
+
+    def build_guided(self, host):
+        from cifereca.plugin_api.guided_maintenance import GuidedMaintenanceView
+        from gi.repository import Gtk, Adw
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        group, row = Adw.PreferencesGroup(), Adw.ActionRow()
+        row.set_title(self.describe().title)
+        row.set_subtitle(self.describe().description)
+        measure, cancel = Gtk.Button(label="Mesurer…"), Gtk.Button(label="Annuler")
+        cancel.set_sensitive(False)
+        row.add_suffix(measure)
+        row.add_suffix(cancel)
+        group.add(row)
+        outer.append(group)
+        detail = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        outer.append(detail)
+
+        def render(controller, action, state, value):
+            ready = state in ("ready", "cancelled")
+            measure.set_sensitive(ready)
+            cancel.set_sensitive(state == "busy")
+            if state == "ready":
+                detail.set_text(capacity_text(value))
+            elif state in ("cancelled", "cancelling"):
+                detail.set_text("Observation annulée. Aucun espace libre attesté.")
+            else:
+                detail.set_text("Observation en cours…")
+
+        controller = self.controller(host, render)
+        measure.connect("clicked", lambda _b: controller.request("capacity"))
+        cancel.connect("clicked", lambda _b: controller.cancel())
+        return GuidedMaintenanceView(outer, controller.dispose)
+
+
 PLUGIN = DerivedPlugin()
+CAPACITY_PLUGIN = CapacityPlugin()

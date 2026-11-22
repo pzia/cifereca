@@ -82,7 +82,8 @@
       ],
       "capabilities": [
         "cache.inspect",
-        "cache.purge"
+        "cache.purge",
+        "maintenance.group.storage"
       ],
       "description": "Inspecte et purge les caches Core et plugins sans toucher aux données utilisateur.",
       "help_text": "Le Core arbitre les namespaces et empêche un plugin tiers de purger le cache d’un autre plugin."

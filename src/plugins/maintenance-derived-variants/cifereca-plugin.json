@@ -13,14 +13,38 @@
       "type": "maintenance.tool",
       "entrypoint": "cifereca_derived_maintenance:PLUGIN",
       "display_name": "Publications dérivées interrompues",
-      "description": "Revue du journal, capacité et simulation supervisée sans écriture.",
+      "description": "Revue des reçus et simulation supervisée sans écriture.",
       "version": "0.1.0",
       "priority": 42,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
-      "help_text": "Consultation des reçus, capacité et stock distincts ; vérification et simulation confirmée uniquement. Aucune reprise réelle, suppression ou restitution de quota.",
+      "help_text": "Consultation des reçus ; vérification et simulation confirmée uniquement. Aucune reprise réelle ni suppression.",
       "capabilities": [
-        "maintenance.derived-variants"
+        "maintenance.derived-variants",
+        "maintenance.group.recovery"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "library.derived.read"
+      ],
+      "requires_contracts": []
+    },
+    {
+      "id": "maintenance.library.derived-capacity",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_derived_maintenance:CAPACITY_PLUGIN",
+      "display_name": "Capacité du journal des variantes",
+      "description": "Observation des réservations, journaux et stock nommé, sans écriture.",
+      "version": "0.1.0",
+      "priority": 43,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Aucune restitution de quota ni suppression ; volume récupérable non attesté.",
+      "capabilities": [
+        "maintenance.derived-capacity",
+        "maintenance.group.storage"
       ],
       "requires": [],
       "recommends": [],

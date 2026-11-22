@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ..core.adept_historical_maintenance import (
     admit_historical_review, run_historical_review, run_historical_hold_review,
+    select_historical_hold,
 )
 from ..core.adept_historical_inventory_operator import admit_inventory_comparison
 from ..storage import Storage
@@ -95,7 +96,15 @@ def _display_holds(result):
     return "\n".join(lines)
 
 
-def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
+def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combined"):
+    """Mount the existing controller on one functional surface.
+
+    The flat legacy host retains both actions. The grouped host exposes
+    separate provenance and recovery rows with independent ephemeral views,
+    not a second hold scanner, queue or writer.
+    """
+    if type(mode) is not str or mode not in ("combined", "provenance", "holds"):
+        return False
     service = getattr(window, "service", None)
     if (not isinstance(getattr(service, "storage", None), Storage)
             or getattr(window, "_closed", False)
@@ -103,12 +112,17 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         return False
     group = Adw.PreferencesGroup()
     row = Adw.ActionRow()
-    row.set_title("Provenances de prêts historiques")
-    row.set_subtitle("Rapport local du profil actif, sans accès fournisseur.")
+    row.set_title("Verrous de téléchargements ADEPT" if mode == "holds"
+                  else "Provenances de prêts historiques")
+    row.set_subtitle("Diagnostic local des verrous ; aucun déverrouillage autorisé."
+                     if mode == "holds" else "Rapport local du profil actif, sans accès fournisseur.")
     start = window.action_button("Examiner…", "system-search-symbolic")
-    row.add_suffix(start)
     holds = window.action_button("Verrous…", "dialog-warning-symbolic")
-    row.add_suffix(holds)
+    primary = holds if mode == "holds" else start
+    if mode != "holds":
+        row.add_suffix(start)
+    if mode != "provenance":
+        row.add_suffix(holds)
     group.add(row)
     box.append(group)
     actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -137,10 +151,11 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
     following = None
     last_request = None
     selected_rows = ()
+    selected_page = None
     last_text = ""
     last_route = None
     last_generation = None
-    hold_mode = False
+    hold_mode = mode == "holds"
 
     def selection_changed(_control):
         compare.set_sensitive(
@@ -151,15 +166,18 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         )
 
     def reset_selection():
-        nonlocal selected_rows
+        nonlocal selected_rows, selected_page
         selected_rows = ()
+        selected_page = None
         selection.remove_all()
         selection.set_sensitive(False)
         compare.set_sensitive(False)
 
     def run(button, *, restart=False, advance=False, hash_files=False, open_holds=False):
         nonlocal busy, cursor, following, last_request, selected_rows, last_text, last_route, last_generation, hold_mode
-        if busy or getattr(window, "_closed", False) or button.get_root() is None:
+        if (busy or getattr(window, "_closed", False) or button.get_root() is None
+                or (restart and ((mode == "holds" and not open_holds)
+                                 or (mode == "provenance" and open_holds)))):
             return
         if restart:
             request = admit_historical_review(service)
@@ -188,7 +206,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         detail.set_text("Revue locale en cours…")
 
         def current():
-            return (not getattr(window, "_closed", False) and start.get_root() is not None
+            return (not getattr(window, "_closed", False) and primary.get_root() is not None
                     and window.service is service and request.current()
                     and getattr(window, "_identity_context_generation", None) == generation
                     and getattr(window, "_route_display_token", None) is route)
@@ -197,13 +215,13 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         delivered = False
 
         def done(value):
-            nonlocal busy, following, selected_rows, last_text, last_route, last_generation, delivered
+            nonlocal busy, following, selected_rows, selected_page, last_text, last_route, last_generation, delivered
             if delivered:
                 return
             delivered = True
             busy = False
             if not current():
-                if start.get_root() is not None:
+                if primary.get_root() is not None:
                     detail.set_text("")
                     detail.set_visible(False)
                     start.set_sensitive(True)
@@ -221,8 +239,18 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                 and item.get("recorded_adept_profile_id")
                 and item.get("recorded_adept_loan_id")
             ) if valid and not examining_holds else ()
+            if valid and examining_holds:
+                selected_page = value
+                selected_rows = value["rows"]
+            # Use a separate action label, without pretending the selection
+            # grants a current replay authorization.
+            compare.set_label("Examiner le verrou sélectionné" if examining_holds
+                              else "Comparer l’inventaire ADEPT local")
             for index, item in enumerate(selected_rows, 1):
                 selection.append_text(
+                    f"{index}. {item['provider_id']} / {item['credential_id']} / "
+                    f"{item['account_id']} — {item['provider_loan_id']}"
+                    if examining_holds else
                     f"{index}. Acquisition {item['acquisition_id']} — profil {item['recorded_adept_profile_id']}"
                 )
             selection.set_active(-1)
@@ -240,7 +268,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                 if examining_holds else
                 (lambda: run_historical_review(service, request, cursor=proposed,
                                                verify_local_bytes=hash_files)),
-                done, lambda _exc: done(None), control=start,
+                done, lambda _exc: done(None), control=primary,
                 priority=TaskPriority.MAINTENANCE, kind="maintenance-plan", origin="user",
             )
         except Exception:
@@ -257,16 +285,34 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                 or getattr(window, "_identity_context_generation", None) != last_generation):
             return
         request, route, generation = last_request, last_route, last_generation
-        operation = admit_inventory_comparison(
-            service, request, selected_rows[index], explicitly_requested=True,
-        )
+        examining_hold = hold_mode
+        if examining_hold:
+            page = selected_page
+            if page is None:
+                return
+
+            def operation():
+                selected = select_historical_hold(
+                    service, request, page, ordinal=index, confirmed=True)
+                if selected is None or not selected.current():
+                    return None
+                # Project only the diagnostic state, never the private marker.
+                return {"selected_hold": True, "marker_state": selected.marker.state,
+                        "witness_state": selected.witness.state,
+                        "copy_evidence": selected.copy_evidence,
+                        "unlock_authorized": False}
+        else:
+            operation = admit_inventory_comparison(
+                service, request, selected_rows[index], explicitly_requested=True,
+            )
         if operation is None:
             detail.set_text(last_text + "\n\nInventaire local indisponible.")
             return
         busy = True
         for widget in (start, holds, verify, next_page, selection, compare):
             widget.set_sensitive(False)
-        detail.set_text(last_text + "\n\nComparaison locale du prêt sélectionné…")
+        detail.set_text(last_text + ("\n\nRelecture du verrou sélectionné…" if examining_hold
+                                      else "\n\nComparaison locale du prêt sélectionné…"))
         delivered = False
 
         def done(value):
@@ -287,7 +333,12 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                     holds.set_sensitive(True)
                 return
             summary = "Inventaire local indisponible ou preuves modifiées. Aucun constat d’absence."
-            if type(value) is dict:
+            if examining_hold:
+                summary = ("Verrou exact relu. Activation et offre fraîche non attestées ; "
+                           "retéléchargement non autorisé."
+                           if type(value) is dict and value.get("selected_hold") is True
+                           else "Sélection périmée ou verrou non vérifiable. Relancer la revue.")
+            elif type(value) is dict:
                 comparison = {
                     "exact_profile_and_loan_reported": "Prêt exact rapporté dans le profil historique.",
                     "not_found_in_supplied_inventory": "Prêt non retrouvé dans cet inventaire local.",
@@ -313,7 +364,8 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
 
         try:
             window.runner.submit(
-                "Comparaison de l’inventaire ADEPT local…", operation,
+                ("Relecture du verrou…" if examining_hold else
+                 "Comparaison de l’inventaire ADEPT local…"), operation,
                 done, lambda _exc: done(None), control=compare,
                 priority=TaskPriority.MAINTENANCE, kind="maintenance-plan", origin="user",
             )
@@ -322,8 +374,10 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
 
     selection.connect("changed", selection_changed)
     compare.connect("clicked", compare_clicked)
-    start.connect("clicked", lambda b: run(b, restart=True))
-    holds.connect("clicked", lambda b: run(b, restart=True, open_holds=True))
+    if mode != "holds":
+        start.connect("clicked", lambda b: run(b, restart=True))
+    if mode != "provenance":
+        holds.connect("clicked", lambda b: run(b, restart=True, open_holds=True))
     verify.connect("clicked", lambda b: run(b, hash_files=True))
     next_page.connect("clicked", lambda b: run(b, advance=True))
     return True

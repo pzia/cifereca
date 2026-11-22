@@ -35,7 +35,7 @@ def test_selected_historical_hold_is_bound_to_exact_page(store, tmp_path, change
         page = dict(page, rows=tuple(dict(row, provider_loan_id="different")
                                      for row in page["rows"]))
     elif change == "scope":
-        service._source_context_epoch += 1
+        service._account_context_epoch += 1
     elif change == "wrong_index":
         index = True
     elif change == "unconfirmed":
