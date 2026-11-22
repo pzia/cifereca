@@ -38,7 +38,7 @@ def test_historical_read_refuses_borrowed_transaction_without_commit(method):
         assert read() == ()
         db.execute("BEGIN IMMEDIATE")
         db.execute("INSERT INTO sentinel(value) VALUES ('uncommitted')")
-        with pytest.raises(RuntimeError, match="historical_review_nested_transaction"):
+        with pytest.raises(RuntimeError, match="adept_historical_nested_transaction"):
             read()
         assert db.in_transaction
         assert db.execute("SELECT value FROM sentinel").fetchall() == [("uncommitted",)]
