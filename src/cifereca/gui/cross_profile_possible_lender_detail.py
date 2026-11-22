@@ -84,11 +84,16 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                     for i, row in enumerate(rows, 1)
                 ]
                 panel._group("Emprunt avec un autre profil · information", details)
+                # GTK may synchronously notify and navigate during the group
+                # append. Never install a choice under a new route.
+                if (not scope_current() or panel._rendered_search_detail is not visible
+                        or (callable(mapped) and not mapped())):
+                    return
                 from .cross_profile_normal_lender_dialog import append_normal_lender_action
                 append_normal_lender_action(
                     panel, item=item, rows=rows, visible=visible, service=service,
                     identity=identity, identity_id=identity_id, account_epoch=account_epoch,
-                    source_epoch=source_epoch,
+                    source_epoch=source_epoch, route=route,
                 )
             except Exception:
                 return

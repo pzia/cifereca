@@ -2,6 +2,7 @@
 from dataclasses import replace
 import hashlib
 import os
+import pytest
 from pathlib import Path
 
 from cifereca.core import derived_variant_journal as journal
@@ -263,4 +264,91 @@ def test_full_root_budget_is_not_reset_per_profile(tmp_path, monkeypatch):
         assert not result["complete_committed_page"]
         assert not result["retention_authorized"]
     finally:
+        db.close()
+
+
+def test_exact_retention_reviews_later_receipt_and_global_dependencies(tmp_path):
+    service, intent, first = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, first)
+        receipts = [(first, intent)]
+        for i in range(1, 6):
+            stage = Path(intent.staged_path).with_name(f"stage-{i}.epub")
+            target = Path(intent.candidate_path).with_name(f"variant-{i}.epub")
+            stage.write_bytes(f"distinct derivative {i}".encode())
+            info = stage.stat()
+            other = replace(intent, staged_path=str(stage), candidate_path=str(target),
+                            output_sha256=hashlib.sha256(stage.read_bytes()).hexdigest(),
+                            output_size=info.st_size,
+                            output_stamp=(info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns),
+                            options_fingerprint=f"recipe-{i}")
+            reservation = journal.reserve_derived_publication(db, other)
+            os.link(stage, target)
+            _publish_reserved(db, other, reservation)
+            receipts.append((reservation, other))
+        selected, chosen = max(receipts, key=lambda pair: pair[0].receipt_sha256)
+        before = journal.summarize_derived_journal(db)
+        overview = _review(db, tmp_path)
+        assert overview["checked"] == 4 and overview["committed_receipts"] == 6
+        assert not overview["complete_committed_page"]
+        def exact(**kwargs):
+            return review.review_exact_derived_retention(
+                db, library_root=tmp_path, identity_id="id1",
+                receipt_sha256=selected.receipt_sha256, explicitly_requested=True, **kwargs)
+        result = exact()
+        assert result["checked"] == result["committed_receipts"] == 1
+        assert result["counts"]["linked_pair_observed"] == 1
+        assert selected.receipt_sha256 not in repr(result) and str(tmp_path) not in repr(result)
+        assert not any(result[k] for k in ("retention_authorized", "quota_refund_authorized",
+                                          "destructive_cleanup_allowed", "all_dependencies_verified"))
+        assert journal.summarize_derived_journal(db) == before
+        # A dependency on the selected later receipt must not be missed
+        # simply because the default overview only scans its first four.
+        db.metadata_set("test.later.consumer", chosen.staged_path)
+        assert exact()["counts"]["known_dependency"] == 1
+        assert _review(db, tmp_path)["counts"]["known_dependency"] == 0
+        assert journal.summarize_derived_journal(db) == before
+        assert Path(chosen.staged_path).samefile(chosen.candidate_path)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("case", ["unconfirmed", "absent", "invalid", "foreign", "nested", "late_alias"])
+def test_exact_retention_refuses_changed_or_unadmitted_receipt(tmp_path, monkeypatch, case):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    sql = db._connect()
+    try:
+        _publish_reserved(db, intent, reservation)
+        args = dict(library_root=tmp_path, identity_id="id1",
+                    receipt_sha256=reservation.receipt_sha256, explicitly_requested=True)
+        if case == "unconfirmed":
+            args["explicitly_requested"] = False
+        elif case == "absent":
+            args["receipt_sha256"] = "0" * 64
+        elif case == "invalid":
+            args["receipt_sha256"] = True
+        elif case == "foreign":
+            args["identity_id"] = "other"
+        elif case == "nested":
+            sql.execute("BEGIN IMMEDIATE")
+            sql.execute("INSERT INTO metadata(key,value) VALUES('test.caller','pending')")
+        else:
+            original = review._observe
+            def changed(intent, profile, current):
+                (profile / "alias").symlink_to(intent.staged_path)
+                return original(intent, profile, current)
+            monkeypatch.setattr(review, "_observe", changed)
+        result = review.review_exact_derived_retention(db, **args)
+        assert result["status"] == ("evidence_changed" if case == "late_alias" else "unavailable")
+        assert result["checked"] == 0 and not any(result["counts"].values())
+        assert not result["retention_authorized"]
+        if case == "nested":
+            assert sql.in_transaction
+            assert sql.execute("SELECT value FROM metadata WHERE key='test.caller'").fetchone() == ("pending",)
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        if sql.in_transaction:
+            sql.rollback()
         db.close()

@@ -27,7 +27,8 @@ def _anonymous_session(session, provider_id):
             and not session._accounts)
 
 
-def _observations(response, session, *, provider_id, observed_at):
+def _observations(response, session, *, provider_id, observed_at, allow_coverless=False):
+    from .notice_c_raw_input_receipt import _coverless_public_search_observation
     if (not _anonymous_session(session, provider_id)
             or type(response) is not ProviderSearchResponse):
         raise UnavailableNoticeWork("notice_reparse_public_response_required")
@@ -45,7 +46,9 @@ def _observations(response, session, *, provider_id, observed_at):
                 and observation.key.visibility == "public"
                 and observation.key.provider_id == provider_id
                 and observation.parser_version == "2"
-                and observation.status == "complete"):
+                and (observation.status == "complete"
+                     or (allow_coverless is True
+                         and _coverless_public_search_observation(observation)))):
             yield observation
 
 
@@ -62,6 +65,7 @@ def public_replay_same_call_observation(response, session, source):
         item for item in _observations(
             response, session, provider_id=source.observation.key.provider_id,
             observed_at=source.observation.observed_at,
+            allow_coverless=source.observation.status == "partial",
         ) if item.key == source.observation.key
     ]
     if len(matches) != 1 or matches[0] != source.observation:
@@ -102,6 +106,7 @@ def make_public_search_replay_port(
         matches = tuple(_observations(
             response, session, provider_id=provider_id,
             observed_at=source.observation.observed_at,
+            allow_coverless=source.observation.status == "partial",
         ))
         if (len(matches) != 1 or matches[0].key != source.observation.key
                 or notice_cover_document_ref(matches[0].key) != source.document):

@@ -14,6 +14,7 @@ from .canonical_recovery import _scope
 from .derived_variant_publication import (
     DerivedPublicationConflict, _verified_variant_file,
 )
+from .adept_historical_snapshot import historical_read_snapshot
 from .source_convergence import SourceKey
 
 _MAX_BYTES = 1024 ** 3
@@ -28,8 +29,7 @@ def _snapshot(storage, source, placement_id, adept_receipt_ref):
     coords = _scope(source)
     identity = coords[0]
     source_id = _stable("source", *coords)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
+    with historical_read_snapshot(storage) as db:
         reference = db.execute(
             "SELECT identity_id,provider_id,credential_id,account_id,branch_id,"
             "edition_id,right_id,reference_kind FROM source_references "

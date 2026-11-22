@@ -1676,7 +1676,11 @@ class LibraryMaintenanceBrokerImpl:
         if op == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
-            entries=[e for e in self.service.storage.catalog_entries() if str(e.get("placement_id") or "") == request.placement_id]
+            # Preserve the historical first-entry ordering, but load only
+            # the exact indexed placement; never materialize the library.
+            entries = self.service.storage.catalog_entries(
+                placement_id=request.placement_id, limit=1,
+            )
             entry=entries[0] if entries else {}
             from .filename_suffixes import split_filename_suffix
             old = Path(str(row.get("path") or ""))
