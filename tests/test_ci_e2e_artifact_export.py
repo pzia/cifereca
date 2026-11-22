@@ -1297,6 +1297,31 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
         assert "window_width" not in repr(result)
         assert result["notice_c_private_series_cold_offline"] is True
         assert result["notice_c_catalogue_http_fallback"] is True
+        assert "notice_c_4980_local_gtk_matrix" not in result
+        # A valid N2/N3 numeric report and a successful six-view stage do
+        # not by themselves prove independent invalidation and EPUB fallback.
+        stages = (
+            "P0_4980_same_c_six_physical_views_restart_offline",
+            "P0_4980_warm_n2_cold_n3_real_gtk",
+            "P0_4980_distinct_c_shared_n3_real_gtk",
+            "P0_4980_invalidated_n2_warm_n3_real_gtk",
+            "P0_4980_epub_priority_cold_real_gtk",
+            "P0_4980_epub_priority_warm_real_gtk",
+            "P0_4980_epub_qualified_fallback_real_gtk",
+            "P0_4980_catalogue_http_fallback_real_gtk",
+        )
+        for stage in stages:
+            data["checks"][stage] = True
+        assert read(data)["notice_c_4980_local_gtk_matrix"] is True
+        for stage in stages:
+            for invalid in (False, 1, None, "PRIVATE", {}):
+                bad = copy.deepcopy(data)
+                bad["checks"][stage] = invalid
+                assert "notice_c_4980_local_gtk_matrix" not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad["checks"][stage]
+            assert "notice_c_4980_local_gtk_matrix" not in read(bad)
         safe = result["notice_c_cover_metrics"]
         assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
         assert safe["cold"]["n3"]["download_ok"] == 1
