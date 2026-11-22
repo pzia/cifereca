@@ -46,11 +46,12 @@ def test_list_and_detail_subscribers_observe_one_decision_without_extra_fetch():
     completed(cache, exact)
     listed = cache.peek(exact, revision=1)
     detail = cache.peek(exact, revision=1)
-    assert listed is detail
+    assert listed == detail and listed is not detail
     assert listed.status == "selected" and listed.uri == URL
     assert [x.kind for x in list_events] == ["refresh", "resolved"]
     assert [x.kind for x in detail_events] == ["refresh", "resolved"]
-    assert detail_events[-1].decision is listed
+    assert detail_events[-1].decision == listed
+    assert detail_events[-1].decision is not listed
     assert list_events[-1].scope == exact
     assert list_events[-1].generation == detail_events[-1].generation
     left.cancel()
