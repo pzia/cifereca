@@ -184,7 +184,18 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
                 matches.append(PrivateDocumentaryMatch(
                     source, pair[0], author, comparison, evidence, observed_at,
                 ))
-            return tuple(rows), tuple(matches), truncated, offset + consumed
+            # Rank only this explicitly bounded cache window; the next page
+            # is independently checked and no global inventory is claimed.
+            # Stable ties keep exact source-row order for human comparison.
+            evidence_rank = {
+                "title_author_concordant": 0,
+                "title_concordant_author_unknown": 1,
+                "title_concordant_author_divergent": 2,
+                "purchase_description_conflicting": 3,
+            }
+            ordered = tuple(sorted(
+                matches, key=lambda row: evidence_rank.get(row.comparison, 4)))
+            return tuple(rows), ordered, truncated, offset + consumed
 
 
 @dataclass(frozen=True, slots=True, repr=False)
