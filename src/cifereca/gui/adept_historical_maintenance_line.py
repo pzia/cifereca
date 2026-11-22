@@ -21,8 +21,20 @@ def _display(result):
     for row in result["rows"]:
         def value(key):
             candidate = row.get(key)
-            return ("inconnu" if candidate is None
-                    else "(vide enregistré)" if candidate == "" else str(candidate))
+            if candidate is None:
+                return "inconnu"
+            if candidate == "":
+                return "(vide enregistré)"
+            if type(candidate) is int:
+                return str(candidate)
+            # The legacy ledger view has more coordinates than the hold
+            # selector. Treat them as opaque data, not printable markup:
+            # controls and bidirectional formatting can forge review lines.
+            if (type(candidate) is str and len(candidate) <= 1024
+                    and all(category(char) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                            for char in candidate)):
+                return candidate
+            return "(valeur non affichable)"
         pub = row.get("publication") or {}
         physical = row.get("local_bytes") or {}
         evidence = physical.get("evidence") or {}
