@@ -25,6 +25,8 @@ from cifereca_numilog_public_client import _parse_search_body
 _MAX_INDEX = 4 * 1024 * 1024
 _MAX_TRANSPORT = 4 * 1024 * 1024
 _REF = re.compile(r"[0-9a-f]{32}\Z")
+# HTTP names are ASCII tokens, unlike ambiguous capture metadata.
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,4096}\Z")
 _LAYOUT_PREFIX = "Numilog : public_catalog_layout_unverified:"
 
 
@@ -35,6 +37,10 @@ def _headers(value):
     for pair in value:
         if (type(pair) not in (list, tuple) or len(pair) != 2
                 or any(type(v) is not str or len(v) > 4096 for v in pair)):
+            return None
+        if (_HEADER_NAME.fullmatch(pair[0]) is None
+                or any((ord(char) < 32 and char != "\t") or ord(char) == 127
+                       for char in pair[1])):
             return None
         name = pair[0].casefold()
         # A duplicated Content-Encoding/Type or auth header is ambiguous:
