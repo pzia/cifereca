@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from unicodedata import category
 import re
 import httpx
 
@@ -234,7 +235,16 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                         or projected.source_credential != "__public__"
                         or projected.source_collection != "public_catalog"
                         or row.owned is not False or row.downloadable is not False
-                        or row.source_account_id is not None or row.download_url is not None):
+                        or row.source_account_id is not None or row.download_url is not None
+                        or type(projected.title) is not str
+                        or (projected.author is not None
+                            and type(projected.author) is not str)
+                        # The remote bibliographic result is advisory only.
+                        # Reject C1/bidi/invisible characters that could forge
+                        # an origin label in a local consent/comparison view.
+                        or any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                               for value in (projected.title, projected.author)
+                               if value is not None for ch in value)):
                     continue
                 remote = _isbns(projected.metadata)
                 candidates.append(PublicCatalogueCandidate(
