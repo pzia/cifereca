@@ -160,12 +160,22 @@ def seed_private_web_choices(db):
                      })
     call = capture_series_call(core, core._sessions[(PROVIDER, a.credential_id)], OWNER)
     assert call is not None
-    stamp_series_rows(core, call, [series])
-    assert persist_series_rows(core, [series], identity_id=OWNER) == 1
-    document = notice_cover_document_ref(_key(series, OWNER))
-    source = read_notice_cover(db, document)
-    assert source is not None
-    assert evict_notice_cover(db, document, expected_epoch=source.epoch)
+    # Same record, two independent documentary scopes. Do not conflate
+    # account-specific series with the credential-only observation.
+    from copy import deepcopy
+    account_series = replace(series, source_account_id=a.unique_id,
+                             metadata=deepcopy(series.metadata))
+    account_series.metadata["series"] = ["Cycle du compte"]
+    account_series.metadata["bibliography_evidence"]["series"]["source_field"] = "Search.account"
+    series_rows = [series, account_series]
+    stamp_series_rows(core, call, series_rows)
+    assert persist_series_rows(core, series_rows, identity_id=OWNER) == 2
+    documents = [notice_cover_document_ref(_key(row, OWNER)) for row in series_rows]
+    assert documents[0] != documents[1]
+    for document in documents:
+        source = read_notice_cover(db, document)
+        assert source is not None
+        assert evict_notice_cover(db, document, expected_epoch=source.epoch)
     return tuple(fixtures)
 
 
@@ -363,16 +373,26 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
         # Both stages read retained C without any live provider session.
         # The actual TaskRunner and DetailPanel remain in use.
         core._sessions.clear()
-        series = replace(fixtures[0][0], source_account_id=None,
-                         friendly_url=None, metadata={})
+        credential_series = replace(fixtures[0][0], source_account_id=None,
+                                    friendly_url=None, metadata={})
+        account_series = replace(fixtures[0][0], friendly_url=None, metadata={})
+        unknown_account = replace(account_series, source_account_id="unregistered-reader")
+        cases = (
+            ("series_owner", credential_series, OWNER, "Cycle témoin", "Search.fixture", False),
+            ("series_account", account_series, OWNER, "Cycle du compte", "Search.account", False),
+            ("series_aba", account_series, OWNER, None, None, True),
+            ("series_wrong_account", unknown_account, OWNER, None, None, False),
+            ("series_foreign", account_series, FOREIGN, None, None, False),
+            ("series_foreign_credential", credential_series, FOREIGN, None, None, False),
+        )
         cell = NS(key="series")
         host.search_page = NS(detail=panel, selection=NS(get_selected_item=lambda: cell))
-        host.search_objects = {cell.key: series}
+        host.search_objects = {}
         selected_identity = [OWNER]
         host._search_detail_context_current = lambda key, ctx: (
-            key == series.id and ctx[0] == generation[0] and ctx[3] == selected_identity[0]
+            key == credential_series.id and ctx[0] == generation[0] and ctx[3] == selected_identity[0]
         )
-        series_deadline = monotonic() + 15
+        series_deadline = monotonic() + 20
 
         def widgets(node):
             yield node
@@ -392,17 +412,16 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
             panel.show_summary(title="Notice privée témoin")
 
         def run_series(index):
-            identity = FOREIGN if index == 2 else OWNER
-            phase(("series_owner", "series_aba", "series_foreign")[index])
+            name, series, identity, expected, source_field, delayed = cases[index]
+            phase(name)
             reset(identity)
+            host.search_objects = {cell.key: series}
             wanted = runner.completed + 1
             host.runner = runner
-            # Capture a real successful read and invalidate the exact render
-            # before delivering it, including a return to the original profile.
-            if index == 1:
+            if delayed:
                 def delayed_submit(title, work, done, fail, **kw):
                     def delayed_done(value):
-                        assert value is not None and value.label == "Cycle témoin"
+                        assert value is not None and value.label == "Cycle du compte"
                         reset(FOREIGN)
                         reset(OWNER)
                         done(value)
@@ -422,20 +441,24 @@ def verify_private_web_choices(window, db, fixtures, *, offline, later, guard,
                     later(40, guard(poll_series))
                     return
                 rows = rendered()
-                if index == 0:
-                    assert rows.count(("Série", "Cycle témoin")) == 1
-                    assert rows.count(("Champ source", "Search.fixture")) == 1
+                if expected is not None:
+                    assert [value for title, value in rows if title == "Série"] == [expected]
+                    assert [value for title, value in rows if title == "Champ source"] == [source_field]
                     assert any(isinstance(widget, Adw.ActionRow)
                                and widget.get_title() == "Série" and widget.get_mapped()
                                for widget in widgets(panel.content))
-                    capture("00-notice-c-private-series-" + label)
+                    screenshot = "00-notice-c-private-series-"
+                    if name == "series_account":
+                        screenshot += "account-"
+                    capture(screenshot + label)
                 else:
                     assert not any(title in ("Série", "Champ source") for title, _ in rows)
                 assert series.metadata == {} and core._sessions == {}
-                if index < 2:
+                if index + 1 < len(cases):
                     run_series(index + 1)
                     return
                 report["checks"]["P0_3104_retained_private_series_real_gtk_" + label] = True
+                report["checks"]["P0_3104_exact_account_series_real_gtk_" + label] = True
                 probe.destroy()
                 state["probe"] = None
                 window.present()
