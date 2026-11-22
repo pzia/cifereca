@@ -283,3 +283,35 @@ def test_retired_cached_detail_link_cannot_reopen_old_source():
     assert old._cifereca_action_context_revoked
     old.activate_link()
     assert old.opened == [url]
+
+
+def test_plugin_actions_and_links_refuse_stale_context_even_before_panel_replacement():
+    for invalidate in (
+        lambda view, button: setattr(view._window.service, "_account_context_epoch", 3),
+        lambda view, button: setattr(view._window.service, "_source_context_epoch", 3),
+        lambda view, button: setattr(view._window, "_route_display_token", object()),
+        lambda view, button: setattr(view._window.service, "current_identity", NS(identity_id="alice")),
+        lambda view, button: setattr(view, "_public_c_page_generation", 3),
+        lambda view, button: setattr(view._window, "_closed", True),
+        lambda view, button: setattr(button, "get_mapped", lambda: False),
+    ):
+        view, buttons = adapter()
+        view._window.service = NS(current_identity=NS(identity_id="alice"),
+                                  _account_context_epoch=1, _source_context_epoch=1)
+        view._window._route_display_token = object()
+        view._public_c_page_generation = 1
+        events = []
+        url = "https://example.org/catalogue/exact"
+        view.show_detail(UiBookDetailPresentation(title="Livre", actions=(
+            UiBookDetailAction(id="local", title="Ouvrir", callback=lambda: events.append("click")),
+            UiBookDetailAction(id="web", title="Fiche", uri=url),
+        )))
+        callback, link = buttons
+        callback.click()
+        link.activate_link()
+        assert events == ["click"] and link.opened == [url]
+        invalidate(view, callback)
+        invalidate(view, link)
+        callback.click()
+        link.activate_link()
+        assert events == ["click"] and link.opened == [url]
