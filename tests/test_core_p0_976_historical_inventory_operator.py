@@ -137,3 +137,40 @@ def test_historical_inventory_adapter_capabilities_have_bounded_receipt(
         assert result is None
         assert calls == []
     assert (rows(store), path.read_bytes()) == before
+
+@pytest.mark.parametrize("count", [257, 258, 1024])
+def test_historical_runtime_inventory_discovery_fails_closed_on_oversized_registry(
+    store, tmp_path, count,
+):
+    service, request, row, path, calls, _runtime, manager, eligible = _fixture(
+        store, tmp_path)
+    original = path.read_bytes()
+    # Exactly one eligible adapter among unrelated ready runtime records is
+    # still not qualified when the registry snapshot itself is unbounded.
+    inert = NS(enabled=True, state="ready", descriptor=NS(
+        id="fixture.other", type="runtime.adapter", capabilities=()))
+    manager.candidates = lambda *_a, **_k: [inert] * (count - 1) + [eligible]
+    manager.status = lambda _: pytest.fail("Oversized discovery must not select a runtime")
+    operation = admit_inventory_comparison(
+        service, request, row, explicitly_requested=True)
+    assert operation is not None
+    assert operation() is None
+    assert operation() is None
+    assert not calls and path.read_bytes() == original
+
+
+def test_historical_runtime_inventory_accepts_bounded_inert_registry(
+    store, tmp_path,
+):
+    service, request, row, path, calls, _runtime, manager, eligible = _fixture(
+        store, tmp_path)
+    inert = NS(enabled=True, state="ready", descriptor=NS(
+        id="fixture.other", type="runtime.adapter", capabilities=()))
+    manager.candidates = lambda *_a, **_k: [inert] * 255 + [eligible]
+    result = admit_inventory_comparison(
+        service, request, row, explicitly_requested=True)()
+    assert result is not None
+    assert result["inventory_comparison"] == "exact_profile_and_loan_reported"
+    assert result["may_reacquire"] is False
+    assert calls == [("historical-adobe", True, True)]
+    assert path.read_bytes() == BYTES
