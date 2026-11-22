@@ -18,7 +18,7 @@ def test_exact_final_receipt_observation_precedes_replay(store, tmp_path, monkey
     source, snapshot = new_source(kind="loan", branch="loans", right="pending")
     persist_attested_source_references(store, snapshot)
     lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda **_kw: lock_path)
     final = target(tmp_path, "A")
     offer = "private-offer"
     if case != "missing":
