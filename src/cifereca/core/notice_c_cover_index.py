@@ -400,6 +400,48 @@ def read_consolidated_notice_cover(
     return _decode(row[0], document) if row else None
 
 
+def read_current_consolidated_public_cover(storage, document):
+    """Cold N2 read; reject a superseded contribution before selecting N3.
+
+    Keep canonical retention independent of raw observation deletion. The
+    durable source epoch detects a newer observation even after eviction.
+    Private source references are never opened by this shared public read.
+    """
+    from .notice_cover_repository import _opaque_key, _checked_source_state
+    if not is_canonical_cover_document(document):
+        return None
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        row = db.execute("SELECT value FROM metadata WHERE key=?", (_db_key(document),)).fetchone()
+        if row is None:
+            return None
+        snapshot = _decode(row[0], document)
+        for member in snapshot.sources:
+            if member.visibility != "public":
+                continue
+            source_doc = CoverDocumentScope(
+                kind="public_catalogue", identity_id=None,
+                source_key=member.source_ref, provider_id=member.provider_id,
+                credential_id="__public__",
+            )
+            key = _opaque_key(source_doc)
+            if key is None:
+                return None
+            try:
+                _, live, fence = _checked_source_state(db, source_doc, key)
+            except ValueError:
+                return None
+            if live is not None:
+                if (live.epoch != member.source_epoch
+                        or live.observation.source_revision != member.source_revision):
+                    return None
+            elif fence is not None:
+                expected = member.source_epoch + int(fence.get("evicted") is True)
+                if fence["epoch"] != expected:
+                    return None
+        return snapshot
+
+
 def persist_consolidated_cover_source(
     storage: Any, *, canonical_edition_id: str,
     source: PersistedNoticeCover, relation_proof_id: str,
