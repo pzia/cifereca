@@ -158,8 +158,13 @@ def matches_known_public_c_filters(item, *, query, field, scope, providers,
             return False
     primary = known_public_c_primary_hit(item)
     alternatives = known_public_c_alternative_hits(item)
-    if primary is None or alternatives is None:
+    if primary is None:
         return False
+    # A revoked or malformed alternative packet cannot grant a match, but
+    # must not remove the independently verified primary. Search keeps the
+    # same primary-only fallback. A mutated/copied DTO still has no primary.
+    if alternatives is None:
+        alternatives = ()
     # An expanded group has exactly the same medium prefilter and typed
     # classification handling as the Search list. Do not mix metadata
     # from one source with the selected catalogue of another.

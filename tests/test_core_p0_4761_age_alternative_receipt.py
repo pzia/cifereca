@@ -118,4 +118,37 @@ def test_known_recommendation_filters_use_same_attested_source_as_search(tmp_pat
                       content_types=(), languages=())
         assert matches_known_public_c_filters(copy(candidate), **kwargs) is False
         assert matches_known_public_c_filters(public_row(), **kwargs) is None
+
+        # A malformed internal group receipt does not change the original
+        # DTO or its separately attested primary. Neither view may use the
+        # stale alternative; both retain the valid primary filter match.
+        from cifereca.core.notice_c_recommendation_known import known_public_c_primary_hit
+        proof = candidate._core_known_public_c_projection
+        alternative, = proof[5]
+        candidate._core_known_public_c_projection = (
+            *proof[:5], (replace(alternative, epoch=alternative.epoch + 1),), proof[6],
+        )
+        assert known_public_c_binding_facts(candidate) == (canonical.document, canonical.epoch)
+        assert known_public_c_primary_hit(candidate) is proof[6]
+        assert known_public_c_alternative_hits(candidate) is None
+        group = rows[0]["_core_notice_c_filter_sources"]
+        primary, alternative = group[4]
+        rows[0]["_core_notice_c_filter_sources"] = (
+            *group[:4], (primary, replace(alternative, epoch=alternative.epoch + 1)),
+        )
+        for text, provider, expected in (
+            ("Astronomie", "aaa-fixture", True),
+            ("Cuisine", "zzz-fixture", False),
+            ("Cuisine", "aaa-fixture", False),
+        ):
+            options = dict(field="subject", scope="all", providers=(provider,),
+                           content_types=(), languages=())
+            assert matches_known_public_c_filters(candidate, query=text, **options) is expected
+            assert bool(filter_loaded_with_documentary_proofs(rows, text, **options)) is expected
+        # A changed DTO still invalidates the entire primary proof.
+        candidate.title += " changé"
+        assert known_public_c_primary_hit(candidate) is None
+        assert matches_known_public_c_filters(candidate, query="Astronomie",
+                                              field="subject", scope="all",
+                                              providers=(), content_types=(), languages=()) is False
         assert storage.entitlements() == storage.acquisitions() == storage.placements() == []
