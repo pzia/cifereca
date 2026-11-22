@@ -36,7 +36,8 @@ def _epub(stage, *, empty=False, kepub=False, bad_span=False):
                          '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + body + '</body></html>')
 
 
-def _published(rig, *, empty=False, media_format="epub", kepub=False, bad_span=False):
+def _published(rig, *, empty=False, media_format="epub", kepub=False, bad_span=False,
+               pdf_bytes=None):
     db, intent, stage, args = rig
     if media_format == "kepub":
         new_stage = stage.with_name("unique.kepub.epub")
@@ -44,7 +45,15 @@ def _published(rig, *, empty=False, media_format="epub", kepub=False, bad_span=F
         stage = new_stage
         intent = replace(intent, staged_path=str(stage),
                          candidate_path=str(Path(intent.candidate_path).with_name("variant.kepub.epub")))
-    _epub(stage, empty=empty, kepub=kepub, bad_span=bad_span)
+    if pdf_bytes is None:
+        _epub(stage, empty=empty, kepub=kepub, bad_span=bad_span)
+    else:
+        new_stage = stage.with_suffix(".pdf")
+        stage.rename(new_stage)
+        stage = new_stage
+        intent = replace(intent, staged_path=str(stage),
+                         candidate_path=str(Path(intent.candidate_path).with_suffix(".pdf")))
+        stage.write_bytes(pdf_bytes)
     stamp = stage.stat()
     intent = replace(intent, output_sha256=hashlib.sha256(stage.read_bytes()).hexdigest(),
                      output_size=stamp.st_size, media_format=media_format,
@@ -280,3 +289,36 @@ def test_commit_reader_proof_is_revocable_and_never_unlinks_on_refusal(
     assert db.metadata_get(retire._PREFIX + digest) == trace
     assert stage.samefile(intent.candidate_path)
     _unchanged(db, intent, quota, digest, data)
+
+
+def test_optional_pdf_reader_receipt_through_isolated_retirement(rig, isolated_fence):
+    pymupdf = pytest.importorskip("pymupdf")
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((36, 36), "Readable fixture")
+        content = pdf.tobytes()
+    db, intent, stage, options = _published(rig, media_format="pdf", pdf_bytes=content)
+    quota = journal.summarize_derived_journal(db)
+    approved = _prepare(db, options)
+    assert stage.samefile(intent.candidate_path)
+    verdict = retire.retire_private_stage(db, **approved)
+    assert verdict["status"] == "retired" and not verdict["quota_refund_authorized"]
+    assert not stage.exists()
+    _unchanged(db, intent, quota, options["receipt_sha256"], content)
+
+
+@pytest.mark.parametrize("case", ["invalid", "revoked", "unavailable", "deadline"])
+def test_pdf_reader_refusal_never_claims_readability(tmp_path, monkeypatch, case):
+    from time import monotonic
+    from cifereca.core import derived_variant_pdf_reader as reader
+    path = tmp_path / "unqualified.pdf"
+    path.write_bytes(b"%PDF-1.7\\nnot a PDF document\\n%%EOF")
+    if case == "unavailable":
+        monkeypatch.setattr(reader.sys, "executable", str(tmp_path / "not-installed"))
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        assert not reader.pdf_reader_observed(
+            fd, path.stat().st_size, still_current=lambda: case != "revoked",
+            deadline=monotonic() if case == "deadline" else None)
+    finally:
+        os.close(fd)
+    assert path.read_bytes().startswith(b"%PDF-")
