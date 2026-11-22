@@ -165,3 +165,55 @@ def test_group_packet_creation_and_collapse_refuse_non_native_members():
     assert len(collapsed) == 1
     assert collapsed[0]["title"] == "Primary"
     assert collapsed[0]["_notice_c_matched_providers"] == ()
+
+
+def test_mutated_alternative_source_scalars_cannot_create_new_search_matches(tmp_path):
+    """A mutable frozen hit is not a fresh Core bibliography receipt."""
+    from dataclasses import replace
+    from cifereca.core.notice_c_loaded_filter import _sources
+
+    filename = tmp_path / "grouped-scalars.sqlite"
+    with closing(Storage(filename)) as db:
+        first = persist(db, verified_public(
+            source_provider="bnf", record_id="primary",
+            title="Groupe stable", author="Premier",
+        ))
+        second = persist(db, verified_public(
+            source_provider="numilog-catalog", record_id="alternative",
+            title="Groupe stable", author="Second",
+        ))
+        shared(db, first, second)
+        for source in (first, second):
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+
+    with closing(Storage(filename)) as db:
+        page = search_public_notice_c(db, "Groupe stable", group_by_document=True)
+        primary, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        packet = primary["_core_notice_c_filter_sources"]
+        assert len(packet[4]) == 2 and len(_sources(primary)) == 2
+        for field, replacement in (
+            ("provider_id", "forged-provider"),
+            ("record_id", "forged-record"),
+            ("title", "Titre forgé"),
+            ("author", "Auteur forgé"),
+            ("publisher", "Éditeur forgé"),
+            ("media_format", "PDF"),
+            ("description", "Mot-clé forgé"),
+            ("source_revision", "revision-forged"),
+            ("published_at", "2027"),
+        ):
+            altered = replace(packet[4][1])
+            row = {**primary, "_core_notice_c_filter_sources": (
+                *packet[:4], (packet[4][0], altered), packet[5],
+            )}
+            object.__setattr__(altered, field, replacement)
+            expanded, originals = expand_filter_sources([row], scope="all")
+            assert expanded == [row] and originals == {}, field
+            assert _sources(row) == (), field
+            assert filter_loaded_with_documentary_proofs(
+                [row], "Groupe stable", providers=("bnf",),
+            ) == [row], field
+            assert filter_loaded_with_documentary_proofs(
+                [row], "Auteur forgé", providers=("numilog-catalog",),
+            ) == [], field
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
