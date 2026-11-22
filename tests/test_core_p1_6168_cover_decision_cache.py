@@ -447,3 +447,27 @@ def test_mutating_one_listener_event_cannot_rekey_other_n2_subscribers():
     assert all(event.scope == scope for event in events)
     assert cache.stats()["scopes"] == 1
 
+
+
+def test_read_leases_cannot_mutate_stored_n2_cas_token():
+    """A valid mutation of a returned lease must not corrupt internal CAS."""
+    cache = CoverDecisionCache()
+    scope = loan()
+    producer = cache.begin(scope, revision=1)
+    object.__setattr__(producer.scope, "loan_id", "other-valid-loan")
+    assert cache.resolve_and_publish(
+        cache.begin(scope, revision=2), [candidate()], snapshot_complete=True,
+    )
+    observed, decision = cache.observe(scope, revision=2)
+    assert decision.uri == URL
+    selected = cache.selected_token(scope, revision=2, uri=URL)
+    assert selected is not None
+    assert observed is not selected
+    object.__setattr__(observed.scope, "loan_id", "other-valid-loan")
+    object.__setattr__(selected.scope, "loan_id", "third-valid-loan")
+    assert cache.observe(scope, revision=2)[0].scope == scope
+    assert cache.selected_token(scope, revision=2, uri=URL).scope == scope
+    assert cache.peek(scope, revision=2).uri == URL
+    assert cache.stats()["scopes"] == 1
+    cache.invalidate(scope, cause="loan_changed")
+    assert cache.peek(scope, revision=2) is None

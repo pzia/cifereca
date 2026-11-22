@@ -197,6 +197,13 @@ class CoverDecisionCache:
             placement_id=scope.placement_id,
         )
 
+    @classmethod
+    def _snapshot_token(cls, token: CoverCacheToken) -> CoverCacheToken:
+        """Return a detached lease; readers must not mutate the stored CAS token."""
+        return CoverCacheToken(
+            cls._snapshot_scope(token.scope), token.revision, token.generation,
+        )
+
     def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
         """Start a complete or partial observation, revoking older work."""
         scope = self._snapshot_scope(scope)
@@ -214,7 +221,7 @@ class CoverDecisionCache:
                 sequence=self._next_event(),
             )
         self._notify(callbacks, event)
-        return token
+        return self._snapshot_token(token)
 
     def peek(
         self, scope: CoverDocumentScope, *, revision: int,
@@ -250,7 +257,7 @@ class CoverDecisionCache:
                     or not slot.published or slot.decision is None
                     or self._clock() >= slot.expires_at):
                 return None
-            return slot.token, slot.decision
+            return self._snapshot_token(slot.token), slot.decision
 
     def selected_token(
         self, scope: CoverDocumentScope, *,
@@ -285,7 +292,7 @@ class CoverDecisionCache:
             if decision.status != "selected" or decision.uri != uri:
                 return None
             self._slots.move_to_end(scope)
-            return current.token
+            return self._snapshot_token(current.token)
 
     @staticmethod
     def _validate_token(token: CoverCacheToken) -> None:
