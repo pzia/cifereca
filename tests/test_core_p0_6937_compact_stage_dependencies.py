@@ -104,11 +104,16 @@ def test_unclassified_sql_consumers_never_look_clear(committed, kind):
     assert Path(stage).samefile(intent.candidate_path)
 
 
-@pytest.mark.parametrize("case", ["literal", "dynamic", "temp", "trigger"])
+@pytest.mark.parametrize("case", ["literal", "dynamic", "temp", "trigger",
+                                  "trigger_relative", "trigger_uri"])
 def test_sql_schema_consumers_are_never_silently_ignored(committed, case):
     db, intent, _placement, key, raw, pk, proof, args = committed
     stage = intent.staged_path
-    literal = "'" + stage.replace("'", "''") + "'"
+    from urllib.parse import quote
+    value = (Path(stage).name if case == "trigger_relative"
+             else "file://" + quote(stage, safe="") if case == "trigger_uri"
+             else stage)
+    literal = "'" + value.replace("'", "''") + "'"
     with db._lock, db._connect() as sql:
         if case == "literal":
             sql.execute(f"CREATE VIEW deferred_reader AS SELECT {literal} AS path")
@@ -122,6 +127,6 @@ def test_sql_schema_consumers_are_never_silently_ignored(committed, case):
         if not sql.in_transaction:
             sql.execute("BEGIN")
         observed = dependencies.scan_stage_references(sql, {stage: key})
-    assert observed[stage] == ("referenced" if case in ("literal", "trigger") else "unverified")
+    assert observed[stage] == ("referenced" if case in ("literal", "trigger", "trigger_relative", "trigger_uri") else "unverified")
     assert db.metadata_get(key) == raw
     assert Path(stage).samefile(intent.candidate_path)
