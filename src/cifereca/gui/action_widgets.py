@@ -282,6 +282,15 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         return text
 
     def _resize(self, _widget, _clock):
+        # An empty header must not reserve half of its own parent's width.
+        # With a long page title this creates a minimum-size feedback loop:
+        # parent expands, empty bar claims more width, parent expands again.
+        # Keep the original sizing policy for actual actions.
+        if not self._buttons:
+            if self._budget != 0:
+                self.set_size_request(0, -1)
+                self._budget = 0
+            return True
         source = self.source or self.get_parent()
         if source is None or source.get_width() <= 0: return True
         budget = action_budget(source.get_width(), self.fraction)

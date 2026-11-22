@@ -1172,9 +1172,19 @@ def main():
             from notice_c_cover_contract import verify_notice_c_cover
             def notice_c_complete():
                 from notice_c_local_views_contract import verify_local_notice_c_views
+                def local_views_complete():
+                    # The 960px XTEST scenario is the narrow acceptance gate.
+                    # A wide allocation or skipped route must not silently
+                    # turn this specific recipe into a generic detail PASS.
+                    if args.width == 960:
+                        for phase in ("cold", "offline"):
+                            assert report["checks"].get(
+                                "P0_3684_narrow_six_views_" + phase
+                            ) is True, "missing narrow six-view receipt: " + phase
+                    later(450, search_initial)
+
                 verify_local_notice_c_views(
-                    window, later, capture, report,
-                    lambda: later(450, search_initial),
+                    window, later, capture, report, local_views_complete,
                 )
 
             verify_notice_c_cover(window, later, capture, report, notice_c_complete)

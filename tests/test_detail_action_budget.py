@@ -3,7 +3,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-from cifereca.gui.action_layout import visible_action_count
+from cifereca.gui.action_layout import action_budget, compact_actions, visible_action_count
 
 
 class Button:
@@ -47,7 +47,7 @@ def bar():
     tree = ast.parse(path.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'AdaptiveActionBar')
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
-               and n.name in {'_layout_overflow', '_move_button', 'append'}]
+               and n.name in {'_layout_overflow', '_move_button', 'append', '_resize'}]
     owner = ast.ClassDef(name='Bar', bases=[], keywords=[], body=methods, decorator_list=[])
     class Content:
         def set_label(self, value): self.label = value
@@ -63,6 +63,7 @@ def bar():
         ),
         'Adw': NS(ButtonContent=Content),
         'visible_action_count': visible_action_count,
+        'action_budget': action_budget, 'compact_actions': compact_actions,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=[owner], type_ignores=[])), str(path), 'exec'), ns)
     obj = ns['Bar']()
@@ -263,3 +264,35 @@ def test_late_actions_keep_exact_identity_and_priority_on_partial_growth():
         )
         assert obj.overflow_box.children == (original + late)[count:]
         assert occupied(obj) <= budget
+
+
+def test_empty_action_bar_releases_width_and_late_actions_recover_budget():
+    obj = bar()
+    obj._buttons = []
+    obj._widths = {}
+    obj._budget = 640
+    obj.source = NS(get_width=lambda: 1189)
+    obj.fraction = 0.5
+    obj.overflow = False
+    obj._compact = False
+    requests = []
+    obj.set_size_request = lambda width, height: requests.append((width, height))
+
+    # An empty bar cannot force its parent to grow to accommodate a
+    # phantom half-width alongside the page heading.
+    assert obj._resize(None, None)
+    assert obj._budget == 0 and requests == [(0, -1)]
+    assert obj._resize(None, None)
+    assert requests == [(0, -1)]
+
+    # Actual actions retain their existing responsive size and identity.
+    button = Button(120)
+    obj._buttons = [button]
+    obj._widths = {button: 120}
+    obj.source = NS(get_width=lambda: 700)
+    assert obj._resize(None, None)
+    assert obj._budget == 350 and requests[-1] == (350, -1)
+    assert obj._buttons == [button]
+    obj._buttons = []
+    assert obj._resize(None, None)
+    assert requests[-1] == (0, -1)
