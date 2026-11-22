@@ -200,3 +200,27 @@ def test_two_distinct_receipts_for_one_output_inode_are_ambiguous(tmp_path):
         assert db.metadata_get(key) == raw
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("unsafe", ["id1\x85", "id1\u202e", "id1\u2028", "id1\u200d"])
+def test_region_review_refuses_invisible_identity_before_fs_or_sql(
+    tmp_path, monkeypatch, unsafe,
+):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        stage = Path(intent.staged_path)
+        before = stage.read_bytes(), db.metadata_get(reservation.key)
+        monkeypatch.setattr(review, "_open_root",
+                            lambda *_a: pytest.fail("Unsafe identity must not open root"))
+        monkeypatch.setattr(review, "_snapshot",
+                            lambda *_a: pytest.fail("Unsafe identity must not read SQL"))
+        result = review.review_derived_private_region(
+            db, library_root=tmp_path, identity_id=unsafe,
+            explicitly_requested=True,
+        )
+        assert result["status"] == "unavailable"
+        _protected(result)
+        assert (stage.read_bytes(), db.metadata_get(reservation.key)) == before
+    finally:
+        db.close()
