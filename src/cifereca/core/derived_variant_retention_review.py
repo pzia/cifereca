@@ -8,6 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from .derived_variant_journal import (
+    _read_logical_receipt,
     DerivedJournalConflict, _COMMITTED, _decode, _measure,
     _require_canonical_proof,
 )
@@ -111,9 +112,7 @@ def review_derived_receipt_retention(storage, *, identity_id, explicitly_request
                 records = {}
                 path_refs, inode_refs = {}, {}
                 for key, _size in rows:
-                    raw = db.execute(
-                        "SELECT value FROM metadata WHERE key=?", (key,),
-                    ).fetchone()[0]
+                    raw = _read_logical_receipt(db, key)
                     intent = _decode(key, raw)
                     records[key] = intent
                     _index_receipt_references(path_refs, inode_refs, key, intent)

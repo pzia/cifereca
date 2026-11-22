@@ -211,6 +211,26 @@ def _decode(key, raw):
         raise DerivedJournalConflict("derived_journal_corrupt") from None
 
 
+def _read_logical_receipt(db, key):
+    """Read the exact original bytes, even for an authorized compact-only row.
+
+    Physical corrupt values are returned to the existing decoder (or
+    partial capacity report). Missing or ambiguous authority fails closed.
+    """
+    if type(key) is not str:
+        raise DerivedJournalConflict("derived_journal_corrupt")
+    row = db.execute("SELECT CASE WHEN length(CAST(value AS BLOB)) BETWEEN 1 AND ? "
+                     "THEN value END FROM metadata WHERE key=?", (_MAX_RECORD_BYTES, key)).fetchone()
+    if key.startswith(_COMMITTED) and _digest(key[len(_COMMITTED):]):
+        from .derived_variant_compact_receipt import _retired_receipt
+        retired = _retired_receipt(db, key)
+        if retired is not None:
+            return retired
+    if row is None:
+        raise DerivedJournalConflict("derived_journal_receipt_missing")
+    return row[0]
+
+
 def _measure(db):
     # Read at most one overflow row. No unbounded JSON materialization.
     rows = db.execute(
@@ -219,6 +239,13 @@ def _measure(db):
         "ORDER BY key LIMIT ?",
         (_PREFIX, _END, _COMMITTED, _COMMITTED_END, _MAX_RECORDS + 1),
     ).fetchall()
+    if len(rows) > _MAX_RECORDS:
+        raise DerivedJournalConflict("derived_journal_capacity_exceeded")
+    # Logical charging remains identical after compacting the physical
+    # representation. No historical digest, target or quota slot disappears.
+    from .derived_variant_compact_receipt import _retired_receipts
+    retired = _retired_receipts(db)
+    rows = sorted((*rows, *((key, len(raw.encode("ascii"))) for key, raw in retired.items())))
     if len(rows) > _MAX_RECORDS:
         raise DerivedJournalConflict("derived_journal_capacity_exceeded")
     if any(type(size) is not int or not 0 < size <= _MAX_RECORD_BYTES
@@ -249,9 +276,7 @@ def _reserve_in_transaction(db, intent, raw, *, private=False):
     reserved_output_bytes = 0
     occupied = False
     for existing_key, _ in rows:
-        existing = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (existing_key,),
-        ).fetchone()[0]
+        existing = _read_logical_receipt(db, existing_key)
         prior = _decode(existing_key, existing)
         reserved_output_bytes += prior.output_size
         # Committed receipt targets remain reserved until a
@@ -323,7 +348,7 @@ def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
     return reserve_derived_publication(storage, intent).key
 
 
-def _read_pending_reservation(db, reservation, *, _private_guard=None):
+def _read_pending_receipt(db, reservation):
     if (not db.in_transaction or type(reservation) is not DerivedReservation
             or type(reservation.key) is not str
             or not reservation.key.startswith(_PREFIX)
@@ -343,6 +368,11 @@ def _read_pending_reservation(db, reservation, *, _private_guard=None):
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     intent = _decode(reservation.key, row[0])
     record = json.loads(row[0], object_pairs_hook=_unique_pairs)
+    return row[0], intent, record
+
+
+def _read_pending_reservation(db, reservation, *, _private_guard=None):
+    raw, intent, record = _read_pending_receipt(db, reservation)
     if record["schema"] != _LEGACY_SCHEMA:
         # Only the isolated v3 recovery controller can supply the typed
         # exact guard. A generic callback, receipt digest or legacy caller
@@ -353,7 +383,7 @@ def _read_pending_reservation(db, reservation, *, _private_guard=None):
             raise DerivedJournalConflict("derived_journal_private_region_review_required")
     elif _private_guard is not None:
         raise DerivedJournalConflict("derived_journal_private_region_review_required")
-    return row[0], intent
+    return raw, intent
 
 
 def require_derived_reservation_in_transaction(db, reservation, *, expected,
@@ -434,7 +464,9 @@ def commit_derived_reservation_in_transaction(
     _require_canonical_proof(db, intent, placement_id=placement_id,
                              origin_id=origin_id, recipe_id=recipe_id)
     committed_key = _COMMITTED + reservation.receipt_sha256
-    if db.execute("SELECT 1 FROM metadata WHERE key=?", (committed_key,)).fetchone():
+    from .derived_variant_compact_receipt import _RETIRED_PREFIX
+    if db.execute("SELECT 1 FROM metadata WHERE key IN (?,?)",
+                  (committed_key, _RETIRED_PREFIX + reservation.receipt_sha256)).fetchone():
         raise DerivedJournalConflict("derived_journal_reservation_changed")
     updated = db.execute(
         "UPDATE metadata SET key=? WHERE key=? AND value=?",
@@ -457,7 +489,7 @@ def summarize_derived_journal(storage):
             rows, total = _measure(db)
             pending_bytes = committed_bytes = 0
             for key, _ in rows:
-                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                raw = _read_logical_receipt(db, key)
                 intent = _decode(key, raw)
                 if key.startswith(_PREFIX):
                     pending_bytes += intent.output_size
