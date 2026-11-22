@@ -233,7 +233,9 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
     mapped = getattr(panel, "get_mapped", None)
 
     def active():
-        return (worker_current(route_token())
+        # An old widget must not adopt a newly navigated route as its own.
+        # The worker and GTK click both remain bound to the original lease.
+        return (worker_current(requested_route)
                 and (not callable(mapped) or mapped())
                 and current())
 
