@@ -53,12 +53,21 @@ def _display_holds(result):
         reason = {
             "marker_recorded": "Marqueur de tentative enregistré ; phase non attestée.",
             "historical_ledger": "Attention historique enregistrée ; rejeu non attesté.",
+            "unsubmitted_witness_orphan": "Témoin sans marqueur correspondant ; conserver le verrou.",
         }.get(row["hold_origin"], "État du verrou indéterminé.")
         if row["hold_origin"] == "marker_recorded":
             reason = {
                 "held_phase_unknown": "Marqueur v1 exact enregistré ; phase non attestée.",
                 "held_invalid": "Marqueur illisible ou non canonique ; conserver le verrou.",
             }.get(row.get("marker_state"), "Marqueur non vérifiable ; conserver le verrou.")
+        phase = row.get("non_submission_evidence")
+        if phase == "non_submission_recorded":
+            reason += " " + {
+                "core_pre_dispatch_refusal": "Refus Core avant appel runtime enregistré.",
+                "runtime_attested_not_submitted": "Non-soumission attestée par le runtime enregistrée.",
+            }.get(row.get("non_submission_reason"), "Témoin de non-soumission enregistré.")
+        elif phase in ("unverified", "unreadable"):
+            reason += " Témoin non vérifié ; aucune reprise."
         lines.extend((
             "",
             row["title"],
