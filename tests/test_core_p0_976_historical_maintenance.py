@@ -425,6 +425,24 @@ def test_grouped_historical_and_hold_views_share_core_without_duplicate_actions(
     assert "Retéléchargement non autorisé" in recovery.children[-1].text
     assert recovery.children[2].visible
     assert provenance.children[-1].text == ""
+    # Keep the actual grouped controller selection witness from #7480.
+    selector, inspect = recovery.children[2].children
+    assert len(selector.items) == 1 and not inspect.sensitive
+    selector.set_active(0)
+    selector.handlers["changed"](selector)
+    assert inspect.sensitive
+    before = len(jobs)
+    inspect.click()
+    assert len(jobs) == before + 1
+    args, kwargs = jobs[-1]
+    assert kwargs["control"] is inspect
+    args[2](args[1]())
+    assert "Verrou sélectionné :" in recovery.children[-1].text
+    assert "Retéléchargement non autorisé" in recovery.children[-1].text
+    assert held.right_id in recovery.children[-1].text
+    assert marker not in recovery.children[-1].text
+    assert store.metadata_get(_key(held)) == marker
+    assert rows(store) == baseline
     examine.click()
     args, kwargs = jobs[-1]
     assert kwargs["control"] is examine
