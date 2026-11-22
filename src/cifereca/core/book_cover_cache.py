@@ -219,8 +219,7 @@ class CoverDecisionCache:
         Exact token + decision let a reader reject changes during external
         physical observation. Unknown/expired is never documentary missing.
         """
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         with self._lock:
@@ -247,8 +246,7 @@ class CoverDecisionCache:
         Read-only: no publisher callback, URL fetch, preview scan or rights
         inference. Missing, pending and ambiguous decisions cannot paint.
         """
-        if type(scope) is not CoverDocumentScope:
-            raise TypeError("expected exact cover scope")
+        self._require_scope(scope)
         if type(revision) is not int or revision < 0:
             raise ValueError("invalid cover revision")
         if type(uri) is not str or not uri:
