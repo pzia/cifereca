@@ -88,6 +88,12 @@ def analyse_capture(path):
     observed_intervals = defaultdict(list)
     try:
         with ZipFile(path) as archive:
+            # ZIP permits duplicate member names, while getinfo() silently
+            # selects only the final one. A replay must never certify counts
+            # from an ambiguous index or body chosen by archive ordering.
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError("ambiguous_trace_members")
             index = archive.getinfo("http/index.json")
             if index.file_size > _MAX_INDEX:
                 raise ValueError("invalid_trace_index")
