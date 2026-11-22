@@ -92,11 +92,22 @@ def _snapshot(scope):
     # exact owner. A dict comprehension would silently accept the last
     # directory as physical ownership evidence; mark that identity unbound.
     configured = {}
+    owners_by_directory = {}
+    ambiguous_directories = set()
     for row in scope.config.identities():
-        identity = row["id"]
-        configured[identity] = (
-            row["directory_name"] if identity not in configured else None
-        )
+        identity, directory = row["id"], row["directory_name"]
+        configured[identity] = directory if identity not in configured else None
+        # A second *different* configured profile claiming this directory
+        # contradicts its ownership even when SQLite has only one binding.
+        # Do not infer physical quota from an ambiguous configuration.
+        if type(directory) is str:
+            if directory in owners_by_directory and owners_by_directory[directory] != identity:
+                ambiguous_directories.add(directory)
+            else:
+                owners_by_directory[directory] = identity
+    for identity, directory in configured.items():
+        if directory in ambiguous_directories:
+            configured[identity] = None
     with scope.storage._lock:
         db = scope.storage._connect()
         if db.in_transaction:
