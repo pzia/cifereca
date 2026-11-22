@@ -17,6 +17,7 @@ from .derived_variant_journal import (
     DerivedJournalConflict, _decode, _measure, _PREFIX, _receipt_digest,
 )
 from .library_inventory import _open_root
+from .derived_variant_retention_review import _directory as _retention_directory
 
 _MAX_SECONDS = 3
 
@@ -30,18 +31,10 @@ def _snapshot(storage, identity_id):
             raise DerivedJournalConflict("derived_stock_nested_transaction")
         with db:
             db.execute("BEGIN")
-            owner = db.execute(
-                "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
-                (identity_id,),
-            ).fetchall()
-            directory = owner[0][0] if len(owner) == 1 else None
-            if (type(directory) is not str or not directory or directory in (".", "..")
-                    or "/" in directory or chr(92) in directory or chr(0) in directory
-                    or db.execute(
-                        "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
-                        (directory,),
-                    ).fetchall() != [(identity_id,)]):
-                raise DerivedJournalConflict("derived_stock_scope_unverified")
+            # The stock observer and retirement preflight must agree on
+            # which exact, unique SQLite profile-directory name is admissible.
+            # Merely observing a file never establishes deletion authority.
+            directory = _retention_directory(db, identity_id)
             rows, _ = _measure(db)
             records = []
             for key, _ in rows:
