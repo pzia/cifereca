@@ -35,7 +35,9 @@ def _record(request, acquisition_id):
 
 def _producer(manager):
     candidates = manager.candidates("runtime.adapter", ready_only=False)
-    if type(candidates) not in (tuple, list):
+    # A non-native or oversized runtime registry is not historical evidence.
+    # Check the bounded snapshot before scanning for a unique read-only adapter.
+    if type(candidates) not in (tuple, list) or len(candidates) > 256:
         return None
     claimed = [
         row.descriptor.id for row in candidates
