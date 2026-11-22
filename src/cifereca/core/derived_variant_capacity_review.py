@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from unicodedata import category
 
 from . import derived_variant_journal as journal
 from . import derived_variant_compact_receipt as compact
@@ -24,7 +25,8 @@ def _valid_profile_directory(value):
     return (type(value) is str and 0 < len(value) <= 256
             and value not in (".", "..") and "/" not in value
             and chr(92) not in value
-            and not any(ord(char) < 32 or ord(char) == 127 for char in value))
+            and not any(category(char) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for char in value))
 
 
 def _receipt_witness(raw):
