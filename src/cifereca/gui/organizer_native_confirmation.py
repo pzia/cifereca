@@ -42,15 +42,25 @@ class NativeOrganizerConfirmation:
     def _current(self, page):
         return self._page is page and self.lease.is_current()
 
+    @staticmethod
+    def _displayable_path(value):
+        # Plugin advice is a presentation DTO, not a Core execution permit.
+        # Refuse malformed/unsafe display text before enabling confirmation.
+        return (type(value) is str and 0 < len(value) <= 4096
+                and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+
     def observe(self, value):
         from ..core import library_organizer_execution as execution
+        entries = value.dry_run_entries if type(value) is OrganizerPageAdvice else ()
         valid = (type(value) is OrganizerPageAdvice
                  and value.mutation_authorized is False
                  and value.dry_run_state == "confirmed"
-                 and len(value.dry_run_entries) == 1
-                 and type(value.dry_run_entries[0]) is OrganizerDryRunAdvice
-                 and value.dry_run_entries[0].operation == "rename"
-                 and value.dry_run_entries[0].state == "review_only"
+                 and type(entries) is tuple and len(entries) == 1
+                 and type(entries[0]) is OrganizerDryRunAdvice
+                 and entries[0].operation == "rename"
+                 and entries[0].state == "review_only"
+                 and self._displayable_path(entries[0].current)
+                 and self._displayable_path(entries[0].proposed)
                  and callable(getattr(execution, "admit_native_reviewed_rename", None))
                  and self.lease.is_current())
         self._page = value if valid else None
