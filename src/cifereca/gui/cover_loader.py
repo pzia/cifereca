@@ -11,6 +11,7 @@ import hashlib
 import itertools
 import os
 import stat
+import tempfile
 import queue
 import threading
 import time
@@ -326,6 +327,27 @@ class CoverLoader:
             return None
         return data if CoverLoader._supported_image_bytes(data[:1024]) else None
 
+    @staticmethod
+    def _publish_image(path: Path, data: bytes | bytearray) -> None:
+        """Publish N3 bytes atomically without following a predictable temp link.
+
+        A fixed <digest>.tmp can be pre-created as a symlink (or a FIFO).
+        mkstemp creates an exclusive regular file in the same cache directory;
+        os.replace then atomically replaces the leaf, not its symlink target.
+        """
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{path.stem}-", suffix=".tmp", dir=path.parent,
+        )
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(data)
+            os.replace(temporary, path)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
     def _valid_cache_file(self, path: Path) -> bool:
         """N3 media validity, not authority linking a DocumentRef to an URL.
 
@@ -531,14 +553,8 @@ class CoverLoader:
                 self._maybe_report()
                 return request
             try:
-                tmp = path.with_suffix(".tmp")
-                tmp.write_bytes(data)
-                tmp.replace(path)
+                self._publish_image(path, data)
             except OSError:
-                try:
-                    path.with_suffix(".tmp").unlink(missing_ok=True)
-                except OSError:
-                    pass
                 with self._lock:
                     self._stats["data_url_invalid"] += 1
                 callback(None)
@@ -809,9 +825,7 @@ class CoverLoader:
                         raise ValueError("empty image body")
                     if not self._supported_image_bytes(data[:1024]):
                         raise ValueError("unsupported image bytes")
-                    tmp = path.with_suffix(".tmp")
-                    tmp.write_bytes(data)
-                    tmp.replace(path)
+                    self._publish_image(path, data)
                     result = path
                     # The URL, even its host/path, and MIME headers can be
                     # private or provider-controlled. Emit only a safe count.
