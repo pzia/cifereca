@@ -155,7 +155,13 @@ class CoverDecisionCache:
     ) -> None:
         for callback in callbacks:
             try:
-                callback(change)
+                # One subscriber must not rekey a later subscriber's event.
+                callback(CoverDecisionChange(
+                    scope=CoverDecisionCache._snapshot_scope(change.scope),
+                    revision=change.revision, generation=change.generation,
+                    kind=change.kind, decision=change.decision,
+                    cause=change.cause, sequence=change.sequence,
+                ))
             except Exception:
                 # A failing detail listener cannot block a list listener.
                 _LOG.exception("cover-decision subscriber failed")
