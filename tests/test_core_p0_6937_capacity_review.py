@@ -161,6 +161,8 @@ def test_native_capacity_line_click_and_duplicate_delivery(tmp_path, stale):
 @pytest.mark.parametrize("directory", [
     "library\n", "library\x7f", "library\x00",
     "x" * 257, ".", "..", "library/sub",
+    "library\x85hidden", "library\u202ehidden",
+    "library\u2028hidden", "library\u200dhidden",
 ])
 def test_capacity_never_recognizes_untrusted_profile_directory_names(
     tmp_path, directory,
