@@ -124,3 +124,30 @@ et ne qualifient ni une destination protégée non démontrée ni l'authentifica
 du navigateur externe. Les limites Paris/Kobo, Numilog achats/BiblioAccess
 prêts et la recette agrégée restent explicites, sans collecte supplémentaire
 imposée au lot externe #6875 non bloquant.
+
+## Réception des cardinalités et corrections ciblées — 22/11
+
+| PR | HEAD testé | Gates SUCCESS | Squash intégré |
+|---|---|---|---|
+| #7524 — trois fournisseurs, une C, trois fiches | `09ccedb5b92ce586d40151d5936ae3d9f7141596` | CI 44998509736, E2E 44998509729 | `e27582e20f579ae32ff2e3453ba165e371237b4b` |
+| #7533 — correction d'un record parmi trois | `3233669f87052c7e23c5494fe1e320dbe32cda58` | CI 44999238448 | `22224f453fc2670ad2294ee9d461ec4be7f2a594` |
+
+Les blobs des trois fichiers de ces PR sont identiques au HEAD testé,
+au squash et sur main. Le témoin synthétique démontre la cardinalité
+Search/SQLite, le choix GTK et le maintien des fiches après éviction
+et redémarrage ; la correction ciblée refuse l'ancienne option sans
+supprimer les deux autres en attendant la recomposition.
+
+**Critère interne restant, distinct de #6875 :** le producteur privé
+[`_source_key`](../src/cifereca/core/notice_c_private_search_web.py)
+incorpore actuellement l'identité au digest de l'édition et à la
+NoticeSourceKey. La recette #7484 concerne deux comptes d'un même
+profil ; elle ne démontre pas une observation unique lorsque le même
+compte est déclaré dans deux profils. Ne pas supprimer l'identité du
+scope de résolution au clic pour dédupliquer l'observation. L'admission
+d'un groupe public par Search refuse par ailleurs les relations mixtes
+privées (#7502) ; une preuve de relation documentaire ne transmet jamais
+les permissions du compte. Le contrat de séparation entre observation
+réutilisable et autorité de clic reste à recevoir avant fermeture.
+Les limites de qualification externe précédentes restent reportées sous
+#6875 ; aucune nouvelle capture ni droit ne sont demandés.
