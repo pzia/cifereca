@@ -1239,14 +1239,15 @@ def main():
                                 # Capture the actual worker result in GTK. This
                                 # only observes presentation, not admission.
                                 notices = []
-                                original_toast = w.toast
+                                host_window = window[0]
+                                original_toast = host_window.toast
                                 def toast(message, *args, **kwargs):
                                     notices.append(message)
                                     return original_toast(message, *args, **kwargs)
-                                w.toast = toast
+                                host_window.toast = toast
                                 dialog.response("apply")
                                 def refused():
-                                    w.toast = original_toast
+                                    host_window.toast = original_toast
                                     assert any("Renommage indisponible ou refusé" in x for x in notices)
                                     assert not native.get_sensitive()
                                     assert fixture_evidence() == evidence and durable_counts() == before
