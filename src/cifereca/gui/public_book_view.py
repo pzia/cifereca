@@ -199,6 +199,29 @@ class PublicBookMasterDetailView:
         with stage:
             panel.show_presentation(detail)
         buttons = []
+        window = self._window
+        service = getattr(window, "service", None)
+        identity = getattr(service, "current_identity", None)
+        account_epoch = getattr(service, "_account_context_epoch", None)
+        source_epoch = getattr(service, "_source_context_epoch", None)
+        route = getattr(window, "_route_display_token", None)
+        generation = getattr(self, "_public_c_page_generation", None)
+
+        def action_context_revoked(clicked):
+            mapped = getattr(clicked, "get_mapped", None)
+            return (getattr(clicked, "_cifereca_action_context_revoked", False)
+                    or getattr(clicked, "_cifereca_action_state_blocked", False)
+                    or (callable(mapped) and not mapped())
+                    or getattr(window, "_closed", False)
+                    or self._window is not window
+                    or self._page.detail is not panel
+                    or getattr(window, "service", None) is not service
+                    or getattr(service, "current_identity", None) is not identity
+                    or getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch
+                    or getattr(window, "_route_display_token", None) is not route
+                    or getattr(self, "_public_c_page_generation", None) != generation)
+
         for action in getattr(detail, "actions", ()) or ():
             raw_uri = getattr(action, "uri", "")
             if type(raw_uri) is not str:
@@ -211,21 +234,13 @@ class PublicBookMasterDetailView:
                     continue
                 button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 button.set_tooltip_text(str(action.title))
-                button.connect(
-                    "activate-link",
-                    lambda clicked: getattr(
-                        clicked, "_cifereca_action_context_revoked", False,
-                    ) is True or getattr(
-                        clicked, "_cifereca_action_state_blocked", False,
-                    ) is True,
-                )
+                button.connect("activate-link", action_context_revoked)
             else:
                 button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
                 callback = getattr(action, "callback", None)
                 if callable(callback):
                     def activate(clicked, cb=callback, action_id=str(action.id)):
-                        if (getattr(clicked, "_cifereca_action_context_revoked", False)
-                                or getattr(clicked, "_cifereca_action_state_blocked", False)):
+                        if action_context_revoked(clicked):
                             return
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
