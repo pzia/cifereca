@@ -368,3 +368,53 @@ def test_readonly_document_occurrence_never_becomes_lender_candidate(harness, fl
     assert _discover(service, notice) == ()
     assert service.storage.loan_borrow_state(key) is None
     assert session.calls == 0
+
+
+def test_label_composition_cannot_refresh_a_mutated_exact_edition_receipt(
+    harness, monkeypatch,
+):
+    """A callback during 0/1/N labeling must not re-admit new source facts."""
+    import cifereca.core.borrow_for_identity_discovery as discovery
+
+    service, _account, session = harness
+    first = _candidate(collection="collection-a").notice
+    second = _candidate(collection="collection-b").notice
+    original_replace = discovery.replace
+    relabels = []
+
+    def mutate_during_label(row, **changes):
+        if type(row) is PossibleBorrowLender and "label" in changes:
+            relabels.append(changes["label"])
+            # A valid upstream revision change with the same account/edition
+            # happens AFTER the original producer captured its source fact.
+            first.revision_id = "newer-source-revision"
+        return original_replace(row, **changes)
+
+    monkeypatch.setattr(discovery, "replace", mutate_during_label)
+    assert _discover(service, first, second) == ()
+    assert relabels
+    assert first.revision_id == "newer-source-revision"
+    assert session.calls == 0
+    assert service.current_identity.identity_id == "default"
+
+
+def test_label_only_clone_preserves_original_captured_source_contract(harness):
+    from cifereca.core.borrow_for_identity_discovery import (
+        _relabel_preserving_receipt, possible_lender_matches,
+    )
+
+    service, _account, session = harness
+    notice = _candidate().notice
+    original, = _discover(service, notice)
+    renamed = _relabel_preserving_receipt(original, "Alex sur Paris · autre choix")
+    assert renamed.label != original.label
+    assert renamed._captured_fields is original._captured_fields
+    assert renamed._captured_notice_binding is original._captured_notice_binding
+    assert possible_lender_matches(
+        renamed, notice, requesting_identity_id="default",
+    )
+    notice.revision_id = "valid-but-new-source-revision"
+    assert not possible_lender_matches(
+        renamed, notice, requesting_identity_id="default",
+    )
+    assert session.calls == 0
