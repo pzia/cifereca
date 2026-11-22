@@ -130,3 +130,36 @@ def test_origin_placement_and_c_are_read_under_one_sqlite_snapshot(tmp_path, mon
         assert len(reads) == 1
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("documentary_only", [False, True])
+def test_corrupt_competing_c_claim_revokes_old_local_receipt(tmp_path, documentary_only):
+    import json
+    from cifereca.core.notice_c_cover_index import _db_key
+    db = Storage(tmp_path / "corrupt-competing.sqlite")
+    try:
+        result, path, first, second = _ready(db, tmp_path)
+        library, recent = _views(db, result.artifact_id, result.placement_id, path)
+        key = ("_public_canonical_document_link" if documentary_only
+               else "_public_canonical_cover_link")
+        project_local_origin_public_c(db, [library, recent], identity_id="A",
+                                      documentary_only=documentary_only)
+        assert key in library and key in recent
+        for source in (first, second):
+            conflicting = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:corrupt-claim", source=source,
+                relation_proof_id="strong:fixture:competing",
+            )
+        with db._lock, db._connect() as sql:
+            raw, = sql.execute("SELECT value FROM metadata WHERE key=?",
+                               (_db_key(conflicting.document),)).fetchone()
+            value = json.loads(raw)
+            value["epoch"] = False
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (json.dumps(value), _db_key(conflicting.document)))
+        project_local_origin_public_c(db, [library, recent], identity_id="A",
+                                      documentary_only=documentary_only)
+        assert key not in library and key not in recent
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
