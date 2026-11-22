@@ -602,3 +602,51 @@ def test_disposed_native_organizer_ignores_late_valid_review_even_if_lease_is_li
     if Dialog.dialogs:
         Dialog.dialogs[0].respond("apply")
     assert not runner.queue and not calls
+
+@pytest.mark.parametrize("transition", ["revoked", "disposed", "superseded"])
+def test_native_dialog_construction_reentry_never_presents_stale_review(
+    monkeypatch, transition,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    live = [True]
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Stale construction cannot report work"))
+    lease = NS(identity_id="A", is_current=lambda: live[0])
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(
+            OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only"),
+        ),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    created = []
+    original_new = Dialog.new
+
+    def reentrant_new(*args):
+        dialog = original_new(*args)
+        created.append(dialog)
+        if transition == "revoked":
+            live[0] = False
+        elif transition == "disposed":
+            ui.dispose()
+        else:
+            ui.observe(replace(page, dry_run_entries=(
+                OrganizerDryRunAdvice("rename", "other.epub", "next.epub", "review_only"),
+            )))
+        return dialog
+
+    monkeypatch.setattr(Dialog, "new", reentrant_new)
+    monkeypatch.setattr(Dialog, "present",
+                        lambda *_args: pytest.fail("Revoked review must not present"))
+    assert ui.open(NS(MessageDialog=Dialog)) is False
+    assert len(created) == 1
+    assert ui._dialog is None and ui._used is None and not runner.queue
+    if transition == "disposed":
+        assert ui._disposed and ui._page is None and not ui.button.visible
+    elif transition == "superseded":
+        assert ui._page is not page and ui.button.sensitive
+    else:
+        assert ui._page is page and not ui._lease_current()

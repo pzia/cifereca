@@ -149,6 +149,18 @@ class NativeOrganizerConfirmation:
                 except Exception:
                     pass
             return False
+        # Native dialog setup can re-enter GTK. A profile switch, disposal or
+        # superseding review during construction invalidates the original
+        # consent before the response handler can even be installed.
+        if (not self._current(page) or page is self._used
+                or self._dialog is not None):
+            try:
+                close = getattr(dialog, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                pass
+            return False
         self._dialog = dialog
         self.button.set_sensitive(False)
         answered = False
