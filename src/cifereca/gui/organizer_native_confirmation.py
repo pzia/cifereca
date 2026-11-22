@@ -158,6 +158,11 @@ class NativeOrganizerConfirmation:
             if answered:
                 return
             answered = True
+            # An old GTK signal may arrive after a replacement review has
+            # already opened its own dialog. Never clear or re-arm that
+            # newer dialog (and never enqueue the old Core command).
+            if self._dialog is not dialog:
+                return
             self._dialog = None
             if response_id != "apply" or not self._current(page):
                 self.button.set_sensitive(self._page is not None

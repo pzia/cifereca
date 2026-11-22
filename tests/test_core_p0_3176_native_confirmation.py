@@ -484,3 +484,46 @@ def test_native_confirmed_rename_cannot_switch_identity_after_mount(
     ui.observe(page)
     assert not ui.button.visible and not ui.button.sensitive
     assert not runner.queue
+
+
+@pytest.mark.parametrize("stale_response", ["apply", "cancel"])
+def test_old_native_dialog_response_cannot_clear_new_modal_after_refresh(
+    monkeypatch, stale_response,
+):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _: pytest.fail("Stale dialog must not deliver a result"))
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_a, **_k: pytest.fail("Stale dialog must not admit Core"),
+    )
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    old_dialog = Dialog.dialogs[-1]
+    # Native close is asynchronous: its cancellation may arrive after a new
+    # review opens. Simulate that documented scheduling without GTK timing.
+    closed = []
+    monkeypatch.setattr(Dialog, "close", lambda self: closed.append(self), raising=False)
+    next_page = replace(page, dry_run_entries=(
+        replace(entry, proposed="different.epub"),))
+    ui.observe(next_page)
+    assert closed == [old_dialog] and ui._dialog is None
+    assert ui.open(NS(MessageDialog=Dialog))
+    new_dialog = Dialog.dialogs[-1]
+    assert new_dialog is not old_dialog
+    assert ui._dialog is new_dialog and not ui.button.sensitive
+    old_dialog.respond(stale_response)
+    assert ui._dialog is new_dialog and not ui.button.sensitive
+    assert not runner.queue
+    new_dialog.respond("cancel")
+    assert ui._dialog is None and ui.button.sensitive
+    assert not runner.queue
