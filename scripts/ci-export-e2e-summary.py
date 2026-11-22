@@ -792,6 +792,23 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
                 break
         if narrow_complete:
             evidence["notice_c_narrow_six_views_cold_offline"] = True
+        # #4980 synthetic receipt: all independently asserted GTK stages must
+        # be present in ONE completed native run with valid cold/offline
+        # N1/N2/N3/N4 numbers. A generic PASS or the six-view headline alone
+        # never certifies the independent cache, EPUB or HTTP fallback paths.
+        # This is not a live BnF/source qualification or a PNG review.
+        local_matrix_stages = (
+            "P0_4980_same_c_six_physical_views_restart_offline",
+            "P0_4980_warm_n2_cold_n3_real_gtk",
+            "P0_4980_distinct_c_shared_n3_real_gtk",
+            "P0_4980_invalidated_n2_warm_n3_real_gtk",
+            "P0_4980_epub_priority_cold_real_gtk",
+            "P0_4980_epub_priority_warm_real_gtk",
+            "P0_4980_epub_qualified_fallback_real_gtk",
+            "P0_4980_catalogue_http_fallback_real_gtk",
+        )
+        if all(data["checks"].get(stage) is True for stage in local_matrix_stages):
+            evidence["notice_c_4980_local_gtk_matrix"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
