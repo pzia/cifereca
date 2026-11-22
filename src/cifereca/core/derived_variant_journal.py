@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 from secrets import token_hex
+from unicodedata import category
 
 from .derived_variant_region_paths import PRIVATE_DERIVED_REGION
 
@@ -66,7 +67,8 @@ def _receipt_digest(raw):
 def _text(value, *, required=True, limit=1024):
     return (type(value) is str and len(value) <= limit
             and (bool(value) or not required)
-            and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+            and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for ch in value))
 
 
 def _digest(value):

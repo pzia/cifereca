@@ -30,7 +30,12 @@ _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
 
 def _source_receipt(hit):
     """Seal unprojected native edition and observation coordinates at admission."""
-    return (id(hit), hit.edition_id, hit.observed_at, hit.last_seen_at)
+    # Source alternatives expose title/author/series but do not project
+    # their docbase, medium, format or N2 freshness into the visible DTO.
+    # Seal those fields too: a frozen PublicNoticeCHit can be rewritten via
+    # object.__setattr__ without changing the displayed alternative summary.
+    return (id(hit), hit.edition_id, hit.observed_at, hit.last_seen_at,
+            hit.docbase, hit.medium, hit.media_format, hit.cover_state, hit.stale)
 
 
 

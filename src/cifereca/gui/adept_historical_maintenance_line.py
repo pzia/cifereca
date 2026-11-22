@@ -12,16 +12,21 @@ from ..storage import Storage
 from ..task_queue import TaskPriority
 
 
-def _ledger_value(candidate):
-    # Historical row coordinates can predate the guarded hold DTO. Keep
-    # exact IDs in Core; only project bounded, non-spoofable UI labels.
-    if candidate is None:
+def _ledger_label(value):
+    # A historical acquisition coordinate is a hint in this view, not a
+    # command, a source key or a verified entitlement. Preserve the Core
+    # value but do not render control characters as another diagnostic line.
+    if value is None:
         return "inconnu"
-    if type(candidate) is str and candidate == "":
+    if value == "":
         return "(vide enregistré)"
-    if type(candidate) is int and 0 <= candidate <= 2**63 - 1:
-        return str(candidate)
-    return _hold_coordinate(candidate)
+    if type(value) is int:
+        return str(value)
+    if (type(value) is str and 0 < len(value) <= 1024
+            and all(category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for ch in value)):
+        return value
+    return "(valeur non affichable)"
 
 
 def _display(result):
@@ -33,7 +38,7 @@ def _display(result):
         lines.append("Aucune transaction ADEPT enregistrée dans cette page du ledger.")
     for row in result["rows"]:
         def value(key):
-            return _ledger_value(row.get(key))
+            return _ledger_label(row.get(key))
         pub = row.get("publication") if type(row.get("publication")) is dict else {}
         physical = row.get("local_bytes") if type(row.get("local_bytes")) is dict else {}
         evidence = physical.get("evidence") if type(physical.get("evidence")) is dict else {}
@@ -45,9 +50,9 @@ def _display(result):
             f"Profil ADEPT enregistré : {value('recorded_adept_profile_id')}",
             f"Prêt ADEPT enregistré : {value('recorded_adept_loan_id')} · {value('historical_license_state')}",
             f"Branche canonique candidate : {value('canonical_branch')} · {value('canonical_status')}",
-            f"Origines : {_ledger_value(pub.get('canonical_origin_records', 'not_checked'))} · "
-            f"Placement : {_ledger_value(pub.get('canonical_placement_state', 'not_checked'))}",
-            f"Octets : {_ledger_value(evidence.get('placement_evidence', physical.get('selection', 'not_checked')))}",
+            f"Origines : {_ledger_label(pub.get('canonical_origin_records', 'not_checked'))} · "
+            f"Placement : {_ledger_label(pub.get('canonical_placement_state', 'not_checked'))}",
+            f"Octets : {_ledger_label(evidence.get('placement_evidence', physical.get('selection', 'not_checked')))}",
         ))
         if row.get("inventory_checked_at") is not None:
             lines.append("Horodatage historique (Unix) : " + value("inventory_checked_at"))

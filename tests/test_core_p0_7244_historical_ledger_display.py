@@ -48,7 +48,7 @@ def test_historical_ledger_untrusted_labels_cannot_spoof_report_lines(field, hid
     target[parts[-1]] = value
     output = _display(page)
     assert "FORGED" not in output
-    assert "identifiant non affichable" in output
+    assert "valeur non affichable" in output
     assert "aucun état fournisseur actuel vérifié" in output
     assert "Aucun retour, rattachement, acquisition ou suppression autorisé" in output
     assert "Horodatage historique (Unix) : 1234567890" in output
@@ -61,7 +61,7 @@ def test_historical_ledger_keeps_readable_labels_and_rejects_malformed_rows():
     assert "Édition : edition · Prêt : loan" in rendered
     assert "Origines : 1 · Placement : observed" in rendered
     assert "Horodatage historique (Unix) : 1234567890" in rendered
-    assert "identifiant non affichable" not in rendered
+    assert "valeur non affichable" not in rendered
     assert "indisponible" in _display({"rows": ("not a row",)})
     page["rows"][0]["publication"] = "malformed"
     page["rows"][0]["local_bytes"] = "malformed"
