@@ -342,7 +342,9 @@ def main():
         "derived": ("maintenance-derived-variants", "maintenance.library.derived-variants"),
     }
     selection = (guided_packages[args.guided_only],) if args.guided_only else tuple(guided_packages.values())
-    for folder in ("maintenance-page", *(folder for folder, _key in selection)):
+    if any(folder == "maintenance-derived-variants" for folder, _key in selection):
+        selection += (("maintenance-derived-variants", "maintenance.library.derived-capacity"),)
+    for folder in dict.fromkeys(("maintenance-page", *(folder for folder, _key in selection))):
         package = fixture_root / (folder + ".zip")
         with ZipFile(package, "w") as archive:
             for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
@@ -560,7 +562,8 @@ def main():
         report["checks"]["P0_7100_real_installed_page_contribution"] = True
         if args.guided_only:
             key = guided_packages[args.guided_only][1]
-            assert {r.plugin_id for r in manager.services("maintenance.tool")} == {key}
+            expected_ids = {selected for _, selected in selection}
+            assert {r.plugin_id for r in manager.services("maintenance.tool")} == expected_ids
             expected = {
                 "organizer": "Organiser la bibliothèque",
                 "origin": "Suggestions de provenance — par lots",
@@ -579,6 +582,15 @@ def main():
             manager.set_enabled(key, False)
             refresh_tools()
             assert manager.service(key) is None and title not in titles()
+            if args.guided_only == "derived":
+                capacity_key = "maintenance.library.derived-capacity"
+                assert titles().count("Capacité du journal des variantes") == 1
+                manager.set_enabled(capacity_key, False)
+                refresh_tools()
+                assert "Capacité du journal des variantes" not in titles()
+                manager.set_enabled(capacity_key, True)
+                refresh_tools()
+                assert titles().count("Capacité du journal des variantes") == 1
             assert w._plugin_page_widgets["tools"] is host
             manager.set_enabled(key, True)
             refresh_tools()
@@ -599,6 +611,24 @@ def main():
                            and node.get_title() == "Provenances de prêts historiques"]
         assert len(historical_rows) == 1
         assert "sans accès fournisseur" in historical_rows[0].get_subtitle()
+        held_rows = [node for node in walk(w._tools_box)
+                     if isinstance(node, Adw.ActionRow)
+                     and node.get_title() == "Verrous de téléchargements ADEPT"]
+        assert len(held_rows) == 1
+        def section_contains(row, heading):
+            ancestor = row.get_parent()
+            while ancestor is not None and ancestor is not w._tools_box:
+                first = ancestor.get_first_child()
+                if isinstance(first, Gtk.Label) and first.get_text() == heading:
+                    return True
+                ancestor = ancestor.get_parent()
+            return False
+        assert section_contains(historical_rows[0], "Origine et provenance")
+        assert section_contains(held_rows[0], "Reprise des opérations")
+        assert "aucun déverrouillage autorisé" in held_rows[0].get_subtitle()
+        assert not any(isinstance(node, Gtk.Button)
+                       and getattr(node, "_cifereca_action_label", "") == "Verrous…"
+                       for node in walk(historical_rows[0]))
         report["checks"]["P0_976_historical_local_review_row"] = True
         organizer_rows = [node for node in walk(w._tools_box)
                           if isinstance(node, Adw.ActionRow)
@@ -606,6 +636,35 @@ def main():
         assert len(organizer_rows) == 1
         assert "Lecture seule" in organizer_rows[0].get_subtitle()
         report["checks"]["P0_3176_organizer_read_only_row"] = True
+        group_names = ("Organiser la bibliothèque", "Vérifier l’intégrité",
+                       "Qualité documentaire", "Origine et provenance",
+                       "Reprise des opérations", "Stockage et entretien technique")
+        # Only direct section containers belong to the taxonomy. Nested
+        # plugin widgets can have labels with the same text as headings.
+        headings = []
+        child = w._tools_box.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Box):
+                heading = child.get_first_child()
+                if isinstance(heading, Gtk.Label) and heading.get_text() in group_names:
+                    headings.append(heading.get_text())
+            child = child.get_next_sibling()
+        assert tuple(headings) == group_names
+        links = [node for node in walk(w._tools_box)
+                 if isinstance(node, Gtk.Button)
+                 and node.get_label() == "Voir : Reprise des opérations"]
+        assert len(links) == 1 and section_contains(links[0], group_names[0])
+        retry_rows = [node for node in walk(w._tools_box)
+                      if isinstance(node, Adw.ActionRow)
+                      and node.get_title() == "Téléchargements à reprendre"]
+        assert len(retry_rows) == 1 and section_contains(retry_rows[0], group_names[4])
+        capacity_rows = [node for node in walk(w._tools_box)
+                         if isinstance(node, Adw.ActionRow)
+                         and node.get_title() == "Capacité du journal des variantes"]
+        assert len(capacity_rows) == 1 and section_contains(capacity_rows[0], group_names[5])
+        assert section_contains(review_rows[0], group_names[4])
+        assert tool.plan_calls == tool.run_calls == 0
+        report["checks"]["P0_7407_six_groups_and_single_contextual_retry"] = True
         origin_rows = [node for node in walk(w._tools_box)
                        if isinstance(node, Adw.ActionRow)
                        and node.get_title() == "Suggestions de provenance — par lots"]
@@ -613,8 +672,9 @@ def main():
         assert "Lecture seule" in origin_rows[0].get_subtitle()
         assert {resolved.plugin_id for resolved in original_services("maintenance.tool")} == {
             "maintenance.library.organizer", "maintenance.library.local-origin",
-            "maintenance.library.derived-variants",
+            "maintenance.library.derived-variants", "maintenance.library.derived-capacity",
         }
+        # Historical result key retained for downstream CI summaries.
         report["checks"]["P0_7100_three_real_guided_contributions"] = True
         # Prove each installed contribution is individually optional in the
         # *actual* GTK host, not merely in a detached PluginManager.
@@ -622,6 +682,7 @@ def main():
             "maintenance.library.organizer": "Organiser la bibliothèque",
             "maintenance.library.local-origin": "Suggestions de provenance — par lots",
             "maintenance.library.derived-variants": "Publications dérivées interrompues",
+            "maintenance.library.derived-capacity": "Capacité du journal des variantes",
         }
         host_widget = w._plugin_page_widgets["tools"]
 
