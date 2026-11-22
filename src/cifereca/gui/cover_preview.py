@@ -1,7 +1,9 @@
 """Worker-only, bounded image previews; original cache files are preserved."""
 import hashlib
+import os
+from pathlib import Path
 import stat
-import uuid
+import tempfile
 
 MAX_PIXELS = 50_000_000
 MAX_BYTES = 24*1024*1024
@@ -53,7 +55,12 @@ def create_preview(source, dest, width, height, backend=None):
     )
     if pixbuf is None:
         raise ValueError('preview_decode_failed')
-    temp = dest.with_name(dest.name + '.' + uuid.uuid4().hex + '.tmp')
+    # O_EXCL on the same physical directory avoids publishing through a
+    # pre-created symlink/FIFO at a guessed worker temp name. The backend
+    # requires a pathname; the exclusive leaf remains owned until replace.
+    fd, name = tempfile.mkstemp(prefix=dest.stem + ".", suffix=".tmp", dir=dest.parent)
+    os.close(fd)
+    temp = Path(name)
     try:
         if pixbuf.savev(str(temp), 'png', [], []) is False:
             raise ValueError('preview_save_failed')
