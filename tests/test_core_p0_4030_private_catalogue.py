@@ -39,6 +39,12 @@ def _run(fixture, **kwargs):
     )
 
 
+def _legacy_groups(groups):
+    """Preserve legacy action assertions while allowing the read-only rank overlay."""
+    return [group for group in groups
+            if group[0] != "Classement documentaire — lecture seule"]
+
+
 def test_private_loan_comparison_is_partial_read_only_and_exact(private_rig):
     service, request, account, session, calls, path, key, _ = private_rig
     before, data = rows(service.storage), path.read_bytes()
@@ -203,16 +209,16 @@ def test_installed_detail_controller_private_action_explicit_exact_and_revocable
         host.live = False
     elif change == "activation":
         active[0] = False
-    count = len(groups)
+    count = len(_legacy_groups(groups))
     done(result)
     done(result)
     if change == "none":
-        assert len(groups) == count + 1
-        visible = repr(groups[-1])
+        assert len(_legacy_groups(groups)) == count + 1
+        visible = repr(_legacy_groups(groups)[-1])
         assert "Occurrence : loan-1" in visible and "Branche : loans" in visible
         assert "Date de description inconnue" in visible
     else:
-        assert len(groups) == count
+        assert len(_legacy_groups(groups)) == count
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
 
 
@@ -231,7 +237,7 @@ def test_cached_purchase_date_is_source_date_not_refresh_time(private_rig, monke
     assert "achats" in actions["private-0"][0]
     assert actions["private-0"][2]()
     deliver(tasks)
-    visible = repr(groups[-1])
+    visible = repr(_legacy_groups(groups)[-1])
     assert "1970-01-01 00:01 UTC" in visible
     assert "Occurrence : " + key.right_id in visible
     assert "fraîcheur réseau" not in visible and not calls
@@ -380,14 +386,14 @@ def test_legacy_private_detail_uses_one_stable_action_for_following_pages(privat
     first = actions["private-0"][2]
     assert first()
     deliver(tasks)
-    assert "Page', '1" in repr(groups[-1])
-    assert "Occurrence : loan-1" in repr(groups[-1])
+    assert "Page', '1" in repr(_legacy_groups(groups)[-1])
+    assert "Occurrence : loan-1" in repr(_legacy_groups(groups)[-1])
     assert "Suite prêts" in actions["private-0"][0]
     following = actions["private-0"][2]
     assert following is not first and not first()
     assert len(tasks) == 2 and issued.count("private-0") == 2
     assert following() and not following()
-    count = len(groups)
+    count = len(_legacy_groups(groups))
     if change == "sqlite":
         service.storage.metadata_set("test-private-ui-drift", "changed")
     elif change == "view":
@@ -396,16 +402,16 @@ def test_legacy_private_detail_uses_one_stable_action_for_following_pages(privat
         dispose()
     deliver(tasks)
     if change == "none":
-        assert len(groups) == count + 1 and "Page', '2" in repr(groups[-1])
-        assert "Occurrence : loan-3" in repr(groups[-1])
+        assert len(_legacy_groups(groups)) == count + 1 and "Page', '2" in repr(_legacy_groups(groups)[-1])
+        assert "Occurrence : loan-3" in repr(_legacy_groups(groups)[-1])
         assert actions["private-0"][2] is following
         assert following()
         deliver(tasks)
-        assert "Page', '3" in repr(groups[-1])
-        assert "Occurrence : loan-5" in repr(groups[-1])
+        assert "Page', '3" in repr(_legacy_groups(groups)[-1])
+        assert "Occurrence : loan-5" in repr(_legacy_groups(groups)[-1])
         assert "private-0" not in actions
     else:
-        assert len(groups) == count and not following()
+        assert len(_legacy_groups(groups)) == count and not following()
     assert issued.count("private-0") == 2 and not following()
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
 
@@ -464,8 +470,8 @@ def test_declaration_choices_on_every_private_cache_page(private_rig, monkeypatc
         for callback in obsolete:
             assert not callback()
         assert "Occurrence à examiner" == groups[-1][0]
-        assert f"Prêt : loan-{2 * page - 1}" in repr(groups[-1])
-        assert f"Prêt : loan-{2 * page}" in repr(groups[-1])
+        assert f"Prêt : loan-{2 * page - 1}" in repr(_legacy_groups(groups)[-1])
+        assert f"Prêt : loan-{2 * page}" in repr(_legacy_groups(groups)[-1])
         assert f"Page', '{page}" in repr(groups[-2])
         obsolete.append(actions["declare-preview-1"][2])
         if page < 3:
