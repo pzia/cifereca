@@ -83,32 +83,45 @@ class _Receipt:
         return self
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _BatchCall:
+    calls: tuple[_Call, ...]
+
+
 def capture_authenticated_search_call(service, session, identity_id):
-    """Capture once before an existing own-session provider call, never log in."""
+    """Pin registered owner accounts before existing Search; never log in."""
     try:
         state = _inert_session_state(session)
         accounts = _inert_session_accounts(session)
-        if state is None or accounts is None or len(accounts) != 1:
+        if state is None or accounts is None or not 1 <= len(accounts) <= 64:
             return None
         descriptor = state.get("descriptor")
-        account = accounts[0]
         if (type(descriptor) is not ProviderDescriptor
                 or descriptor.capabilities.authentication is not True
-                or type(account) is not Account or account.identity_id != identity_id
-                or not all(_coordinate(v) for v in (
-                    identity_id, account.provider_id, account.credential_id, account.unique_id,
-                ))):
+                or not _coordinate(identity_id)):
             return None
         from .search_orchestration import capture_search_read_scope
         scope = capture_search_read_scope(service, identity_id)
-        placeholder = notice_cover_document_ref(NoticeSourceKey(
-            account.provider_id, "private", identity_id, account.credential_id,
-            account.unique_id, "search.authenticated.catalogue", "call", "call", "unknown",
-        ))
-        binding = _capture(service, scope, placeholder)
-        if binding is None or binding.session is not session:
+        observed_at = int(time.time())
+        calls = []
+        for account in accounts:
+            if (type(account) is not Account or account.identity_id != identity_id
+                    or account.provider_id != state.get("provider_id")
+                    or account.credential_id != state.get("credential_id")
+                    or not all(_coordinate(v) for v in (
+                        identity_id, account.provider_id, account.credential_id, account.unique_id,
+                    ))):
+                return None
+            placeholder = notice_cover_document_ref(NoticeSourceKey(
+                account.provider_id, "private", identity_id, account.credential_id,
+                account.unique_id, "search.authenticated.catalogue", "call", "call", "unknown",
+            ))
+            binding = _capture(service, scope, placeholder)
+            if binding is not None and binding.session is session and binding.account is account:
+                calls.append(_Call(scope, binding, observed_at))
+        if not calls:
             return None
-        return _Call(scope, binding, int(time.time()))
+        return calls[0] if len(calls) == 1 else _BatchCall(tuple(calls))
     except (AttributeError, TypeError, ValueError, LookupError, RuntimeError):
         return None
 
@@ -159,26 +172,35 @@ def stamp_authenticated_search_rows(service, call, rows):
     for row in rows:
         if type(row) is SearchResult:
             row.__dict__.pop(_MARKER, None)
-    if (type(rows) is not list or len(rows) > 10000
-            or type(call) is not _Call or not call.binding.current(service, call.scope)):
+    if type(rows) is not list or len(rows) > 10000:
         return
+    calls = (call,) if type(call) is _Call else call.calls if type(call) is _BatchCall else ()
+    by_account = {}
+    for captured in calls:
+        if type(captured) is not _Call or not captured.binding.current(service, captured.scope):
+            continue
+        doc = captured.binding.document
+        coords = (doc.provider_id, doc.credential_id, doc.account_id)
+        by_account[coords] = captured if coords not in by_account else None
     seen = {}
+    prepared = []
     for row in rows:
-        key = _source_key(row, call.scope.identity_id)
+        if type(row) is not SearchResult or not all(_coordinate(v) for v in (
+                row.source_provider, row.source_credential, row.source_account_id)):
+            continue
+        captured = by_account.get((row.source_provider, row.source_credential, row.source_account_id))
+        if captured is None:
+            continue
+        key = _source_key(row, captured.scope.identity_id)
         if key is not None:
             seen[key] = seen.get(key, 0) + 1
-    for row in rows:
-        key = _source_key(row, call.scope.identity_id)
-        if key is None or seen[key] != 1:
+            prepared.append((row, captured, key))
+    for row, captured, key in prepared:
+        if seen[key] != 1:
             continue
-        doc = notice_cover_document_ref(key)
-        original = call.binding.document
-        if (doc.provider_id, doc.credential_id, doc.account_id) != (
-                original.provider_id, original.credential_id, original.account_id):
-            continue
-        proof = _evidence(row, key, call.binding.descriptor.homepage)
+        proof = _evidence(row, key, captured.binding.descriptor.homepage)
         if proof is not None:
-            row.__dict__[_MARKER] = _Receipt(_WITNESS, id(row), call, key, proof)
+            row.__dict__[_MARKER] = _Receipt(_WITNESS, id(row), captured, key, proof)
 
 
 def _prepare(service, row, identity):
@@ -215,7 +237,10 @@ def _prepare(service, row, identity):
             or _evidence(row, key, call.binding.descriptor.homepage) != proof):
         return None
     doc = notice_cover_document_ref(key)
-    if not call.binding.current(service, call.scope):
+    original = call.binding.document
+    if ((doc.identity_id, doc.provider_id, doc.credential_id, doc.account_id)
+            != (original.identity_id, original.provider_id, original.credential_id, original.account_id)
+            or not call.binding.current(service, call.scope)):
         return None
     observation = admit_source_notice(
         key=key, parser_id="core.search.authenticated-web", parser_version="1",
