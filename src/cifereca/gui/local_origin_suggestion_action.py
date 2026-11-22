@@ -129,7 +129,16 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                         return
                     if (type(report) is not dict or report.get("status") != "partial"
                             or type(report.get("candidates")) is not tuple):
-                        window.toast("Comparaison publique indisponible ; aucune absence attestée.")
+                        reason = ({
+                        "auth_required": "Authentification requise",
+                        "access_denied": "Accès refusé",
+                        "rate_limited": "Limite de requêtes atteinte",
+                        "timeout": "Délai de réponse dépassé",
+                        "cancelled": "Comparaison annulée",
+                    }.get(report.get("status"))
+                                  if type(report) is dict and type(report.get("status")) is str else None)
+                        window.toast((reason or "Comparaison publique indisponible") +
+                                     " ; aucune absence attestée. Nouvelle revue nécessaire.")
                         return
                     lines = [
                         ("Portée", "Comparaison documentaire uniquement ; aucune origine ni droit attestés."),
