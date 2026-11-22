@@ -1,5 +1,7 @@
 """#6937: corrupted Unicode private retirement records fail closed."""
 
+from pathlib import Path
+
 import pytest
 
 from cifereca.core import derived_variant_journal as journal
@@ -15,6 +17,8 @@ def test_nonascii_sqlite_trace_is_rejected_without_unicode_leak_or_mutation(rig,
     key = prefix + "a" * 64
     invalid = "non-canonical-\u00e9"
     before = stage.read_bytes()
+    parent = Path(intent.parent_path)
+    parent_before = parent.read_bytes()
     storage.metadata_set(key, invalid)
 
     with storage._lock:
@@ -28,4 +32,4 @@ def test_nonascii_sqlite_trace_is_rejected_without_unicode_leak_or_mutation(rig,
 
     assert storage.metadata_get(key) == invalid
     assert stage.read_bytes() == before
-    assert intent.parent_path
+    assert parent.read_bytes() == parent_before
