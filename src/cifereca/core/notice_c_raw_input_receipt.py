@@ -69,12 +69,39 @@ def _key(document):
     return key
 
 
+def _coverless_public_search_observation(observation):
+    """Only the explicit Search v2 thumbnail omission, not generic partial data."""
+    key = observation.key
+    if (key.visibility != "public" or key.branch_id != "search.public.catalogue"
+            or observation.parser_id != "core.search.public-cover"
+            or observation.parser_version != "2" or observation.status != "partial"):
+        return False
+    result = observation.fields_copy().get("search_result")
+    return (type(result) is dict
+            and set(result) in ({"thumbnail_url", "public_bibliography"},
+                               {"thumbnail_url", "public_bibliography", "public_web_references"})
+            and result["thumbnail_url"] is None
+            and type(result["public_bibliography"]) is dict)
+
+
 def _source_state(db, document):
     key = _key(document)
     raw, source, fence = _checked_source_state(db, document, key)
-    if (source is None or source.observation.key.visibility != "public"
-            or source.observation.status != "complete"):
+    if source is None or source.observation.key.visibility != "public":
         return None, None
+    if source.observation.status != "complete":
+        if (not _coverless_public_search_observation(source.observation)
+                or source.attribute.field_path != ("search_result", "thumbnail_url")
+                or source.attribute.state != "pending" or source.attribute.candidates
+                or json.loads(raw[0]).get("cover_inventory_complete") is not True):
+            return None, None
+        # Reuse the durable bibliographic decoder and exact coordinates.
+        # This exception is for a real C source, never a generic partial parser.
+        from .notice_c_public_search import _public_observation
+        hit = _public_observation(raw[0], key_string=key,
+                                  now=source.observation.observed_at)
+        if hit is None or hit.document != document:
+            return None, None
     # Include the watermark and eviction fence, not only the visible epoch.
     state = json.dumps([_hash(raw[0].encode("utf-8")), fence],
                        ensure_ascii=True, sort_keys=True, separators=(",", ":"))

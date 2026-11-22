@@ -140,6 +140,9 @@ def test_private_source_keeps_only_opaque_provenance_no_image_session_url(tmp_pa
             db, "paris", "https://private.example.org/cover.jpg",
             identity="john",
         )
+        assert private.attribute.candidates
+        assert is_notice_cover_document(private.document)
+        assert cached_notice_cover_snapshot(NS(storage=db), private.document) is None
         aggregate = persist_consolidated_cover_source(
             db, canonical_edition_id=EDITION, source=private,
             relation_proof_id="strong:private:provider",
@@ -293,3 +296,115 @@ def test_canonical_writer_keeps_legacy_unfenced_source_compatibility(tmp_path):
         )
         assert result.candidates[0].url == "https://covers.example.org/bnf.jpg"
         assert read_consolidated_notice_cover(db, result.document) == result
+
+
+@pytest.mark.parametrize("mode", ("chain", "401", "403", "429", "503", "redirect", "bad-bytes"))
+def test_canonical_http_fallback_requires_exact_definitive_absence(tmp_path, monkeypatch, mode):
+    import httpx
+    from cifereca.gui import cover_loader
+    from tests.test_core_p0_2435_cover_cache_baseline import PNG
+
+    monkeypatch.setattr(cover_loader, "cache_dir", lambda: tmp_path / "cache")
+    db = Storage(tmp_path / "fallback.sqlite")
+    addresses = {name: f"https://covers.example.org/{name}.jpg"
+                 for name in ("bnf", "kobo", "paris")}
+    for name in addresses:
+        aggregate = _join(db, name, addresses[name])
+    snapshot = cached_notice_cover_snapshot(NS(storage=db), aggregate.document)
+    assert snapshot.snapshot_complete
+    entered, release = Event(), Event()
+    calls = []
+
+    def respond(request):
+        url = str(request.url)
+        calls.append(url)
+        assert request.method == "GET"
+        if url == addresses["bnf"]:
+            entered.set()
+            assert release.wait(5)
+            if mode == "chain":
+                return httpx.Response(404, request=request)
+            if mode == "redirect":
+                return httpx.Response(302, request=request, headers={"location": "/moved.jpg"})
+            if mode == "bad-bytes":
+                return httpx.Response(200, request=request, content=b"not an image")
+            return httpx.Response(int(mode), request=request)
+        if url.endswith("/moved.jpg"):
+            return httpx.Response(404, request=request)
+        if url == addresses["kobo"]:
+            assert mode == "chain"
+            return httpx.Response(410, request=request)
+        assert url == addresses["paris"] and mode == "chain"
+        return httpx.Response(200, request=request, content=PNG,
+                              headers={"content-type": "image/png"})
+
+    loader = CoverLoader(max_workers=2)
+    old = loader.client
+    loader.client = httpx.Client(transport=httpx.MockTransport(respond),
+                                 follow_redirects=True, trust_env=False)
+    old.close()
+    clock = [100.]
+    service = DocumentCoverService(loader, clock=lambda: clock[0])
+    service.register(snapshot)
+    list_changed, detail_changed, seen = Event(), Event(), Event()
+    outcomes = []
+    try:
+        listing = service.get_cover(aggregate.document, "list", lambda path: outcomes.append(path),
+                                    on_source_changed=list_changed.set)
+        assert entered.wait(5)
+
+        def first_detail(path):
+            outcomes.append(path)
+            seen.set()
+
+        detail = service.get_cover(aggregate.document, "detail", first_detail,
+                                   on_source_changed=detail_changed.set)
+        assert listing.source_uri == detail.source_uri == addresses["bnf"]
+        release.set()
+        if mode != "chain":
+            assert seen.wait(5)
+            loader._queue.join()
+            assert not list_changed.is_set() and not detail_changed.is_set()
+            assert listing.still_current and detail.still_current
+            assert service.decisions.peek(aggregate.document, revision=aggregate.epoch).uri == addresses["bnf"]
+            assert calls == ([addresses["bnf"], "https://covers.example.org/moved.jpg"]
+                             if mode == "redirect" else [addresses["bnf"]])
+            assert loader.definitive_http_missing_ttl(addresses["bnf"]) == 0
+        else:
+            # Both variants are notified although one N3 callback may arrive
+            # after the other invalidates their original N2 token.
+            assert list_changed.wait(5) and detail_changed.wait(5)
+            assert not listing.still_current and not detail.still_current
+            assert calls == [addresses["bnf"]]
+            changed = Event()
+            alternative = service.get_cover(aggregate.document, "detail", outcomes.append,
+                                            on_source_changed=changed.set)
+            assert alternative.source_uri == addresses["kobo"]
+            assert changed.wait(5)
+            assert not alternative.still_current
+            painted = Event()
+            media = []
+            final = service.get_cover(
+                aggregate.document, "detail",
+                lambda path: (media.append(path), painted.set()),
+            )
+            assert final.source_uri == addresses["paris"]
+            assert painted.wait(5) and final.still_current
+            assert media[0].read_bytes() == PNG
+            assert calls == list(addresses.values())
+            assert all(value is None for value in outcomes)
+            assert loader.definitive_http_missing_ttl(addresses["bnf"]) > 0
+            # A lease is a temporary decision only; original C and source
+            # inventory stay intact, even after N3 failures.
+            assert read_consolidated_notice_cover(db, aggregate.document) == aggregate
+            clock[0] += 61
+            original = service.get_cover(aggregate.document, "detail", outcomes.append)
+            assert original.source_uri == addresses["bnf"]
+            assert not final.still_current
+            assert calls == list(addresses.values())
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        release.set()
+        service.close()
+        loader.close()
+        db.close()

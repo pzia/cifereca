@@ -105,13 +105,27 @@ def make_port(session, family, implementation):
     )
 
 
-@pytest.mark.parametrize("mode", ("unchanged", "upgrade", "expired"))
+@pytest.mark.parametrize("mode", ("unchanged", "upgrade", "expired",
+                                  "coverless-unchanged", "coverless-upgrade",
+                                  "coverless-recover", "reject-downgrade"))
 def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monkeypatch, mode):
     session, client, cache_clock, calls, body = make_session(monkeypatch)
     db = Storage(tmp_path / "reparse.sqlite")
     tasks = TaskBrokerImpl(object(), max_workers=1, shared_admission=
                            SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
     try:
+        coverless = mode.startswith("coverless-")
+        upgrade = mode in ("upgrade", "coverless-upgrade", "coverless-recover")
+        real_parse = client.parse_public_search
+
+        def original_parse(text, url):
+            page = real_parse(text, url)
+            if coverless:
+                return replace(page, items=tuple(
+                    replace(row, thumbnail_url=None) for row in page.items))
+            return page
+
+        monkeypatch.setattr(client, "parse_public_search", original_parse)
         response, token = session._search_response_with_retained_input("loup", "catalog")
         assert token is not None and len(calls) == 1
         rows = search_orchestration._public_rows_from_response(response, session)
@@ -125,6 +139,8 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
             db, observation, field_path=("search_result", "thumbnail_url"),
             cover_inventory_complete=True,
         )
+        assert observation.status == ("partial" if coverless else "complete")
+        assert original.attribute.state == ("pending" if coverless else "available")
         canonical = persist_exact_public_search_cover(db, original)
         assert public_replay_same_call_observation(response, session, original) == observation
         with pytest.raises(UnavailableNoticeWork, match="original_response_changed"):
@@ -144,7 +160,7 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
                 now=100, ttl_seconds=ttl, producer_token=held.token,
             )
             implementation = held.parser_implementation_digest
-            if mode == "upgrade":
+            if upgrade or mode == "reject-downgrade":
                 # Emulate a new parser implementation using the SAME recorded
                 # input. First execute the actual parser, then model the one
                 # intended field correction; no fabricated source witness.
@@ -155,12 +171,12 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
             )
 
         parses = []
-        real_parse = client.parse_public_search
-
         def counted(text, url):
             parses.append(sha256(text.encode("utf-8")).hexdigest())
-            page = real_parse(text, url)
-            if mode == "upgrade":
+            page = real_parse(text, url) if mode == "coverless-recover" else original_parse(text, url)
+            if mode == "reject-downgrade":
+                return replace(page, items=(replace(page.items[0], thumbnail_url=None),))
+            if upgrade:
                 return replace(page, items=(replace(page.items[0], title=CORRECTED),))
             return page
 
@@ -175,11 +191,11 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         if mode == "expired":
             cache_clock[0] += 61.
         handle, = pump.tick().handles
-        assert handle.result(timeout=10) == ("error" if mode == "expired" else "current")
-        expected = "error" if mode == "expired" else "current"
+        expected = "error" if mode in ("expired", "reject-downgrade") else "current"
+        assert handle.result(timeout=10) == expected
         assert journal.read_job(db, ref).state == expected
 
-        if mode == "upgrade":
+        if upgrade:
             deadline = monotonic() + 10
             while monotonic() < deadline:
                 step = pump.tick()
@@ -195,6 +211,7 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
             corrected = read_notice_cover(db, original.document)
             assert corrected.epoch == original.epoch + 1
             assert corrected.observation.observed_at == original.observation.observed_at
+            assert corrected.attribute.state == ("pending" if mode == "coverless-upgrade" else "available")
             assert events == [(canonical.document, latest.epoch)]
         else:
             assert read_notice_cover(db, original.document) == original

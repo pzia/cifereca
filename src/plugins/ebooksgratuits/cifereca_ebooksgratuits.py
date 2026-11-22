@@ -100,14 +100,33 @@ DESCRIPTOR=ProviderDescriptor(
            'Le catalogue Calibre inclut aussi des livres partenaires.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
-    def __init__(self, base_url=BASE):
+    def __init__(self, base_url=BASE, *, documentary=False):
         super().__init__(convert_charrefs=True); self.base_url=str(base_url); self.cards=[]; self._depth=0; self._card=None; self._capture=None; self._ignored=0
+        self.documentary = documentary
+        self._doc_stack = []
+
     @staticmethod
     def _attrs(attrs): return {str(k).lower():str(v or '') for k,v in attrs}
     def handle_starttag(self,tag,attrs):
         tag=tag.lower(); a=self._attrs(attrs)
+        hidden = False
+        if self.documentary:
+            if len(self._doc_stack) >= 128:
+                raise ProviderError("Ebooks libres et gratuits : catalogue_html_depth")
+            hidden = (tag in {"script", "style", "template", "noscript"}
+                      or "hidden" in a or a.get("aria-hidden", "").casefold() == "true"
+                      or re.search(r"(?i)(?:display\s*:\s*none|visibility\s*:\s*hidden)", a.get("style", "")) is not None
+                      or len(a) != len(attrs)
+                      or any(flag for _, flag in self._doc_stack))
+            if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                           "link", "meta", "param", "source", "track", "wbr"}:
+                self._doc_stack.append((tag, hidden))
+            if self._card is not None and (hidden or tag == "li"):
+                self._card["_doc_bad"] = True
         if tag=='li':
             if self._depth==0: self._card={'title':[],'author':[],'description':[],'detail':'','epub':'','image':'','_plain':[],'_plain_size':0}
+            if self.documentary and self._depth == 0:
+                self._card["_doc_bad"] = hidden
             self._depth+=1; return
         if not self._card: return
         # Script/style/template text is not visible catalogue evidence.
@@ -118,6 +137,11 @@ class Parser(HTMLParser):
             low=href.casefold()
             if 'details.php' in low:
                 verified=_safe_catalog_link(self.base_url,href,'detail')
+                if self.documentary:
+                    if (verified is None or not re.fullmatch(
+                            r"https://www\.ebooksgratuits\.com/details\.php\?book=[1-9][0-9]{0,15}", verified)
+                            or (self._card['detail'] and self._card['detail'] != verified)):
+                        self._card["_doc_bad"] = True
                 if verified: self._card['detail']=verified
             if 'newsendbook.php' in low or low.endswith('.epub'):
                 verified=_safe_catalog_link(self.base_url,href,'epub')
@@ -140,6 +164,11 @@ class Parser(HTMLParser):
             self._card['_plain_size']+=len(kept)
     def handle_endtag(self,tag):
         tag=tag.lower()
+        if self.documentary:
+            for i in range(len(self._doc_stack)-1, -1, -1):
+                if self._doc_stack[i][0] == tag:
+                    del self._doc_stack[i:]
+                    break
         if tag in {'script','style','template'} and self._ignored: self._ignored-=1
         if tag in {'span','div','p'}: self._capture=None
         if tag=='li' and self._depth:
@@ -153,9 +182,11 @@ class Parser(HTMLParser):
                      for k,v in card.items() if not k.startswith('_')}
                 row['ebook_release_date']=_ebook_release_evidence(plain)
                 row['territorial_rights_warning']=_rights_warning_attested(plain)
-                if row['detail'] and row['epub'] and row['title']: self.cards.append(row)
+                if (row['detail'] and row['epub'] and row['title']
+                        and not (self.documentary and card.get("_doc_bad"))):
+                    self.cards.append(row)
     def rows(self,text):
-        self.cards=[]; self._depth=0; self._card=None; self._capture=None; self._ignored=0; self.feed(text); self.close(); return list(self.cards)
+        self.cards=[]; self._depth=0; self._card=None; self._capture=None; self._ignored=0; self._doc_stack=[]; self.feed(text); self.close(); return list(self.cards)
 class FilterParser(HTMLParser):
     """Extract public search select options without executing page scripts."""
     def __init__(self):
@@ -396,11 +427,13 @@ class EbooksSession(ProviderSession):
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
     def search_with_response_facets(self, query, scope='all', *, field='all', content_types=()):
-        """Declare only anonymous, exact OPDS occurrences; not delivery offers."""
+        """Declare exact anonymous catalogue occurrences, never delivery offers."""
+        html_backend = self.acquisition_backend == "html" and self.base_url == BASE
+        opds_backend = self.acquisition_backend == "opds" and self.opds_feed_url == OPDS_FEED
         if not (self.connected and self.credential_id == "__public__"
                 and type(self.credentials) is dict and not self.credentials
                 and type(self._accounts) is list and not self._accounts
-                and self.acquisition_backend == "opds" and self.opds_feed_url == OPDS_FEED):
+                and (html_backend or opds_backend)):
             return ProviderSearchResponse([], partial=True, catalogue_complete=False)
         if (type(content_types) not in (tuple, list, set, frozenset)
                 or any(type(value) is not str or not 0 < len(value) <= 80 for value in content_types)):
@@ -410,6 +443,17 @@ class EbooksSession(ProviderSession):
         if requested and not requested & supported:
             self.last_search_warnings = ["partial_results : format non qualifié"]
             return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        if html_backend:
+            # Only the already qualified title form/list route. The optional
+            # HTML facet selectors do not yet have documentary receipts.
+            if field not in ("all", "title"):
+                return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+            rows = self.search(query, "all" if scope == "catalog" else scope,
+                               page=0, field=field, _documentary=True)
+            return ProviderSearchResponse(
+                rows, partial=True, catalogue_complete=False,
+                public_notices=tuple(PublicSearchNotice(row) for row in rows),
+            )
         rows = _opds_search(self, query, scope="all" if scope == "catalog" else scope,
                             page=0, field=field, documentary=True)
         if requested - supported:
@@ -419,7 +463,7 @@ class EbooksSession(ProviderSession):
             public_notices=tuple(PublicSearchNotice(row) for row in rows),
         )
 
-    def search(self,query,scope='all',page=0,field='all'):
+    def search(self,query,scope='all',page=0,field='all', *, _documentary=False):
         self.last_search_warnings = []
         query = _validated_public_query(query)
         if self.acquisition_backend == 'opds':
@@ -492,8 +536,18 @@ class EbooksSession(ProviderSession):
                 r=self._fetch(self.base_url+'ebooks.php')
         else:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
+        if _documentary and (self.base_url != BASE or self.credential_id != "__public__"
+                or self.credentials or self._accounts or r.history
+                or str(r.url) != BASE + "ebooks.php"
+                or len(r.content) > 2 * 1024 * 1024
+                or "cookie" in r.request.headers or "authorization" in r.request.headers):
+            return []
         out=[]
-        for card in Parser(self.base_url).rows(r.text):
+        cards = Parser(self.base_url, documentary=_documentary).rows(r.text)
+        duplicate_ids = Counter(card["detail"] for card in cards) if _documentary else {}
+        for card in cards:
+            if _documentary and duplicate_ids.get(card["detail"]) != 1:
+                continue
             detail=card['detail']; epub=card['epub']; rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             metadata={'license_note':'Vérifier les droits selon le pays',**attested_metadata}
             if card.get('ebook_release_date'):
@@ -504,6 +558,15 @@ class EbooksSession(ProviderSession):
                 metadata['territorial_rights_evidence']='ebooksgratuits.catalogue.warning'
                 metadata['license_note']='Attention : téléchargement non autorisé dans certains pays ; vérifier les droits locaux'
             out.append(SearchResult(id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',medium='digital',title=card['title'],author=card['author'] or None,type='Livre numérique',format='EPUB',publisher='Ebooks libres et gratuits',published_at=None,description=card['description'] or None,thumbnail_url=card['image'] or None,friendly_url=detail,scenario='EBOOKSGRATUITS_CATALOG',source_provider='ebooksgratuits',source_credential=self.credential_id,download_url=epub,content_type='ebook',source_collection='public',owned=False,downloadable=True,metadata=metadata))
+        if _documentary:
+            out = [
+                replace(row, source_collection="public_catalog",
+                        thumbnail_url=None,  # HTML image identity not yet qualified
+                        owned=False, downloadable=False, download_url=None,
+                        metadata={"public_url_evidence":
+                                  "ebooksgratuits.public_search_record_query"})
+                for row in out
+            ]
         return out[:self.page_size]
     def _search_opds(self,query,scope='all',page=0,field='all'):
         return _opds_search(self,query,scope=scope,page=page,field=field)

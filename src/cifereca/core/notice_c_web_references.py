@@ -51,7 +51,7 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
                 or type(item["evidence"]) is not str
                 or not _is_public_web_evidence(item["evidence"], provider_id)
                 or _public_catalog_url(item["url"], evidence=item["evidence"],
-                                       provider_id=provider_id) != item["url"]
+                                       provider_id=provider_id, record_id=record_id) != item["url"]
                 or item["url"] in seen):
             raise ValueError("invalid_public_web_references")
         seen.add(item["url"])

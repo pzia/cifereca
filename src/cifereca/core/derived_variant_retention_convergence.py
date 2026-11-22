@@ -12,7 +12,7 @@ from time import monotonic
 
 from .derived_variant_journal import (
     _read_logical_receipt,
-    DerivedJournalConflict, _COMMITTED, _decode, _measure, _receipt_digest,
+    DerivedJournalConflict, _COMMITTED, _decode, _digest, _measure, _receipt_digest,
 )
 from .derived_variant_publication import DerivedPublicationConflict
 from .derived_variant_retention_review import (
@@ -45,7 +45,7 @@ def _report(status, *, total=0, checked=0, counts=None):
     }
 
 
-def _snapshot(storage, identity_id):
+def _snapshot(storage, identity_id, *, exact_digest=None):
     """One bounded SQL snapshot of all journal coordinates plus owner verdicts."""
     with storage._lock:
         db = storage._connect()
@@ -63,7 +63,9 @@ def _snapshot(storage, identity_id):
                 _index_receipt_references(paths, inodes, key, intent)
             owned = []
             for key, digest, intent in records:
-                if not key.startswith(_COMMITTED) or intent.identity_id != identity_id:
+                if (not key.startswith(_COMMITTED) or intent.identity_id != identity_id
+                        or (exact_digest is not None and
+                            (key != _COMMITTED + exact_digest or digest != exact_digest))):
                     continue
                 try:
                     _canonical(storage, db, intent)
@@ -93,6 +95,28 @@ def _snapshot(storage, identity_id):
 
 def review_converged_derived_retention(storage, *, library_root, identity_id,
                                        explicitly_requested=False):
+    return _review_converged(storage, library_root=library_root, identity_id=identity_id,
+                             explicitly_requested=explicitly_requested)
+
+
+def review_exact_derived_retention(storage, *, library_root, identity_id,
+                                   receipt_sha256, explicitly_requested=False):
+    """Private exact-receipt review, including receipts beyond the overview.
+
+    Match a digest previously selected by Core against the installation-wide
+    journal, then scan ALL known SQL consumers and the same bounded library
+    tree before observing the bytes. This is a diagnostic, not a capability
+    to retire or publish paths. No raw digest or coordinates leave Core.
+    """
+    if not _digest(receipt_sha256):
+        return _report("unavailable")
+    return _review_converged(storage, library_root=library_root, identity_id=identity_id,
+                             explicitly_requested=explicitly_requested,
+                             exact_digest=receipt_sha256)
+
+
+def _review_converged(storage, *, library_root, identity_id,
+                       explicitly_requested, exact_digest=None):
     """Correlate the SAME receipt's SQL and physical evidence; never join counts.
 
     First four committed rows, max 1 GiB of attested input/output hashed,
@@ -113,8 +137,16 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
         deadline = monotonic() + _SECONDS
         root_fd = _open_root(library_root)
         stamp = _directory_stamp(root_fd)
-        snapshot = _snapshot(storage, identity_id)
+        def snapshot_now():
+            # Keep the overview's historical call contract; exact mode
+            # always binds the same receipt in every recheck.
+            return (_snapshot(storage, identity_id) if exact_digest is None else
+                    _snapshot(storage, identity_id, exact_digest=exact_digest))
+
+        snapshot = snapshot_now()
         directory, _journal, owned = snapshot
+        if exact_digest is not None and len(owned) != 1:
+            return _report("unavailable")
         profile = library_root / directory
         counts = dict.fromkeys(_CATEGORIES, 0)
         checked = budget = 0
@@ -133,7 +165,7 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
             nonlocal invalidated, incomplete
             if invalidated or incomplete:
                 return False
-            if _snapshot(storage, identity_id) != snapshot:
+            if snapshot_now() != snapshot:
                 invalidated = True
                 return False
             fd = _open_root(library_root)

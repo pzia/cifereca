@@ -122,3 +122,46 @@ def test_other_source_never_reads_file(store, tmp_path, monkeypatch):
     report = _review(store, other, root, verify_local_bytes=True)
     assert report["publication"]["source_reference_record"] == "not_recorded"
     assert report["local_bytes"]["selection"] == "canonical_candidate_unavailable"
+
+
+@pytest.mark.parametrize("reader", ["inventory", "publication", "candidate", "physical", "combined"])
+def test_readers_never_settle_a_caller_transaction(store, tmp_path, reader):
+    from cifereca.core.adept_historical_inventory_join import review_legacy_adept_inventory
+    from cifereca.core.adept_historical_publication_review import review_legacy_adept_publication
+    from cifereca.core.adept_historical_evidence import review_historical_adept_evidence
+
+    source, root, path, result = _setup(store, tmp_path)
+    sql = store._connect()
+    sql.execute("BEGIN IMMEDIATE")
+    sql.execute("INSERT INTO metadata(key,value) VALUES('caller.historical.test','pending')")
+    try:
+        if reader == "inventory":
+            verdict = review_legacy_adept_inventory(
+                store, source=source, inventory_profile_id="historical-adobe",
+                inventory_complete=True, inventory_loans=[])
+            assert verdict["recorded_binding"] == "ledger_unverified"
+        elif reader == "publication":
+            verdict = review_legacy_adept_publication(store, source=source)
+            assert verdict["source_reference_record"] == "storage_unverified"
+        elif reader == "candidate":
+            with pytest.raises(RuntimeError, match="adept_historical_nested_transaction"):
+                diagnostic._candidate(store, source)
+        elif reader == "physical":
+            verdict = review_historical_adept_evidence(
+                store, source=source, library_root=root, placement_id=result.placement_id,
+                adept_receipt_ref="opaque-receipt")
+            assert verdict["adept_origin"] == "unverified"
+            assert verdict["placement_evidence"] == "not_checked"
+        else:
+            verdict = _review(store, source, root, verify_local_bytes=True)
+            assert verdict["inventory"]["recorded_binding"] == "ledger_unverified"
+            assert verdict["publication"]["source_reference_record"] == "storage_unverified"
+            assert verdict["local_bytes"]["evidence"] is None and not verdict["may_reacquire"]
+        assert sql.in_transaction
+        assert sql.execute("SELECT value FROM metadata WHERE key='caller.historical.test'").fetchone() == ("pending",)
+        assert path.read_bytes() == BYTES
+    finally:
+        if sql.in_transaction:
+            sql.rollback()
+    assert store.metadata_get("caller.historical.test") is None
+    assert _review(store, source, root, verify_local_bytes=True)["local_bytes"]["evidence"]["placement_evidence"] == "verified_artifact_bytes"

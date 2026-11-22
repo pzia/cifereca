@@ -162,7 +162,8 @@ def test_unqualified_occurrence_is_partial(entries):
     {"credential": "private"},
     {"credentials": {"secret": "fixture"}},
     {"options": {"opds_feed_url": "https://example.invalid/index.php/feed"}},
-    {"options": {"acquisition_backend": "html"}},
+    {"credential": "private", "options": {"acquisition_backend": "html"}},
+    {"options": {"acquisition_backend": "html", "base_url": "https://example.invalid/"}},
 ])
 def test_nonanonymous_or_custom_backend_does_not_query(kwargs):
     session, calls = make_session(**kwargs)
