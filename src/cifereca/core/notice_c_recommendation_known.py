@@ -317,4 +317,21 @@ def known_public_c_primary_hit(item: object):
                     item.revision_id, item.title, item.author, item.publisher,
                     item.published_at, item.format, item.description)):
         return None
+    # The SearchResult DTO is sealed by _snapshot, but the private
+    # PublicNoticeCHit referenced by the receipt is a frozen dataclass that
+    # can still be mutated through object.__setattr__. A valid *different*
+    # classification, series or age must not silently acquire this edition's
+    # primary provenance without changing any displayed scalar field.
+    projected = _series_metadata(hit)
+    reserved = {
+        "notice_c_known", "notice_c_stale", "notice_c_query_status",
+        "notice_c_cover_state", "notice_c_epoch",
+        "notice_c_source_alternatives",
+    }
+    visible_facts = {key: value for key, value in item.metadata.items()
+                     if key not in reserved}
+    if (item.metadata.get("notice_c_stale") is not hit.stale
+            or item.metadata.get("notice_c_cover_state") != hit.cover_state
+            or visible_facts != projected):
+        return None
     return hit
