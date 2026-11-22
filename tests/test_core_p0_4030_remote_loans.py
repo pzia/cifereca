@@ -265,3 +265,45 @@ def test_remote_loan_evidence_priority_preserves_ties_and_window_limit(
     assert [item.loan_id for item in limited] == ["exact-a", "exact-b"]
     assert truncated
     assert not calls and rows(service.storage) == before and path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("coordinate", ["id", "record_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_remote_loan_result_suppresses_spoofed_occurrence_coordinates(
+    case, coordinate, spoof,
+):
+    service, request, account, session, path, calls, choice, observed = case
+    forged = replace(
+        observed, id="other-loan",
+        **{coordinate: ("other-loan" if coordinate == "id" else "other-edition")
+           + spoof + "FORGED"},
+    )
+    snapshot = LoanInventorySnapshot(
+        LoanInventoryScope.for_account(account), (forged, observed),
+        status="success",
+    )
+    before, raw = rows(service.storage), path.read_bytes()
+    matches, truncated = remote._matches(
+        snapshot, choice, "Roman commun", ("Autrice",),
+    )
+    assert [row.loan_id for row in matches] == ["fresh-loan"]
+    assert not truncated and not calls
+    assert rows(service.storage) == before and path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_remote_account_discovery_does_not_bind_spoofed_scope(
+    case, monkeypatch, spoof,
+):
+    service, request, account, session, path, calls, choice, observed = case
+    malformed = replace(account, unique_id=account.unique_id + spoof + "FORGED")
+    service.accounts[:] = [malformed]
+    session.accounts[:] = [malformed]
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Non-displayable account is ineligible before session binding")
+    monkeypatch.setattr(remote, "_binding", forbidden)
+    before, contents = rows(service.storage), path.read_bytes()
+    assert remote.available_remote_loan_catalogues(
+        service, request, evidence=choice.evidence,
+    ) == ()
+    assert not calls and rows(service.storage) == before and path.read_bytes() == contents
