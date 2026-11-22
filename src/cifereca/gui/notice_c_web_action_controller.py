@@ -169,7 +169,12 @@ def _web_choice_labels(core, choices):
                 else provider
             )
         label = choice.label
-        if label.startswith(provider):
+        # A provider name may prefix an unrelated human-readable label
+        # (e.g. "paris" and "parisian"). Only rewrite a whole provider
+        # component, never the beginning of a different name.
+        if label == provider or (label.startswith(provider)
+                                 and label[len(provider):len(provider) + 1]
+                                 in {" ", "·", "(", ":"}):
             label = names[provider] + label[len(provider):]
         labels.append(label)
     counts = Counter(labels)
