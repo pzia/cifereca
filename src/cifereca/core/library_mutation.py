@@ -15,7 +15,7 @@ from ..library_files import sha256_file
 from ..models import Loan
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
-from .derived_variant_region_paths import private_derived_path
+from .derived_variant_region_paths import private_derived_path, PRIVATE_DERIVED_REGION
 
 
 def _open_owned_transfer_file(path: Path, owner_root: Path) -> int:
@@ -81,6 +81,32 @@ def _owned_transfer_digest(path: Path, owner_root: Path):
         return sha.hexdigest(), initial
 
 
+def _bundle_transfer_exclusion(root: Path) -> str | None:
+    """Review bundle names without descending into Core-owned derived stages.
+
+    Neither the bundle donor nor an existing recipient copy may be treated as
+    ordinary stock if a reserved region is nested in its tree. This is a
+    read-only veto: no stage member is opened, hashed, copied or removed.
+    """
+    def unavailable(error):
+        raise OSError("bundle_walk_incomplete") from error
+
+    if not root.is_dir() or root.is_symlink():
+        return "unavailable"
+    observed_root = False
+    for current, directories, files in os.walk(
+            root, topdown=True, onerror=unavailable, followlinks=False):
+        observed_root = True
+        # Refuse by the exact reserved component BEFORE os.walk can scandir
+        # it. Lookalike ordinary names must not be excluded.
+        if PRIVATE_DERIVED_REGION in directories or PRIVATE_DERIVED_REGION in files:
+            return "private"
+        if any((Path(current) / name).is_symlink()
+               for name in (*directories, *files)):
+            return "symlink"
+    return None if observed_root else "unavailable"
+
+
 def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
     """Explicit A→B send, serialized with the canonical acquisition lock."""
     from ..locking import InterProcessLock
@@ -143,12 +169,18 @@ def _materialize_to_identity_locked(
         raise ProviderConfigurationError("Artifact source introuvable")
     is_bundle = src.is_dir()
     if is_bundle:
-        # copytree follows symlinks by default: reject them, including links
-        # hidden in a playlist/manifest subdirectory.
-        if any(private_derived_path(path) for path in src.rglob("*")):
+        # Check all ordinary members, but never enumerate Core's reserved
+        # staging subtree. copytree would otherwise follow internal symlinks.
+        try:
+            exclusion = _bundle_transfer_exclusion(src)
+        except OSError as exc:
+            raise ProviderConfigurationError("Bundle source invalide") from exc
+        if exclusion == "private":
             raise ProviderConfigurationError("Zone privée de publication dérivée : envoi interdit")
-        if any(path.is_symlink() for path in src.rglob("*")):
+        if exclusion == "symlink":
             raise ProviderConfigurationError("Lien symbolique interdit dans le bundle")
+        if exclusion is not None:
+            raise ProviderConfigurationError("Bundle source invalide")
         try:
             source_bundle = load_bundle_manifest(src, verify=True)
         except BundleError as exc:
@@ -294,7 +326,10 @@ def _materialize_to_identity_locked(
         if private_derived_path(path) or path.is_symlink() or path.resolve() != path or not accepted:
             return False
         if is_bundle:
-            if not path.is_dir() or any(p.is_symlink() or private_derived_path(p) for p in path.rglob("*")):
+            try:
+                if _bundle_transfer_exclusion(path) is not None:
+                    return False
+            except OSError:
                 return False
             try:
                 return (load_bundle_manifest(path, verify=True).bundle_sha256
