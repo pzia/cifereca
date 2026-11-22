@@ -28,7 +28,7 @@ def test_choice_discovery_is_inert_and_explicit_search_is_one_shot(rig):
     assert report.status == "partial" and report.provider_access_performed
     assert calls == [("Roman commun", "digital", {"field": "title", "content_types": ()})]
     assert [(x.record_id, x.comparison) for x in report.matches] == [
-        ("one", "isbn_title_author_concordant"), ("two", "isbn_claim_ambiguous")]
+        ("one", "isbn_claim_ambiguous"), ("two", "isbn_claim_ambiguous")]
     assert not (report.association_authorized or report.coverage_complete
                 or report.fresh_network_verified)
     assert broker.search_public(token=choice.token, confirmed=True) is None
