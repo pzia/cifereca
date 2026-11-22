@@ -383,3 +383,29 @@ def test_historical_committed_receipt_keeps_target_reserved_even_without_placeme
         assert journal.summarize_derived_journal(db)["count"] == 2
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("hidden", ["\x85", "\u202e", "\u2028", "\u200d", "\ud800"])
+@pytest.mark.parametrize("field", ["transformer_id", "options_fingerprint", "candidate_path"])
+def test_invisible_unicode_receipt_coordinate_is_rejected_without_reservation(
+    tmp_path, hidden, field,
+):
+    service, intent = _fixture(tmp_path)
+    storage = service.storage
+    try:
+        baseline = journal.summarize_derived_journal(storage)
+        initial = len(storage.placements())
+        if field == "candidate_path":
+            value = str(Path(intent.candidate_path).with_name("variant" + hidden + ".epub"))
+        elif field == "options_fingerprint":
+            value = "option" + hidden + "fingerprint"
+        else:
+            value = "transformer" + hidden + "test"
+        changed = replace(intent, **{field: value})
+        with pytest.raises(journal.DerivedJournalConflict, match="invalid_intent"):
+            journal.reserve_derived_intent(storage, changed)
+        assert journal.summarize_derived_journal(storage) == baseline
+        assert len(storage.placements()) == initial
+        assert not storage.artifact_variants()
+    finally:
+        storage.close()
