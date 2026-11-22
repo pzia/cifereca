@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from threading import Lock
 
-from ..core.borrow_for_identity_discovery import possible_lender_matches
+from ..core.borrow_for_identity_discovery import (
+    possible_lender_matches, possible_lender_session_matches,
+)
 
 
 def present_normal_lender_choice(panel, *, item, rows, current, service,
@@ -12,11 +14,16 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     """Choose among multiple candidates, then require explicit confirmation."""
     window = panel.window
     execute = getattr(service, "execute_normal_lender_borrow_for_current_identity", None)
+
+    def lender_current(row):
+        return (possible_lender_matches(
+            row, item, requesting_identity_id=identity_id,
+        ) and (row._session is None or possible_lender_session_matches(
+            row, row._session,
+        )))
     if (not callable(execute) or not current()
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
-            or any(not possible_lender_matches(
-                row, item, requesting_identity_id=identity_id,
-            ) for row in rows)
+            or any(not lender_current(row) for row in rows)
             or getattr(window, "_cross_profile_borrow_pending", None) is not None):
         return False
     token = object()
@@ -60,9 +67,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         if not owns("confirm"):
             return
         if (type(response) is not str or response != "borrow" or not dialog_current()
-                or not possible_lender_matches(
-                    candidate, item, requesting_identity_id=identity_id,
-                )):
+                or not lender_current(candidate)):
             release()
             return
         stage = "submitted"
@@ -80,9 +85,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                 dispatched = True
             # No widget reads on the worker. Core revalidates exact candidate,
             # requester object, epochs, lender/session and at-most-once claim.
-            if (not route_current() or not possible_lender_matches(
-                    candidate, item, requesting_identity_id=identity_id,
-                )):
+            if (not route_current() or not lender_current(candidate)):
                 return {"status": "blocked"}
             return execute(
                 captured_candidate=candidate, exact_notice=item,
@@ -127,9 +130,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         nonlocal stage
         if not owns("choose"):
             return False
-        if not dialog_current() or not possible_lender_matches(
-                candidate, item, requesting_identity_id=identity_id,
-        ):
+        if not dialog_current() or not lender_current(candidate):
             release()
             return False
         stage = "confirm"
