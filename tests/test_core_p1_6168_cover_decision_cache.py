@@ -493,7 +493,7 @@ def test_mutated_admitted_n1_decision_cannot_rewrite_n2_evidence():
     assert cache.selected_token(original_scope, revision=3, uri=URL) == producer
     assert cache.selected_token(original_scope, revision=3, uri=ALT) is None
     assert events[-1].decision.uri == URL
-    assert events[-1].decision.scope == scope
+    assert events[-1].decision.scope == original_scope
     assert cache.stats()["scopes"] == 1
 
 
