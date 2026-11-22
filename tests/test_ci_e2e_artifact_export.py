@@ -1266,7 +1266,35 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
                 bad = copy.deepcopy(data)
                 bad["checks"]["P0_3104_retained_private_series_real_gtk_" + phase] = value
                 assert "notice_c_private_series_cold_offline" not in read(bad)
+        assert "notice_c_narrow_six_views_cold_offline" not in read(data)
+        for phase_name in ("cold", "offline"):
+            data["checks"]["P0_3684_narrow_six_views_" + phase_name] = True
+            data["notice_c_narrow_context_" + phase_name] = {
+                route: {"returned": True, "reopened_exact_selection": True,
+                        "native_focus_returned": True, "window_width": 960,
+                        "widget": "PRIVATE"}
+                for route in ("library", "recent", "search", "loans",
+                              "history", "recommendations")
+            }
+        for phase_name in ("cold", "offline"):
+            for bad_value in (False, 1, "PRIVATE", None, {}):
+                bad = copy.deepcopy(data)
+                bad["checks"]["P0_3684_narrow_six_views_" + phase_name] = bad_value
+                assert "notice_c_narrow_six_views_cold_offline" not in read(bad)
+                for key in ("returned", "reopened_exact_selection", "native_focus_returned"):
+                    bad = copy.deepcopy(data)
+                    bad["notice_c_narrow_context_" + phase_name]["library"][key] = bad_value
+                    assert "notice_c_narrow_six_views_cold_offline" not in read(bad)
+            bad = copy.deepcopy(data)
+            del bad["notice_c_narrow_context_" + phase_name]["history"]
+            assert "notice_c_narrow_six_views_cold_offline" not in read(bad)
+            bad = copy.deepcopy(data)
+            bad["notice_c_narrow_context_" + phase_name]["PRIVATE"] = {}
+            assert "notice_c_narrow_six_views_cold_offline" not in read(bad)
         result = read(data)
+        assert result["notice_c_narrow_six_views_cold_offline"] is True
+        assert "notice_c_narrow_context_cold" not in result
+        assert "window_width" not in repr(result)
         assert result["notice_c_private_series_cold_offline"] is True
         assert result["notice_c_catalogue_http_fallback"] is True
         safe = result["notice_c_cover_metrics"]
@@ -1299,6 +1327,7 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
             assert "notice_c_cover_metrics" not in read(bad)
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
         assert "notice_c_private_series_cold_offline" not in read(data)
+        assert "notice_c_narrow_six_views_cold_offline" not in read(data)
         assert "notice_c_cover_metrics" not in read(data)
         assert "notice_c_catalogue_http_fallback" not in read(data)
         for value in ("catalogue_http_fallback", "catalogue_http_fallback_PRIVATE"):
