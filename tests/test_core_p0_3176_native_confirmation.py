@@ -373,3 +373,39 @@ def test_repeat_exact_page_does_not_close_presented_dialog(monkeypatch):
     assert ui._dialog is original and not ui.button.sensitive
     original.respond("cancel")
     assert not runner.queue
+
+
+@pytest.mark.parametrize("late", ["same", "fresh", "invalid"])
+def test_disposed_native_organizer_cannot_remount_from_late_worker_result(monkeypatch, late):
+    Dialog.dialogs = []
+    runner = Runner()
+    runner.deferred = True
+    calls = []
+    monkeypatch.setattr(
+        execution, "admit_native_reviewed_rename",
+        lambda *_args, **_kwargs: calls.append("admission"),
+    )
+    lease = NS(identity_id="A", is_current=lambda: True)
+    window = NS(service=object(), plugin_manager=object(), runner=runner,
+                toast=lambda _message: pytest.fail("disposed view cannot notify"))
+    entry = OrganizerDryRunAdvice("rename", "old.epub", "new.epub", "review_only")
+    page = OrganizerPageAdvice(
+        "private-token", 1, 1, 1, (), 0, 0, False, "partial",
+        dry_run_state="confirmed", dry_run_entries=(entry,),
+    )
+    ui = NativeOrganizerConfirmation(window, object(), lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    prior, = Dialog.dialogs
+    ui.dispose()
+    assert ui._disposed is True
+    next_page = (page if late == "same" else
+                 replace(page, dry_run_entries=(replace(entry, proposed="next.epub"),))
+                 if late == "fresh" else None)
+    ui.observe(next_page)
+    prior.respond("apply")
+    assert not ui.button.visible and not ui.button.sensitive
+    assert ui._page is None and ui._dialog is None
+    assert not ui.open(NS(MessageDialog=Dialog))
+    assert not runner.queue and not calls
+    assert len(Dialog.dialogs) == 1
