@@ -59,6 +59,11 @@ class PossibleBorrowLender:
     _notice: SearchResult = field(repr=False, compare=False)
     supplier_eligibility: Literal["not_verified"] = "not_verified"
     executable: bool = False
+    # A discovery receipt cannot be silently rebound to a replacement
+    # lender session, even if account coordinates and Core epochs agree.
+    # UI-only test descriptors may omit it; Core execution never may.
+    _session: object = field(default=None, repr=False, compare=False)
+    _session_generation: object = field(default=None, repr=False, compare=False)
     # A SearchResult and Account can be mutated in-place after rendering;
     # object identity alone is not an immutable edition/source snapshot.
     _captured_fields: tuple[object, ...] = field(
@@ -118,6 +123,21 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             and _valid_fields(fields)
             and candidate.lender_identity_id == fields[0]
             and candidate._captured_fields == fields)
+
+
+def possible_lender_session_matches(candidate, session):
+    """Worker-only check of the original inert session receipt."""
+    if (type(candidate) is not PossibleBorrowLender
+            or session is None or candidate._session is not session):
+        return False
+    state = _inert_session_state(session)
+    if state is None:
+        return False
+    generation = state.get("_epoch")
+    expected = candidate._session_generation
+    return (type(generation) in (int, str, type(None))
+            and type(expected) is type(generation)
+            and expected == generation)
 
 
 def _unique_lender_account(accounts, provider, credential, requester):
@@ -296,6 +316,7 @@ def discover_possible_borrow_lenders(
             result[route] = PossibleBorrowLender(
                 label=label, lender_identity_id=account.identity_id,
                 _account=account, _notice=item,
+                _session=session, _session_generation=session_generation,
             )
             admitted_sessions[route] = (session, session_generation, descriptor, lender)
         except Exception:
