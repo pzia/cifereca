@@ -25,6 +25,14 @@ def _notice_binding(account: Account, notice: SearchResult):
     A revision change must revoke a displayed selection, but must not mint
     a second borrow claim for the same upstream borrower/record.
     """
+    # Read-only catalogue mirrors are not native lender occurrences.
+    # Keep the same distinction as manual_borrow_contract, including on
+    # the held candidate at click time. No extra eligibility requirement.
+    metadata = notice.metadata
+    if (type(metadata) is not dict
+            or metadata.get("catalogue_access") == "shared_read_only"
+            or metadata.get("search_provenance") == "known_catalog_stale"):
+        return None
     scenario, revision, source_account = (
         notice.scenario, notice.revision_id, notice.source_account_id,
     )
