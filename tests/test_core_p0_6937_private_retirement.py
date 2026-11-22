@@ -255,3 +255,28 @@ def test_isolated_kepub_retirement_requires_text_spine_and_keeps_authority(
         _unchanged(other, intent, quota, digest, data)
     finally:
         other.close()
+
+
+@pytest.mark.parametrize("case", ["revoked", "deadline", "invalid_crc"])
+def test_commit_reader_proof_is_revocable_and_never_unlinks_on_refusal(
+        rig, isolated_fence, monkeypatch, case):
+    db, intent, stage, options = _published(rig)
+    approved = _prepare(db, options)
+    digest = options["receipt_sha256"]
+    trace = db.metadata_get(retire._PREFIX + digest)
+    quota, data = journal.summarize_derived_journal(db), stage.read_bytes()
+    from cifereca.core import derived_variant_retirement_preparation as preparation
+    def inspect(stream, kind, **kwargs):
+        if case == "revoked":
+            monkeypatch.setattr(retire, "_exclusive_consumer_fence_current", lambda *args: False)
+            assert kwargs["cancelled"]()
+        if case == "deadline":
+            monkeypatch.setattr(preparation, "monotonic", lambda: float("inf"))
+            assert kwargs["cancelled"]()
+        return "structure_invalid" if case == "invalid_crc" else "epub_structure_crc_ok"
+    monkeypatch.setattr(preparation, "inspect_stream_structure", inspect)
+    with pytest.raises(journal.DerivedJournalConflict):
+        retire.retire_private_stage(db, **approved)
+    assert db.metadata_get(retire._PREFIX + digest) == trace
+    assert stage.samefile(intent.candidate_path)
+    _unchanged(db, intent, quota, digest, data)

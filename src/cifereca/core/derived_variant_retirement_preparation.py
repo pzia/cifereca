@@ -45,28 +45,30 @@ def _require(ok, code="derived_retirement_preparation_unverified"):
         raise journal.DerivedJournalConflict(code)
 
 
-def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: True):
+def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: True,
+                        max_bytes=None, deadline=None):
     """Pinned, bounded EPUB container and spine readability, not rendering.
 
     PDFs are deliberately not accepted by this tranche: a PDF signature or
     EOF marker is not a reader proof and Core has no qualified PDF reader.
     """
-    deadline = monotonic() + _SECONDS
+    deadline = min(deadline, monotonic() + _SECONDS) if deadline is not None else monotonic() + _SECONDS
+    budget = _MAX_BYTES if max_bytes is None else min(_MAX_BYTES, max_bytes)
 
     def live():
         return still_current() is True and monotonic() < deadline
 
-    _require(type(size) is int and 0 < size <= _MAX_BYTES and live(),
+    _require(type(size) is int and 0 < size <= budget and live(),
              "derived_retirement_reader_unverified")
-    read_budget = _MAX_BYTES - size
+    read_budget = budget - size
     with os.fdopen(os.dup(fd), "rb") as stream:
         _bounded_directory(stream)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             # Bound expansion before any full CRC pass. Reject symlink and
             # ambiguous archive entries; parse XML using the safe shared reader.
-            _require(live() and sum(i.file_size for i in infos) + size <= _MAX_BYTES
-                     and all(i.file_size <= _MAX_BYTES
+            _require(live() and sum(i.file_size for i in infos) + size <= budget
+                     and all(i.file_size <= budget
                              and i.file_size <= 1000 * max(i.compress_size, 1)
                              and not i.flag_bits & 1
                              and (i.external_attr >> 16) & 0o170000 != 0o120000
@@ -89,11 +91,15 @@ def _inspect_epub_final(fd, size, *, media_format="epub", still_current=lambda: 
                 return _xml(data)
 
             container = read_xml("META-INF/container.xml")
-            roots = [n.get("full-path") for n in container.iter()
-                     if n.tag.rsplit("}", 1)[-1] == "rootfile"]
-            _require(len(roots) == 1 and bool(roots[0]), "derived_retirement_reader_unverified")
-            package_name = _member("", roots[0])
-            _require(package_name == roots[0], "derived_retirement_reader_unverified")
+            ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+            roots = container.findall(ocf + "rootfiles/" + ocf + "rootfile")
+            _require(container.tag == ocf + "container" and len(roots) == 1,
+                     "derived_retirement_reader_unverified")
+            root_name = roots[0].get("full-path", "")
+            _require(bool(root_name) and not root_name.startswith("/"),
+                     "derived_retirement_reader_unverified")
+            package_name = _member("", root_name)
+            _require(package_name == root_name, "derived_retirement_reader_unverified")
             package = read_xml(package_name)
             opf = "{http://www.idpf.org/2007/opf}"
             manifests, spines = package.findall(opf + "manifest"), package.findall(opf + "spine")
