@@ -275,3 +275,32 @@ def test_stale_user_declaration_on_same_path_is_not_applied_to_local_artifact(
         assert not report["association_authorized"]
     assert rows(store) == prior
     assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("field", ["inode", "mtime", "ctime"])
+def test_declared_origin_must_match_exact_pinned_file_fingerprint(
+    store, tmp_path, monkeypatch, field,
+):
+    from cifereca.core.library_declared_links import _PREFIX, _json
+
+    root, path, pid, _ = _setup(store, tmp_path)
+    declaration = _record_declaration(store, path)
+    index = {"inode": 1, "mtime": 3, "ctime": 4}[field]
+    declaration["file"]["fingerprint"][index] += 1
+    store.metadata_set(_PREFIX + declaration["relation_id"], _json(declaration))
+    before = rows(store)
+    monkeypatch.setattr(
+        documentary, "suggest_known_public_documents",
+        lambda *_args, **_kwargs: pytest.fail("stale file selection must not reach C"),
+    )
+    ordinary = _request(store, root, pid)
+    assert ordinary["status"] == "excluded"
+    assert ordinary["reason"] == "declared_origin_requires_review"
+
+    confirmed = _request(store, root, pid, include_declared=True)
+    assert confirmed["status"] == "excluded"
+    assert confirmed["reason"] == "declaration_scope_unverified"
+    assert confirmed["suggestions"] is None
+    assert not confirmed["association_authorized"]
+    assert not confirmed["may_write_origin_or_right"]
+    assert rows(store) == before and path.read_bytes() == BYTES
