@@ -111,7 +111,7 @@ def test_sql_schema_consumers_are_never_silently_ignored(committed, case):
     stage = intent.staged_path
     from urllib.parse import quote
     value = (Path(stage).name if case == "trigger_relative"
-             else "file://" + quote(stage, safe="") if case == "trigger_uri"
+             else "file:" + quote(stage, safe="") if case == "trigger_uri"
              else stage)
     literal = "'" + value.replace("'", "''") + "'"
     with db._lock, db._connect() as sql:
