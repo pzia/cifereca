@@ -183,3 +183,39 @@ def test_public_same_isbn_distinct_editions_remain_ambiguous(rig, other_format):
         ("one", "isbn_claim_ambiguous"), ("two", "isbn_claim_ambiguous")]
     assert not result["association_authorized"] and not result["may_write_origin_or_right"]
     assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_public_evidence_ranks_exact_concordance_before_weak_descriptive_hits(rig):
+    """Provider order is not evidence order; a result is still only a notice."""
+    service, session, request, calls, path = rig
+    weak = _row("weak", title="Different work", author="Other",
+                metadata={})
+    descriptive = _row("descriptive", metadata={})
+    exact = _row("exact", metadata={"isbn": "9780306406157"})
+    result_rows = [weak, descriptive, exact]
+    session.search_with_response_facets = lambda *_a, **_kw: ProviderSearchResponse(
+        result_rows, public_notices=tuple(PublicSearchNotice(x) for x in result_rows))
+    before, contents = rows(service.storage), path.read_bytes()
+    result = _run(service, request)
+    assert result["status"] == "partial"
+    assert [(x.record_id, x.comparison) for x in result["candidates"]] == [
+        ("exact", "isbn_title_author_concordant"),
+        ("descriptive", "title_author_concordant"),
+        ("weak", "title_related"),
+    ]
+    assert result["provider_access_performed"]
+    assert not result["coverage_complete"] and not result["fresh_network_verified"]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert rows(service.storage) == before and path.read_bytes() == contents
+
+
+def test_public_rank_keeps_ambiguous_editions_and_supplier_tie_order(rig):
+    service, session, request, calls, path = rig
+    first, second = _row("z"), _row("a", format="PDF")
+    session.search_with_response_facets = lambda *_a, **_kw: ProviderSearchResponse(
+        [first, second], public_notices=(PublicSearchNotice(first), PublicSearchNotice(second)))
+    result = _run(service, request)
+    assert [(c.record_id, c.comparison) for c in result["candidates"]] == [
+        ("z", "isbn_claim_ambiguous"), ("a", "isbn_claim_ambiguous"),
+    ]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
