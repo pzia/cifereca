@@ -140,7 +140,13 @@ def measure(paths, cache):
             }
     finally:
         loader.close()
-    report["valid"] = bool(prepared) and not any(p["failed"] for p in report["phases"].values())
+    # The two representative 16/256 baselines are complete-corpus
+    # receipts, not best-effort samples. A skipped archive must not turn a
+    # 15/16 or 255/256 run into a publishable PASS. Keep the aggregate
+    # counters to explain partial runs without disclosing any filename.
+    report["complete_manifest"] = len(prepared) == len(paths)
+    report["valid"] = (report["complete_manifest"] and bool(prepared)
+                       and not any(p["failed"] for p in report["phases"].values()))
     return report
 
 
