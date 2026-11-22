@@ -268,3 +268,33 @@ def test_capacity_refuses_unbounded_or_malformed_config_owner_inventory(
         assert stage.samefile(intent.candidate_path)
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("identity_rows", [
+    [],
+    [{"id": "id1", "directory_name": "library"}] * 129,
+    ({"id": "id1", "directory_name": "library"},),
+    [{"id": "id1", "directory_name": "library"}, None],
+    [{"id": 123, "directory_name": "library"}],
+    [{"id": "", "directory_name": "library"}],
+])
+def test_capacity_refuses_unbounded_or_invalid_config_identity_inventory(
+    tmp_path, identity_rows,
+):
+    service, intent, reservation = _setup(tmp_path)
+    storage = service.storage
+    try:
+        stage = Path(intent.staged_path)
+        original = stage.read_bytes()
+        prior = storage.metadata_get(reservation.key)
+        service.config.identities = lambda: identity_rows
+        scope = NS(storage=storage, config=service.config, root=tmp_path,
+                   identity_id="id1", directory="library")
+        with pytest.raises(journal.DerivedJournalConflict,
+                           match="derived_capacity_config_unverified"):
+            core._snapshot(scope)
+        assert storage.metadata_get(reservation.key) == prior
+        assert stage.read_bytes() == original
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        storage.close()
