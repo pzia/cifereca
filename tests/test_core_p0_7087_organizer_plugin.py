@@ -456,3 +456,54 @@ def test_native_rename_handoff_is_one_exact_private_review(store, tmp_path, chan
     assert current() is (change == "none")
     assert rows(store) == before and path.read_bytes() == content
     assert not path.with_name("Autrice - Roman commun.epub").exists()
+
+def test_new_organizer_preview_revokes_old_keeper_cursor_before_worker(store, tmp_path):
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    for index in range(5):
+        _put_epub(store, root, f"Acquisitions/restart-{index}.epub",
+                  metadata=META.replace("Roman commun", f"Roman restart {index}"))
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    controller = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert controller.request("preview")
+    _finish(tasks)
+    old = controller.page
+    assert old is not None and old.has_more
+    assert controller.request("preview")
+    # The new worker remains queued: no Core preview has executed yet.
+    assert len(tasks) == 2 and controller.page is None and controller.busy
+    assert plugin.broker.next_page(token=old.token, confirmed=True) is None
+    assert plugin.broker.select_all_advice(token=old.token, confirmed=True) is None
+    assert not controller.request("preview")
+    _finish(tasks)
+    assert controller.page is not None and controller.page.page == 1
+    assert controller.page.token != old.token and rows(store) == before
+
+
+def test_cancelled_queued_organizer_restart_cannot_restore_old_advice(store, tmp_path):
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    _, plugin = _plugin(_service(store, root))
+    host, tasks, renders = _host()
+    controller = plugin.controller(host, lambda *args: renders.append(args))
+    before = rows(store)
+    assert controller.request("preview")
+    _finish(tasks)
+    assert controller.request("select")
+    _finish(tasks)
+    old = controller.page
+    assert old.selected == 1
+    assert controller.request("preview")
+    assert plugin.broker.select_all_advice(token=old.token, confirmed=True) is None
+    assert controller.cancel()
+    work, done = tasks[-1]
+    assert work() is None
+    done(None)
+    assert controller.page is None
+    assert not plugin.broker.confirm_dry_run(token=old.token, confirmed=True)
+    assert controller.request("preview")
+    _finish(tasks)
+    assert controller.page.selected == 0 and rows(store) == before
