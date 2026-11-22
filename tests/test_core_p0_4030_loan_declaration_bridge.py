@@ -166,3 +166,40 @@ def test_loan_comparison_candidate_token_projects_only_exact_declaration_advice(
         assert advice is None
     assert broker.preview_loan_declaration(token=token, confirmed=True) is None
     assert records(service) == before and path.read_bytes() == data and calls == []
+
+
+@pytest.mark.parametrize("change", ["none", "expired", "view", "back"])
+def test_detail_loan_declaration_preview_is_explicit_exact_and_read_only(case, change):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+    service, request, choice, candidate, right, path, calls = case
+    controller, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, None, request, calls, path))
+    host.retire_action = lambda key: actions.pop(key, None) is not None
+    add = host.add_action
+    def limited(key, title, tooltip, action):
+        assert len(actions) < 12
+        add(key, title, tooltip, action)
+    host.add_action = limited
+    before, data = records(service), path.read_bytes()
+    assert actions["preview"][2]()
+    deliver(tasks)
+    action = next(v[2] for k, v in actions.items() if k.startswith("private-"))
+    assert action()
+    deliver(tasks)
+    select = actions["declare-preview-1"][2]
+    assert candidate.source.resource_id in repr(groups[-1])
+    assert records(service) == before
+    if change == "back":
+        assert actions["declare-back"][2]()
+        deliver(tasks)
+        assert not select()
+    else:
+        if change == "expired":
+            service.storage.entitlement_put({**right, "state": "expired"})
+        assert select()
+        if change == "view":
+            host.live = False
+        deliver(tasks)
+        assert not select()
+    assert any(g[0] == "Aperçu de déclaration utilisateur" for g in groups) == (change == "none")
+    assert records(service) == before and path.read_bytes() == data and calls == []
