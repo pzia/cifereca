@@ -1,5 +1,6 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
 from datetime import datetime, timezone
+from unicodedata import category
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
@@ -48,6 +49,13 @@ _SURFACE_LABEL = {
 }
 
 
+def _displayable_c_docbase(value):
+    # C source coordinates are documentary hints, not a trusted UI channel.
+    return (type(value) is str and 0 < len(value) <= 512
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def ranked_documentary_rows(compared):
     """Present the explicitly reviewed windows, never produce a right or origin.
 
@@ -71,6 +79,14 @@ def ranked_documentary_rows(compared):
                 match.title,
                 _SURFACE_LABEL[family] + " · " + provider
                 + (" · édition/référence : " + record if record else "")
+                + (" · Collection catalogue : " + match.docbase
+                   + " · Support catalogue : " + match.medium
+                   + (" · Format catalogue : " + match.media_format
+                      if match.media_format else "")
+                   if family == "public" else "")
+                + (" · Collection C : " + match.docbase
+                   if family == "known-c" and _displayable_c_docbase(match.docbase)
+                   else "")
                 + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
             ))
     if not candidates:
@@ -98,10 +114,22 @@ def known_rows(page):
         ("Résultats connus", str(page.known_matches)),
     ]
     for hit in page.matches:
+        observed = "Dernière observation C : date indisponible"
+        if type(hit.observed_at) is int and 0 <= hit.observed_at <= 253402300799:
+            try:
+                observed = ("Dernière observation C (UTC) : "
+                            + datetime.fromtimestamp(hit.observed_at, tz=timezone.utc)
+                            .strftime("%Y-%m-%d %H:%M"))
+            except (OverflowError, OSError, ValueError):
+                pass
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, hit.edition_id,
+            hit.author, hit.provider_id,
+            "Référence C : " + hit.record_id,
+            "Collection C : " + hit.docbase if _displayable_c_docbase(hit.docbase) else "",
+            "Édition C : " + hit.edition_id,
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
             "Notice ancienne" if hit.stale else "Notice en cache",
+            observed,
         ) if x)))
     if not page.matches:
         verdict = ("Correspondances C connues, aucune fiche présentable sur cette page ; "
@@ -119,8 +147,15 @@ def public_rows(report):
         ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
     ]
     for hit in report.matches:
+        # Every displayed coordinate comes from this one explicit catalogue
+        # response, not from the local EPUB, an attested right or a C write.
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, ", ".join(hit.isbns),
+            hit.author, hit.provider_id,
+            "Référence catalogue : " + hit.record_id,
+            "Collection catalogue : " + hit.docbase,
+            "Support catalogue : " + hit.medium,
+            "Format catalogue : " + hit.media_format if hit.media_format else "",
+            "ISBN déclarés par le catalogue : " + ", ".join(hit.isbns) if hit.isbns else "",
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
         ) if x)))
     if not report.matches:
