@@ -1,0 +1,105 @@
+"""#6937: durable isolated v3 admission."""
+from dataclasses import replace
+from pathlib import Path
+import os
+
+import pytest
+
+from cifereca.core import derived_variant_journal as journal
+from cifereca.core import derived_variant_private_region as region
+from cifereca.core import derived_variant_supervised_recovery as recovery
+from cifereca.core.derived_variant_private_admission import reserve_private_derived_publication
+from cifereca.locking import InterProcessLock
+from cifereca.storage import Storage
+from tests.test_core_p0_4520_derived_journal import _fixture
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    service, intent = _fixture(tmp_path)
+    db = service.storage
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(recovery, "acquisition_lock_file", lambda: lock_path)
+    try:
+        with InterProcessLock(lock_path) as lock:
+            common = dict(library_root=tmp_path, identity_id="id1", shared_lock=lock,
+                          scope_current=lambda sql: sql.in_transaction, explicitly_requested=True)
+            region.ensure_private_derived_region(db, placement_id=intent.parent_placement_id,
+                                                  provision=True, **common)
+            stage = Path(intent.parent_path).parent / region._REGION / "unique.epub"
+            stage.write_bytes(b"new bytes")
+            stage.chmod(0o600)
+            s = stage.stat()
+            private = replace(intent, staged_path=str(stage),
+                              output_stamp=(s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns))
+            binding = db.metadata_get(region._key("id1"))
+            args = dict(common, intent=private, approved_binding_sha256=journal._receipt_digest(binding))
+            yield db, private, stage, args
+    finally:
+        db.close()
+
+
+def test_v3_admission_durable_and_legacy_writer_refuses(rig):
+    db, intent, stage, args = rig
+    sync = db._connect().execute("PRAGMA synchronous").fetchone()
+    receipt = reserve_private_derived_publication(db, **args)
+    assert db._connect().execute("PRAGMA synchronous").fetchone() == sync
+    raw = db.metadata_get(receipt.key)
+    assert journal._decode(receipt.key, raw) == intent
+    other = Storage(db.path)
+    try:
+        assert other.metadata_get(receipt.key) == raw
+        assert journal.summarize_derived_journal(other)["reserved_output_bytes"] == 9
+        with other._lock, other._connect() as sql:
+            sql.execute("BEGIN")
+            with pytest.raises(journal.DerivedJournalConflict, match="private_region_review_required"):
+                journal._read_pending_reservation(sql, receipt)
+        with pytest.raises(journal.DerivedJournalConflict, match="slot_occupied"):
+            reserve_private_derived_publication(other, **args)
+    finally:
+        other.close()
+    assert stage.read_bytes() == b"new bytes"
+    assert not Path(intent.candidate_path).exists() and len(db.placements()) == 1
+
+
+@pytest.mark.parametrize("change", ["approval", "binding", "mode", "alias", "occupied",
+                                     "bytes", "quota", "scope", "sql_fault"])
+def test_v3_refusal_retains_bytes(rig, monkeypatch, change):
+    db, intent, stage, args = rig
+    if change == "approval":
+        args["explicitly_requested"] = False
+    elif change == "binding":
+        args["approved_binding_sha256"] = "0" * 64
+    elif change == "mode":
+        stage.chmod(0o644)
+    elif change == "alias":
+        os.link(stage, stage.with_name("alias.epub"))
+    elif change == "occupied":
+        Path(intent.candidate_path).write_bytes(b"other")
+    elif change == "bytes":
+        stage.write_bytes(b"bad bytes")
+    elif change == "quota":
+        monkeypatch.setattr(journal, "_MAX_RESERVED_OUTPUT_BYTES", 8)
+    elif change == "scope":
+        args["scope_current"] = lambda _sql: False
+    else:
+        with db._lock, db._connect() as sql:
+            sql.execute("CREATE TRIGGER synthetic_v3_abort BEFORE INSERT ON metadata "
+                        "WHEN NEW.key LIKE 'derived.publication.pending.v2:%' "
+                        "BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+    before = stage.read_bytes()
+    with pytest.raises(journal.DerivedJournalConflict):
+        reserve_private_derived_publication(db, **args)
+    assert journal.summarize_derived_journal(db)["count"] == 0
+    assert stage.read_bytes() == before and len(db.placements()) == 1
+
+
+def test_scope_revoked_after_insert_rolls_back(rig):
+    db, intent, stage, args = rig
+    key = journal._slot(intent)
+    args["scope_current"] = lambda sql: sql.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone() is None
+    with pytest.raises(journal.DerivedJournalConflict):
+        reserve_private_derived_publication(db, **args)
+    assert db.metadata_get(key) is None
+    assert stage.read_bytes() == b"new bytes"
+    assert not Path(intent.candidate_path).exists()

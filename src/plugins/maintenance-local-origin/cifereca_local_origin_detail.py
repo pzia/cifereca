@@ -11,6 +11,7 @@ _MAX_CATALOGUE_ACTIONS = 11
 
 _LABELS = {
     "title_related": "Titre voisin",
+    "purchase_description_conflicting": "Des descriptions de cet achat divergent ; aucune valeur arbitrée",
     "title_concordant_author_unknown": "Titre concordant, auteur inconnu",
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
