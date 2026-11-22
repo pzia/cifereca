@@ -147,3 +147,32 @@ def test_sibling_alias_added_after_first_walk_invalidates_report(tmp_path, monke
         assert Path(intent.staged_path).samefile(intent.candidate_path)
     finally:
         db.close()
+
+
+def test_same_device_submount_refuses_clear_symlink_observation(tmp_path, monkeypatch):
+    from cifereca.core import derived_variant_private_region as region
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        other = tmp_path / "same-device-mount"
+        other.mkdir()
+        before = Path(intent.staged_path).read_bytes()
+        real = region._mount_id
+        inode = other.stat().st_ino
+        # Synthetic md-independent mount identity with actual same-device
+        # directories; no privileged mount or external file access.
+        def mount(fd):
+            value = real(fd)
+            return value + 1 if os.fstat(fd).st_ino == inode else value
+
+        monkeypatch.setattr(region, "_mount_id", mount)
+        report = _review(db, tmp_path)
+        assert report["status"] == "incomplete"
+        assert report["entries_observed"] == 0
+        assert not report["external_dependencies_verified"]
+        assert not report["retention_authorized"]
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+        assert Path(intent.staged_path).read_bytes() == before
+    finally:
+        db.close()

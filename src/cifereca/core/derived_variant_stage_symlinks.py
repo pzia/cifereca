@@ -40,6 +40,8 @@ def _lexical_target(parent, value):
 
 
 def _walk(profile, stages, *, deadline):
+    from .derived_variant_private_region import _mount_id
+
     # Keep only bounded private witnesses for comparison, not for diagnostics.
     # Directory names are never reopened through a symlink.
     entries = {}
@@ -56,10 +58,11 @@ def _walk(profile, stages, *, deadline):
         if depth > _MAX_DEPTH:
             raise _Incomplete()
         before = _stamp(os.fstat(fd))
-        # Do not cross a distinct-device mount or walk a directory inode
-        # twice (e.g. a same-device bind alias). An incomplete walk is not
-        # absence evidence. Same-device mounts cannot all be detected here.
-        if before[0] != root[0] or before[:2] in directories:
+        # A distinct mount is not covered by the root's observation, even
+        # when a bind mount preserves st_dev or points to an unseen inode.
+        # An incomplete walk is never absence evidence.
+        if (before[0] != root[0] or before[:2] in directories
+                or _mount_id(fd) != root_mount):
             raise _Incomplete()
         directories.add(before[:2])
         with os.scandir(fd) as iterator:
@@ -96,12 +99,13 @@ def _walk(profile, stages, *, deadline):
                         os.close(child)
                 if _stamp(os.stat(name, dir_fd=fd, follow_symlinks=False)) != expected:
                     raise _Incomplete()
-        if _stamp(os.fstat(fd)) != before:
+        if _stamp(os.fstat(fd)) != before or _mount_id(fd) != root_mount:
             raise _Incomplete()
 
     fd = _open_root(profile)
     try:
         root = _stamp(os.fstat(fd))
+        root_mount = _mount_id(fd)
         scan(fd, profile, 0)
         return root, entries, direct, unresolved
     finally:
