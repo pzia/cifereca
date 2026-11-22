@@ -15,7 +15,8 @@ from .notice_c_purchase_execution import PurchaseIntentExecution, PreparedPurcha
 from .notice_c_purchase_association import (
     record_purchase_association_txn, reattest_current_purchase_association,
 )
-from .notice_c_purchase_intent import _MAX_BATCH, request_purchase_enrichment_intents
+from .notice_c_purchase_intent import _MAX_BATCH
+from .notice_c_enrichment_intent import ExistingPurchaseIntent, request_notice_enrichment
 from .notice_c_purchase_publication import (
     prepare_purchase_public_observation, publish_purchase_public_txn,
 )
@@ -100,10 +101,12 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 with hold_context() as allowed:
                     if allowed is not True:
                         raise ValueError("notice_purchase_context_changed")
-                    refs, changed = request_purchase_enrichment_intents(
-                        execution._storage, portion, chunk, now=execution._now(),
-                        context_current=lambda: allowed is True, report_change=True,
+                    admission = request_notice_enrichment(
+                        execution._storage,
+                        ExistingPurchaseIntent(portion, chunk, lambda: allowed is True),
+                        now=execution._now(),
                     )
+                    refs, changed = admission.refs, admission.changed
             except ValueError:
                 if not requested:
                     raise
