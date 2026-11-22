@@ -527,3 +527,45 @@ def test_failed_live_supplier_preserves_one_c_batch_not_a_duplicate():
     assert result.warnings == ("catalogue_search_failed",)
     assert result.cache_unknown_calls == 0
     assert "private-provider-diagnostic" not in str(result.warnings)
+
+
+def test_c_first_does_not_alias_distinct_public_source_collections():
+    """Two original C branches of one displayed book survive ranking intact."""
+    common = {
+        "id": "public-c:edition-same", "title": "Archives de l'histoire",
+        "author": "Alice", "metadata": {"subjects": ["histoire"]},
+        "source_provider": "bnf", "source_credential": "",
+        "record_id": "same-record", "docbase": "digital-books",
+        "medium": "digital", "revision_id": "2026-11",
+    }
+    first = {**common, "source_collection": "public-branch-a"}
+    second = {**common, "source_collection": "public-branch-b"}
+
+    class OnlyKnownC:
+        def searchable_providers(self):
+            return []
+
+        def known_public_notices(self, query, **kwargs):
+            assert query and kwargs["provider_ids"] == ()
+            return [first, second]
+
+        def search(self, *_args, **_kwargs):
+            pytest.fail("reading known C must not dispatch a supplier GET")
+
+    intermediate = []
+    result = compute_recommendations(
+        Metadata(), OnlyKnownC(), "id-1", max_queries=1,
+        exploration=0, exclude_owned=False, partial=intermediate.append,
+    )
+    assert result.providers == () and result.network_batches == 0
+    assert result.ranked and intermediate
+    for rows in (result.ranked, intermediate[-1].ranked):
+        selected = next(
+            row for row in rows
+            if row.item["id"] == "public-c:edition-same"
+        )
+        assert {variant.source_collection for variant in selected.notices} == {
+            "public-branch-a", "public-branch-b",
+        }
+        assert len(selected.notices) == 2
+        assert all(variant.source_credential == "" for variant in selected.notices)
