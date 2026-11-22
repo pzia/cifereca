@@ -165,7 +165,7 @@ class LibraryOrganizerReadBrokerImpl:
                     dry_run_excluded=plan.excluded_count,
                     dry_run_entries=tuple(OrganizerDryRunAdvice(
                         e.operation, e.current, e.proposed, e.state) for e in plan.entries))
-                self._dry_run = None if confirm or not plan.entries else plan
+                self._dry_run = plan if plan.entries else None
                 self._active = (scope, report, stamp, updated)
                 return updated
             except Exception:
@@ -178,6 +178,36 @@ class LibraryOrganizerReadBrokerImpl:
 
     def confirm_dry_run(self, *, token, confirmed=False):
         return self._review_dry_run(token, confirmed, confirm=True)
+
+    def _take_native_rename(self, page, *, service, identity_id):
+        """One exact confirmed review, private host handoff, NOT permission."""
+        with self._lock:
+            if type(page) is not OrganizerPageAdvice or self._active is None:
+                return None
+            scope, report, stamp, active_page = self._active
+            plan = self._dry_run
+            if (active_page is not page or self._service is not service
+                    or scope.identity != identity_id
+                    or page.dry_run_state != "confirmed"
+                    or page.mutation_authorized is not False
+                    or plan is None or plan.confirmed is not True
+                    or plan.executable is not False or len(plan.entries) != 1
+                    or plan.entries[0].operation != "rename"
+                    or plan.entries[0].state != "review_only"
+                    or self._current(page.token) is None):
+                return None
+            # Consume only the private handoff; the visible simulation stays
+            # read-only and may still be cancelled or revised.
+            self._dry_run = None
+
+        def current():
+            with self._lock:
+                return (self._active is not None
+                        and self._active[3] is page
+                        and scope.bound()
+                        and sqlite_source_stamp(scope.database) == stamp)
+
+        return scope, report, plan, current
 
     def revise_dry_run(self, *, token, confirmed=False):
         """Discard advice and return to the exact reviewed page, never execute."""
@@ -214,3 +244,48 @@ class LibraryOrganizerReadBrokerImpl:
         """Host-only lifetime boundary; not part of the public protocol."""
         with self._lock:
             self._active = self._dry_run = None
+
+
+def take_native_organizer_rename(manager, resolved, page, *, service, identity_id):
+    """Resolve only the existing activation's private plan; no plugin writer.
+
+    The future native consent/worker must separately revalidate the returned
+    lease and use the existing Core execution fence. This handoff never
+    executes or authorizes a rename.
+    """
+    from .activation_scoped_broker import ActivationBrokerResolver, _ActivationReadLease
+
+    try:
+        def live():
+            return (manager._registry_generation == resolved.registry_generation
+                    and manager.service(resolved.plugin_id) is resolved.service)
+
+        if not live():
+            return None
+        record = manager._records.get(resolved.plugin_id)
+        if record is None or record.service is not resolved.service:
+            return None
+        resolver = record.activation_brokers
+        if type(resolver) is not ActivationBrokerResolver or resolver.current() is not True:
+            return None
+        with resolver._lock:
+            lease = resolver._scoped.get("library.organizer.read")
+        if (type(lease) is not _ActivationReadLease
+                or type(lease._reader) is not LibraryOrganizerReadBrokerImpl
+                or not live() or resolver.current() is not True):
+            return None
+        result = lease._reader._take_native_rename(
+            page, service=service, identity_id=identity_id)
+        if result is None:
+            return None
+        scope, report, plan, current = result
+
+        def still_current():
+            try:
+                return live() and resolver.current() is True and current() is True
+            except Exception:
+                return False
+
+        return (scope, report, plan, still_current) if still_current() else None
+    except Exception:
+        return None
