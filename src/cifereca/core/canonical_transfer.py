@@ -18,6 +18,7 @@ from ..catalog import LocalCatalog
 from ..locking import InterProcessLock
 from ..paths import acquisition_lock_file
 from .canonical_publication import _physical_target, _same_file, _stable
+from .derived_variant_region_paths import private_derived_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,9 @@ def publish_completed_local_transfer(
             or shared_lock._handle is None
             or shared_lock.path.resolve() != acquisition_lock_file().resolve()):
         raise ValueError("canonical_transfer_authorization_required")
+
+    if private_derived_path(from_path) or private_derived_path(to_path):
+        raise ValueError("canonical_transfer_private_derived_region")
 
     try:
         profiles = storage.identities()
