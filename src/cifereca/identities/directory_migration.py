@@ -12,7 +12,7 @@ import uuid
 from cifereca.plugin_api import BUNDLE_MANIFEST_NAME
 from cifereca.library_files import safe_library_component, sha256_file
 from cifereca.filename_suffixes import split_filename_suffix
-from cifereca.core.derived_variant_region_paths import private_derived_path
+from cifereca.core.derived_variant_region_paths import private_derived_path, PRIVATE_DERIVED_REGION
 
 JOURNAL_KEY = 'identity-directory-migration-v1'
 
@@ -27,16 +27,29 @@ def checked_tree(path: Path):
         raise DirectoryMigrationError(f'Lien symbolique refusé pour la migration : {path}')
     if not path.exists():
         return
-    nodes = [path] + list(path.rglob('*')) if path.is_dir() else [path]
-    for node in nodes:
-        # The private receipt pins the profile/region inode and exact path.
-        # The legacy directory migration cannot rebind that receipt. Never
-        # copy, fingerprint or remove a reserved subtree as ordinary stock.
-        if private_derived_path(node):
-            raise DirectoryMigrationError("Zone privée de publication dérivée : migration non qualifiée.")
-        if node.is_symlink() or not (node.is_dir() or node.is_file()):
-            raise DirectoryMigrationError(f'Entrée non régulière refusée : {node}')
+    if not path.is_dir():
+        if not path.is_file():
+            raise DirectoryMigrationError(f'Entrée non régulière refusée : {path}')
+        return
 
+    def unavailable(error):
+        raise DirectoryMigrationError('Arborescence de migration inaccessible.') from error
+
+    seen = False
+    for current, directories, files in os.walk(
+            path, topdown=True, onerror=unavailable, followlinks=False):
+        seen = True
+        # The derived receipt owns this exact namespace. Reject its directory
+        # entry *before* os.walk could descend into it and enumerate stages.
+        if PRIVATE_DERIVED_REGION in directories or PRIVATE_DERIVED_REGION in files:
+            raise DirectoryMigrationError(
+                "Zone privée de publication dérivée : migration non qualifiée.")
+        for name in (*directories, *files):
+            node = Path(current) / name
+            if node.is_symlink() or not (node.is_dir() or node.is_file()):
+                raise DirectoryMigrationError(f'Entrée non régulière refusée : {node}')
+    if not seen:
+        raise DirectoryMigrationError('Arborescence de migration inaccessible.')
 
 def fingerprint(path: Path) -> str:
     checked_tree(path)
