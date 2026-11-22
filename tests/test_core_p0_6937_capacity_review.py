@@ -226,3 +226,37 @@ def test_duplicate_configured_owner_never_counts_as_bound_retention_capacity(
         assert stage.samefile(intent.candidate_path)
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("other_directory,expected_unbound", [
+    ("library", True),
+    ("other-profile", False),
+])
+def test_capacity_refuses_cross_identity_configuration_directory_alias(
+    tmp_path, other_directory, expected_unbound,
+):
+    service, intent, reservation = _setup(tmp_path)
+    storage = service.storage
+    try:
+        service.config.identities = lambda: [
+            {"id": "id1", "directory_name": "library"},
+            {"id": "other-profile", "directory_name": other_directory},
+        ]
+        original_receipt = storage.metadata_get(reservation.key)
+        stage = Path(intent.staged_path)
+        original_bytes = stage.read_bytes()
+        scope = NS(
+            storage=storage, config=service.config, root=tmp_path,
+            identity_id="id1", directory="library",
+        )
+        snapshot = core._snapshot(scope)
+        assert snapshot[1] == (("id1", None if expected_unbound else "library"),)
+        assert snapshot[2]["unbound"] == (1 if expected_unbound else 0)
+        assert snapshot[2]["active_pending"] == (0 if expected_unbound else 1)
+        assert snapshot[2]["active_committed"] == 0
+        assert snapshot[2]["other_bound"] == 0
+        assert storage.metadata_get(reservation.key) == original_receipt
+        assert stage.read_bytes() == original_bytes
+        assert stage.samefile(intent.candidate_path)
+    finally:
+        storage.close()
