@@ -39,6 +39,25 @@ def _headers(value):
         result.append((pair[0].casefold(), pair[1]))
     return tuple(sorted(result))
 
+def _private_request_header(name):
+    """Conservative transport-only credential fence for anonymous GET counts.
+
+    A request marked public by its producer can still carry a private
+    session/credential through an extension header. Neither the replay
+    statistics nor the exact-GET coalescing evidence may claim it anonymous.
+    """
+    normalized = "".join(ch for ch in name if ch.isalnum()).casefold()
+    return (
+        not normalized or any(ord(ch) > 127 for ch in name)
+        or normalized.endswith("key")
+        or any(part in normalized for part in (
+            "cookie", "authorization", "token", "session", "credential",
+            "secret", "signature", "ticket", "password", "apikey",
+            "accesskey", "oauth", "saml", "bearer", "private", "sso",
+        ))
+        or normalized.startswith(("xauth", "xamz", "xgoog"))
+    )
+
 
 def _bounded_decode(raw, coding):
     if coding in ("", "identity"):
@@ -116,8 +135,7 @@ def analyse_capture(path):
                 # coalescing, even when the URL happens to be identical.
                 headers = _headers(req.get("headers"))
                 if (headers is None or req.get("producer") != "provider.numilog.public"
-                        or any(key in {"cookie", "authorization", "proxy-authorization"}
-                               or "token" in key or "secret" in key for key, _ in headers)):
+                        or any(_private_request_header(key) for key, _ in headers)):
                     counts["unqualified"] += 1
                     continue
                 url = req.get("url")
@@ -173,6 +191,13 @@ def analyse_capture(path):
                 if values.get("content-type", "").split(";", 1)[0].strip().lower() not in (
                         "text/html", "application/xhtml+xml"):
                     reasons["invalid_mime"] += 1
+                    continue
+                # Only bytes as observed on the wire may be decoded with
+                # Content-Encoding. A recorder may instead store decompressed
+                # body bytes; counting those as a Brotli/deflate failure would
+                # give a false supplier-layout diagnosis.
+                if info.get("representation") != "transport_bytes":
+                    reasons["body_representation_unverified"] += 1
                     continue
                 ref = entry.get("exchange_ref")
                 if (type(ref) is not str or _REF.fullmatch(ref) is None
