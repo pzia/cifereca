@@ -710,6 +710,66 @@ def main():
             assert names.count("Provenances de prêts historiques") == 1
             report["checks"]["P0_7100_gtk_optional_" + key.rsplit(".", 1)[-1]] = True
 
+        # Receive the zero-optional-contribution case in the actual page
+        # host as well: disabling each independently is not proof that the
+        # empty combination is safe. No registry mock or tool dispatch.
+        try:
+            for key in titles:
+                manager.set_enabled(key, False)
+            refresh_tools()
+            assert not original_services("maintenance.tool")
+            assert w._plugin_page_widgets["tools"] is host_widget
+            names = action_titles()
+            assert not any(title in names for title in titles.values())
+            assert names.count("Provenances de prêts historiques") == 1
+            assert names.count("Téléchargements à reprendre") == 1
+            seen = []
+            child = w._tools_box.get_first_child()
+            while child is not None:
+                if isinstance(child, Gtk.Box):
+                    heading = child.get_first_child()
+                    if isinstance(heading, Gtk.Label) and heading.get_text() in group_names:
+                        seen.append(heading.get_text())
+                child = child.get_next_sibling()
+            assert tuple(seen) == group_names
+            assert tool.plan_calls == tool.run_calls == 0
+        finally:
+            for key in titles:
+                manager.set_enabled(key, True)
+            refresh_tools()
+        assert all(action_titles().count(title) == 1 for title in titles.values())
+        assert w._plugin_page_widgets["tools"] is host_widget
+        report["checks"]["P0_7407_zero_optional_and_restore_real_host"] = True
+
+        # A cached native GTK row can remain rooted while another page is
+        # visible. Its old click callback must never start a new worker.
+        old_hold, = (node for node in walk(w._tools_box)
+                     if isinstance(node, Adw.ActionRow)
+                     and node.get_title() == "Verrous de téléchargements ADEPT")
+        stale, = (node for node in walk(old_hold)
+                  if isinstance(node, Gtk.Button)
+                  and getattr(node, "_cifereca_action_label", "") == "Verrous…")
+        w.navigate("dashboard")
+        assert w.view_stack.get_visible_child_name() == "dashboard"
+        submitted = []
+        original_submit = w.runner.submit
+        try:
+            w.runner.submit = lambda *args, **kwargs: submitted.append(args)
+            stale.emit("clicked")
+        finally:
+            w.runner.submit = original_submit
+        assert not submitted
+        w.navigate("tools")
+        assert w.view_stack.get_visible_child_name() == "tools"
+        assert w._plugin_page_widgets["tools"] is host_widget
+        assert all(action_titles().count(title) == 1 for title in titles.values())
+        fresh_hold, = (node for node in walk(w._tools_box)
+                       if isinstance(node, Adw.ActionRow)
+                       and node.get_title() == "Verrous de téléchargements ADEPT")
+        assert fresh_hold is not old_hold and old_hold.get_root() is None
+        assert tool.plan_calls == tool.run_calls == 0
+        report["checks"]["P0_7407_native_adapter_navigation_revoked"] = True
+
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
