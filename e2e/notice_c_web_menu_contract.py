@@ -21,6 +21,7 @@ def seed_multiple_web_choices(db):
     expected = {}
     for provider, record, suffix in (
         ("seller-a", "multiple-a", "one"), ("seller-b", "multiple-b", "two"),
+        ("seller-c", "multiple-c", "three"),
     ):
         uri = "https://books.example.org/title/" + suffix
         row = SearchResult(
@@ -144,9 +145,9 @@ def verify_multiple_web_choices(window, db, fixture, *, offline, later, guard,
                 return
             assert launches == [expected[key] for key in keys[:count]]
             assert not messages
-            if count == 1:
-                options[keys[1]].emit("clicked")
-                later(40, guard(lambda: poll_launch(2)))
+            if count < len(keys):
+                options[keys[count]].emit("clicked")
+                later(40, guard(lambda: poll_launch(count + 1)))
                 return
             menu.popdown()
             panel.empty("Sélection modifiée", "Menu révoqué")
