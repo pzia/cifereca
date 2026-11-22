@@ -110,5 +110,30 @@ fraîcheur et les ambiguïtés restent opposables ; aucune preuve terrain ni
 clôture #4030 n'est déduite de cette mise à jour documentaire. Aucun lien
 provider attesté ni droit n'est créé par les rapprochements.
 
+### Matrice de réception croisée — preuves réutilisables
+
+Cette matrice relie les critères existants aux témoins de `main`.
+Elle ne transforme **ni un résultat C en provenance**, ni un test
+synthétique en preuve terrain ou en autorisation de GET.
+
+| Critère #4030 | Preuves synthétiques | Limite opposable |
+| --- | --- | --- |
+| Placement exact, fichier/SHA, profil, exclusion des origines attestées même sous `other/` | `test_core_p0_4030_local_origin_suggestion_preview.py`, `test_core_p0_4030_scoped_documentary_suggestions.py`, `test_core_p0_4030_candidate_exclusions.py` | La présence physique seule n'atteste pas la source |
+| Notice C, attributs OPF/ISBN, éditions concurrentes et rang descriptif | `test_core_p0_4030_epub_evidence.py`, `test_core_p0_4030_documentary_suggestions.py`, `test_core_p0_4030_public_catalogue.py` | Pages partielles, aucun rang universel, droit/format non déduits |
+| Sélection explicite de catalogues publics, 401/403/429/timeout, activation révocable | `test_core_p0_7092_origin_detail_public.py`, `test_core_p0_7092_origin_detail_controller.py` | Seul le titre OPF est envoyé après choix ; résultat distant non exhaustif |
+| Achats/prêts privés exacts, cache et continuation, choix d'un compte | `test_core_p0_4030_private_catalogue.py`, `test_core_p0_4030_real_purchase_c_comparison.py`, `test_core_p0_4030_private_cache_evidence_order.py` | Cache non réputé frais, dénominateur de couverture non attesté |
+| Relecture typée du seul inventaire de prêts sélectionné | `test_core_p0_4030_remote_loans.py` | Ne prouve aucune branche canonique, activation ni droit |
+| Déclaration humaine distincte des attestations, consentement et révocation transactionnelle | `test_core_p0_4030_loan_declaration_bridge.py`, `test_core_p0_4030_purchase_declaration.py` | Writer existant #2797, droit exact préalable obligatoire, jamais `OriginLink(provider)` inventé |
+| Batch supervisé, annulation/ABA, scopes et budgets | `test_core_p0_4030_suggestion_batch.py`, `test_core_p0_4030_batch_native_reception.py` | Comparaison C locale seulement ; pas de balayage réseau silencieux |
+| Cohabitation des trois surfaces, 403 public sans veto privé, révocation de profil, invariance FS/SQLite | `test_core_p0_4030_three_surface_reception.py` (PR #7707, **réception sous réserve de CI et merge**) | N'exécute ni téléchargement fournisseur ni prêt réel |
+
+**Critères de clôture encore à arbitrer en réception :** la somme des témoins
+ci-dessus doit être confrontée au parcours complet de l'utilisateur, dont les
+priorités public/achats/prêts sont **des priorités de présentation, pas un score
+juridique transversal**. Les résultats paginés et inaccessibles restent
+partiels. Aucune revendication de rafraîchissement privé exhaustif, de TTL
+négatif réseau ou de preuve terrain sans témoin explicite ; aucun nouveau
+moteur de recherche n'est autorisé par cette matrice.
+
 **Garde de production** : ni activation destructrice #6937/#3176, ni
 levée de marqueur ADEPT #7244, ni nouveau chemin de publication.
