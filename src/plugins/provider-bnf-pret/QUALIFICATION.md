@@ -190,3 +190,43 @@ ou une acquisition numérique effectivement fonctionnels.**
 - Mode d'emploi : https://www.bnf.fr/fr/centre-d-aide/bnf-pret-numerique-mode-demploi
 - Exploration GitHub : https://github.com/xlcnd/isbnlib-bnf (Catalogue général) et https://github.com/Kryzo/mcp-bibliotheque_nationale_de_France (Gallica). Aucun de ces clients ne démontre les permissions de prêt via API v1.
 - Références projet : src/plugins/provider-bnf-catalogue (SRU public), src/plugins/provider-paris (PNB) ; #976, #982, #984, #1063.
+
+
+## #4283 — surface Web Historique reçue le 22/11/2026
+
+La sauvegarde HTML privée fournie au Backlog (commentaire #4283 du 22/11)
+atteste une page lecteur connectée, distincte de /my_profile/activity :
+`/my_profile/history`, avec liens de langue fr/en. Aucun GET direct par
+le client HTTPX n'a été exécuté pour cette réception. Le contrat Basic v1
+n'est ni nécessaire à cette tranche ni réhabilité.
+
+Structure expurgée observée : body#members.profile_history,
+data-coffee-cup Members#ProfileHistory, #main, navigation active vers
+history, titre Historique et compteur .list-header__page strong.
+Les deux lignes observées contiennent un lien /resources/{id catalogue}
+(24 caractères hexadécimaux), h2.line-desc-title avec sous-titre Prêt,
+et .line-desc-supinfo time[datetime] précédé de Emprunté le.
+Les images de la sauvegarde avaient des chemins locaux, pas des URL
+distantes attestées. Aucun ID individuel de prêt, auteur, ISBN, date de
+retour/échéance ou état terminé explicite n'était disponible.
+
+Le parseur hors réseau `parse_history_events` réutilise ProfileScope :
+l'appelant doit prouver l'identité de session indépendamment du DOM.
+Il conserve les coordonnées d'événements et les dates d'emprunt
+normalisées UTC, distingue les réemprunts et signale les collisions,
+dates absentes, compteurs incohérents et pages ambiguës. Le résultat
+`observed` signifie seulement des lignes localement cohérentes ;
+`exhaustive=False` dans tous les cas. Les cas zéro et pagination sont
+des fixtures hypothétiques, non des comportements terrain attestés.
+Le parseur ne suit aucun lien et n'extrait aucune couverture locale,
+ne retourne ni login ni jeton et ne construit aucun ID de prêt.
+
+**Reste avant activation :** lecture GET autorisée via la session
+existante, scope/reconnexion, qualification de la présence ou exclusion
+des prêts actifs et, si nécessaire, de la pagination réelle. La simple
+date d'emprunt ou l'identifiant catalogue ne prouve pas la fin d'un cycle.
+Normalisation vers HistoryItem et cache existant uniquement après
+qualification de cette sémantique, avec provenance exacte. Jusqu'alors
+`history=False` est conservé, unsupported distinct d'un historique vide.
+Aucune demande de nouvelle capture redondante, aucune mutation fournisseur,
+aucune archive ni donnée personnelle publiée.
