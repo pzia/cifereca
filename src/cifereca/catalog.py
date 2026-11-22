@@ -620,6 +620,10 @@ class LocalCatalog:
         return enriched
 
     def scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> CatalogScanResult:
+        # A reserved root is not a normal library, even when missing.
+        # Refuse before the historical mkdir or any inventory work.
+        if private_derived_path(self.root):
+            raise OSError("catalog_scan_reserved_root")
         self._force_covers = force_covers
         self._cover_refresh_seen = set()
         # Never fabricate an empty replacement for a temporarily unavailable
