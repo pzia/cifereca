@@ -211,6 +211,14 @@ def run_historical_review(service, request, *, cursor="", verify_local_bytes=Fal
         return None
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _HoldPageAnchor:
+    request: HistoricalReviewRequest
+    offset: int
+    stamp: tuple
+    verified: bool
+
+
 def run_historical_hold_review(service, request, *, offset=0,
                                verify_local_bytes=False):
     """Project the existing retry queue, not a second marker inventory.
@@ -285,10 +293,90 @@ def run_historical_hold_review(service, request, *, offset=0,
             "rows": tuple(reports),
             "next_cursor": offset + _PAGE if offset + _PAGE < len(blocked) else None,
             "known_holds": len(blocked),
+            "_review_anchor": _HoldPageAnchor(request, offset, stamp, verify_local_bytes),
             "coverage": "persisted_source_retry_queue",
             "complete_provider_inventory": False,
             "common_snapshot_attested": False,
             "mutation_authorized": False,
         }
+    except Exception:
+        return None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class HistoricalHoldSelection:
+    """Process-local selection, not a replay permit or a provider request."""
+    request: HistoricalReviewRequest
+    source: SourceKey
+    marker: object
+    witness: object
+    stamp: tuple
+    copy_evidence: str
+    unlock_authorized: bool = False
+
+    def current(self):
+        from .canonical_adept_attempt import (
+            review_loan_adept_marker_in_transaction,
+            review_loan_adept_unsubmitted_in_transaction,
+        )
+        from .adept_historical_snapshot import historical_read_snapshot
+        try:
+            if (not self.request.bound()
+                    or sqlite_source_stamp(self.request.database) != self.stamp):
+                return False
+            with historical_read_snapshot(self.request.storage) as db:
+                if (review_loan_adept_marker_in_transaction(db, self.source) != self.marker
+                        or review_loan_adept_unsubmitted_in_transaction(
+                            db, source=self.source) != self.witness):
+                    return False
+            return (self.request.bound()
+                    and sqlite_source_stamp(self.request.database) == self.stamp)
+        except Exception:
+            return False
+
+
+def select_historical_hold(service, request, page, *, ordinal, confirmed=False):
+    """Select one exact occurrence from the displayed private review page.
+
+    No UUID, offer, marker value or path supplied by UI can substitute for
+    the admitted page. Do not export the returned witness to plugin ports.
+    Still requires the independently qualified activation, consent, fresh
+    offer and a Core writer under acquisition lock before any rearm.
+    """
+    from .canonical_adept_attempt import (
+        review_loan_adept_marker_in_transaction,
+        review_loan_adept_unsubmitted_in_transaction,
+    )
+    from .adept_historical_snapshot import historical_read_snapshot
+
+    if (confirmed is not True or type(request) is not HistoricalReviewRequest
+            or request.service is not service or type(page) is not dict
+            or type(ordinal) is not int or ordinal < 0):
+        return None
+    try:
+        anchor = page.get("_review_anchor")
+        if (type(anchor) is not _HoldPageAnchor or anchor.request is not request
+                or not request.bound()
+                or sqlite_source_stamp(request.database) != anchor.stamp):
+            return None
+        fresh = run_historical_hold_review(
+            service, request, offset=anchor.offset, verify_local_bytes=anchor.verified)
+        if fresh != page or ordinal >= len(fresh["rows"]):
+            return None
+        row = fresh["rows"][ordinal]
+        source = SourceKey(
+            ProviderRightsScope(request.identity, row["provider_id"],
+                                row["credential_id"], row["account_id"]),
+            row["edition_id"], row["provider_loan_id"], "loan", row["canonical_branch"],
+        )
+        with historical_read_snapshot(request.storage) as db:
+            marker = review_loan_adept_marker_in_transaction(db, source)
+            witness = review_loan_adept_unsubmitted_in_transaction(db, source=source)
+        if (not request.bound()
+                or sqlite_source_stamp(request.database) != anchor.stamp):
+            return None
+        selection = HistoricalHoldSelection(
+            request, source, marker, witness, anchor.stamp, row["local_copy_evidence"])
+        return selection if selection.current() else None
     except Exception:
         return None
