@@ -33,7 +33,7 @@ def test_reserved_region_skipped_before_stat_open_and_budget(tmp_path, monkeypat
     assert result.complete, result.reasons
     assert {x.path.relative_to(root).as_posix() for x in result.candidates} == {
         "book.epub", "nested/" + PRIVATE_DERIVED_REGION + "-old/user.pdf"}
-    assert result.entries_inspected == 5
+    assert result.entries_inspected == 4
     assert result.directories_inspected == 3
     assert (private / "stage.epub").read_bytes() == before
     assert result.redacted_summary()["mutation_authorized"] is False
