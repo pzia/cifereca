@@ -98,7 +98,7 @@ def _read(db, document):
     for source in snapshot.sources:
         try:
             refs = _current_refs(db, source)
-        except ValueError:
+        except (ValueError, TypeError, KeyError, AttributeError):
             # A corrupt source observation/fence disqualifies only that
             # exact contribution. Other sources in the decoded canonical
             # snapshot still require their own independent current proof.
