@@ -468,7 +468,11 @@ def compute_recommendations(
             try:
                 raw_known = list(known_reader(
                     query, scope=scope,
-                    provider_ids=tuple(str(pid) for pid, _ in providers),
+                    # Public C is installation-scoped and persists without
+                    # a corresponding active supplier session. The catalogue
+                    # inventory below limits only live provider dispatch;
+                    # source facets apply later via the common view filter.
+                    provider_ids=(),
                 ) or ())[:max(10, int(per_query))]
                 for item in raw_known:
                     key = tuple(str(get_field(item, field, "") or "") for field in (
