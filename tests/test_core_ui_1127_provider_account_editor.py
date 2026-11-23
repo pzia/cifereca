@@ -613,3 +613,6 @@ def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
                  if row.title == "État de la connexion")
         assert "modification non enregistrée" in row2.subtitle
         assert ("Désactivée" if enabled else "Activée") in row2.subtitle
+        editor["enabled"].set_active(enabled)
+        assert "modification non enregistrée" not in row2.subtitle
+        assert row2.subtitle == expected
