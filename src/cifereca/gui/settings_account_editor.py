@@ -219,9 +219,12 @@ def build_provider_account_editor(
     # Reflect unsaved activation changes immediately; this remains a local
     # configuration draft and never claims an authenticated provider session.
     def update_lifecycle(switch, _param):
+        changed = switch.get_active() is not (saved_enabled is True)
         lifecycle.set_subtitle(
             ("Activée" if switch.get_active() is True else "Désactivée")
-            + " dans les paramètres · modification non enregistrée · session non vérifiée"
+            + " dans les paramètres · "
+            + ("modification non enregistrée · " if changed else "")
+            + "session non vérifiée"
         )
     enabled.connect("notify::active", update_lifecycle)
     # A malformed persisted label must never be stringified into the GTK
@@ -478,5 +481,6 @@ def build_provider_account_editor(
         "deleted": False,
         "explicit_probe_button": probe_button,
         "explicit_probe_status": probe_status,
+        "connection_lifecycle_status": lifecycle,
     }
     return editor, delete_button
