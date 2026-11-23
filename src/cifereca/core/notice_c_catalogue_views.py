@@ -45,7 +45,8 @@ def project_public_catalogue_view(page: PublicNoticeCPage, *, mode: str):
     for hit in page.matching_sources:
         counts[hit.document] = counts.get(hit.document, 0) + 1
     rows = []
-    for hit in page.hits:
+    displayed = page.matching_sources if mode == "sources" and page.matching_sources else page.hits
+    for hit in displayed:
         if type(hit) is not PublicNoticeCHit:
             raise ValueError("invalid_public_catalogue_hit")
         rows.append(PublicCatalogueViewRow(
