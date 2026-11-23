@@ -562,6 +562,15 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "ok" if (live or observed) else "warning",
                     )
                     if callback_current():
+                        lifecycle = e.get("connection_lifecycle_status")
+                        if lifecycle is not None:
+                            lifecycle.set_subtitle(
+                                "Test de connexion réussi · session temporaire refermée"
+                                if live else
+                                "Diagnostic effectué · connexion non attestée"
+                                if observed else
+                                "Connexion non vérifiée · diagnostic indisponible"
+                            )
                         e["explicit_probe_status"].set_subtitle(
                             "Connexion vérifiée pour ce test. "
                             "Session temporaire refermée ; aucune modification du compte."
@@ -574,6 +583,9 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     release()
                     record("failed", "warning")
                     if callback_current():
+                        lifecycle = e.get("connection_lifecycle_status")
+                        if lifecycle is not None:
+                            lifecycle.set_subtitle("Connexion non vérifiée · diagnostic refusé")
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic refusé. Enregistrer, activer le compte "
                             "et vérifier l’option de recette.")
