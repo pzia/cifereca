@@ -34,3 +34,19 @@ def test_distinct_credential_or_borrower_remains_separate():
         assert len(lines) == 3
         assert all("Reste inconnu" in line for line in lines[:2])
         assert lines[-1].startswith("Total non calculable")
+
+
+def test_forged_unhashable_scope_fails_closed_before_duplicate_lookup():
+    first = _row()
+    for field, forged in (
+        ("identity_id", ["profile"]),
+        ("provider_id", ["provider"]),
+        ("credential_id", ["credential"]),
+        ("borrower_id", ["borrower"]),
+        ("credential_id", {"secret": "do-not-print"}),
+    ):
+        altered = replace(first)
+        object.__setattr__(altered, field, forged)
+        lines = digital_loan_availability_lines((altered,), identity_id="profile")
+        assert lines == ("Reste inconnu — projection des comptes invalide.",)
+        assert "do-not-print" not in str(lines)
