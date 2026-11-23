@@ -193,3 +193,61 @@ def test_previously_compared_file_changed_during_later_batch_row_is_not_delivere
     monkeypatch.setattr(batch, "suggest_local_placement_documents", changed)
     assert batch.run_origin_batch(service, scope) is None
     assert len(visited) == 2 and rows(store) == before
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_batch_scope_discovery_refuses_spoofed_owner_directory_before_read(
+    store, tmp_path, monkeypatch, spoof,
+):
+    service, root, pid = _service(store, tmp_path)
+    owner = service.current_identity
+    before, data = rows(store), Path(store.placement_get(pid)["path"]).read_bytes()
+    owner.directory_name = "A" + spoof + "FORGED"
+    assert not batch._token(owner.directory_name, 256)
+    checked = []
+    original = batch._rows
+    def counted(*args, **kwargs):
+        checked.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(batch, "_rows", counted)
+    assert batch.admit_origin_batch(service, confirmed=True) is None
+    assert not checked and rows(store) == before
+    assert Path(store.placement_get(pid)["path"]).read_bytes() == data
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_batch_continuation_refuses_spoofed_page_coordinate_before_sql_or_hash(
+    store, tmp_path, monkeypatch, spoof,
+):
+    from dataclasses import replace
+    service, root, pid = _service(store, tmp_path)
+    for i in range(4):
+        _extra(store, root, f"extra-{i}.pdf")
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    first = batch.run_origin_batch(service, scope)
+    assert first is not None and first["next_cursor"] is not None
+    forged = replace(first["next_cursor"],
+                     after=first["next_cursor"].after + spoof + "FORGED")
+    before, data = rows(store), Path(store.placement_get(pid)["path"]).read_bytes()
+    queried = []
+    original = batch._rows
+    def counted(*args, **kwargs):
+        queried.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(batch, "_rows", counted)
+    assert batch.run_origin_batch(service, scope, cursor=forged) is None
+    assert queried == [] and rows(store) == before
+    assert Path(store.placement_get(pid)["path"]).read_bytes() == data
+
+
+def test_batch_safe_real_cursor_still_pages_without_search_or_right_mutation(store, tmp_path):
+    service, root, _ = _service(store, tmp_path)
+    for i in range(4):
+        _extra(store, root, f"safe-{i}.pdf")
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    first = batch.run_origin_batch(service, scope)
+    second = batch.run_origin_batch(service, scope, cursor=first["next_cursor"])
+    assert first["status"] == second["status"] == "partial"
+    assert first["has_more"] and second["page"] == 2
+    assert not first["association_authorized"] and not second["association_authorized"]
+    assert not first["provider_access_performed"] and not second["provider_access_performed"]

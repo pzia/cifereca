@@ -160,9 +160,16 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                     for entry in report["candidates"]:
                         if type(entry) is not PublicCatalogueCandidate or entry.provider_id != selected.provider_id:
                             continue
+                        # Preserve public response coordinates on each row:
+                        # equal ISBN/record IDs can still denote distinct formats.
                         lines.append((entry.title, " · ".join(part for part in (
-                            entry.author, entry.provider_id, entry.record_id,
-                            ", ".join(entry.isbns), _LABELS.get(entry.comparison, "Comparaison descriptive"),
+                            entry.author, entry.provider_id,
+                            "Référence catalogue : " + entry.record_id,
+                            "Collection catalogue : " + entry.docbase,
+                            "Support catalogue : " + entry.medium,
+                            "Format catalogue : " + entry.media_format if entry.media_format else "",
+                            "ISBN déclarés par le catalogue : " + ", ".join(entry.isbns) if entry.isbns else "",
+                            _LABELS.get(entry.comparison, "Comparaison descriptive"),
                         ) if part)))
                     if len(lines) == 2:
                         lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))

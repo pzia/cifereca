@@ -258,3 +258,47 @@ def test_restart_revokes_previous_page_before_queued_worker(store, tmp_path, inc
     assert controller.page is fresh and fresh.page == 1 and fresh.can_continue
     assert fresh.token != old.token
     assert rows(store) == before
+
+def test_idle_batch_cancel_revokes_exact_page_before_next_worker(store, tmp_path):
+    service, root, _ = _service(store, tmp_path)
+    for index in range(5):
+        _extra(store, root, f"idle-cancel-{index}.pdf")
+    _, _, host, controller, tasks, renders = rig(service)
+    before = rows(store)
+    assert controller.request(restart=True)
+    work, done = tasks[-1]
+    old = work()
+    done(old)
+    assert old.can_continue and controller.page is old
+    assert controller.cancel() and not controller.cancel()
+    assert controller.page is None and controller.stop is None
+    assert renders[-1] == (None, "cancelled")
+    assert controller.broker.next_page(token=old.token, confirmed=True) is None
+    assert not controller.request(restart=False)
+    assert controller.request(restart=True)
+    refreshed_work, refreshed_done = tasks[-1]
+    refreshed = refreshed_work()
+    refreshed_done(refreshed)
+    assert refreshed is controller.page and refreshed.page == 1
+    assert refreshed.token != old.token and rows(store) == before
+
+
+def test_idle_cancel_does_not_affect_another_mounted_batch_view(store, tmp_path):
+    service, root, _ = _service(store, tmp_path)
+    for index in range(5):
+        _extra(store, root, f"two-views-{index}.pdf")
+    _, _, _, first, tasks_a, renders_a = rig(service)
+    _, _, _, other, tasks_b, renders_b = rig(service)
+    assert first.request(restart=True)
+    work_a, done_a = tasks_a[-1]
+    page_a = work_a()
+    done_a(page_a)
+    assert first.cancel()
+    assert renders_a[-1] == (None, "cancelled")
+    assert other.request(restart=True)
+    work_b, done_b = tasks_b[-1]
+    page_b = work_b()
+    done_b(page_b)
+    assert other.page is page_b and page_b.page == 1
+    assert page_b.token != page_a.token
+    assert other.cancel()

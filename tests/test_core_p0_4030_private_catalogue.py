@@ -207,8 +207,11 @@ def test_installed_detail_controller_private_action_explicit_exact_and_revocable
     done(result)
     done(result)
     if change == "none":
-        assert len(groups) == count + 1
-        visible = repr(groups[-1])
+        # The independent documentary ranking is an additional group.
+        assert len(groups) == count + 2
+        assert groups[-2][0] == "Catalogue privé — lecture seule"
+        assert groups[-1][0] == "Classement documentaire — lecture seule"
+        visible = repr(groups[-2])
         assert "Occurrence : loan-1" in visible and "Branche : loans" in visible
         assert "Date de description inconnue" in visible
     else:
@@ -231,7 +234,8 @@ def test_cached_purchase_date_is_source_date_not_refresh_time(private_rig, monke
     assert "achats" in actions["private-0"][0]
     assert actions["private-0"][2]()
     deliver(tasks)
-    visible = repr(groups[-1])
+    visible = repr(next(group for group in reversed(groups)
+                        if group[0] == "Catalogue privé — lecture seule"))
     assert "1970-01-01 00:01 UTC" in visible
     assert "Occurrence : " + key.right_id in visible
     assert "fraîcheur réseau" not in visible and not calls
@@ -380,8 +384,9 @@ def test_legacy_private_detail_uses_one_stable_action_for_following_pages(privat
     first = actions["private-0"][2]
     assert first()
     deliver(tasks)
-    assert "Page', '1" in repr(groups[-1])
-    assert "Occurrence : loan-1" in repr(groups[-1])
+    assert groups[-1][0] == "Classement documentaire — lecture seule"
+    assert "Page', '1" in repr(groups[-2])
+    assert "Occurrence : loan-1" in repr(groups[-2])
     assert "Suite prêts" in actions["private-0"][0]
     following = actions["private-0"][2]
     assert following is not first and not first()
@@ -396,13 +401,13 @@ def test_legacy_private_detail_uses_one_stable_action_for_following_pages(privat
         dispose()
     deliver(tasks)
     if change == "none":
-        assert len(groups) == count + 1 and "Page', '2" in repr(groups[-1])
-        assert "Occurrence : loan-3" in repr(groups[-1])
+        assert len(groups) == count + 2 and "Page', '2" in repr(groups[-2])
+        assert "Occurrence : loan-3" in repr(groups[-2])
         assert actions["private-0"][2] is following
         assert following()
         deliver(tasks)
-        assert "Page', '3" in repr(groups[-1])
-        assert "Occurrence : loan-5" in repr(groups[-1])
+        assert "Page', '3" in repr(groups[-2])
+        assert "Occurrence : loan-5" in repr(groups[-2])
         assert "private-0" not in actions
     else:
         assert len(groups) == count and not following()
@@ -466,7 +471,9 @@ def test_declaration_choices_on_every_private_cache_page(private_rig, monkeypatc
         assert "Occurrence à examiner" == groups[-1][0]
         assert f"Prêt : loan-{2 * page - 1}" in repr(groups[-1])
         assert f"Prêt : loan-{2 * page}" in repr(groups[-1])
-        assert f"Page', '{page}" in repr(groups[-2])
+        private_group = next(group for group in reversed(groups)
+                             if group[0] == "Catalogue privé — lecture seule")
+        assert f"Page', '{page}" in repr(private_group)
         obsolete.append(actions["declare-preview-1"][2])
         if page < 3:
             advance = actions["declare-next-page"][2]
@@ -551,3 +558,51 @@ def test_private_scope_discovery_refuses_spoofed_display_coordinates_before_bind
         service, request, evidence=evidence,
     ) == ()
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("field", ["branch_id", "edition_id", "right_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_private_cached_source_identifiers_cannot_spoof_origin_review(
+    private_rig, field, spoof,
+):
+    service, request, account, session, calls, path, key, snap = private_rig
+    before_data = path.read_bytes()
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute("UPDATE source_references SET " + field + "=? "
+                   "WHERE identity_id='A' AND provider_id='seller' AND "
+                   "credential_id='card-A' AND account_id='buyer-A' "
+                   "AND reference_kind='loan'",
+                   ({"branch_id": key.branch, "edition_id": key.edition_id,
+                     "right_id": key.right_id}[field] + spoof + "FORGED",))
+    before = rows(service.storage)
+    result = _run(private_rig)
+    assert result["status"] == "partial" and result["candidates"] == ()
+    assert not result["coverage_complete"] and not result["association_authorized"]
+    assert not result["may_write_origin_or_right"] and not calls
+    assert rows(service.storage) == before and path.read_bytes() == before_data
+
+
+@pytest.mark.parametrize("field", ["id", "record_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_private_loan_occurrence_coordinate_never_enters_cached_match(
+    private_rig, field, spoof,
+):
+    service, request, account, session, calls, path, key, snap = private_rig
+    original = service.last_loans[0]
+    value = getattr(original, field)
+    service.last_loans[0] = replace(original, **{field: value + spoof + "FORGED"})
+    before, data = rows(service.storage), path.read_bytes()
+    result = _run(private_rig)
+    assert result["status"] == "partial" and result["candidates"] == ()
+    assert not result["may_write_origin_or_right"] and not calls
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_safe_private_reference_is_not_lost_by_local_display_policy(private_rig):
+    service, request, account, session, calls, path, *_ = private_rig
+    result = _run(private_rig)
+    candidate, = result["candidates"]
+    assert candidate.source.branch == "loans"
+    assert candidate.source.edition_id == "edition"
+    assert candidate.source.resource_id == "loan-1"
+    assert not calls
