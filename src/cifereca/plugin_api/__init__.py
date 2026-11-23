@@ -27,6 +27,9 @@ from .capability_matrix import (
     declared_provider_matrix,
 )
 from .capability_projection import project_existing_capabilities
+from .capability_families import (
+    CAPABILITY_FAMILIES, CapabilityFamilyCoverage, exact_capability_families,
+)
 from .provider_rights_observation import (RIGHTS_OBSERVATION_CONTRACT, ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot)
 from .downloadable_resources import (
     DOWNLOADABLE_RESOURCE_CONTRACT, SourceReference, DownloadCapability,
@@ -136,7 +139,7 @@ __all__ = [
     "CatalogSearchFacet", "CatalogSearchFacetValue", "ProviderSearchResponse",
     "PublicSearchNotice",
     "ProviderSearchWithFacets",
-    "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
+    "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities", "CAPABILITY_FAMILIES", "CapabilityFamilyCoverage", "exact_capability_families",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
     "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation", "PurchaseEnrichmentOmission",
