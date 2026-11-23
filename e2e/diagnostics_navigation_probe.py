@@ -3477,6 +3477,24 @@ def main() -> int:
             core.close()
             Gio.Application.do_shutdown(self)
 
+    if args.window_baseline:
+        # #5540 uses a separate GTK process before the real MainWindow,
+        # without pytest skip or a synthetic substitute for the UI.
+        widths = (960, 1366) if args.width == 1366 else (1600,)
+        for width in widths:
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "e2e/settings_account_lifecycle_acceptance.py"), str(width)],
+                cwd=ROOT, capture_output=True, text=True, timeout=20,
+            )
+            marker = f"P1_5540_NATIVE_ACCOUNTS_PASS:{width}"
+            if result.returncode != 0 or marker not in result.stdout.splitlines():
+                report.update(status="FAIL", error=f"#5540 native account lifecycle {width} failed")
+                save()
+                page_plugin.deactivate()
+                core.close()
+                return 1
+            report["checks"][f"P1_5540_native_accounts_{width}"] = True
+
     app = Application()
     # The full baseline additionally runs 563-row render comparisons, sync
     # consent, Settings and three identity changes with their own deadlines.
