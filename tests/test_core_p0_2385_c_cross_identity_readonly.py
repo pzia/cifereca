@@ -84,3 +84,35 @@ def test_public_c_pagination_uses_document_group_not_provider_rows(tmp_path):
         assert not first.has_more
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
+
+
+def test_grouped_public_c_search_survives_restart_without_provider_fetch(tmp_path, monkeypatch):
+    """Cold pagination reads the durable canonical C, never a viewer mirror."""
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        a, b = _rows()
+        search._ingest_public_search_c(
+            core.library, [a, b], identity_id="profile-a", now=100,
+            require_public_cover_witness=True,
+        )
+        expected = a._core_notice_canonical_cover_document_ref
+        assert expected == b._core_notice_canonical_cover_document_ref
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("cold C pagination must not fetch or reingest providers")
+
+    monkeypatch.setattr(search, "_ingest_public_search_c", forbidden)
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        first = search_public_notice_c(
+            core.storage, "Même titre", group_by_document=True,
+            page=0, page_size=1, now=101,
+        )
+        assert len(first.hits) == 1
+        assert first.hits[0].document == expected
+        assert first.known_documents == 1
+        assert len(first.matching_sources) == 2
+        assert not first.has_more
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
