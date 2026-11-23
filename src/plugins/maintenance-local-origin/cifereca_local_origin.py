@@ -11,6 +11,7 @@ _LABELS = {
     "title_concordant_author_unknown": "Titre concordant, auteur inconnu",
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
+    "opf_source_url_concordant": "URL déclarée dans l’EPUB, titre et auteur concordants",
 }
 
 
