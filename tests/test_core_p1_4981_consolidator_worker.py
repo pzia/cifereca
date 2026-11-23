@@ -214,3 +214,15 @@ def test_real_worker_cannot_promote_inherited_proof_over_exact_source():
             source_facts=(exact, related),
             attested_strong_links={FOREIGN: "strong:confirmed"},
         )
+
+
+def test_real_worker_memory_budget_rejects_oversized_allocation():
+    """Q11: an installed pure reducer cannot exhaust Core memory."""
+    excessive = '''\ndef consolidate(facts):
+    value = "x" * (512 * 1024 * 1024)
+    return None
+'''
+    with pytest.raises(ValueError, match="consolidator_execution_failed"):
+        invoke(source=excessive)
+    # A failed isolated worker does not poison the next valid execution.
+    assert invoke().value == "13+"
