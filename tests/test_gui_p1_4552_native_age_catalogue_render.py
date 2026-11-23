@@ -50,5 +50,6 @@ def test_native_public_ages_are_visible_only_in_source_and_detail_views():
     assert any("De 8 à 12 ans" in value and "8–12 ans" in value
                for value in labels)
     assert sum("Âge déclaré" in value for value in labels) == 2
+    assert sum("Observation périmée" in value for value in labels) == 2
     assert all("Emprunter" not in value and "Possédé" not in value
                for value in labels)
