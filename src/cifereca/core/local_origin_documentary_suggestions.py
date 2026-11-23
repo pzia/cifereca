@@ -149,10 +149,12 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             and displayable(hit.docbase)
             # These coordinates are rendered alongside the title in the
             # local review; even a malformed C DTO must not spoof a label.
-            and all(displayable(getattr(hit, field)) for field in (
-                "provider_id", "record_id", "edition_id",
-                "source_revision", "medium", "media_format",
-            )))
+            and all((value is None or (type(value) is str and len(value) <= 512))
+                    and displayable(value)
+                    for value in (getattr(hit, field) for field in (
+                        "provider_id", "record_id", "edition_id",
+                        "source_revision", "medium", "media_format",
+                    ))))
     )
     if (type(source_urls) is frozenset and len(source_urls) == 1
             and page == 0 and not found.has_more and len(matches) == found.known_matches):
