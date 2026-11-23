@@ -210,3 +210,19 @@ def test_execution_key_preserves_revision_and_proof_invalidation():
         installed_source_sha256="a" * 64,
     )
     assert a != b
+
+
+@pytest.mark.parametrize("field", ["canonical_type", "relation", "inherited"])
+def test_forged_lineage_fields_never_execute_foreign_equality(field):
+    """A public SourceFact DTO must not run arbitrary comparator code in Core."""
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign lineage equality")
+
+    valid = admitted([row()])
+    forged_fact = replace(valid.exact[0], **{field: Hostile()})
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        descriptive_lineage_key(
+            selection=SELECTED,
+            admitted=replace(valid, exact=(forged_fact,)),
+        )
