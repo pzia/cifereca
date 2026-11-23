@@ -9,19 +9,17 @@ from collections.abc import Sequence
 from typing import Any
 
 from cifereca.plugin_api import CapabilityMatrix
+from cifereca.plugin_api.capability_families import _family
 
 
-_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Catalogue", ("catalog.",)),
-    ("Métadonnées", ("metadata.",)),
-    ("Droits", ("personal_inventory.",)),
-    ("Prêt", ("loan.",)),
-    ("Acquisition", ("acquisition.",)),
-    ("DRM", ("drm.",)),
-    # Core's installed capability ABI also declares artifact.backup.
-    # The UI must classify that existing cross-cutting declaration rather
-    # than silently present the entire family as missing evidence.
-    ("Transversal", ("sync.", "artifact.")),
+_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("Catalogue", "catalogue"),
+    ("Métadonnées", "metadata"),
+    ("Droits", "accounts_rights"),
+    ("Prêt", "loans"),
+    ("Acquisition", "acquisition"),
+    ("DRM", "drm"),
+    ("Transversal", "crosscutting"),
 )
 
 
@@ -48,9 +46,13 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
         except (ValueError, TypeError, AttributeError):
             raise ValueError("capability_invalid_matrix") from None
         statuses: list[str] = []
-        for label, prefixes in _FAMILIES:
+        for label, family in _FAMILIES:
+            # Share the public seven-family contract. An unknown legacy
+            # sync.* operation stays transversal, never an attested right.
             rows = tuple(row for row in matrix.observations
-                         if row.operation.startswith(prefixes))
+                         if (_family(row.operation) or (
+                             "crosscutting" if row.operation.startswith("sync.")
+                             else None)) == family)
             observed = tuple(row for row in rows
                              if row.source_kind in (
                                  "provider_observation", "account_observation",

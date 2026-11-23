@@ -285,7 +285,7 @@ def test_sync_and_backup_evidence_share_one_read_only_transversal_family():
     ("Prêt", "loan.inventory"),
     ("Acquisition", "acquisition.download"),
     ("DRM", "drm.license"),
-    ("Transversal", "sync.remote_inventory"),
+    ("Transversal", "sync.scheduled_refresh"),
 ])
 @pytest.mark.parametrize(("status", "source_kind", "expected"), [
     ("supported", "account_observation", "observation, action non autorisée"),
@@ -365,3 +365,24 @@ def test_mixed_or_unknown_connection_observations_are_not_presented_as_current()
         assert "private-" not in label and "rights.snapshot/1" not in label
     label, = source_capability_labels((CapabilityMatrix("synthetic", (base,)),))
     assert "état de connexion mixte ou inconnu" not in label
+
+
+def test_coreui_uses_canonical_family_for_existing_sync_and_rights_operations():
+    matrix = CapabilityMatrix("synthetic", tuple(
+        CapabilityEvidence(
+            "synthetic", operation, "account", status="partial",
+            source_kind="account_observation", implementation_state="implemented",
+            evidence_ref="synthetic.readonly/1", reason="read_only",
+        ) for operation in (
+            "rights.observe", "account.profile", "sync.entitlements",
+            "sync.remote_inventory", "booking.list",
+            "sync.local_materialization", "transform.convert",
+            "cache.refresh", "sync.scheduled_refresh",
+        )
+    ))
+    rendered, = source_capability_labels((matrix,))
+    for family in ("Droits", "Prêt", "Acquisition", "DRM", "Transversal"):
+        assert f"{family} : observation, action non autorisée" in rendered
+    assert "Catalogue : preuve indisponible" in rendered
+    assert "Métadonnées : preuve indisponible" in rendered
+    assert "synthetic.readonly/1" not in rendered
