@@ -391,7 +391,7 @@ def select_historical_hold(service, request, page, *, ordinal, confirmed=False):
 
     if (confirmed is not True or type(request) is not HistoricalReviewRequest
             or request.service is not service or type(page) is not dict
-            or type(ordinal) is not int or ordinal < 0):
+            or type(ordinal) is not int or not 0 <= ordinal < _PAGE):
         return None
     try:
         anchor = page.get("_review_anchor")
