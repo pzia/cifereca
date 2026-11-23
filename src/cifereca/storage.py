@@ -272,6 +272,90 @@ class Storage:
             # profiles, processes or a restart with fresh SSO cookies.
             return False, {"status": "verification_unavailable"}
 
+    def loan_borrow_claim_next_cycle(
+        self, key: str, previous_operation_id: str,
+        previous_verified_loan_id: str, operation_id: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Atomically reserve a *new* manual cycle after a confirmed prior loan.
+
+        The caller must first independently verify the exact previous loan
+        ended, using a current complete borrower/edition-scoped provider read
+        and a fresh explicit user click. This primitive only checks the
+        immutable previous checkpoint and performs the SQLite CAS. It does
+        not inspect provider evidence or grant lending permission.
+
+        Prior checkpoint bytes are retained under a deterministic private
+        history key. In-progress / ambiguous / submitted / corrupt claims
+        are never renewed. No blind DELETE of the one-shot v1 key occurs.
+        """
+        from datetime import datetime, timezone
+        if (not self._loan_borrow_checkpoint_key_valid(key)
+                or type(previous_operation_id) is not str
+                or not previous_operation_id
+                or type(previous_verified_loan_id) is not str
+                or not previous_verified_loan_id
+                or type(operation_id) is not str
+                or not 0 < len(operation_id) <= 128
+                or any(ord(ch) < 33 or ord(ch) > 126 for ch in operation_id)
+                or operation_id == previous_operation_id):
+            return False, {"status": "verification_unavailable"}
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            found = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if found is None or type(found[0]) is not str or not 0 < len(found[0]) <= 4096:
+                return False, {"status": "verification_unavailable"}
+            try:
+                previous = json.loads(found[0])
+            except (ValueError, TypeError):
+                return False, {"status": "verification_unavailable"}
+            if (type(previous) is not dict
+                    or previous.get("schema") != 1
+                    or previous.get("operation") != "loan.borrow"
+                    or previous.get("status") != "confirmed"
+                    or previous.get("request_accepted") is not True
+                    or previous.get("verification") != "positive_active_loan"
+                    or previous.get("operation_id") != previous_operation_id
+                    or previous.get("verified_loan_id") != previous_verified_loan_id
+                    or type(previous.get("verified_loan_id")) is not str
+                    or not 0 < len(previous["verified_loan_id"]) <= 128
+                    or any(not c.isascii() or not (c.isalnum() or c in "_-")
+                           for c in previous["verified_loan_id"])):
+                return False, {"status": "verification_unavailable"}
+            generation = previous.get("cycle_generation", 1)
+            if type(generation) is not int or not 1 <= generation < 10000:
+                return False, {"status": "verification_unavailable"}
+            history_key = "loan.borrow.history.v1:" + key[len("loan.borrow.v1:"):] + ":" + str(generation)
+            history = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (history_key,),
+            ).fetchone()
+            if history is not None and history[0] != found[0]:
+                return False, {"status": "verification_unavailable"}
+            if history is None:
+                saved = db.execute(
+                    "INSERT INTO metadata(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO NOTHING",
+                    (history_key, found[0]),
+                )
+                if saved.rowcount != 1:
+                    return False, {"status": "verification_unavailable"}
+            row = {
+                "schema": 1, "operation": "loan.borrow",
+                "status": "request_sent", "operation_id": operation_id,
+                "request_accepted": False, "verification": "not_checked",
+                "cycle_generation": generation + 1,
+                "previous_operation_id": previous_operation_id,
+                "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }
+            update = db.execute(
+                "UPDATE metadata SET value=? WHERE key=? AND value=?",
+                (json.dumps(row, sort_keys=True, separators=(",", ":")), key, found[0]),
+            )
+            if update.rowcount != 1:
+                return False, {"status": "verification_unavailable"}
+            return True, row
+
     def loan_borrow_release_unsent(self, key: str, operation_id: str) -> bool:
         """CAS release ONLY when provider attests no borrow POST was attempted.
 
@@ -307,6 +391,39 @@ class Storage:
                     or row.get("request_accepted") is not False
                     or row.get("verification") != "not_checked"):
                 return False
+            generation = row.get("cycle_generation", 1)
+            if type(generation) is not int or not 1 <= generation <= 10000:
+                return False
+            if generation > 1:
+                # A pre-POST abort of a renewed cycle must restore the
+                # historically confirmed checkpoint, NOT remove the
+                # replay fence and accidentally authorize a first attempt.
+                history_key = (
+                    "loan.borrow.history.v1:"
+                    + key[len("loan.borrow.v1:"):] + ":" + str(generation - 1)
+                )
+                history = db.execute(
+                    "SELECT value FROM metadata WHERE key=?", (history_key,),
+                ).fetchone()
+                if history is None or type(history[0]) is not str:
+                    return False
+                try:
+                    old = json.loads(history[0])
+                except (ValueError, TypeError):
+                    return False
+                if (type(old) is not dict or old.get("schema") != 1
+                        or old.get("operation") != "loan.borrow"
+                        or old.get("status") != "confirmed"
+                        or old.get("request_accepted") is not True
+                        or old.get("verification") != "positive_active_loan"
+                        or old.get("operation_id") != row.get("previous_operation_id")
+                        or old.get("cycle_generation", 1) != generation - 1):
+                    return False
+                restored = db.execute(
+                    "UPDATE metadata SET value=? WHERE key=? AND value=?",
+                    (history[0], key, previous[0]),
+                )
+                return restored.rowcount == 1
             removed = db.execute(
                 "DELETE FROM metadata WHERE key=? AND value=?",
                 (key, previous[0]),
