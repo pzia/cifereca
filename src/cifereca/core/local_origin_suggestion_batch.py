@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
+from unicodedata import category
 
 from .derived_variant_maintenance_review import admit_maintenance_review
 from .library_sqlite_freshness import sqlite_source_stamp
@@ -58,8 +59,14 @@ class BatchCursor:
 
 
 def _token(value, limit=4096):
+    """The batch cursor/identity selector must be one readable exact scope.
+
+    Filename review already refuses hidden Unicode; admission and resumed
+    SQLite pagination must not accept weaker, forged coordinates.
+    """
     return (type(value) is str and 0 < len(value) <= limit
-            and not any(ord(c) < 32 or ord(c) == 127 for c in value))
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
 
 
 def admit_origin_batch(service, *, confirmed=False, include_declared=False):
