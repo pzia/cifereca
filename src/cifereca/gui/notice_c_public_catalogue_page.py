@@ -32,7 +32,13 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
     scroller.set_child(content)
     root.append(scroller)
     state = {"generation": 0, "mode": "list", "page": 0,
-             "field": "all", "scope": "all"}
+             "field": "all", "scope": "all", "age_kind": None}
+
+    age_filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    age_entry = Gtk.Entry()
+    age_entry.set_placeholder_text("Âge observé 0–17 (facultatif)")
+    age_filters.append(age_entry)
+    root.append(age_filters)
 
     def identity_epoch():
         return (getattr(window.service, "_account_context_epoch", None),
@@ -68,6 +74,12 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
             content.append(following)
         return False
 
+    def clear_content():
+        child = content.get_first_child()
+        while child is not None:
+            content.remove(child)
+            child = content.get_first_child()
+
     def refresh():
         state["generation"] += 1
         generation = state["generation"]
@@ -75,20 +87,25 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
         field, scope = state["field"], state["scope"]
         epoch = identity_epoch()
         text = query.get_text().strip()
+        age_text = age_entry.get_text().strip()
         if len(text) < 2:
-            child = content.get_first_child()
-            while child is not None:
-                content.remove(child)
-                child = content.get_first_child()
+            clear_content()
             status.set_text("Saisissez au moins deux caractères")
             return
+        if age_text and (not age_text.isascii() or not age_text.isdecimal()
+                         or len(age_text) > 2 or int(age_text) > 17):
+            clear_content()
+            status.set_text("Âge invalide · utilisez un nombre de 0 à 17")
+            return
+        age = int(age_text) if age_text else None
+        age_kind = state["age_kind"] if age is not None else None
         status.set_text("Recherche dans le catalogue public…")
 
         def work():
             try:
                 view = search_public_catalogue_view(
                     window.service.storage, text, mode=mode, page=page,
-                    field=field, scope=scope,
+                    field=field, scope=scope, age=age, age_kind=age_kind,
                 )
             except (ValueError, OSError, RuntimeError):
                 view = None
@@ -123,10 +140,18 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
             button.connect("clicked", lambda _, k=kind, v=value: set_filter(k, v))
             filters.append(button)
 
+    for kind, label in ((None, "Tout type d’âge"),
+                        ("reading", "Lecture"), ("interest", "Intérêt"),
+                        ("publisher", "Éditeur"), ("recommended", "Recommandé")):
+        button = Gtk.Button(label=label)
+        button.connect("clicked", lambda _, k=kind: set_filter("age_kind", k))
+        age_filters.append(button)
+
     search = Gtk.Button(label="Rechercher")
     search.connect("clicked", lambda _: set_page(0))
     root.append(search)
     query.connect("activate", lambda _: set_page(0))
+    age_entry.connect("activate", lambda _: set_page(0))
     for mode, label in _MODES:
         button = Gtk.Button(label=label)
         button.connect("clicked", lambda _, selected=mode: set_mode(selected))
