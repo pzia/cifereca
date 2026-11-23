@@ -539,7 +539,7 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(paths=paths), TemporaryDirectory() as temp:
                 root = Path(temp)
                 source = root / "changed-files"
-                source.write_text("\\n".join(paths) + "\\n", encoding="utf-8")
+                source.write_text("\n".join(paths) + "\n", encoding="utf-8")
                 emitted = []
                 for shard in range(3):
                     target = root / ("output-" + str(shard))
@@ -573,9 +573,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_workflow_keeps_one_required_aggregated_gate_after_all_three_shards(self):
         source = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
-        self.assertIn("  startup:\\n    name: E2E GTK · core\\n    needs: gtk_shards", source)
+        self.assertIn("  startup:\n    name: E2E GTK · core\n    needs: gtk_shards", source)
         self.assertIn('test "$SHARDS_RESULT" = "success"', source)
-        self.assertIn("    strategy:\\n      fail-fast: false\\n      matrix:\\n        shard: [0, 1, 2]", source)
+        self.assertIn("    strategy:\n      fail-fast: false\n      matrix:\n        shard: [0, 1, 2]", source)
         self.assertEqual(source.count('--shard-count 3 --shard-index "$E2E_SHARD_INDEX"'), 3)
 
 
