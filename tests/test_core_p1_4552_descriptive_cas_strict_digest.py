@@ -7,7 +7,11 @@ from cifereca.core.notice_descriptive_materialization_store import publish_descr
 
 
 @pytest.mark.parametrize("expected", [
-    "", "0" * 63, "G" * 64, "A" * 64, "0" * 63 + "z", 42, True, object(),
+    "", "0" * 63, "G" * 64, "A" * 64, "0" * 63 + "z",
+    "notice-c-exec-v1:" + "A" * 64,
+    "notice-c-exec-v1:" + "0" * 63 + "z",
+    "notice-c-exec-v1:" + "0" * 63,
+    42, True, object(),
 ])
 def test_noncanonical_descriptive_cas_rejected_before_capture(tmp_path, expected):
     storage = Storage(tmp_path / "cas.sqlite")
