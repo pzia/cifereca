@@ -106,6 +106,9 @@ class CapabilityMatrix:
         for row in self.observations:
             if type(row) is not CapabilityEvidence or row.provider_id != self.provider_id:
                 raise ValueError("capability_owner_mismatch")
+            # Dataclasses are frozen by normal assignment but can be forged
+            # with object.__setattr__. Never accept a mutated proof as valid.
+            row.__post_init__()
             key = (row.operation, row.scope, row.field, row.identity_id,
                    row.account_id, row.credential_id, row.edition_id)
             if key in seen:
@@ -118,6 +121,10 @@ class CapabilityMatrix:
         credential_id: str = "", edition_id: str = "",
     ) -> CapabilityEvidence | None:
         """No fallback from public to account, all to author, or A to B."""
+        # This public lookup may consume cached matrices held by plugins.
+        # Revalidate before returning a proof: frozen DTOs can be altered by
+        # object.__setattr__, including after their first construction.
+        self.__post_init__()
         for row in self.observations:
             if (row.operation, row.scope, row.field, row.identity_id,
                     row.account_id, row.credential_id, row.edition_id) == (
