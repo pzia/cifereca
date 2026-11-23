@@ -77,6 +77,14 @@ def test_incomplete_stale_or_future_inventory_fails_closed():
         assert not decide(snapshot=snap)
 
 
+def test_forged_complete_empty_bnf_widget_cannot_authorize_new_cycle():
+    # BnF currently attests completeness only for a nonempty loan widget.
+    # A fabricated typed snapshot must not bypass that producer constraint.
+    a = _account()
+    assert not decide(snapshot=snapshot(a, loans=[]))
+    assert decide(snapshot=snapshot(a, loans=[loan(a)]))
+
+
 def test_previous_loan_or_same_edition_still_active_is_not_ended():
     a = _account()
     for row in (loan(a, ident="old-loan"), loan(a, edition=_item(a).record_id)):
