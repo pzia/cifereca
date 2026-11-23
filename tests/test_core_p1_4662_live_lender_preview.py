@@ -869,3 +869,15 @@ def test_p1_3120_missing_exact_fact_remains_unverified(harness, field):
     assert preview.options == ()
     assert preview.rejection_reasons == ("permission_unverified",)
     assert session.calls == 0
+
+
+def test_p1_3120_denial_for_different_edition_does_not_block_exact_offer(harness):
+    service, _account, session = harness
+    row = _candidate()
+    foreign = replace(row, edition_evidence=replace(
+        row.edition_evidence, record_id="other-record", quota_state="exhausted",
+    ))
+    preview = _preview(service, foreign)
+    assert preview.options == ()
+    assert "borrower_blocked" not in preview.rejection_reasons
+    assert session.calls == 0
