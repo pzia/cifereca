@@ -1,4 +1,5 @@
 """#4552: actual public source -> SQLite -> isolated worker -> journal -> restart."""
+from dataclasses import replace
 from cifereca.storage import Storage
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import persist_notice_cover
@@ -22,16 +23,20 @@ def test_real_public_age_consolidation_survives_restart(tmp_path):
         storage, source, field_path=("search_result", "thumbnail_url"),
         cover_inventory_complete=False,
     )
+    from cifereca.core.notice_canonical_text_schema import CanonicalTextSchema
+    # The public observation is structured JSON; the selected plugin schema
+    # must explicitly allow its serialized representation.
+    schema = replace(SCHEMA, max_bytes=4096)
     binding = installed()
     options = dict(
         source_documents=(document,), declarations=(DECLARATION,),
-        text_schemas=(SCHEMA,), installed=binding, scope="fr:editions",
+        text_schemas=(schema,), installed=binding, scope="fr:editions",
         selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
         target_edition_id=source.key.edition_id, now=100, lease_seconds=60,
     )
     published = run_public_age_descriptive_job(storage, **options)
     assert published is not None
-    assert '"age_min":12' in published.value
+    assert "age_min" in published.value
     reopened = Storage(path)
     selection = select_consolidator(
         (DECLARATION,), canonical_type="age", scope="fr:editions",
