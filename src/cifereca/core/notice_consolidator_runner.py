@@ -99,7 +99,13 @@ def run_registered_text_consolidator(
     schema = select_text_schema(text_schemas, selection=selected)
     if schema is None:
         raise ValueError("canonical_text_schema_not_installed")
+    # The installed DTO can be constructed by a caller. Reject foreign
+    # objects before tuple equality could run an attacker-controlled __eq__.
     if (type(installed) is not InstalledTextConsolidator
+            or any(type(value) is not str for value in (
+                installed.canonical_type, installed.scope, installed.plugin_id,
+                installed.version, installed.schema_id,
+            ))
             or (installed.canonical_type, installed.scope, installed.plugin_id,
                 installed.version, installed.schema_id) != (
                     selected.canonical_type, selected.scope,
