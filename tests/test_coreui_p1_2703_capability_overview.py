@@ -310,7 +310,7 @@ def test_each_family_distinguishes_four_synthetic_evidence_states(
         enabled=True, connected=True,
     )
     render, = source_capability_labels((CapabilityMatrix("synthetic", (row,)),))
-    assert f"{family} : {expected}" in render.split("\n", 1)[1].split(" · ")
+    assert f"{family} : {expected}" in render.split("\n", 1)[1].split("\nOpérations", 1)[0].split(" · ")
     assert not row.authorizes_mutation
     assert "private-" not in render
     assert "fixture/1" not in render
