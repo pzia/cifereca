@@ -116,3 +116,42 @@ def test_grouped_public_c_search_survives_restart_without_provider_fetch(tmp_pat
         assert not first.has_more
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
+
+
+def test_cold_grouped_pages_keep_two_distinct_documents_and_source_lineage(tmp_path, monkeypatch):
+    """#2385: page boundaries count documents, never duplicate source rows."""
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from tests.test_core_p0_4982_search_repair import _admitted
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        a, b = _rows()
+        unrelated = _admitted(
+            "Même titre", "unrelated-edition", source_provider="seller-c",
+            thumbnail_url=A_URL,
+        )
+        search._ingest_public_search_c(
+            core.library, [a, b, unrelated], identity_id="profile-a", now=100,
+            require_public_cover_witness=True,
+        )
+        grouped = a._core_notice_canonical_cover_document_ref
+        distinct = unrelated._core_notice_canonical_cover_document_ref
+        assert grouped != distinct
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("cold pagination must not reingest providers")
+
+    monkeypatch.setattr(search, "_ingest_public_search_c", forbidden)
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        pages = [search_public_notice_c(
+            core.storage, "Même titre", group_by_document=True,
+            page=i, page_size=1, now=101,
+        ) for i in range(3)]
+        assert {page.hits[0].document for page in pages[:2]} == {grouped, distinct}
+        assert pages[2].hits == ()
+        assert pages[0].has_more
+        assert not pages[1].has_more
+        assert all(page.known_documents == 2 for page in pages)
+        assert {hit.document for hit in pages[0].matching_sources + pages[1].matching_sources} == {grouped, distinct}
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
