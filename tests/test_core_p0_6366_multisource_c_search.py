@@ -174,16 +174,17 @@ def test_multi_source_relation_outranks_singleton_but_conflict_fails_closed(
         )
         purge(db, b, c)
         uncertain = search_public_notice_c(db, "deux sources", now=100)
+        # Numilog was re-admitted under a newer source epoch and then
+        # removed without a qualified Core eviction. Its old canonical
+        # bibliography is superseded: do not resurrect it from either
+        # competing group or its obsolete singleton.
         assert {hit.provider_id for hit in uncertain.hits} == {
-            "bnf", "numilog-catalog", "paris",
+            "bnf", "paris",
         }
         assert {
             hit.provider_id: hit.document for hit in uncertain.hits
         } == {
             "bnf": group.document,
-            # Two incompatible cross-provider relations cannot override
-            # Numilog's independent self-identity canonical document.
-            "numilog-catalog": b_self,
             "paris": third.document,
         }
         assert db.entitlements() == [] and db.acquisitions() == []
