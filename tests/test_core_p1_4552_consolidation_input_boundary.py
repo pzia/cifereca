@@ -136,3 +136,29 @@ def test_same_evidence_id_on_two_sources_is_not_a_collision():
     result = resolve(rows)
     assert len(result.exact) == 2
     assert {item.source_id for item in result.exact} == {"catalog-a", "catalog-b"}
+
+
+def test_foreign_dictionary_keys_and_type_values_are_rejected_without_user_code():
+    """Q4: Core admission must not invoke foreign equality during lookup."""
+    class HostileKey:
+        def __hash__(self):
+            return hash("canonical_type")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign dictionary-key equality")
+
+    class HostileValue:
+        def __eq__(self, other):
+            raise AssertionError("foreign canonical-type equality")
+
+        def __ne__(self, other):
+            raise AssertionError("foreign canonical-type inequality")
+
+    result = resolve([
+        {HostileKey(): "age"},
+        {"canonical_type": HostileValue()},
+        fact(value="13_plus"),
+    ])
+    assert result.rejected_count == 2
+    assert len(result.exact) == 1
+    assert result.exact[0].value == "13_plus"
