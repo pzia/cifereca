@@ -159,3 +159,41 @@ def test_paged_host_exposes_all_bounded_choices_without_network(rig):
                     | {f"private-{i}" for i in range(16)})
     assert old() is False
     assert not calls and not toasts
+
+
+
+@pytest.mark.parametrize("with_retirement", [False, True])
+def test_public_catalogue_long_identifier_keeps_action_title_within_host_budget(
+    rig, with_retirement,
+):
+    from dataclasses import replace
+    from cifereca.plugin_api.local_origin_detail import LocalOriginPublicChoice
+    service, session, request, calls, path = rig
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    page = c.broker.preview(identity_id=request.identity_id,
+                            placement_id=request.placement_id,
+                            still_current=lambda: True, confirmed=True)
+    provider = "catalogue-" + "x" * 260
+    public = (LocalOriginPublicChoice("explicit-long-provider", provider),)
+    c.broker = NS(preview=lambda **kwargs: replace(page, public_choices=public,
+                                                   private_choices=(),
+                                                   remote_loan_choices=()))
+    if with_retirement:
+        host.retire_action = lambda key: actions.pop(key, None) is not None
+    previous_add = host.add_action
+
+    def bounded(key, title, tooltip, callback):
+        assert len(title) <= 256
+        previous_add(key, title, tooltip, callback)
+
+    host.add_action = bounded
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert len(groups) >= 1 and not calls
+    label, tooltip, action = actions["public-0"]
+    assert label == "Envoyer le titre — catalogue 1"
+    assert "seul le titre OPF" in tooltip
+    assert action() is True
+    # No I/O until the explicit action's worker is actually executed.
+    assert not calls
+    assert action() is False

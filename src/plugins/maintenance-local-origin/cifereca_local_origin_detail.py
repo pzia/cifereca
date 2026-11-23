@@ -57,6 +57,15 @@ def _displayable_c_docbase(value):
                         for ch in value))
 
 
+def _public_action_title(provider_id, ordinal):
+    # The GTK host rejects action titles longer than 256 characters.
+    # Keep the ordinary provider-specific title; a long exact identifier
+    # remains in the account-independent choice detail, never truncated
+    # into a misleading provider identity.
+    direct = "Envoyer le titre à " + provider_id
+    return direct if len(direct) <= 256 else f"Envoyer le titre — catalogue {ordinal}"
+
+
 def ranked_documentary_rows(compared):
     """Top ten from explicit review windows, bounded independently of pages.
 
@@ -300,7 +309,7 @@ class DetailController:
                     if not self.current():
                         return
                     self.host.add_action(
-                        "public-" + str(index), "Envoyer le titre à " + choice.provider_id,
+                        "public-" + str(index), _public_action_title(choice.provider_id, index + 1),
                         "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement.",
                         lambda selected=choice, original=value: self.search(selected, original),
                     )
@@ -383,7 +392,7 @@ class DetailController:
                    if kind == "private" else "remote-loan-" + str(
                        index - 1 - len(original.public_choices) - len(original.private_choices)))
             if kind == "public":
-                title = "Envoyer le titre à " + choice.provider_id
+                title = _public_action_title(choice.provider_id, index)
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
                 action = lambda selected=choice: self.search(selected, original)
             elif kind == "private":
