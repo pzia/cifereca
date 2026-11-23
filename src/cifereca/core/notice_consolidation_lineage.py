@@ -69,8 +69,11 @@ def descriptive_lineage_key(
             raise ValueError("invalid_lineage_facts")
         for fact in rows:
             if (type(fact) is not SourceFact
+                    or type(fact.inherited) is not bool
                     or fact.inherited is not inherited
+                    or type(fact.canonical_type) is not str
                     or fact.canonical_type != selection.canonical_type
+                    or type(fact.relation) is not str
                     or not all(_source_identifier(x) for x in (
                         fact.source_id, fact.edition_id, fact.evidence_id,
                         fact.source_revision,
