@@ -431,6 +431,9 @@ def search_public_notice_c(
             or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
                    for value in content_types for char in value)
             or (age is not None and (type(age) is not int or not 0 <= age < 18))
+            # A type of age evidence without an age is a silently ignored
+            # filter; reject it instead of presenting an unfiltered C page.
+            or (age is None and age_kind is not None)
             or (age_kind is not None and (type(age_kind) is not str or age_kind not in
                 ('interest', 'reading', 'publisher', 'recommended')))
             or type(group_by_document) is not bool
