@@ -3,8 +3,6 @@
 Only synthetic CapabilityEvidence and pure local grouping. Never implies a
 license, subscription, full inventory, valid connection or mutating consent.
 """
-from dataclasses import replace
-
 import pytest
 
 from cifereca.plugin_api import (
@@ -78,7 +76,8 @@ def test_account_credential_field_edition_and_unknown_scope_do_not_widen():
     assert all(x.missing for f, x in exact.items() if f != "loans")
     assert all(x.missing for x in grouped(matrix, credential_id="card-b").values())
     assert all(x.missing for x in grouped(matrix, account_id="reader-b").values())
-    assert all(x.missing for x in grouped(matrix, identity_id="bob").values())
+    assert grouped(matrix, identity_id="bob")["loans"].missing
+    assert grouped(matrix, identity_id="bob")["acquisition"].unverified_count == 1
     assert all(x.missing for x in grouped(matrix, field="dilicom").values())
     branch = grouped(matrix, scope="digital", field="dilicom")
     assert [x.operation for x in branch["loans"].evidence] == ["loan.inventory.branch"]
