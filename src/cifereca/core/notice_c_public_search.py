@@ -647,7 +647,7 @@ def search_public_notice_c(
                 ):
                     unindexed += 1
                     continue
-                unqualified_retention = fence is None or fence['evicted'] is not True
+                unqualified_retention = fence is None or fence.get('evicted') is not True
             except ValueError:
                 unindexed += 1
                 continue
