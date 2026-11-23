@@ -10,7 +10,35 @@ from __future__ import annotations
 from .capability_matrix import (
     CapabilityEvidence, CapabilityMatrix, declared_provider_matrix,
 )
-from .loan_inventory import LoanInventorySnapshot
+from .loan_inventory import LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot
+
+
+def _validated_loan_snapshot(snapshot: LoanInventorySnapshot) -> LoanInventorySnapshot:
+    """Recheck a previously constructed provider claim before public display.
+
+    A frozen DTO can be modified via object.__setattr__, including its nested
+    scope, branch or loan rows. Reconstruct and validate a defensive copy;
+    never mutate the caller's snapshot or reuse its former validation verdict.
+    This checks *structure*, not authenticity, freshness or borrowing rights.
+    """
+    try:
+        if type(snapshot.scope) is not LoanInventoryScope:
+            raise ValueError("invalid_scope")
+        snapshot.scope.__post_init__()
+        if type(snapshot.branches) is not tuple:
+            raise ValueError("invalid_branches")
+        for branch in snapshot.branches:
+            if type(branch) is not LoanBranchCoverage:
+                raise ValueError("invalid_branch")
+            branch.__post_init__()
+        return LoanInventorySnapshot(
+            scope=snapshot.scope, loans=snapshot.loans,
+            status=snapshot.status, branches=snapshot.branches,
+            observed_at=snapshot.observed_at, reason_code=snapshot.reason_code,
+            contract=snapshot.contract,
+        )
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        raise ValueError("capability_invalid_loan_snapshot") from None
 from .models import CatalogueSourceCapability, SyncSourceRef
 
 # Explicitly documented names in SyncSourceRef.sync_capabilities.
@@ -107,6 +135,9 @@ def project_existing_capabilities(
                 or loan_snapshot.scope.provider_id != provider
                 or loan_snapshot.scope.identity_id != identity_id):
             raise ValueError("capability_loan_scope_mismatch")
+        # Do not elevate a forged post-construction mutation to a positive
+        # account/branch capability, or leak a mutated timestamp as a ref.
+        loan_snapshot = _validated_loan_snapshot(loan_snapshot)
         scope = loan_snapshot.scope
         # Provider 'success' without observed complete branch evidence is
         # never a complete loan inventory. Reading a list is not a right.

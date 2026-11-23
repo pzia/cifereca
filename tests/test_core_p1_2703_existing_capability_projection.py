@@ -259,3 +259,37 @@ def test_failed_loan_snapshot_must_not_produce_positive_branch_claim(status):
     assert branch.evidence_ref == ""
     assert branch.reason == "branch_snapshot_" + status
     assert not branch.authorizes_mutation
+
+
+@pytest.mark.parametrize("mutate", (
+    lambda snapshot: object.__setattr__(snapshot, "observed_at", "https://secret.example/?token=private"),
+    lambda snapshot: object.__setattr__(snapshot, "branches", [snapshot.branches[0]]),
+    lambda snapshot: object.__setattr__(snapshot, "branches", snapshot.branches * 2),
+    lambda snapshot: object.__setattr__(snapshot.branches[0], "pagination_complete", False),
+    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "card\x00other"),
+    lambda snapshot: object.__setattr__(snapshot, "loans", ("not-a-loan",)),
+))
+def test_precollected_loan_mutations_are_rejected_before_capability_projection(mutate):
+    # An opaque provider reference is immutable by convention, not against
+    # object.__setattr__. A former constructor PASS is no current proof.
+    snapshot = _loan_snapshot()
+    mutate(snapshot)
+    with pytest.raises(ValueError, match="^capability_invalid_loan_snapshot$"):
+        project_existing_capabilities(
+            _descriptor(), identity_id="alice", loan_snapshot=snapshot,
+        )
+
+
+def test_capability_projection_never_rewrites_a_valid_input_snapshot():
+    snapshot = _loan_snapshot()
+    original_branches = snapshot.branches
+    original_loans = snapshot.loans
+    projected = project_existing_capabilities(
+        _descriptor(), identity_id="alice", loan_snapshot=snapshot,
+    )
+    assert projected.exact(
+        "loan.inventory.branch", "digital", field="pnblive",
+        identity_id="alice", account_id="card-a", credential_id="vault-a",
+    ).status == "supported"
+    assert snapshot.branches is original_branches
+    assert snapshot.loans is original_loans
