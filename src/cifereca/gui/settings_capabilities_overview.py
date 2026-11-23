@@ -103,9 +103,9 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
                               key=lambda row: (row.operation, row.scope, row.field))
         )
         output.append(
-            matrix.provider_id + "\\n" + " · ".join(statuses)
-            + ("\\nOpérations et périmètres déclarés :\\n"
-               + "\\n".join(detail) if detail else "")
+            matrix.provider_id + "\n" + " · ".join(statuses)
+            + ("\nOpérations et périmètres déclarés :\n"
+               + "\n".join(detail) if detail else "")
         )
     return tuple(output)
 
