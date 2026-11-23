@@ -103,7 +103,7 @@ def _display_holds(result):
             reason += " Témoin non vérifié ; aucune reprise."
         lines.extend((
             "",
-            row["title"],
+            _ledger_label(row["title"]),
             f"Source : {_hold_coordinate(row['provider_id'])} / "
             + _hold_coordinate(row['credential_id']) + " / "
             + _hold_coordinate(row['account_id'], account=True),
