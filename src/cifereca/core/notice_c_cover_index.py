@@ -409,7 +409,9 @@ def read_current_consolidated_public_cover(storage, document):
     durable source epoch detects a newer observation even after eviction.
     Private source references are never opened by this shared public read.
     """
-    from .notice_cover_repository import _opaque_key, _checked_source_state
+    from .notice_cover_repository import (
+        _opaque_key, _checked_source_state, _source_fingerprint,
+    )
     if not is_canonical_cover_document(document):
         return None
     with storage._lock, storage._connect() as db:
@@ -438,17 +440,20 @@ def read_current_consolidated_public_cover(storage, document):
                         or live.observation.source_revision != member.source_revision):
                     return None
             elif fence is not None:
-                # A missing source is qualified only by a Core-produced
-                # eviction tombstone. A raw DELETE with the old live fence
-                # must not make a retained N2 candidate look current.
-                if (fence.get("evicted") is not True
-                        or fence["epoch"] != member.source_epoch + 1):
+                # Legacy C retention predates qualified source eviction and
+                # remains a valid offline documentary read. The durable
+                # fence, if present, MUST nevertheless match the exact
+                # retained projection, not merely reuse its old epoch.
+                expected = member.source_epoch + int(fence.get("evicted") is True)
+                if fence["epoch"] != expected:
                     return None
-            else:
-                # Neither observation nor durable fence can attest this
-                # contribution's revision. Keep retained C readable via the
-                # non-current documentary reader; deny only current N2 use.
-                return None
+                if (member.public_bibliography is not None
+                        and fence["proof"] not in {
+                            _source_fingerprint(
+                                member, ("search_result", "thumbnail_url"), complete,
+                            ) for complete in (True, False)
+                        }):
+                    return None
         return snapshot
 
 
