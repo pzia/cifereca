@@ -188,3 +188,22 @@ def test_catalogue_search_and_detail_declarations_are_independent_and_inert(
     assert matrix.exact("catalog.detail", "edition") is None
     assert matrix.exact("catalog.detail", "account") is None
     assert matrix.exact("catalog.detail", "unknown", edition_id="epub") is None
+
+
+@pytest.mark.parametrize("selector", (
+    {"operation": []}, {"operation": {}}, {"operation": "loan.borrow\n"},
+    {"scope": []}, {"scope": "account\r"},
+    {"field": []}, {"field": {"branch": "digital"}},
+    {"identity_id": ["alice"]}, {"account_id": {"id": "reader"}},
+    {"credential_id": "bad\x00credential"}, {"edition_id": "bad\nrow"},
+    {"edition_id": "x" * 257},
+))
+def test_exact_lookup_rejects_malformed_untrusted_selectors(selector):
+    matrix = CapabilityMatrix("synthetic", (
+        CapabilityEvidence("synthetic", "loan.borrow", "account"),
+    ))
+    arguments = {"operation": "loan.borrow", "scope": "account"}
+    arguments.update(selector)
+    with pytest.raises(ValueError, match="^capability_invalid_scope$"):
+        matrix.exact(**arguments)
+    assert matrix.exact("loan.borrow", "account") is not None
