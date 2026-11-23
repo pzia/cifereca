@@ -4,6 +4,7 @@ import pytest
 from cifereca.core.notice_source_observation import (
     NoticeSourceKey, admit_source_notice,
 )
+from cifereca.core.notice_search_cover_producer import _coordinate_digest
 from cifereca.core.notice_c_public_age_descriptive_facts import (
     public_age_descriptive_facts, admit_public_age_descriptive_facts,
 )
@@ -15,10 +16,16 @@ def observation(*, visibility="public", age=True):
         identity_id="identity:1" if visibility == "private" else None,
         credential_id="credential:1" if visibility == "private" else None,
         account_id=None, branch_id="search.public.catalogue",
-        record_id="search:abc", edition_id="edition:abc",
+        record_id="search:" + _coordinate_digest(
+            "provider.example", "public_catalog", "record:1",
+        ), edition_id="edition:" + _coordinate_digest(
+            "provider.example", "public_catalog", "record:1",
+            "docbase:1", "digital", "rev:1",
+        ),
         manifestation_role="digital",
     )
     bibliography = {
+        "source_collection": "public_catalog",
         "record_id": "record:1", "docbase": "docbase:1",
         "medium": "digital", "revision_id": "rev:1",
     }
@@ -42,10 +49,10 @@ def test_exact_public_age_is_admitted_without_guessing():
     source = observation()
     facts = public_age_descriptive_facts(source)
     assert len(facts) == 1
-    assert facts[0]["edition_id"] == "edition:abc"
+    assert facts[0]["edition_id"] == source.key.edition_id
     assert '"age_min":12' in facts[0]["value"]
     admitted = admit_public_age_descriptive_facts(
-        source, target_edition_id="edition:abc",
+        source, target_edition_id=source.key.edition_id,
         consolidator_id="plugin.age.alpha", consolidator_version="1.0.0",
         attested_strong_links={},
     )
@@ -63,7 +70,7 @@ def test_other_edition_requires_attested_strong_link():
     )
     assert not unlinked.exact and not unlinked.inherited
     linked = admit_public_age_descriptive_facts(
-        source, attested_strong_links={"edition:abc": "proof:1"}, **args,
+        source, attested_strong_links={source.key.edition_id: "proof:1"}, **args,
     )
     assert len(linked.inherited) == 1
     assert linked.inherited[0].relation_proof_id == "proof:1"
@@ -74,3 +81,17 @@ def test_other_edition_requires_attested_strong_link():
 ])
 def test_private_or_absent_age_never_yields_public_facts(kwargs):
     assert public_age_descriptive_facts(observation(**kwargs)) == ()
+
+
+def test_cross_edition_age_receipt_does_not_admit_facts():
+    from dataclasses import replace
+    source = observation()
+    other_key = replace(source.key, edition_id="edition:foreign")
+    assert public_age_descriptive_facts(replace(source, key=other_key)) == ()
+
+
+def test_cross_record_age_receipt_does_not_admit_facts():
+    from dataclasses import replace
+    source = observation()
+    other_key = replace(source.key, record_id="search:foreign")
+    assert public_age_descriptive_facts(replace(source, key=other_key)) == ()
