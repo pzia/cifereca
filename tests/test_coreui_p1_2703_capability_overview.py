@@ -339,3 +339,29 @@ def test_disconnected_observation_is_explicitly_historical_not_live():
     unknown = replace(disconnected, connected=None)
     label, = source_capability_labels((CapabilityMatrix("synthetic", (unknown,)),))
     assert "source déconnectée" not in label
+
+
+def test_mixed_or_unknown_connection_observations_are_not_presented_as_current():
+    """An observed family can combine several distinct account connections."""
+    base = CapabilityEvidence(
+        "synthetic", "personal_inventory.rights", "account",
+        identity_id="private-owner", account_id="private-card",
+        status="supported", implementation_state="implemented",
+        source_kind="account_observation", evidence_ref="rights.snapshot/1",
+        enabled=True, connected=True,
+    )
+    disconnected = replace(
+        base, operation="personal_inventory.list", connected=False,
+        account_id="private-other",
+    )
+    unknown = replace(
+        base, operation="personal_inventory.list", connected=None,
+        account_id="private-other",
+    )
+    for rows in ((base, disconnected), (base, unknown), (unknown,)):
+        label, = source_capability_labels((CapabilityMatrix("synthetic", rows),))
+        assert "Droits : observation, action non autorisée" in label
+        assert "état de connexion mixte ou inconnu" in label
+        assert "private-" not in label and "rights.snapshot/1" not in label
+    label, = source_capability_labels((CapabilityMatrix("synthetic", (base,)),))
+    assert "état de connexion mixte ou inconnu" not in label

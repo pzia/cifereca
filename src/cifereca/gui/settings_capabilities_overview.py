@@ -73,6 +73,10 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
                 # Do not expose account identifiers or producer-supplied notes.
                 if all(row.connected is False for row in observed):
                     state += " ; source déconnectée, observation historique"
+                elif not all(row.connected is True for row in observed):
+                    # Mixed or unknown connection states cannot be promoted
+                    # to an entirely connected, current observation.
+                    state += " ; état de connexion mixte ou inconnu"
             elif manual:
                 # A human-entered report is not an independent provider
                 # observation, even if its producer marked it 'supported'.
