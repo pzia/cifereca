@@ -135,6 +135,11 @@ def main() -> None:
         # No inherited env/credential is available when plugin code runs.
         os.environ.clear()
         resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+        # Bound address space as well as CPU: pure plugins may still allocate
+        # unbounded strings/lists before the 16 KiB result check. This is
+        # applied inside the isolated worker, never in the parent Core.
+        memory_cap = 256 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory_cap, memory_cap))
         resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024, 64 * 1024))
         with open(os.devnull, "wb", buffering=0) as null_output:
             os.dup2(null_output.fileno(), 1)
