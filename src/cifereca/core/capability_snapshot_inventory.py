@@ -7,15 +7,48 @@ CoreUI-safe enabled source inventory and refuses ambiguous duplicates.
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from dataclasses import replace
 from typing import Any
 
 from ..plugin_api.capability_matrix import CapabilityEvidence, CapabilityMatrix
 from ..plugin_api.capability_projection import project_existing_capabilities
 from ..plugin_api.loan_inventory import LoanInventorySnapshot
-from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 from ..plugin_api.models import SyncSourceRef
 from .capability_inventory import capability_matrices_for_identity
+from ..plugin_api.provider_rights_observation import (
+    ProviderRightObservation, ProviderRightsScope, ProviderRightsSnapshot,
+)
+
+
+# Upstream branch identifiers are *public technical tokens*, not arbitrary
+# provider URLs or bearer-bearing resource labels. Do not interpolate secrets
+# from a forged rights snapshot into CoreUI's capability matrix.
+_PUBLIC_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}")
+
+
+def _validated_rights_snapshot(snapshot: ProviderRightsSnapshot) -> None:
+    """Revalidate the complete nested envelope, without provider I/O.
+
+    The dataclasses are frozen for normal assignment only. Providers can
+    mutate their scopes, rights and branches after construction. No previous
+    constructor PASS or private branch reference authorizes a UI projection.
+    """
+    try:
+        if type(snapshot.scope) is not ProviderRightsScope:
+            raise ValueError("invalid_scope")
+        snapshot.scope.__post_init__()
+        if type(snapshot.rights) is not tuple:
+            raise ValueError("invalid_rights")
+        for right in snapshot.rights:
+            if type(right) is not ProviderRightObservation:
+                raise ValueError("invalid_right")
+            right.__post_init__()
+        snapshot.__post_init__()
+        if snapshot.branch and _PUBLIC_BRANCH.fullmatch(snapshot.branch) is None:
+            raise ValueError("private_branch")
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        raise ValueError("capability_invalid_rights_snapshot") from None
 
 
 def capability_matrices_with_precollected_evidence(
@@ -121,6 +154,7 @@ def capability_matrices_with_precollected_evidence(
     for snapshot in rights_snapshots:
         if type(snapshot) is not ProviderRightsSnapshot:
             raise ValueError("capability_invalid_rights_snapshot")
+        _validated_rights_snapshot(snapshot)
         if snapshot.scope.identity_id != identity_id:
             raise ValueError("capability_rights_scope_mismatch")
         provider = snapshot.scope.provider_id

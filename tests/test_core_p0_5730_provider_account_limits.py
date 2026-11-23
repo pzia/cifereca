@@ -72,3 +72,25 @@ def test_missing_descriptor_does_not_guess_cardinality():
 def test_malformed_account_container_fails_closed():
     with pytest.raises(ProviderAccountLimitError):
         validate_provider_account_limits({}, [descriptor("store", 1)])
+
+
+@pytest.mark.parametrize("first,second", ((1, 2), (2, 1), (1, 1), (None, 1), (1, None), (None, None)))
+def test_duplicate_provider_descriptors_never_pick_a_random_cardinality(first, second):
+    # Duplicate installed descriptors for the same provider are ambiguous
+    # even when neither row declares a limit. A last-wins policy could turn
+    # one permitted account into two, depending on plugin registration order.
+    sources = [descriptor("LoCaL", first), descriptor("local", second)]
+    with pytest.raises(ProviderAccountLimitError, match="Ambiguous provider descriptor") as raised:
+        validate_provider_account_limits(
+            [row("local", "alice", "private-a"), row("local", "alice", "private-b")],
+            sources,
+        )
+    assert "private-" not in str(raised.value)
+
+
+def test_two_different_provider_ids_retain_independent_cardinalities():
+    validate_provider_account_limits(
+        [row("first", "alice", "one"), row("second", "alice", "one"),
+         row("second", "alice", "two")],
+        [descriptor("first", 1), descriptor("second", 2)],
+    )

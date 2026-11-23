@@ -525,5 +525,63 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("exact_mount_skips_native_folder_chooser", probe)
         self.assertIn("revoked_profile_cannot_start_new_gtk_scan", probe)
 
+    def test_three_shards_cover_every_selected_scenario_exactly_once(self):
+        # The fix reduces wall time, never acceptance coverage. Unknown Core
+        # dependencies must still execute all 54 scenarios, just partitioned.
+        cases = (
+            ["src/cifereca/plugin_api/capability_projection.py"],
+            ["src/plugins/home-page/cifereca_home.py"],
+            ["src/cifereca/gui/book_widgets.py", "src/plugins/home-page/cifereca_home.py"],
+            ["docs/README.md"],
+        )
+        for paths in cases:
+            selected = mod.select(paths)
+            with self.subTest(paths=paths), TemporaryDirectory() as temp:
+                root = Path(temp)
+                source = root / "changed-files"
+                source.write_text("\n".join(paths) + "\n", encoding="utf-8")
+                emitted = []
+                for shard in range(3):
+                    target = root / ("output-" + str(shard))
+                    self.assertEqual(mod.main([
+                        "--changed-files", str(source),
+                        "--shard-count", "3", "--shard-index", str(shard),
+                        "--github-output", str(target),
+                    ]), 0)
+                    result = dict(line.split("=", 1) for line in target.read_text().splitlines())
+                    self.assertEqual(result["shard_index"], str(shard))
+                    self.assertEqual(result["shard_count"], "3")
+                    names = tuple(result["scenarios"].split())
+                    self.assertEqual(int(result["count"]), len(names))
+                    emitted.extend(names)
+                self.assertEqual(len(emitted), len(selected))
+                self.assertEqual(set(emitted), set(selected))
+                self.assertEqual(len(set(emitted)), len(emitted))
+
+    def test_invalid_shard_parameters_fail_before_publishing(self):
+        with TemporaryDirectory() as temp:
+            for count, index in ((0, 0), (9, 0), (3, -1), (3, 3)):
+                target = Path(temp) / f"output-{count}-{index}"
+                with self.subTest(count=count, index=index), self.assertRaises(SystemExit) as exc:
+                    mod.main([
+                        "--full", "--shard-count", str(count),
+                        "--shard-index", str(index),
+                        "--github-output", str(target),
+                    ])
+                self.assertEqual(exc.exception.code, 2)
+                self.assertFalse(target.exists())
+
+    def test_workflow_keeps_one_required_aggregated_gate_after_all_three_shards(self):
+        source = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
+        self.assertIn("  startup:\n    name: E2E GTK · core\n    needs: gtk_shards", source)
+        self.assertIn('test "$SHARDS_RESULT" = "success"', source)
+        self.assertIn("    strategy:\n      fail-fast: false\n      matrix:\n        shard: [0, 1, 2]", source)
+        self.assertEqual(source.count('--shard-count 3 --shard-index "$E2E_SHARD_INDEX"'), 3)
+        # Artifact API names are unique across matrix jobs, while raw probe
+        # outputs remain unpublished.
+        self.assertIn("name: e2e-core-summary-shard-${{ matrix.shard }}", source)
+        self.assertNotIn("path: e2e-artifacts/", source)
+
+
 if __name__ == "__main__":
     unittest.main()
