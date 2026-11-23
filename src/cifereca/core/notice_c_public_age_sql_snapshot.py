@@ -13,7 +13,7 @@ from .notice_c_public_age_descriptive_facts import public_age_descriptive_facts
 def public_age_facts_txn(db, document):
     """Return native age facts from one validated, exact persisted C source.
 
-    Invalid, missing, stale or tampered rows abstain; never synthesize a
+    Invalid, missing or tampered rows abstain; never synthesize a
     source fact from a title, ISBN, URL or other edition.
     """
     try:
