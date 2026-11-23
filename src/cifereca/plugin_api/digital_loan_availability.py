@@ -31,6 +31,10 @@ def _public_label(value: object) -> bool:
     return (
         type(value) is str and len(value) <= 160
         and value == value.strip() and value.isprintable()
+        # Invisible Unicode format controls can visually impersonate a
+        # provider/account label even when Python considers it printable.
+        and not any(__import__("unicodedata").category(ch) in {"Cf", "Cs"}
+                    for ch in value)
         and not any(marker in value.casefold()
                     for marker in _PRIVATE_LABEL_MARKERS)
     )
