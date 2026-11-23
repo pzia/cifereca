@@ -16,8 +16,60 @@ def overview_text(value):
             f"{coverage} Aucune reprise ni suppression autorisée.")
 
 
-def capacity_text(value):
+def _bounded_counter_shape(raw, keys):
+    """No malformed/duplicate public counters may manufacture spare capacity."""
+    return (type(raw) is tuple and len(raw) == len(keys)
+            and all(type(pair) is tuple and len(pair) == 2
+                    and type(pair[0]) is str
+                    and type(pair[1]) is int and 0 <= pair[1] <= 2**74
+                    for pair in raw)
+            and {k for k, _ in raw} == set(keys))
+
+
+def _safe_capacity_observation(value):
     if type(value) is not DerivedCapacityObservation:
+        return False
+    if not (value.status in ("observed", "partial")
+            and value.saturation in ("below_limits", "at_limit", "unknown")
+            and value.compact_saturation in ("below_limits", "at_limit", "unknown")
+            and type(value.output_bytes_complete) is bool):
+        return False
+    numeric = (value.record_count, value.payload_bytes,
+               value.known_output_bytes, value.active_payload_bytes,
+               value.active_output_bytes)
+    if any(type(n) is not int or not 0 <= n <= 2**74 for n in numeric):
+        return False
+    if not (_bounded_counter_shape(value.counts, (
+                "pending", "committed", "unreadable", "unbound",
+                "active_pending", "active_committed", "other_bound"))
+            and _bounded_counter_shape(value.capacity, (
+                "records", "payload_bytes", "output_bytes"))
+            and _bounded_counter_shape(value.compact_capacity, (
+                "records", "payload_bytes"))):
+        return False
+    if (value.logical_bytes is None) != (value.allocated_bytes is None):
+        return False
+    for n in (value.logical_bytes, value.allocated_bytes):
+        if n is not None and (type(n) is not int or not 0 <= n <= 2**74):
+            return False
+    if value.region_status == "observed" and not _bounded_counter_shape(
+            value.region_counts, (
+                "pending_named", "committed_named", "unrecorded_regular",
+                "ambiguous_entries", "unverified_regions", "unobserved_receipts")):
+        return False
+    if value.compact_status in ("observed", "partial"):
+        if not _bounded_counter_shape(value.compact_counts, (
+                "count", "payload_bytes", "matched", "unpaired", "retired")):
+            return False
+        cc = dict(value.compact_counts)
+        if (cc["retired"] > cc["matched"] or cc["matched"] > cc["count"]
+                or cc["unpaired"] > cc["count"]):
+            return False
+    return True
+
+
+def capacity_text(value):
+    if not _safe_capacity_observation(value):
         return "Capacité indisponible. Aucun espace libre attesté."
     c, cap = dict(value.counts), dict(value.capacity)
     saturation = {"below_limits": "Sous les plafonds observés (pas une réservation).",
