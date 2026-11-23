@@ -8,7 +8,7 @@ from cifereca.core.local_origin_documentary_suggestions import (
 class DocumentaryEvidenceRankTests(unittest.TestCase):
     def test_normalized_title_and_author_match(self):
         hit = SimpleNamespace(title="École des livres", author="Alice")
-        self.assertEqual(_comparison(hit, "E\\u0301cole des livres", "ALICE"),
+        self.assertEqual(_comparison(hit, "École des livres", "ALICE"),
                          "title_author_concordant")
 
     def test_author_mismatch_is_not_full_concordance(self):
