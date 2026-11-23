@@ -47,7 +47,7 @@ def test_public_catalogue_worker_is_not_called_by_page_factory(monkeypatch):
         pass
 
     root = page.build_public_catalogue_page(Window(), Gtk=Gtk, GLib=object())
-    assert len(root.children) == 7
+    assert len(root.children) == 8
 
 
 def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monkeypatch):
@@ -108,7 +108,7 @@ def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monke
                  _source_context_epoch=2)
     window = NS(service=service, _closed=False)
     root = page.build_public_catalogue_page(window, Gtk=Gtk, GLib=glib)
-    entry, _, status, scroller, field_filters, scope_filters, search_button = root.children
+    entry, _, status, scroller, age_filters, field_filters, scope_filters, search_button = root.children
     entry.value = "Astronomie"
     search_button.handlers["clicked"](search_button)
     assert calls[0][1] == "Astronomie"
@@ -136,3 +136,25 @@ def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monke
     fn(*args)
     assert calls[-1][2]["scope"] == "digital"
     assert calls[-1][2]["page"] == 0
+    age_entry = age_filters.children[0]
+    age_entry.value = "9"
+    search_button.handlers["clicked"](search_button)
+    fn, args = pending.pop()
+    fn(*args)
+    assert calls[-1][2]["age"] == 9
+    assert calls[-1][2]["age_kind"] is None
+    age_filters.children[2].handlers["clicked"](age_filters.children[2])
+    fn, args = pending.pop()
+    fn(*args)
+    assert calls[-1][2]["age_kind"] == "reading"
+    previous = len(calls)
+    age_entry.value = "99"
+    search_button.handlers["clicked"](search_button)
+    assert len(calls) == previous
+    assert "Âge invalide" in status.value
+    age_entry.value = ""
+    search_button.handlers["clicked"](search_button)
+    fn, args = pending.pop()
+    fn(*args)
+    assert calls[-1][2]["age"] is None
+    assert calls[-1][2]["age_kind"] is None
