@@ -9,6 +9,7 @@ Nothing in this API grants a loan, changes permissions or reads a provider.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from unicodedata import category
 from typing import Literal
 
 DigitalAvailabilityStatus = Literal["unknown", "estimated", "attested"]
@@ -33,7 +34,7 @@ def _public_label(value: object) -> bool:
         and value == value.strip() and value.isprintable()
         # Invisible Unicode format controls can visually impersonate a
         # provider/account label even when Python considers it printable.
-        and not any(__import__("unicodedata").category(ch) in {"Cf", "Cs"}
+        and not any(category(ch) in {"Cf", "Cs"}
                     for ch in value)
         and not any(marker in value.casefold()
                     for marker in _PRIVATE_LABEL_MARKERS)
