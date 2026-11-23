@@ -50,7 +50,9 @@ class LibraryOrganizerReadBrokerImpl:
         return page
 
     def _current(self, token):
-        if type(token) is not str or self._active is None:
+        if (type(token) is not str or len(token) != 64
+                or any(ch not in "0123456789abcdef" for ch in token)
+                or self._active is None):
             return None
         scope, result, stamp, page = self._active
         if token != page.token:
