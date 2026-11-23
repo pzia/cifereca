@@ -387,12 +387,13 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             title, author = local[-2:]
             metadata = "local_catalogue_only"
             local_isbns = ()
+            source_urls = frozenset()
             if local[6] in ("epub", "kepub"):
-                from .local_origin_epub_evidence import read_verified_epub_bibliography
-                observation = read_verified_epub_bibliography(path, signature)
+                from .local_origin_epub_evidence import read_verified_epub_details
+                observation = read_verified_epub_details(path, signature, include_source_claims=True)
                 if observation is None:
                     raise _CandidateRejected("epub_description_unverified")
-                title, authors, local_isbns = observation
+                title, authors, local_isbns, _, source_urls = observation
                 author = authors[0] if len(authors) == 1 else None
                 metadata = "verified_epub_opf_description"
             # Fresh SHA, inode and descriptive evidence must match the
@@ -408,6 +409,7 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             suggestions = suggest_known_public_documents(
                 storage, title=title, author=author,
                 page=page, page_size=page_size,
+                **({"source_urls": source_urls} if source_urls else {}),
             )
             following = (_SuggestionContinuation(
                 storage, library_root, identity_id, placement_id, local,

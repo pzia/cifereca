@@ -6,10 +6,13 @@ The existing C search owns source validation, pagination and freshness.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import sqlite3
 import unicodedata
 
+from .notice_c_cover_index import is_canonical_cover_document
 from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
+from .notice_c_web_choices import _read as _read_current_public_web_references
 from .public_search_projection import _public_bibliographic_text
 
 
@@ -49,9 +52,41 @@ def _comparison(hit, title, author):
     return "title_author_concordant"
 
 
+def _matching_source_url(storage, matches, url):
+    """Return a single corroborated hit index from one bounded C snapshot."""
+    if type(url) is not str or not matches:
+        return None
+    by_document = {}
+    matched = []
+    try:
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            for index, match in enumerate(matches):
+                hit = match.hit
+                if not is_canonical_cover_document(hit.document):
+                    continue
+                if hit.document not in by_document:
+                    by_document[hit.document] = _read_current_public_web_references(db, hit.document)
+                snapshot, pairs = by_document[hit.document]
+                if snapshot is None or snapshot.epoch != hit.epoch:
+                    return None
+                if any(
+                    (ref.provider_id, ref.record_id, ref.edition_id, ref.observed_at, ref.url)
+                    == (hit.provider_id, hit.record_id, hit.edition_id, hit.observed_at, url)
+                    for _, ref in pairs
+                ):
+                    matched.append(index)
+    except (sqlite3.Error, ValueError, TypeError, RuntimeError):
+        # A failed optional reference read leaves the title/author comparison.
+        return None
+    if len(matched) == 1 and matches[matched[0]].comparison == "title_author_concordant":
+        return matched[0]
+    return None
+
+
 def suggest_known_public_documents(storage, *, title: str, author: str | None = None,
                                    page: int = 0, page_size: int = 20,
-                                   now: int | None = None):
+                                   now: int | None = None, source_urls=frozenset()):
     """One bounded title query; classify, never collapse source editions.
 
     A descriptive match is not an exact identifier proof. All results retain
@@ -84,6 +119,7 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
     # Ranking is advisory only. Do not infer origin/right from similarity,
     # reorder across pagination windows, or collapse source editions.
     evidence_rank = {
+        "opf_source_url_concordant": -1,
         "title_author_concordant": 0,
         "title_concordant_author_unknown": 1,
         "title_concordant_author_divergent": 2,
@@ -115,6 +151,15 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
                 "source_revision", "medium", "media_format",
             )))
     )
+    if (type(source_urls) is frozenset and len(source_urls) == 1
+            and page == 0 and not found.has_more and len(matches) == found.known_matches):
+        # The URL is an OPF claim. Compare it without exposing it or using
+        # it as a request. Do not pick a winner across unseen title hits.
+        index = _matching_source_url(storage, matches, next(iter(source_urls)))
+        if index is not None:
+            matches = (*matches[:index],
+                       replace(matches[index], comparison="opf_source_url_concordant"),
+                       *matches[index + 1:])
     ordered = tuple(sorted(
         matches, key=lambda item: evidence_rank.get(item.comparison, 4),
     ))
