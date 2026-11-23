@@ -9,6 +9,7 @@ Nothing in this API grants a loan, changes permissions or reads a provider.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from unicodedata import category
 from typing import Literal
 
 DigitalAvailabilityStatus = Literal["unknown", "estimated", "attested"]
@@ -31,6 +32,7 @@ def _public_label(value: object) -> bool:
     return (
         type(value) is str and len(value) <= 160
         and value == value.strip() and value.isprintable()
+        and not any(category(ch) in {"Cf", "Cs"} for ch in value)
         and not any(marker in value.casefold()
                     for marker in _PRIVATE_LABEL_MARKERS)
     )
