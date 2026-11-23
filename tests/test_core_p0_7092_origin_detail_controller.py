@@ -51,7 +51,9 @@ def test_mount_is_inert_and_public_action_is_explicit_one_shot(rig):
     assert search() is True and search() is False
     deliver(tasks)
     assert search() is False and len(calls) == 1
-    assert len(groups) == 2 and "aucune origine ni droit" in str(groups[1]).lower()
+    assert len(groups) == 3 and "aucune origine ni droit" in str(groups[1]).lower()
+    assert groups[2][0] == "Classement documentaire — lecture seule"
+    assert "aucune absence attestée" in repr(groups[2]) or "Partielle" in repr(groups[2])
     assert rows(service.storage) == before and path.read_bytes() == data
 
 
