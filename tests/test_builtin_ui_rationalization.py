@@ -53,6 +53,7 @@ def test_builtin_pages_keep_routes_groups_and_library_action():
     assert [row.route for row in rows] == [
         "dashboard",
         "search",
+        "public_catalogue",
         "library",
         "readers",
         "recent",
