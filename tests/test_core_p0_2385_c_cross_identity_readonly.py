@@ -55,3 +55,32 @@ def test_same_title_without_attested_origin_does_not_join_public_c(tmp_path):
         assert unrelated._core_notice_canonical_cover_document_ref != a._core_notice_canonical_cover_document_ref
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
+
+
+def test_public_c_pagination_uses_document_group_not_provider_rows(tmp_path):
+    """A canonical multi-provider edition must occupy one grouped page slot."""
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        a, b = _rows()
+        search._ingest_public_search_c(
+            core.library, [a, b], identity_id="profile-a", now=100,
+            require_public_cover_witness=True,
+        )
+        canonical = a._core_notice_canonical_cover_document_ref
+        assert canonical == b._core_notice_canonical_cover_document_ref
+        first = search_public_notice_c(
+            core.storage, "Même titre", group_by_document=True,
+            page=0, page_size=1, now=101,
+        )
+        second = search_public_notice_c(
+            core.storage, "Même titre", group_by_document=True,
+            page=1, page_size=1, now=101,
+        )
+        assert len(first.hits) == 1
+        assert first.hits[0].document == canonical
+        assert second.hits == ()
+        assert not first.has_more
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
