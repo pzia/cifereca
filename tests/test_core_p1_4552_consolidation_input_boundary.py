@@ -119,3 +119,20 @@ def test_no_mutation_and_no_provider_io():
     before = record.copy(), links.copy()
     resolve([record], links)
     assert (record, links) == before
+
+
+def test_same_evidence_id_different_source_revision_is_conflict():
+    """A stale revision cannot silently win because its value is unchanged."""
+    original = fact()
+    changed_revision = {**original, "source_revision": "rev-8"}
+    with pytest.raises(ValueError, match="conflicting_source_evidence"):
+        resolve([original, changed_revision])
+    with pytest.raises(ValueError, match="conflicting_source_evidence"):
+        resolve([changed_revision, original])
+
+
+def test_same_evidence_id_on_two_sources_is_not_a_collision():
+    rows = [fact(source="catalog-a"), fact(source="catalog-b")]
+    result = resolve(rows)
+    assert len(result.exact) == 2
+    assert {item.source_id for item in result.exact} == {"catalog-a", "catalog-b"}
