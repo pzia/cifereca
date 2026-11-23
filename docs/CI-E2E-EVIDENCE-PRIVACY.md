@@ -19,7 +19,7 @@ Les pixels PNG ne sont pas suffisamment inspectables automatiquement pour
 attester l'absence de données privées : **pas de PNG, logs, traces, rapports
 détaillés ou archives XDG dans les artefacts publics**. Les preuves visuelles
 utiles restent consultables seulement à l'intérieur du job pendant son
-exécution. L'artefact `e2e-core-summary` est conservé deux jours.
+exécution. Les artefacts `e2e-core-summary-shard-0`, `e2e-core-summary-shard-1` et `e2e-core-summary-shard-2` sont publiés séparément (noms uniques pour les jobs GTK parallèles), et conservés deux jours. Le contrôle `E2E GTK · core` n'est vert que si les trois shards ont réussi ; chaque artefact contient uniquement le résumé public validé de sa partition.
 
 Ceci protège exclusivement **les nouvelles exécutions E2E Smoke**.
 Les anciens artefacts ne sont pas supprimés sans accord explicite. Les autres
