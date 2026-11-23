@@ -110,6 +110,7 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             or (author is not None and any(
                 unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
                 for ch in author))
+            or (now is not None and (type(now) is not int or now < 0))
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
         raise ValueError("invalid_documentary_suggestion_request")
