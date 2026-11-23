@@ -252,3 +252,18 @@ def test_replay_accepts_normal_ascii_header_tokens(tmp_path):
     entry["request"]["headers"].append(["X-Trace_ID", "trace-safe"])
     result = analyse_capture(_archive(tmp_path / "valid-headers.zip", [entry]))
     assert result["counts"]["parser_qualified"] == 1
+
+
+def test_encrypted_or_unreadable_zip_member_returns_closed_status(tmp_path, monkeypatch):
+    # zipfile raises RuntimeError when a member is encrypted and no password
+    # is supplied. A private capture must not leak this exception or a path.
+    archive = _archive(tmp_path / "private-encrypted.zip", [_entry("a", HTML)])
+    original_read = ZipFile.read
+
+    def encrypted_member(self, name, *args, **kwargs):
+        if getattr(name, "filename", name) == "http/index.json":
+            raise RuntimeError("File is encrypted, password required: PRIVATE_SENTINEL")
+        return original_read(self, name, *args, **kwargs)
+
+    monkeypatch.setattr(ZipFile, "read", encrypted_member)
+    assert analyse_capture(archive) == {"status": "invalid_capture"}
