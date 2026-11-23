@@ -37,6 +37,9 @@ class Widget:
     def append(self, item): self.children.append(item)
     def add_suffix(self, item): self.suffixes.append(item)
     def add_css_class(self, _name): pass
+    def connect(self, signal, callback):
+        assert signal == "notify::active"
+        self._active_callback = callback
     def connect(self, _signal, _callback): return None
 
 
