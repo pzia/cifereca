@@ -64,6 +64,7 @@ def validated_private_web_field(raw, provider):
         try:
             parts = urlsplit(url)
             if (parts.scheme != "https" or parts.port not in (None, 443)
+                    or parts.username is not None or parts.password is not None
                     or parts.query or parts.fragment):
                 return None
         except ValueError:
