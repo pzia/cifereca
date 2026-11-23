@@ -34,6 +34,29 @@ class OrganizerDryRunPlan:
     excluded_count: int = 0
 
 
+def _mark_conflicted_page_destinations(entries, groups):
+    """Block disputed targets even when the occupying placement has no advice."""
+    sources = {}
+    for group in groups:
+        for file in group["files"]:
+            if file["current"]:
+                sources.setdefault(file["current"], set()).add(file["placement"])
+    destinations = {}
+    per_placement = {}
+    for entry in entries:
+        if entry.operation in ("rename", "classify"):
+            destinations.setdefault(entry.proposed, set()).add(entry.placement_id)
+            per_placement.setdefault(entry.placement_id, set()).add(entry.proposed)
+    return tuple(
+        OrganizerDryRunEntry(e.placement_id, e.operation, e.current,
+                             e.proposed, "destination_conflict")
+        if e.operation in ("rename", "classify")
+        and (len(destinations[e.proposed]) > 1
+             or len(per_placement[e.placement_id]) > 1
+             or any(pid != e.placement_id for pid in sources.get(e.proposed, ())))
+        else e for e in entries)
+
+
 def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=None,
                               rename_only=False):
     """Fresh explicit page selection. No filesystem or SQLite changes.
@@ -101,29 +124,7 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
                     return None
                 entries.append(OrganizerDryRunEntry(
                     pid, "keeper", candidate["current"], keeper["current"], "cleanup_held"))
-        # Two independent books may propose the same vacant name. A page
-        # cannot preselect either by order. Keep both explicit as conflicts.
-        destinations = {}
-        # Targets already occupied on the whole review page are unsafe.
-        sources = {}
-        for entry in entries:
-            if entry.operation in ("rename", "classify"):
-                destinations.setdefault(entry.proposed, set()).add(entry.placement_id)
-                sources.setdefault(entry.current, set()).add(entry.placement_id)
-        # A single placement may also receive conflicting advice from two
-        # independent operations. Neither is safe to preselect as a winner.
-        per_placement = {}
-        for entry in entries:
-            if entry.operation in ("rename", "classify"):
-                per_placement.setdefault(entry.placement_id, set()).add(entry.proposed)
-        entries = tuple(
-            OrganizerDryRunEntry(e.placement_id, e.operation, e.current,
-                                 e.proposed, "destination_conflict")
-            if e.operation in ("rename", "classify")
-            and (len(destinations[e.proposed]) > 1
-                 or len(per_placement[e.placement_id]) > 1
-                 or any(pid != e.placement_id for pid in sources.get(e.proposed, ())))
-            else e for e in entries)
+        entries = _mark_conflicted_page_destinations(entries, fresh["groups"])
         if (not scope.bound() or sqlite_source_stamp(scope.database) != anchor.stamp
                 or run_organizer_review(scope.service, scope,
                                         cursor=anchor if anchor.offset else None) != fresh):
