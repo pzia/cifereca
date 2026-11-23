@@ -111,8 +111,9 @@ def retain_private_web_field_txn(db, source, original):
 def retained_private_web_field_txn(db, doc, member, fence):
     """An evicted exact source can use its scoped retained field, never raw DELETE."""
     if (member.visibility != "private" or member.provider_id != doc.provider_id
-            or member.source_ref != doc.source_key or fence is None
+            or member.source_ref != doc.source_key or type(fence) is not dict
             or fence.get("evicted") is not True
+            or not _epoch(fence.get("epoch"))
             or fence["epoch"] != member.source_epoch + 1):
         return None
     row = db.execute("SELECT value FROM metadata WHERE key=?", (_key(doc),)).fetchone()
