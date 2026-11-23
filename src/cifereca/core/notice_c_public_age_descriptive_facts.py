@@ -13,6 +13,7 @@ import json
 from .notice_c_public_age import decode_public_age_observation
 from .notice_consolidation_inputs import admit_descriptive_facts
 from .notice_source_observation import NoticeSourceObservation
+from .notice_search_cover_producer import _coordinate_digest
 
 
 def public_age_descriptive_facts(observation: NoticeSourceObservation) -> tuple[dict, ...]:
@@ -45,7 +46,19 @@ def public_age_descriptive_facts(observation: NoticeSourceObservation) -> tuple[
         )
         if age is None:
             return ()
-        if not key.record_id.startswith("search:"):
+        # The native age receipt must describe the SAME producer-authenticated
+        # source key. A valid receipt from a different edition is not evidence.
+        collection = bibliography.get("source_collection")
+        if collection != "public_catalog":
+            return ()
+        if key.record_id != "search:" + _coordinate_digest(
+            key.provider_id, collection, age.record_id,
+        ):
+            return ()
+        if key.edition_id != "edition:" + _coordinate_digest(
+            key.provider_id, collection, age.record_id, age.docbase,
+            age.medium, age.source_revision,
+        ):
             return ()
         # Hash bounded, vetted source coordinates; do not expose a URL or title
         # as an identity and never merge editions by bibliographic similarity.
