@@ -25,6 +25,10 @@ class PublicCatalogueViewRow:
     observed_at: int
     last_seen_at: int
     description: str | None = None
+    record_id: str = ""
+    docbase: str = ""
+    medium: str = ""
+    source_revision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,8 @@ def project_public_catalogue_view(page: PublicNoticeCPage, *, mode: str):
             source_count=counts.get(hit.document, 1),
             observed_at=hit.observed_at, last_seen_at=hit.last_seen_at,
             description=hit.description if mode == "detail" else None,
+            record_id=hit.record_id, docbase=hit.docbase,
+            medium=hit.medium, source_revision=hit.source_revision,
         ))
     if mode == "timeline":
         rows.sort(key=lambda row: (-row.last_seen_at, row.provider_id, row.edition_id))
