@@ -206,6 +206,27 @@ def build_provider_account_editor(
     # historical default, but corrupt truthy values must fail closed.
     saved_enabled = data.get("enabled", bool(data))
     enabled = Gtk.Switch(); enabled.set_active(saved_enabled is True); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
+    # A configured/activated connection is not proof of an authenticated
+    # session. Expose its lifecycle honestly without calling the provider.
+    lifecycle = Adw.ActionRow()
+    lifecycle.set_title("État de la connexion")
+    lifecycle.set_subtitle(
+        "Désactivée dans les paramètres · session non vérifiée"
+        if saved_enabled is not True else
+        "Activée dans les paramètres · session non vérifiée"
+    )
+    group.add(lifecycle)
+    # Reflect unsaved activation changes immediately; this remains a local
+    # configuration draft and never claims an authenticated provider session.
+    def update_lifecycle(switch, _param):
+        changed = switch.get_active() is not (saved_enabled is True)
+        lifecycle.set_subtitle(
+            ("Activée" if switch.get_active() is True else "Désactivée")
+            + " dans les paramètres · "
+            + ("modification non enregistrée · " if changed else "")
+            + "session non vérifiée"
+        )
+    enabled.connect("notify::active", update_lifecycle)
     # A malformed persisted label must never be stringified into the GTK
     # editor and later saved as a plausible account name on an unrelated edit.
     # Display a safe descriptor fallback while preserving the original row.
@@ -460,5 +481,6 @@ def build_provider_account_editor(
         "deleted": False,
         "explicit_probe_button": probe_button,
         "explicit_probe_status": probe_status,
+        "connection_lifecycle_status": lifecycle,
     }
     return editor, delete_button

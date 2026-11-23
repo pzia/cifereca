@@ -25,7 +25,15 @@ class Widget:
     def set_title(self, value): self.title = value
     def set_subtitle(self, value): self.subtitle = value
     def set_text(self, value): self.text = value
-    def set_active(self, value): self.active = value
+    def set_active(self, value):
+        self.active = value
+        for callback in getattr(self, "_signal_callbacks", {}).get("notify::active", ()):
+            callback(self, None)
+    def get_active(self): return self.active
+    def connect(self, signal, callback):
+        if not hasattr(self, "_signal_callbacks"):
+            self._signal_callbacks = {}
+        self._signal_callbacks.setdefault(signal, []).append(callback)
     def set_sensitive(self, value): self.sensitive = value
     def set_visible(self, value): self.visible = value
     def set_valign(self, _value): pass
@@ -89,7 +97,7 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     group = container.children[0]
     assert group.title == "PARIS — Bibliothèque"
     assert [row.title for row in group.children][:3] == [
-        "Compte activé", "Libellé local", "Identité (ID)"
+        "Compte activé", "État de la connexion", "Libellé local"
     ]
     assert editor["enabled"].active is False
     assert editor["label"].text == "Bibliothèque"
@@ -581,3 +589,31 @@ def test_fieldless_sso_is_an_account_not_an_anonymous_source():
     )
     assert container.children[0].children[0].title == "Source activée"
     assert public["enabled"].active is False
+
+
+def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
+    """Activation is a saved preference, not evidence of provider connection."""
+    for enabled, expected in (
+        (True, "Activée dans les paramètres · session non vérifiée"),
+        (False, "Désactivée dans les paramètres · session non vérifiée"),
+    ):
+        _, _, container, _ = _render(data={
+            "id": "connection-a", "identity_id": "alice", "enabled": enabled,
+            "label": "Compte local", "credentials": {}, "options": {},
+        })
+        rows = container.children[0].children
+        lifecycle, = (row for row in rows if row.title == "État de la connexion")
+        assert lifecycle.subtitle == expected
+        # Switch changes the same row immediately, without saving or probing.
+        editor, _, container2, _ = _render(data={
+            "id": "connection-b", "identity_id": "alice", "enabled": enabled,
+            "label": "Compte local", "credentials": {}, "options": {},
+        })
+        editor["enabled"].set_active(not enabled)
+        row2, = (row for row in container2.children[0].children
+                 if row.title == "État de la connexion")
+        assert "modification non enregistrée" in row2.subtitle
+        assert ("Désactivée" if enabled else "Activée") in row2.subtitle
+        editor["enabled"].set_active(enabled)
+        assert "modification non enregistrée" not in row2.subtitle
+        assert row2.subtitle == expected
