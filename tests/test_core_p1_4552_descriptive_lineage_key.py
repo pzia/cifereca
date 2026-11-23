@@ -5,7 +5,9 @@ import pytest
 
 from cifereca.core.notice_consolidation_inputs import admit_descriptive_facts
 from cifereca.core.notice_consolidator_selection import ExplicitSelection
-from cifereca.core.notice_consolidation_lineage import descriptive_lineage_key
+from cifereca.core.notice_consolidation_lineage import (
+    descriptive_lineage_key, descriptive_execution_key,
+)
 
 
 SELECTED = ExplicitSelection(
@@ -169,3 +171,42 @@ def test_invalid_lineage_bucket_shape_or_rejected_budget_fails_closed(change):
         descriptive_lineage_key(
             selection=SELECTED, admitted=replace(admitted([row()]), **change),
         )
+
+
+def test_execution_key_invalidates_when_installed_source_changes_without_version_bump():
+    """Q8: a plugin binary change cannot silently reuse a cached value."""
+    selected = SELECTED
+    facts = admitted([row()])
+    a = descriptive_execution_key(
+        selection=selected, admitted=facts, installed_source_sha256="a" * 64,
+    )
+    b = descriptive_execution_key(
+        selection=selected, admitted=facts, installed_source_sha256="b" * 64,
+    )
+    assert a != b
+    assert a == descriptive_execution_key(
+        selection=selected, admitted=facts, installed_source_sha256="a" * 64,
+    )
+    assert a.startswith("notice-c-exec-v1:")
+    assert len(a) == len("notice-c-exec-v1:") + 64
+
+
+@pytest.mark.parametrize("digest", ["", "A" * 64, "z" * 64, "0" * 63, None, True])
+def test_execution_key_rejects_unverified_source_digest_shape(digest):
+    with pytest.raises(ValueError, match="invalid_consolidator_source_digest"):
+        descriptive_execution_key(
+            selection=SELECTED, admitted=admitted([row()]),
+            installed_source_sha256=digest,
+        )
+
+
+def test_execution_key_preserves_revision_and_proof_invalidation():
+    a = descriptive_execution_key(
+        selection=SELECTED, admitted=admitted([row(edition=RELATED)], proof="proof:v1"),
+        installed_source_sha256="a" * 64,
+    )
+    b = descriptive_execution_key(
+        selection=SELECTED, admitted=admitted([row(edition=RELATED)], proof="proof:v2"),
+        installed_source_sha256="a" * 64,
+    )
+    assert a != b
