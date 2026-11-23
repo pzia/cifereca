@@ -438,9 +438,17 @@ def read_current_consolidated_public_cover(storage, document):
                         or live.observation.source_revision != member.source_revision):
                     return None
             elif fence is not None:
-                expected = member.source_epoch + int(fence.get("evicted") is True)
-                if fence["epoch"] != expected:
+                # A missing source is qualified only by a Core-produced
+                # eviction tombstone. A raw DELETE with the old live fence
+                # must not make a retained N2 candidate look current.
+                if (fence.get("evicted") is not True
+                        or fence["epoch"] != member.source_epoch + 1):
                     return None
+            else:
+                # Neither observation nor durable fence can attest this
+                # contribution's revision. Keep retained C readable via the
+                # non-current documentary reader; deny only current N2 use.
+                return None
         return snapshot
 
 
