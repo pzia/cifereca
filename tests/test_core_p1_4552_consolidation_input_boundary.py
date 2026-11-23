@@ -162,3 +162,19 @@ def test_foreign_dictionary_keys_and_type_values_are_rejected_without_user_code(
     assert result.rejected_count == 2
     assert len(result.exact) == 1
     assert result.exact[0].value == "13_plus"
+
+
+def test_strong_link_map_foreign_key_rejected_before_edition_lookup():
+    """Q4: a plugin must not trigger Python equality through proof-map keys."""
+    foreign = "edition:paper"
+
+    class HostileKey:
+        def __hash__(self):
+            return hash(foreign)
+
+        def __eq__(self, other):
+            raise AssertionError("untrusted strong-link key equality")
+
+    with pytest.raises(ValueError, match="invalid_strong_link"):
+        resolve([fact(edition=foreign)], links={HostileKey(): "proof:valid"})
+    assert len(resolve([fact(edition=foreign)], links={foreign: "proof:valid"}).inherited) == 1
