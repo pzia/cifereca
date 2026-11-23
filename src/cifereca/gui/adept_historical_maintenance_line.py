@@ -76,7 +76,12 @@ def _hold_coordinate(value, *, account=False):
 
 
 def _display_holds(result):
-    if type(result) is not dict or type(result.get("rows")) is not tuple:
+    if (type(result) is not dict or type(result.get("rows")) is not tuple
+            or type(result.get("known_holds")) is not int
+            or result["known_holds"] < 0
+            or any(type(row) is not dict or type(row.get("hold_origin")) is not str
+                   or type(row.get("title")) is not str
+                   for row in result["rows"])):
         return "Verrous indisponibles ou contexte modifié. Aucun constat d’absence."
     lines = [
         "Verrous de téléchargements ADEPT — observations locales du profil actif.",
