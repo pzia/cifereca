@@ -60,7 +60,11 @@ def validate_descriptive_result(
     descriptive_lineage_key(selection=selection, admitted=admitted)
     if proposed is None:
         return None
-    if type(proposed) is not dict or frozenset(proposed) != _RESULT_KEYS:
+    # Never compare foreign dictionary keys to trusted field names: even a
+    # hash-colliding key can execute user-defined __eq__ during set equality.
+    if (type(proposed) is not dict
+            or any(type(key) is not str for key in proposed)
+            or frozenset(proposed) != _RESULT_KEYS):
         raise ValueError("invalid_consolidator_result_shape")
     if (type(proposed["canonical_type"]) is not str
             or proposed["canonical_type"] != selection.canonical_type
