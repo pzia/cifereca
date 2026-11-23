@@ -577,6 +577,10 @@ class SelectionTests(unittest.TestCase):
         self.assertIn('test "$SHARDS_RESULT" = "success"', source)
         self.assertIn("    strategy:\n      fail-fast: false\n      matrix:\n        shard: [0, 1, 2]", source)
         self.assertEqual(source.count('--shard-count 3 --shard-index "$E2E_SHARD_INDEX"'), 3)
+        # Artifact API names are unique across matrix jobs, while raw probe
+        # outputs remain unpublished.
+        self.assertIn("name: e2e-core-summary-shard-${{ matrix.shard }}", source)
+        self.assertNotIn("path: e2e-artifacts/", source)
 
 
 if __name__ == "__main__":
