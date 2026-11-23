@@ -197,3 +197,32 @@ def test_no_rights_snapshot_preserves_the_previous_projection():
     assert expected == LibraryService.capability_matrices_with_precollected_evidence(
         service, "alice", rights_snapshots=(),
     )
+
+
+@pytest.mark.parametrize("mutate", (
+    lambda snapshot: object.__setattr__(snapshot, "branch", "https://private.example/?token=signed"),
+    lambda snapshot: object.__setattr__(snapshot, "branch", "loans\\nprivate"),
+    lambda snapshot: object.__setattr__(snapshot, "rights", list(snapshot.rights)),
+    lambda snapshot: object.__setattr__(snapshot, "rights", snapshot.rights * 2),
+    lambda snapshot: object.__setattr__(snapshot.rights[0], "evidence_ref", ""),
+    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "bad\x00scope"),
+))
+def test_mutated_rights_snapshot_cannot_be_projected_to_coreui(mutate):
+    # Revalidate nested rights and exact source branches at read time. These
+    # otherwise valid DTOs were changed after their original constructor PASS.
+    snapshot = _snapshot()
+    mutate(snapshot)
+    with pytest.raises(ValueError, match="^capability_invalid_rights_snapshot$"):
+        _read(snapshot)
+
+
+def test_valid_rights_projection_preserves_existing_source_envelope():
+    snapshot = _snapshot(branch="pnblive.digital")
+    rights = snapshot.rights
+    matrices, calls = _read(snapshot)
+    assert snapshot.rights is rights
+    assert _matrix(matrices, "kobo").exact(
+        "personal_inventory.rights", "account", field="pnblive.digital",
+        identity_id="alice", account_id="owner-A", credential_id="a-kobo",
+    ).status == "partial"
+    assert all(call[0] in {"accounts", "enabled"} for call in calls)
