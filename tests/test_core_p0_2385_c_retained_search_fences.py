@@ -1,7 +1,8 @@
 """#2385: a retained Notice C stays searchable without inventing source freshness.
 
 These tests mutate ONLY a disposable SQLite fixture, not real provider
-records or user library state. Canonical cover availability is independent\nfrom the freshness of a missing short-lived source. Qualified eviction carries an advanced
+records or user library state. Canonical cover availability is independent
+from the freshness of a missing short-lived source. Qualified eviction carries an advanced
 CAS fence; manual/legacy loss does not.
 """
 import pytest
