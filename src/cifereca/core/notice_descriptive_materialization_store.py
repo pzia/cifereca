@@ -29,7 +29,13 @@ def _row_key(row: DescriptiveMaterialization) -> str:
 
 
 def _decode(raw):
-    if type(raw) is not str or not 0 < len(raw.encode("utf-8")) <= _MAX_ROW_BYTES:
+    if type(raw) is not str:
+        raise ValueError("corrupt_descriptive_materialization")
+    try:
+        raw_size = len(raw.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("corrupt_descriptive_materialization") from exc
+    if not 0 < raw_size <= _MAX_ROW_BYTES:
         raise ValueError("corrupt_descriptive_materialization")
     def unique(pairs):
         out = {}
