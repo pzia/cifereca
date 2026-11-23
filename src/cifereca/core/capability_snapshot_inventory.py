@@ -14,6 +14,8 @@ from typing import Any
 from ..plugin_api.capability_matrix import CapabilityEvidence, CapabilityMatrix
 from ..plugin_api.capability_projection import project_existing_capabilities
 from ..plugin_api.loan_inventory import LoanInventorySnapshot
+from ..plugin_api.models import SyncSourceRef
+from .capability_inventory import capability_matrices_for_identity
 from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsScope, ProviderRightsSnapshot,
 )
@@ -22,7 +24,7 @@ from ..plugin_api.provider_rights_observation import (
 # Upstream branch identifiers are *public technical tokens*, not arbitrary
 # provider URLs or bearer-bearing resource labels. Do not interpolate secrets
 # from a forged rights snapshot into CoreUI's capability matrix.
-_PUBLIC_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\\Z")
+_PUBLIC_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}")
 
 
 def _validated_rights_snapshot(snapshot: ProviderRightsSnapshot) -> None:
@@ -47,8 +49,6 @@ def _validated_rights_snapshot(snapshot: ProviderRightsSnapshot) -> None:
             raise ValueError("private_branch")
     except (ValueError, TypeError, AttributeError, OverflowError):
         raise ValueError("capability_invalid_rights_snapshot") from None
-from ..plugin_api.models import SyncSourceRef
-from .capability_inventory import capability_matrices_for_identity
 
 
 def capability_matrices_with_precollected_evidence(
