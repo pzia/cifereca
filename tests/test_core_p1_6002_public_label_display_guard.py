@@ -67,3 +67,18 @@ def test_unicode_display_label_remains_readable_and_counts_unknown():
     assert lines[-1].startswith("Total non calculable")
     assert "PRIVATE-KEY" not in str(lines)
     assert "reader-secret" not in str(lines)
+
+
+@pytest.mark.parametrize("bad", [
+    "Public\\u202eSECRET", "Public\\u2066SECRET\\u2069",
+    "Public\\u200bSECRET", "Public\\ufeffSECRET",
+])
+def test_unicode_format_controls_cannot_spoof_public_account_labels(bad):
+    for attribute in ("provider_label", "connection_label", "borrower_label"):
+        with pytest.raises(ValueError, match="invalid_public_label"):
+            record(**{attribute: bad})
+        item = record()
+        object.__setattr__(item, attribute, bad)
+        assert digital_loan_availability_lines((item,), identity_id="alice") == (
+            "Reste inconnu — projection des comptes invalide.",
+        )
