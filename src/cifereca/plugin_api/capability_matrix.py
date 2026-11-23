@@ -130,6 +130,17 @@ class CapabilityMatrix:
         # Revalidate before returning a proof: frozen DTOs can be altered by
         # object.__setattr__, including after their first construction.
         self.__post_init__()
+        # Public selectors are untrusted input. Reject malformed coordinates
+        # instead of comparing lists/dicts, accepting control characters or
+        # treating an omitted exact coordinate as a wildcard.
+        if (type(operation) is not str or not _KEY.fullmatch(operation)
+                or type(scope) is not str or not _KEY.fullmatch(scope)):
+            raise ValueError("capability_invalid_scope")
+        if any(type(value) is not str or len(value) > 256
+               or "\0" in value or "\n" in value or "\r" in value
+               for value in (field, identity_id, account_id,
+                             credential_id, edition_id)):
+            raise ValueError("capability_invalid_scope")
         for row in self.observations:
             if (row.operation, row.scope, row.field, row.identity_id,
                     row.account_id, row.credential_id, row.edition_id) == (
