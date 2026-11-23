@@ -88,7 +88,7 @@ def catalogue_url(row):
             continue
         if parts.scheme not in {'https', 'http'} or not parts.hostname or userinfo:
             continue
-        if port not in {None, 80, 443}:
+        if port is not None and port != (443 if parts.scheme == 'https' else 80):
             continue
         path = unquote(unquote(parts.path)).casefold()
         # Validate the decoded path rather than treating a trailing slash,
