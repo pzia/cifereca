@@ -10,7 +10,7 @@ class HostileProvider:
 
 
 @pytest.mark.parametrize("provider", [
-    HostileProvider(), None, 123, True, "", "provider\\u200b", "provider\\n",
+    HostileProvider(), None, 123, True, "", "provider" + chr(0x200b), "provider\n",
     "provider/foreign", "provider:" + "a" * 80,
 ])
 def test_private_web_evidence_rejects_non_native_provider_before_dispatch(provider):
