@@ -209,7 +209,7 @@ def build_provider_account_editor(
     # A configured/activated connection is not proof of an authenticated
     # session. Expose its lifecycle honestly without calling the provider.
     lifecycle = Adw.ActionRow()
-    lifecycle.set_title("Connexion · état enregistré")
+    lifecycle.set_title("État de la connexion")
     lifecycle.set_subtitle(
         "Désactivée dans les paramètres · session non vérifiée"
         if saved_enabled is not True else
