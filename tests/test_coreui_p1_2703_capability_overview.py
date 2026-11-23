@@ -396,7 +396,7 @@ def test_settings_lists_exact_operations_scopes_and_provenance_without_private_i
             mode="server", evidence_ref="private/proof",
             reason="provider private reason", identity_id="alice-private",
             account_id="account-private", credential_id="token-private",
-            edition_id="edition-private",
+            edition_id="edition-private", enabled=False, connected=False,
         ),
         CapabilityEvidence(
             "synthetic", "catalog.search", "public", status="unverified",
@@ -405,7 +405,8 @@ def test_settings_lists_exact_operations_scopes_and_provenance_without_private_i
         ),
     )
     label, = source_capability_labels((CapabilityMatrix("synthetic", rows),))
-    assert "loan.borrow [account] : partial (account_observation, server)" in label
+    assert ("loan.borrow [account] : partial (account_observation, server)"
+            " · source désactivée · connexion absente") in label
     assert ("catalog.search [public] : unverified "
             "(code, local_postfilter_partial)") in label
     assert label.index("catalog.search [public]") < label.index("loan.borrow [account]")
