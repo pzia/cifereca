@@ -68,6 +68,11 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
                 state = ("observation, action non autorisée (partielle ou mixte)"
                          if any(row.status != "supported" for row in rows)
                          else "observation, action non autorisée")
+                # A cached account observation from a disconnected source is
+                # historical evidence, never a claim of current availability.
+                # Do not expose account identifiers or producer-supplied notes.
+                if all(row.connected is False for row in observed):
+                    state += " ; source déconnectée, observation historique"
             elif manual:
                 # A human-entered report is not an independent provider
                 # observation, even if its producer marked it 'supported'.

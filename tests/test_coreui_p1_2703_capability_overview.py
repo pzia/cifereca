@@ -316,3 +316,26 @@ def test_each_family_distinguishes_four_synthetic_evidence_states(
     assert "fixture/1" not in render
     missing, = source_capability_labels((CapabilityMatrix("synthetic", ()),))
     assert f"{family} : preuve indisponible" in missing.split("\n", 1)[1].split(" · ")
+
+
+def test_disconnected_observation_is_explicitly_historical_not_live():
+    """A persisted rights report must not masquerade as current availability."""
+    disconnected = CapabilityEvidence(
+        "synthetic", "personal_inventory.rights", "account",
+        identity_id="private-owner", account_id="private-card",
+        status="partial", implementation_state="implemented",
+        source_kind="account_observation", evidence_ref="rights.snapshot/1",
+        reason="historical_snapshot", enabled=True, connected=False,
+    )
+    label, = source_capability_labels((CapabilityMatrix("synthetic", (disconnected,)),))
+    assert "Droits : observation, action non autorisée" in label
+    assert "source déconnectée, observation historique" in label
+    assert "private-owner" not in label and "private-card" not in label
+    assert "rights.snapshot/1" not in label
+    connected = replace(disconnected, connected=True)
+    label, = source_capability_labels((CapabilityMatrix("synthetic", (connected,)),))
+    assert "observation historique" not in label
+    # Unknown connection is not asserted to be offline either.
+    unknown = replace(disconnected, connected=None)
+    label, = source_capability_labels((CapabilityMatrix("synthetic", (unknown,)),))
+    assert "source déconnectée" not in label
