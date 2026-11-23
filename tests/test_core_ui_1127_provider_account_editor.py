@@ -89,7 +89,7 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     group = container.children[0]
     assert group.title == "PARIS — Bibliothèque"
     assert [row.title for row in group.children][:3] == [
-        "Compte activé", "Libellé local", "Identité (ID)"
+        "Compte activé", "Connexion · état enregistré", "Libellé local"
     ]
     assert editor["enabled"].active is False
     assert editor["label"].text == "Bibliothèque"
@@ -581,3 +581,18 @@ def test_fieldless_sso_is_an_account_not_an_anonymous_source():
     )
     assert container.children[0].children[0].title == "Source activée"
     assert public["enabled"].active is False
+
+
+def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
+    """Activation is a saved preference, not evidence of provider connection."""
+    for enabled, expected in (
+        (True, "Activée dans les paramètres · session non vérifiée"),
+        (False, "Désactivée dans les paramètres · session non vérifiée"),
+    ):
+        _, _, container, _ = _render(data={
+            "id": "connection-a", "identity_id": "alice", "enabled": enabled,
+            "label": "Compte local", "credentials": {}, "options": {},
+        })
+        rows = container.children[0].children
+        lifecycle, = (row for row in rows if row.title == "Connexion · état enregistré")
+        assert lifecycle.subtitle == expected
