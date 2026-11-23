@@ -180,3 +180,22 @@ def test_empty_output_does_not_bypass_invalid_admitted_lineage():
     forged = replace(admitted, exact=(replace(admitted.exact[0], inherited=True),))
     with pytest.raises(ValueError, match="invalid_lineage_fact"):
         validate(None, admitted=forged)
+
+
+def test_foreign_result_dictionary_key_rejected_without_custom_equality():
+    """Q4: plugin output cannot execute a hostile key comparator in Core."""
+    class HostileKey:
+        def __hash__(self):
+            return hash("value")
+
+        def __eq__(self, other):
+            raise AssertionError("foreign result-key equality")
+
+    proposed = result()
+    # Remove the trusted colliding key before installing the hostile key:
+    # otherwise dict insertion itself executes __eq__, before Core is called.
+    proposed.pop("value")
+    proposed[HostileKey()] = "injected"
+    with pytest.raises(ValueError, match="invalid_consolidator_result_shape"):
+        validate(proposed)
+    assert validate(result()).value == "13+"
