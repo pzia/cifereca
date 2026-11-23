@@ -422,11 +422,13 @@ def search_public_notice_c(
             or type(scope) is not str or scope not in _SCOPES
             or type(provider_ids) is not tuple or len(provider_ids) > 128
             or any(type(provider) is not str or not 1 <= len(provider) <= 64
+                   or provider != provider.strip()
                    for provider in provider_ids)
             or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
                    for provider in provider_ids for char in provider)
             or type(content_types) is not tuple or len(content_types) > 32
             or any(type(value) is not str or not 0 < len(value) <= 64
+                   or value != value.strip()
                    for value in content_types)
             or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
                    for value in content_types for char in value)
