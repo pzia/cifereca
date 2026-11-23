@@ -97,8 +97,10 @@ def assess_borrower_eligibility(
             # primary account, never an unidentified linked reader.
             or type(account.is_primary) is not bool
             or (account.is_primary is False and account.unique_id == "")
-            or (notice.source_collection is not None
-                and not _bounded(notice.source_collection))
+            # An omitted collection is not an exact branch: two upstream
+            # branches can share docbase and record IDs. Never promote a
+            # collection-less notice to borrower-specific eligibility.
+            or not _bounded(notice.source_collection)
             or notice.source_provider != account.provider_id
             or notice.source_credential != account.credential_id
             or notice.medium != "digital"):
