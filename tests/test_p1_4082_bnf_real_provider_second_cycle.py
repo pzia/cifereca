@@ -133,21 +133,25 @@ def test_real_bnf_provider_active_loan_never_starts_second_post(tmp_path):
         service.close()
 
 
-def test_real_bnf_provider_empty_activity_never_forges_completed_cycle(tmp_path):
+def test_real_bnf_provider_empty_activity_allows_second_explicit_cycle(tmp_path):
     service, session, account, item, state = _service(tmp_path)
     try:
         assert _click(service, account, item)["status"] == "confirmed"
         assert state["post"] == 1
         key = borrow_claim_key(account, item)
         previous = service.storage.metadata_get(key)
-        # BnF currently does NOT qualify a zero-card active-loans section as
-        # exhaustive. Do not turn an ambiguous empty widget into a new POST.
+        # A fresh, authenticated HTTP 200 with a closed empty activity widget
+        # now proves that the previous loan is no longer active.
         state["activity"] = _activity()
         before = len(state["calls"])
-        denied = _click(service, account, item)
-        assert denied["reason_code"] == "borrow_cycle_not_ended"
-        assert state["calls"][before:] == [("GET", "/my_profile/activity")]
-        assert state["post"] == 1
-        assert service.storage.metadata_get(key) == previous
+        second = _click(service, account, item)
+        assert second["status"] == "confirmed"
+        assert second["provider_verified"] is True
+        assert state["calls"][before:][0] == ("GET", "/my_profile/activity")
+        assert state["post"] == 2
+        row = service.storage.loan_borrow_state(key)
+        assert row["cycle_generation"] == 2
+        assert row["verified_loan_id"] == "second-loan"
+        assert service.storage.metadata_get(key) != previous
     finally:
         service.close()
