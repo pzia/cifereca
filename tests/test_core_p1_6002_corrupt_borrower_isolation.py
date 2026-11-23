@@ -16,6 +16,8 @@ from tests.test_core_p1_6002_digital_loan_availability import (
 
 @pytest.mark.parametrize("bad_id", [
     None, [], 42, True, "reader\x00private", "a" * 1025,
+    "reader\nprivate", "reader\tprivate",
+    "reader\u202eprivate", "reader\u200bprivate", "reader\u00a0private",
 ])
 def test_invalid_borrower_id_isolated_to_its_own_connection(bad_id):
     corrupt = account("demo", "bad", "not-renderable")
