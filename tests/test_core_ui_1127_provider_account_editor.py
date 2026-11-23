@@ -96,7 +96,7 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     group = container.children[0]
     assert group.title == "PARIS — Bibliothèque"
     assert [row.title for row in group.children][:3] == [
-        "Compte activé", "Connexion · état enregistré", "Libellé local"
+        "Compte activé", "État de la connexion", "Libellé local"
     ]
     assert editor["enabled"].active is False
     assert editor["label"].text == "Bibliothèque"
@@ -601,7 +601,7 @@ def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
             "label": "Compte local", "credentials": {}, "options": {},
         })
         rows = container.children[0].children
-        lifecycle, = (row for row in rows if row.title == "Connexion · état enregistré")
+        lifecycle, = (row for row in rows if row.title == "État de la connexion")
         assert lifecycle.subtitle == expected
         # Switch changes the same row immediately, without saving or probing.
         editor, _, container2, _ = _render(data={
@@ -610,6 +610,6 @@ def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
         })
         editor["enabled"].set_active(not enabled)
         row2, = (row for row in container2.children[0].children
-                 if row.title == "Connexion · état enregistré")
+                 if row.title == "État de la connexion")
         assert "modification non enregistrée" in row2.subtitle
         assert ("Désactivée" if enabled else "Activée") in row2.subtitle
