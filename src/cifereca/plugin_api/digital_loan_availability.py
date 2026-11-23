@@ -111,6 +111,11 @@ def digital_loan_availability_lines(
     seen_scopes: set[tuple[str, str, str, str | None, str]] = set()
     for record in rows:
         if (type(record) is not DigitalLoanAvailability
+                or type(record.identity_id) is not str
+                or type(record.provider_id) is not str
+                or type(record.credential_id) is not str
+                or (record.borrower_id is not None
+                    and type(record.borrower_id) is not str)
                 or record.identity_id != identity_id
                 or record.status != "unknown"
                 or record.remaining is not None
