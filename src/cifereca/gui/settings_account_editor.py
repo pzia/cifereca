@@ -206,6 +206,16 @@ def build_provider_account_editor(
     # historical default, but corrupt truthy values must fail closed.
     saved_enabled = data.get("enabled", bool(data))
     enabled = Gtk.Switch(); enabled.set_active(saved_enabled is True); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
+    # A configured/activated connection is not proof of an authenticated
+    # session. Expose its lifecycle honestly without calling the provider.
+    lifecycle = Adw.ActionRow()
+    lifecycle.set_title("État de connexion")
+    lifecycle.set_subtitle(
+        "Désactivée · aucune connexion automatique"
+        if saved_enabled is not True else
+        "Activée dans les paramètres · connexion non vérifiée"
+    )
+    group.add(lifecycle)
     # A malformed persisted label must never be stringified into the GTK
     # editor and later saved as a plausible account name on an unrelated edit.
     # Display a safe descriptor fallback while preserving the original row.
