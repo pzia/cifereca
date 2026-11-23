@@ -414,3 +414,29 @@ def test_settings_lists_exact_operations_scopes_and_provenance_without_private_i
                     "edition-private", "private/proof", "provider private reason"):
         assert private not in label
     assert "Prêt : observation, action non autorisée" in label
+
+
+def test_p1_2703_same_operation_code_and_account_observation_keep_distinct_scopes():
+    """A provider declaration is not a current borrower-scoped observation."""
+    matrix = CapabilityMatrix("synthetic-provider", (
+        CapabilityEvidence(
+            "synthetic-provider", "loan.borrow", "provider",
+            status="unverified", implementation_state="implemented",
+            source_kind="code",
+        ),
+        CapabilityEvidence(
+            "synthetic-provider", "loan.borrow", "account",
+            identity_id="alice", account_id="private-borrower",
+            credential_id="private-credential",
+            status="partial", implementation_state="implemented",
+            source_kind="account_observation", enabled=False, connected=False,
+        ),
+    ))
+    text = source_capability_labels((matrix,))[0]
+    assert "Prêt : observation, action non autorisée" in text
+    assert "loan.borrow [provider] : unverified (code" in text
+    assert "loan.borrow [account] : partial (account_observation" in text
+    assert "source désactivée" in text and "connexion absente" in text
+    assert "private-borrower" not in text
+    assert "private-credential" not in text
+    assert "alice" not in text
