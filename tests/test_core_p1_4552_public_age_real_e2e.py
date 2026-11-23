@@ -25,7 +25,7 @@ def test_real_public_age_consolidation_survives_restart(tmp_path):
     )
     # The public observation is structured JSON; the selected plugin schema
     # must explicitly allow its serialized representation.
-    schema = replace(SCHEMA, max_bytes=4096)
+    schema = replace(SCHEMA, max_bytes=2048)
     binding = installed()
     options = dict(
         source_documents=(document,), declarations=(DECLARATION,),
