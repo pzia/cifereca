@@ -507,6 +507,12 @@ def summarize_derived_journal(storage):
         "committed_output_bytes": committed_bytes,
         "reserved_output_bytes": pending_bytes + committed_bytes,
         "reserved_output_capacity": _MAX_RESERVED_OUTPUT_BYTES,
+        "remaining_record_slots": _MAX_RECORDS - len(rows),
+        "remaining_payload_bytes": _MAX_TOTAL_BYTES - total,
+        "remaining_declared_output_bytes": _MAX_RESERVED_OUTPUT_BYTES - pending_bytes - committed_bytes,
+        "admission_saturated": (len(rows) >= _MAX_RECORDS
+                                or total >= _MAX_TOTAL_BYTES
+                                or pending_bytes + committed_bytes >= _MAX_RESERVED_OUTPUT_BYTES),
         "physical_disk_usage_measured": False,
         "recovery_authorized": False, "destructive_cleanup_allowed": False,
     }
