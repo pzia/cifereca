@@ -230,3 +230,26 @@ d'observation reste non autorisant même avec enabled/connected vrais.
 La matrice ne remplace ni le broker d'action, ni les autorités A/B/C.
 Les tests ne prouvent pas les capacités terrain manquantes. Aucun changement
 des priorités, aucun appel fournisseur et aucune clôture automatique de #2703.
+
+
+## Tranche sept familles exactes — #7805 / #2703 (23/11/2026)
+
+L'API publique `CAPABILITY_FAMILIES`, `CapabilityFamilyCoverage` et
+`exact_capability_families(matrix, scope=..., identity_id=...,
+account_id=..., credential_id=..., edition_id=..., field=...)` regroupe les
+preuves **déjà présentes**, sans appel fournisseur ni lecture de stockage.
+Les sept familles sont : catalogue, métadonnées, comptes/droits, prêts,
+acquisition, DRM et transversal.
+
+La sélection conserve **toutes les coordonnées exactes** : un statut
+`scope=unknown` est une déclaration de code, **pas** un joker pour un compte
+ou une édition. Chaque famille expose les comptages indépendants
+`supported / partial / unverified / unsupported` pour ses seules opérations
+présentes, plus `missing=True` si aucune preuve exacte n'est disponible.
+Même si une opération est `supported`, **aucun statut global de famille
+`supported` n'est inventé** ; la présence d'une opération ne couvre pas
+les autres. Une famille vide est un écart à documenter, **pas** un refus
+attesté du fournisseur. La projection n'a aucune méthode d'autorisation
+ou d'exécution. Les sept familles ne sont pas revendiquées comme observées
+sur les serveurs réels : ce contrat sert à afficher les lacunes et à guider
+les recettes/plugins à venir, et ne clôt pas seul #2703.
