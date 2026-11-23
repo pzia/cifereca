@@ -63,6 +63,17 @@ def _decode(raw):
                     "scope", "plugin_id", "plugin_version", "schema_id", "value",
                 ))):
             raise ValueError
+        # JSON escapes can decode to unpaired surrogates even when raw bytes
+        # were valid UTF-8. Reject them before reconstructing a trusted row.
+        scalar_fields = (
+            "execution_key", "canonical_type", "target_edition_id",
+            "scope", "plugin_id", "plugin_version", "schema_id", "value",
+        )
+        for value in (
+            *(payload[field] for field in scalar_fields),
+            *(part for ref in refs for part in ref),
+        ):
+            value.encode("utf-8")
         payload["source_evidence_keys"] = tuple(tuple(ref) for ref in refs)
         return DescriptiveMaterialization(**payload)
     except (TypeError, ValueError, KeyError, UnicodeError, RecursionError) as exc:
