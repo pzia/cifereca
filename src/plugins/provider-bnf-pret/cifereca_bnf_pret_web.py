@@ -702,14 +702,16 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
             else:
                 loan = previous
         loans[loan.loan_id] = loan
-    # Product decision #4142: a validated, nonempty official active-loans
-    # section is the bounded inventory of this authenticated borrower ONLY.
-    # Never treat a blank widget, broken card, or pagination/lazy-load signal
-    # as proof of negative absence. Rights/mutations remain separate.
-    exhaustive = bool(loans) and not partial and not _active_loans_may_be_truncated(sections[0])
+    # #4082 owner decision: an authenticated HTTP 200 activity response with
+    # exactly one closed active-loans section and no loan cards counts as a
+    # complete empty inventory, provided the section is not loading/paginated.
+    # The HTTP client already rejects non-200/login/redirect responses. A
+    # missing widget, malformed card, hidden card or lazy loader fails closed.
+    # This attests *absence* only, never lender acceptance or a loan quota.
+    exhaustive = not partial and not _active_loans_may_be_truncated(sections[0])
     return LoanSnapshot(
         expected, tuple(loans.values()),
-        "observed" if loans and not partial else "partial",
+        "observed" if exhaustive else "partial",
         exhaustive=exhaustive,
     )
 
