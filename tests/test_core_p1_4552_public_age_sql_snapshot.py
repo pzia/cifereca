@@ -7,7 +7,7 @@ from cifereca.core.notice_c_public_age_sql_snapshot import (
 )
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import (
-    _opaque_key, _encode_source_row,
+    _opaque_key, _encode_source_row, _fence_key, _source_fingerprint,
 )
 from tests.test_core_p1_4552_public_age_descriptive_facts import observation
 
@@ -78,3 +78,41 @@ def test_sql_capture_rejects_invalid_inventory():
         capture_public_age_sources_txn(
             db, documents=(None,), target_edition_id="edition:one",
         )
+
+
+def test_sql_snapshot_respects_current_source_fence():
+    db = sqlite3.connect(":memory:")
+    source = observation()
+    document = _seed(db, source)
+    key = _opaque_key(document)
+    proof = _source_fingerprint(
+        source, ("search_result", "thumbnail_url"), False,
+    )
+    db.execute(
+        "INSERT INTO metadata VALUES (?, ?)",
+        (_fence_key(key), json.dumps({
+            "epoch": 1, "last_seen_at": source.observed_at, "proof": proof,
+        })),
+    )
+    assert len(public_age_facts_txn(db, document)) == 1
+    db.execute(
+        "UPDATE metadata SET value=? WHERE key=?",
+        (json.dumps({"epoch": 1, "last_seen_at": source.observed_at,
+                     "proof": "0" * 64}), _fence_key(key)),
+    )
+    assert public_age_facts_txn(db, document) == ()
+
+
+def test_sql_snapshot_rejects_evicted_source_fence():
+    db = sqlite3.connect(":memory:")
+    source = observation()
+    document = _seed(db, source)
+    key = _opaque_key(document)
+    db.execute(
+        "INSERT INTO metadata VALUES (?, ?)",
+        (_fence_key(key), json.dumps({
+            "epoch": 2, "last_seen_at": source.observed_at,
+            "proof": "0" * 64, "evicted": True,
+        })),
+    )
+    assert public_age_facts_txn(db, document) == ()
