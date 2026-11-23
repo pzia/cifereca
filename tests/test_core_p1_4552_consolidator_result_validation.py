@@ -199,3 +199,24 @@ def test_foreign_result_dictionary_key_rejected_without_custom_equality():
     with pytest.raises(ValueError, match="invalid_consolidator_result_shape"):
         validate(proposed)
     assert validate(result()).value == "13+"
+
+
+@pytest.mark.parametrize("field,side", [
+    ("canonical_type", "selection"), ("plugin_id", "selection"),
+    ("version", "selection"), ("canonical_type", "admitted"),
+    ("consolidator_id", "admitted"), ("consolidator_version", "admitted"),
+])
+def test_forged_context_rejected_without_foreign_equality(field, side):
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign context equality")
+
+    selected, facts = SELECTION, context()
+    if side == "selection":
+        selected = replace(selected, **{field: Hostile()})
+    else:
+        facts = replace(facts, **{field: Hostile()})
+    with pytest.raises(ValueError, match="invalid_consolidation_context"):
+        validate_descriptive_result(
+            selection=selected, admitted=facts, proposed=result(),
+        )

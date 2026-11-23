@@ -49,6 +49,13 @@ def validate_descriptive_result(
     """
     if type(selection) is not ExplicitSelection or type(admitted) is not ConsolidationInputs:
         raise ValueError("invalid_consolidation_context")
+    # Frozen dataclasses can still be forged with foreign Python fields.
+    # Validate primitive comparator operands before any equality operation.
+    if (any(type(value) is not str for value in (
+            selection.canonical_type, selection.plugin_id, selection.version,
+            admitted.canonical_type, admitted.consolidator_id,
+            admitted.consolidator_version))):
+        raise ValueError("invalid_consolidation_context")
     if (selection.canonical_type != admitted.canonical_type
             or selection.plugin_id != admitted.consolidator_id
             or selection.version != admitted.consolidator_version):
