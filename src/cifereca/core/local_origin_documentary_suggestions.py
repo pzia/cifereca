@@ -54,28 +54,36 @@ def _comparison(hit, title, author):
 
 def _matching_source_url(storage, matches, url):
     """Return a single corroborated hit index from one bounded C snapshot."""
-    if type(url) is not str or not matches:
+    if (type(url) is not str or not 0 < len(url) <= 4096
+            or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for ch in url) or not matches):
         return None
     by_document = {}
     matched = []
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
-            for index, match in enumerate(matches):
-                hit = match.hit
-                if not is_canonical_cover_document(hit.document):
-                    continue
-                if hit.document not in by_document:
-                    by_document[hit.document] = _read_current_public_web_references(db, hit.document)
-                snapshot, pairs = by_document[hit.document]
-                if snapshot is None or snapshot.epoch != hit.epoch:
-                    return None
-                if any(
-                    (ref.provider_id, ref.record_id, ref.edition_id, ref.observed_at, ref.url)
-                    == (hit.provider_id, hit.record_id, hit.edition_id, hit.observed_at, url)
-                    for _, ref in pairs
-                ):
-                    matched.append(index)
+        with storage._lock:
+            db = storage._connect()
+            # A borrowed connection may belong to an unrelated writer.
+            # Never enter its context manager and accidentally commit it.
+            if db.in_transaction:
+                return None
+            with db:
+                db.execute("BEGIN")
+                for index, match in enumerate(matches):
+                    hit = match.hit
+                    if not is_canonical_cover_document(hit.document):
+                        continue
+                    if hit.document not in by_document:
+                        by_document[hit.document] = _read_current_public_web_references(db, hit.document)
+                    snapshot, pairs = by_document[hit.document]
+                    if snapshot is None or snapshot.epoch != hit.epoch:
+                        return None
+                    if any(
+                        (ref.provider_id, ref.record_id, ref.edition_id, ref.observed_at, ref.url)
+                        == (hit.provider_id, hit.record_id, hit.edition_id, hit.observed_at, url)
+                        for _, ref in pairs
+                    ):
+                        matched.append(index)
     except (sqlite3.Error, ValueError, TypeError, RuntimeError):
         # A failed optional reference read leaves the title/author comparison.
         return None
@@ -113,6 +121,7 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             or any(type(url) is not str or not 0 < len(url) <= 4096
                    or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
                           for ch in url) for url in source_urls)
+            or (now is not None and (type(now) is not int or now < 0))
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
         raise ValueError("invalid_documentary_suggestion_request")
@@ -151,10 +160,12 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             and displayable(hit.docbase)
             # These coordinates are rendered alongside the title in the
             # local review; even a malformed C DTO must not spoof a label.
-            and all(displayable(getattr(hit, field)) for field in (
-                "provider_id", "record_id", "edition_id",
-                "source_revision", "medium", "media_format",
-            )))
+            and all((value is None or (type(value) is str and len(value) <= 512))
+                    and displayable(value)
+                    for value in (getattr(hit, field) for field in (
+                        "provider_id", "record_id", "edition_id",
+                        "source_revision", "medium", "media_format",
+                    ))))
     )
     if (type(source_urls) is frozenset and len(source_urls) == 1
             and page == 0 and not found.has_more and len(matches) == found.known_matches):

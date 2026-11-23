@@ -98,7 +98,8 @@ class ConsolidatedNoticeCover:
 def canonical_cover_document_ref(canonical_edition_id: str) -> CoverDocumentScope:
     """Stable canonical edition reference, not a title/ISBN/image-URL join."""
     if (type(canonical_edition_id) is not str
-            or _IDENTIFIER.fullmatch(canonical_edition_id) is None):
+            or _IDENTIFIER.fullmatch(canonical_edition_id) is None
+            or "://" in canonical_edition_id or ".." in canonical_edition_id):
         raise ValueError("invalid_canonical_edition")
     digest = sha256(json.dumps(
         ["cifereca.notice-c.canonical-cover.v1", canonical_edition_id],
@@ -298,6 +299,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
             item["provider"], item["source_revision"], item["proof"],
         )
         if (any(type(x) is not str or _IDENTIFIER.fullmatch(x) is None
+                or "://" in x or ".." in x
                 for x in (provider, revision, proof))
                 or type(item["observed_at"]) is not int
                 or not 0 <= item["observed_at"] <= _MAX_EPOCH
