@@ -47,6 +47,8 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
             or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
                    for value in (provider_id, source_ref, record_id, edition_id,
                                  source_revision) for char in value)
+            or any(value != value.strip() for value in (provider_id, source_ref,
+                        record_id, edition_id, source_revision))
             or not source_ref.startswith("notice-c:v1:")
             or len(source_ref) != len("notice-c:v1:") + 64
             or any(char not in "0123456789abcdef" for char in source_ref[len("notice-c:v1:"):])
