@@ -3,7 +3,9 @@
 The read path must not require another Search ingestion or a provider request.
 """
 from cifereca.core import search_orchestration as search
-from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+from cifereca.core.notice_c_cover_index import (
+    read_consolidated_notice_cover, read_current_consolidated_public_cover,
+)
 from tests.test_core_p0_4982_search_atomic_groups import _budget, _rows
 from tests.test_core_p0_4982_notice_work_runtime import open_core
 from tests.test_core_p0_6366_library_recent_public_c import _real_origins, A_URL, B_URL
@@ -33,5 +35,9 @@ def test_attested_multi_provider_c_survives_restart_without_reingest(tmp_path, m
         assert {source.provider_id for source in snapshot.sources} == {"seller-a", "seller-b"}
         assert {cover.url for cover in snapshot.candidates} == {A_URL, B_URL}
         assert snapshot.snapshot_complete
+        # The stricter current-reader also validates live source revisions
+        # after restart, not merely the retained canonical snapshot.
+        current = read_current_consolidated_public_cover(core.storage, document)
+        assert current == snapshot
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
