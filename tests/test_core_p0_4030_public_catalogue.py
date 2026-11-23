@@ -262,3 +262,43 @@ def test_public_comparison_drops_spoofed_source_coordinates_but_keeps_valid_hits
     assert report["provider_access_performed"]
     assert not report["association_authorized"] and not report["may_write_origin_or_right"]
     assert rows(service.storage) == before and path.read_bytes() == original
+
+
+def test_same_isbn_same_public_coordinates_but_two_rows_stays_ambiguous(rig):
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    service, session, request, calls, path = rig
+    first = _row("same")
+    second = replace(_row("same"), id="public:same:other-row")
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return ProviderSearchResponse(
+            [first, second],
+            public_notices=(PublicSearchNotice(first), PublicSearchNotice(second)),
+        )
+    session.search_with_response_facets = search
+    before, data = rows(service.storage), path.read_bytes()
+    report = _run(service, request)
+    assert report["status"] == "partial"
+    assert [(m.record_id, m.media_format, m.comparison) for m in report["candidates"]] == [
+        ("same", "EPUB", "isbn_claim_ambiguous"),
+        ("same", "EPUB", "isbn_claim_ambiguous"),
+    ]
+    assert len(calls) == 1 and report["provider_access_performed"]
+    assert not report["coverage_complete"] and not report["association_authorized"]
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_single_unique_public_source_preserves_corroborated_isbn_strength(rig):
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    service, session, request, calls, path = rig
+    one = _row("unique")
+    session.search_with_response_facets = lambda *_args, **_kw: ProviderSearchResponse(
+        [one], public_notices=(PublicSearchNotice(one),),
+    )
+    before, data = rows(service.storage), path.read_bytes()
+    report = _run(service, request)
+    assert report["status"] == "partial"
+    hit, = report["candidates"]
+    assert hit.record_id == "unique" and hit.comparison == "isbn_title_author_concordant"
+    assert not report["association_authorized"]
+    assert rows(service.storage) == before and path.read_bytes() == data
