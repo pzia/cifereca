@@ -32,7 +32,10 @@ def render_public_catalogue_view(view: PublicCatalogueView, *, Gtk):
                 item.append(author)
         if view.mode in ("detail", "sources"):
             evidence = Gtk.Label(
-                label=f"Source : {row.provider_id} · édition : {row.edition_id}",
+                label=(f"Source : {row.provider_id} · notice : {row.record_id} "
+                       f"· base : {row.docbase} · support : {row.medium} "
+                       f"· révision : {row.source_revision or 'inconnue'} "
+                       f"· édition : {row.edition_id}"),
             )
             evidence.set_xalign(0)
             evidence.set_wrap(True)
