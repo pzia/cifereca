@@ -43,7 +43,10 @@ def capture_public_age_sources_txn(db, *, documents, target_edition_id):
     facts = []
     seen = set()
     for document in documents:
-        key = _opaque_key(document)
+        try:
+            key = _opaque_key(document)
+        except (TypeError, AttributeError, ValueError) as exc:
+            raise ValueError("invalid_public_age_snapshot_document") from exc
         if key is None or document.kind != "public_catalogue":
             raise ValueError("invalid_public_age_snapshot_document")
         if key in seen:
