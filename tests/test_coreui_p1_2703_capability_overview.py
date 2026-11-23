@@ -310,7 +310,7 @@ def test_each_family_distinguishes_four_synthetic_evidence_states(
         enabled=True, connected=True,
     )
     render, = source_capability_labels((CapabilityMatrix("synthetic", (row,)),))
-    assert f"{family} : {expected}" in render.split("\n", 1)[1].split(" · ")
+    assert f"{family} : {expected}" in render.split("\n", 1)[1].split("\nOpérations", 1)[0].split(" · ")
     assert not row.authorizes_mutation
     assert "private-" not in render
     assert "fixture/1" not in render
@@ -386,3 +386,31 @@ def test_coreui_uses_canonical_family_for_existing_sync_and_rights_operations():
     assert "Catalogue : preuve indisponible" in rendered
     assert "Métadonnées : preuve indisponible" in rendered
     assert "synthetic.readonly/1" not in rendered
+
+
+def test_settings_lists_exact_operations_scopes_and_provenance_without_private_ids():
+    rows = (
+        CapabilityEvidence(
+            "synthetic", "loan.borrow", "account", status="partial",
+            implementation_state="implemented", source_kind="account_observation",
+            mode="server", evidence_ref="private/proof",
+            reason="provider private reason", identity_id="alice-private",
+            account_id="account-private", credential_id="token-private",
+            edition_id="edition-private", enabled=False, connected=False,
+        ),
+        CapabilityEvidence(
+            "synthetic", "catalog.search", "public", status="unverified",
+            implementation_state="implemented", source_kind="code",
+            mode="local_postfilter_partial",
+        ),
+    )
+    label, = source_capability_labels((CapabilityMatrix("synthetic", rows),))
+    assert ("loan.borrow [account] : partial (account_observation, server)"
+            " · source désactivée · connexion absente") in label
+    assert ("catalog.search [public] : unverified "
+            "(code, local_postfilter_partial)") in label
+    assert label.index("catalog.search [public]") < label.index("loan.borrow [account]")
+    for private in ("alice-private", "account-private", "token-private",
+                    "edition-private", "private/proof", "provider private reason"):
+        assert private not in label
+    assert "Prêt : observation, action non autorisée" in label

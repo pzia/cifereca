@@ -92,7 +92,23 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
             statuses.append(f"{label} : {state}")
         # Provider IDs are canonical plugin registry public keys, not account
         # labels, credentials, source path, edition IDs or vendor notes.
-        output.append(matrix.provider_id + "\n" + " · ".join(statuses))
+        # Show the actual operation and its declared scope alongside the
+        # family overview. This is a source inventory, not a permission view:
+        # never render borrower/account/credential/edition IDs, free-form
+        # reasons, or evidence references that may contain private data.
+        detail = tuple(
+            f"{row.operation} [{row.scope}] : {row.status} "
+            f"({row.source_kind}, {row.mode})"
+            + (" · source désactivée" if row.enabled is False else "")
+            + (" · connexion absente" if row.connected is False else "")
+            for row in sorted(matrix.observations,
+                              key=lambda row: (row.operation, row.scope, row.field))
+        )
+        output.append(
+            matrix.provider_id + "\n" + " · ".join(statuses)
+            + ("\nOpérations et périmètres déclarés :\n"
+               + "\n".join(detail) if detail else "")
+        )
     return tuple(output)
 
 
