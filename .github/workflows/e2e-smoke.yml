@@ -59,14 +59,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Preserve the existing required-check name. It becomes green only when
+  # ALL selected GTK shards completed successfully; cancelled/failed/skipped
+  # shards cannot be disguised by a successful sibling.
   startup:
     name: E2E GTK · core
+    needs: gtk_shards
+    if: always()
     runs-on: ubuntu-24.04
-    # Full impacted GTK replay includes isolated BnF cover acceptance; 10 minutes
-    # cancelled a valid PR gate before verdict (run #40403881704).
-    # Keep a strict finite watchdog; do not skip or mask failed scenarios.
     timeout-minutes: 15
+    steps:
+      - name: Require every GTK shard to pass
+        shell: bash
+        env:
+          SHARDS_RESULT: ${{ needs.gtk_shards.result }}
+        run: |
+          set -euo pipefail
+          test "$SHARDS_RESULT" = "success"
 
+  gtk_shards:
+    name: E2E GTK · shard ${{ matrix.shard }}
+    # Independent isolated runners, workspaces, D-Bus and Xvfb: a failure in
+    # one shard must not cancel coverage in the others. Full = 54/54, not an
+    # exclusion/skip; shards partition the selector's ordered scenario list.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -79,18 +100,19 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MANUAL_SCENARIO: ${{ inputs.scenario }}
+          E2E_SHARD_INDEX: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ -n "$MANUAL_SCENARIO" ]]; then
-              /usr/bin/python3 scripts/ci-select-e2e.py --scenario "$MANUAL_SCENARIO" --github-output "$GITHUB_OUTPUT"
+              /usr/bin/python3 scripts/ci-select-e2e.py --scenario "$MANUAL_SCENARIO" --github-output "$GITHUB_OUTPUT" --shard-count 3 --shard-index "$E2E_SHARD_INDEX"
             else
-              /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT"
+              /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT" --shard-count 3 --shard-index "$E2E_SHARD_INDEX"
             fi
           else
             # Compare PR-owned changes from the merge base, not unrelated commits on main.
             git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/e2e-changed-files"
-            /usr/bin/python3 scripts/ci-select-e2e.py --changed-files "$RUNNER_TEMP/e2e-changed-files" --github-output "$GITHUB_OUTPUT"
+            /usr/bin/python3 scripts/ci-select-e2e.py --changed-files "$RUNNER_TEMP/e2e-changed-files" --github-output "$GITHUB_OUTPUT" --shard-count 3 --shard-index "$E2E_SHARD_INDEX"
           fi
 
       - name: Test E2E scenario selector
