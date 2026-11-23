@@ -7,7 +7,7 @@ class HistoricalHoldTitleWhitespaceTests(unittest.TestCase):
         self.assertEqual(_hold_display_title("Book title"), "Book title")
 
     def test_whitespace_wrapped_title_uses_neutral_fallback(self):
-        for title in (" Book title", "Book title ", "  ", "\\nBook title"):
+        for title in (" Book title", "Book title ", "  ", "\nBook title"):
             with self.subTest(title=repr(title)):
                 self.assertEqual(_hold_display_title(title), "Référence de prêt historique")
 
