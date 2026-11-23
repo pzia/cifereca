@@ -67,6 +67,12 @@ def render_public_catalogue_view(view: PublicCatalogueView, *, Gtk):
             stamp = Gtk.Label(label=f"Dernière observation : {row.last_seen_at}")
             stamp.set_xalign(0)
             item.append(stamp)
+        freshness = Gtk.Label(label=(
+            "Observation périmée · rafraîchissement non attesté"
+            if row.stale else "Observation disponible · fraîcheur non garantie"
+        ))
+        freshness.set_xalign(0)
+        item.append(freshness)
         root.append(item)
     if view.has_more or view.status != "complete":
         note = Gtk.Label(label="Résultats partiels · d'autres notices peuvent exister")
