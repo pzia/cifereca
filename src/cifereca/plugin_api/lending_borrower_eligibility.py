@@ -82,7 +82,10 @@ def assess_borrower_eligibility(
             or capability.availability != "supported"
             or capability.manifest_declared is not True
             or capability.descriptor_declared is not True
-            or capability.method_implemented is not True):
+            or capability.method_implemented is not True
+            # A positive diagnostic must never be derived from a loan
+            # capability that omits the explicit-user-action requirement.
+            or capability.explicit_action_required is not True):
         return result("unavailable", "capability_unavailable")
     if capability.session_ready is not True:
         return result("unavailable", "session_unavailable")
