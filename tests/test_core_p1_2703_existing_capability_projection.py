@@ -266,7 +266,7 @@ def test_failed_loan_snapshot_must_not_produce_positive_branch_claim(status):
     lambda snapshot: object.__setattr__(snapshot, "branches", [snapshot.branches[0]]),
     lambda snapshot: object.__setattr__(snapshot, "branches", snapshot.branches * 2),
     lambda snapshot: object.__setattr__(snapshot.branches[0], "pagination_complete", False),
-    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "card\nother"),
+    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "card\x00other"),
     lambda snapshot: object.__setattr__(snapshot, "loans", ("not-a-loan",)),
 ))
 def test_precollected_loan_mutations_are_rejected_before_capability_projection(mutate):
