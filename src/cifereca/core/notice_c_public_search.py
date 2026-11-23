@@ -639,7 +639,7 @@ def search_public_notice_c(
             try:
                 fence = _decode_source_fence(absent_fences.get(source_ref))
                 if fence is not None and (
-                    fence['epoch'] != source.source_epoch + int(fence['evicted'])
+                    fence['epoch'] != source.source_epoch + int(fence.get('evicted') is True)
                     or fence['proof'] not in {
                         _source_fingerprint(source, ('search_result', 'thumbnail_url'), complete)
                         for complete in (True, False)
