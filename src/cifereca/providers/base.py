@@ -307,7 +307,7 @@ class ManualBorrowPolicy:
                 or (self.observed_loan_account_alias is not None
                     and (type(self.observed_loan_account_alias) is not str
                          or fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",
-                                      self.observed_loan_account_alias) is None)
+                                      self.observed_loan_account_alias) is None))
                 or (self.reborrow_inventory_branch is not None
                     and (type(self.reborrow_inventory_branch) is not str
                          or fullmatch(r"[a-z][a-z0-9_-]{0,47}",
