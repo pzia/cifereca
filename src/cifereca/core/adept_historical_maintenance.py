@@ -301,7 +301,10 @@ def run_historical_hold_review(service, request, *, offset=0,
                 "replay_proof": "not_established",
                 "unlock_authorized": False,
             })
-        if not request.bound() or sqlite_source_stamp(request.database) != stamp:
+        if (not request.bound() or sqlite_source_stamp(request.database) != stamp
+                or tuple(row for row in review_loan_download_retries(
+                    service, identity_id=request.identity,
+                ) if row.source.kind == "loan" and row.adept_hold) != blocked):
             return None
         return {
             "rows": tuple(reports),
