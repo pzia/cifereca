@@ -54,7 +54,7 @@ def _decode(raw):
 def publish_descriptive_materialization(
     storage, row: DescriptiveMaterialization, *,
     expected_execution_key: str | None, capture_current_txn,
-    journal_lease=None, journal_now=None, expected_job_target=None,
+    journal_lease=None, journal_now=None,
 ):
     """CAS publish with authoritative Core snapshot recaptured in same txn.
 
@@ -66,8 +66,7 @@ def publish_descriptive_materialization(
     the lease this is a staging-only port, not a scheduler publication.
     """
     key = _row_key(row)
-    if ((journal_lease is None) != (journal_now is None)
-            or (journal_lease is None) != (expected_job_target is None)):
+    if (journal_lease is None) != (journal_now is None):
         raise ValueError("descriptive_journal_binding_required")
     if (expected_execution_key is not None
             and (type(expected_execution_key) is not str
@@ -86,12 +85,12 @@ def publish_descriptive_materialization(
         )
         if journal_lease is not None:
             from . import notice_c_job_journal as journal
-            from hashlib import sha256 as _sha256
+            from .notice_c_cover_index import canonical_cover_document_ref
             job = journal._held(db, journal_lease, journal_now)
-            if (type(expected_job_target) is not str
-                    or job.spec.kind != "recompute_aggregate"
-                    or job.spec.target != expected_job_target
-                    or job.spec.input_digest != _sha256(
+            if (job.spec.kind != "recompute_aggregate"
+                    or job.spec.target != canonical_cover_document_ref(
+                        row.target_edition_id).source_key
+                    or job.spec.input_digest != sha256(
                         row.execution_key.encode("ascii")
                     ).hexdigest()
                     or job.spec.implementation_digest != digest):
