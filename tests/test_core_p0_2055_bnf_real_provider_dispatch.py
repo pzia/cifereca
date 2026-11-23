@@ -120,7 +120,10 @@ def test_full_coreui_core_real_provider_one_confirmed_post(tmp_path):
             ("POST", "/loans/activation"),
             ("GET", "/my_profile/activity"),
         ]
-        assert service.can_borrow_manual(item) is False
+        # A previously confirmed BnF loan no longer hides the manual button
+        # forever. A NEW click must still establish its completed-cycle
+        # evidence before any second POST; this preview is provider-I/O-free.
+        assert service.can_borrow_manual(item) is True
         row = service.storage.loan_borrow_state(
             borrow_claim_key(account, item))
         assert row["status"] == "confirmed"
