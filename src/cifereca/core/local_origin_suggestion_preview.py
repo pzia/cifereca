@@ -26,6 +26,14 @@ def _text(value, limit=1024):
             and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
 
 
+def _displayable_scope_id(value):
+    # Exact profile/Placement selection cannot depend on invisible or
+    # bidirectional controls. Reject without normalizing stored identifiers.
+    return (_text(value, 256)
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
     """Same candidate-path policy for individual and batch reviews.
 
@@ -34,7 +42,7 @@ def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
     """
     if (not _text(raw, 4096) or not isinstance(library_root, Path)
             or not library_root.is_absolute() or library_root == Path("/")
-            or ".." in library_root.parts or not _text(identity_id, 256)
+            or ".." in library_root.parts or not _displayable_scope_id(identity_id)
             or not _text(directory, 256) or directory in (".", "..")
             or "/" in directory or chr(92) in directory):
         return None
@@ -205,7 +213,8 @@ class _CandidateRejected(ValueError):
 @contextmanager
 def _verified_candidate(storage, *, library_root, identity_id, placement_id,
                         catalogue=False, include_declared=False):
-    if (type(include_declared) is not bool or not _text(identity_id, 256) or not _text(placement_id, 256)
+    if (type(include_declared) is not bool or not _displayable_scope_id(identity_id)
+            or not _displayable_scope_id(placement_id)
             or not isinstance(library_root, Path) or not library_root.is_absolute()
             or library_root == Path("/") or ".." in library_root.parts):
         raise _CandidateRejected("invalid_scope")
