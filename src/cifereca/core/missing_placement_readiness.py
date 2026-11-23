@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from sqlite3 import Error as SqliteError
 
+from .derived_variant_region_paths import private_derived_path
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
 
 
@@ -18,7 +19,7 @@ def _physical_absence(identity_root: Path, stored_path: str) -> str:
     try:
         path = Path(stored_path)
         if (not path.is_absolute() or ".." in path.parts
-                or not identity_root.is_absolute()):
+                or not identity_root.is_absolute() or private_derived_path(path)):
             return "path_out_of_scope"
         relative = path.relative_to(identity_root)
         if not relative.parts or any(p in {"", ".", ".."} for p in relative.parts):

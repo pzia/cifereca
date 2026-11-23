@@ -14,6 +14,7 @@ from pathlib import Path
 import stat
 from typing import Mapping
 
+from .derived_variant_region_paths import private_derived_path
 from .device_usb_preview import UsbLocalArtifact, _sha
 
 
@@ -26,6 +27,7 @@ def _safe_scope(root: Path, path: Path) -> bool:
     if (not isinstance(root, Path) or not isinstance(path, Path)
             or not root.is_absolute() or not path.is_absolute()
             or ".." in root.parts or ".." in path.parts
+            or private_derived_path(path)
             or root == path):
         return False
     try:

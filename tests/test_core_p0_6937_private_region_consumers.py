@@ -95,3 +95,72 @@ def test_private_region_does_not_consume_ordinary_scan_entry_budget(tmp_path):
     assert {Path(observed.path).name for observed in result.files} == {"book.pdf"}
     assert "entry_budget" not in result.reasons
     assert stage.read_bytes() == BYTES
+
+
+def test_private_region_cannot_supply_usb_source_or_snapshot(tmp_path, monkeypatch):
+    from hashlib import sha256
+
+    from cifereca.core.device_usb_content_snapshot import snapshot_local_usb_content
+    from cifereca.core.device_usb_local_source import attest_local_usb_source
+
+    root = tmp_path / "alice"
+    private = root / PRIVATE_DERIVED_REGION / "book.epub"
+    ordinary = root / (PRIVATE_DERIVED_REGION + "-backup") / "book.epub"
+    for path in (private, ordinary):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(BYTES)
+    digest = sha256(BYTES).hexdigest()
+    artifact = {"artifact_id": "sha256:" + digest, "sha256": digest,
+                "kind": "file", "size": len(BYTES)}
+    placement = {"artifact_id": artifact["artifact_id"], "identity_id": "alice",
+                 "state": "present", "path": str(ordinary)}
+    scope = dict(identity_id="alice", identity_root=root, artifact=artifact)
+    admitted = attest_local_usb_source(placement=placement, **scope)
+    assert admitted is not None
+    assert snapshot_local_usb_content(placement=placement, local=admitted, **scope) == BYTES
+
+    lstat = Path.lstat
+
+    def refuse_probe(path, *args, **kwargs):
+        assert PRIVATE_DERIVED_REGION not in path.parts
+        return lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", refuse_probe)
+    placement["path"] = str(private)
+    assert attest_local_usb_source(placement=placement, **scope) is None
+    assert snapshot_local_usb_content(placement=placement, local=admitted, **scope) is None
+    assert private.read_bytes() == BYTES
+
+
+def test_private_missing_placement_cannot_enter_ordinary_retirement(store, tmp_path):
+    from cifereca.core.missing_placement_readiness import preview_missing_placement_retirement
+    from cifereca.core.missing_placement_retirement import (
+        prepare_missing_placement_retirement, retire_missing_placement,
+    )
+
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    rows = {}
+    for directory in (PRIVATE_DERIVED_REGION, PRIVATE_DERIVED_REGION + "-backup"):
+        path = root / "A" / directory / "absent.epub"
+        path.parent.mkdir(parents=True)
+        rows[directory] = store.placement_put({
+            "path": str(path), "identity_id": "A", "state": "missing", "artifact_id": None,
+        })
+    private = rows[PRIVATE_DERIVED_REGION]
+    ordinary = rows[PRIVATE_DERIVED_REGION + "-backup"]
+    scope = dict(identity_id="A", library_root=root)
+    before = store.placement_get(private)
+    assert preview_missing_placement_retirement(
+        store, placement_id=private, **scope,
+    )["reason"] == "path_out_of_scope"
+    assert prepare_missing_placement_retirement(store, placement_id=private, **scope) == {
+        "status": "blocked", "reason": "path_out_of_scope",
+    }
+    assert retire_missing_placement(
+        store, placement_id=private, plan_token="a" * 64, confirmed=True, **scope,
+    ) == {"status": "blocked", "reason": "path_out_of_scope"}
+    assert prepare_missing_placement_retirement(
+        store, placement_id=ordinary, **scope,
+    )["status"] == "ready"
+    assert store.placement_get(private) == before
