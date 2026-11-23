@@ -197,3 +197,24 @@ def test_nul_in_unselected_schema_invalidates_entire_registry():
     )
     with pytest.raises(ValueError, match="invalid_canonical_text_schema"):
         select_text_schema([SCHEMA, unrelated], selection=SELECTED)
+
+
+@pytest.mark.parametrize("field,side", [
+    ("canonical_type", "selection"), ("scope", "selection"),
+    ("plugin_id", "selection"), ("version", "selection"),
+    ("schema_id", "selection"), ("canonical_type", "result"),
+    ("plugin_id", "result"), ("plugin_version", "result"),
+    ("schema_id", "result"), ("inherited", "result"),
+])
+def test_forged_schema_context_cannot_execute_foreign_equality(field, side):
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("foreign schema equality")
+
+    selected, proposed = SELECTED, RESULT
+    if side == "selection":
+        selected = replace(selected, **{field: Hostile()})
+    else:
+        proposed = replace(proposed, **{field: Hostile()})
+    with pytest.raises(ValueError, match="invalid_canonical_text_validation_context"):
+        validate_text_schema_result(proposed, schema=SCHEMA, selection=selected)
