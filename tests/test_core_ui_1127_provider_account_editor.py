@@ -617,3 +617,66 @@ def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
         editor["enabled"].set_active(enabled)
         assert "modification non enregistrée" not in row2.subtitle
         assert row2.subtitle == expected
+
+
+def test_p1_5540_two_accounts_two_identities_keep_exact_options_and_credentials():
+    """Installed-style GTK contract: one descriptor, two saved connections."""
+    option = _url_option("endpoint", "Catalogue personnel",
+                         default="https://default.example",
+                         legacy_config_key="legacy.endpoint")
+    accounts = [
+        {"id": "connection-a", "provider": "synthetic",
+         "identity_id": "alice", "enabled": True, "label": "Bibliothèque A",
+         "credentials": {"card": "CARD-A", "password": "SECRET-A"},
+         "options": {"endpoint": "https://a.example"}},
+        {"id": "connection-b", "provider": "synthetic",
+         "identity_id": "bob", "enabled": False, "label": "Bibliothèque B",
+         "credentials": {"card": "CARD-B", "password": "SECRET-B"},
+         "options": {"endpoint": "https://b.example"}},
+    ]
+    observed = []
+    for account in accounts:
+        editor, _, container, adw = _render(
+            "synthetic", data=account, descriptor_options=[option],
+            configured=[{"id": "alice"}, {"id": "bob"}],
+            legacy_values={"providers.accounts": accounts,
+                           "legacy.endpoint": "https://unscoped.example"},
+        )
+        observed.append((editor, container, adw))
+        assert editor["identity"].text == account["identity_id"]
+        assert editor["fields"]["card"].text == account["credentials"]["card"]
+        assert isinstance(editor["fields"]["password"], adw.PasswordEntryRow)
+        assert editor["fields"]["password"].text == account["credentials"]["password"]
+        assert editor["option_fields"]["endpoint"].text == account["options"]["endpoint"]
+        assert editor["invalid_saved_snapshot"] is False
+        assert account["credentials"]["password"] not in str(container.children[0].title)
+    first, second = observed[0][0], observed[1][0]
+    first["option_fields"]["endpoint"].set_text("https://changed.example")
+    assert second["option_fields"]["endpoint"].text == "https://b.example"
+    assert second["enabled"].get_active() is False
+    assert accounts[0]["options"]["endpoint"] == "https://a.example"
+    assert accounts[1]["options"]["endpoint"] == "https://b.example"
+
+
+def test_p1_5540_unscoped_legacy_option_never_migrates_to_two_accounts():
+    option = _url_option("endpoint", "Catalogue personnel",
+                         default="https://default.example",
+                         legacy_config_key="legacy.endpoint")
+    accounts = [
+        {"id": "a", "provider": "synthetic", "identity_id": "alice"},
+        {"id": "b", "provider": "synthetic", "identity_id": "bob"},
+    ]
+    for account in accounts:
+        editor, _, _, _ = _render(
+            "synthetic", data=account, descriptor_options=[option],
+            legacy_values={"providers.accounts": accounts,
+                           "legacy.endpoint": "https://private.example"},
+        )
+        assert editor["option_fields"]["endpoint"].text == "https://default.example"
+    # A sole historical connection may still recover its legacy preference.
+    editor, _, _, _ = _render(
+        "synthetic", data=accounts[0], descriptor_options=[option],
+        legacy_values={"providers.accounts": [accounts[0]],
+                       "legacy.endpoint": "https://historical.example"},
+    )
+    assert editor["option_fields"]["endpoint"].text == "https://historical.example"
