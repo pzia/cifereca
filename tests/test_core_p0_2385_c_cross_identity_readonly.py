@@ -36,3 +36,22 @@ def test_public_c_cold_read_independent_of_search_identity(tmp_path, monkeypatch
             assert {cover.url for cover in current.candidates} == {A_URL, B_URL}
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
+
+
+def test_same_title_without_attested_origin_does_not_join_public_c(tmp_path):
+    """A matching title is not evidence of canonical documentary identity."""
+    from tests.test_core_p0_4982_search_repair import _admitted
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        a, b = _rows()
+        unrelated = _admitted("Même titre", "unrelated-edition", source_provider="seller-c")
+        pairs = search._ingest_public_search_c(
+            core.library, [a, b, unrelated], identity_id="profile-a", now=100,
+            require_public_cover_witness=True,
+        )
+        assert len(pairs) == 3
+        assert a._core_notice_canonical_cover_document_ref == b._core_notice_canonical_cover_document_ref
+        assert unrelated._core_notice_canonical_cover_document_ref != a._core_notice_canonical_cover_document_ref
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
