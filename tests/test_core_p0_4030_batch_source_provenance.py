@@ -48,16 +48,16 @@ def test_batch_plugin_rejects_invisible_source_label_but_retains_neighbor():
                             False, "record-1", "public", "edition-1", "digital",
                             "EPUB", 100)
     forged = KnownOriginMatch("Autre", "Autrice", "public", "title_related", False,
-                              "record-2", "public\\u202eFORGED", "edition-2", "digital",
-                              "EPUB\\x85FORGED", None)
+                              "record-2", "public\u202eFORGED", "edition-2", "digital",
+                              "EPUB\x85FORGED", None)
     page = LocalOriginBatchPage("token", 1, (
         LocalOriginFileAdvice("roman.epub", "compared", "", 2, False,
                               (good, forged)),), False, False)
     lines = display(page)
     assert "Référence C : record-1" in lines
     assert "Collection C : public" in lines
-    assert "Collection C : public\\u202e" not in lines
-    assert "Format C : EPUB\\x85" not in lines
+    assert "Collection C : public\u202e" not in lines
+    assert "Format C : EPUB\x85" not in lines
     assert "Date d'observation C indisponible" in lines
     assert "Roman" in lines and "Autre" in lines
 
