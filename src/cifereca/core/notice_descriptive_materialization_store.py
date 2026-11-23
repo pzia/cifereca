@@ -54,16 +54,21 @@ def _decode(raw):
 def publish_descriptive_materialization(
     storage, row: DescriptiveMaterialization, *,
     expected_execution_key: str | None, capture_current_txn,
+    journal_lease=None, journal_now=None, expected_job_target=None,
 ):
     """CAS publish with authoritative Core snapshot recaptured in same txn.
 
     capture_current_txn(db) MUST be a trusted, side-effect-free Core reader
     returning (selection, admitted, installed_source_sha256). This is not a
     plugin callback and must not perform I/O outside this SQLite connection.
-    The caller must separately validate journal lease/fence and complete its
-    job in this same transaction before this is wired to an executor.
+    With journal_lease supplied, validates the exact journal generation,
+    fence, target and execution digests and completes it atomically. Without
+    the lease this is a staging-only port, not a scheduler publication.
     """
     key = _row_key(row)
+    if ((journal_lease is None) != (journal_now is None)
+            or (journal_lease is None) != (expected_job_target is None)):
+        raise ValueError("descriptive_journal_binding_required")
     if (expected_execution_key is not None
             and (type(expected_execution_key) is not str
                  or len(expected_execution_key) != len(row.execution_key))):
@@ -79,6 +84,18 @@ def publish_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
         )
+        if journal_lease is not None:
+            from . import notice_c_job_journal as journal
+            from hashlib import sha256 as _sha256
+            job = journal._held(db, journal_lease, journal_now)
+            if (type(expected_job_target) is not str
+                    or job.spec.kind != "recompute_aggregate"
+                    or job.spec.target != expected_job_target
+                    or job.spec.input_digest != _sha256(
+                        row.execution_key.encode("ascii")
+                    ).hexdigest()
+                    or job.spec.implementation_digest != digest):
+                raise ValueError("descriptive_journal_snapshot_mismatch")
         encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
                              separators=(",", ":"))
         if len(encoded.encode("utf-8")) > _MAX_ROW_BYTES:
@@ -88,6 +105,8 @@ def publish_descriptive_materialization(
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, encoded),
         )
+        if journal_lease is not None:
+            journal._complete_job_txn(db, journal_lease, now=journal_now)
     return row
 
 
