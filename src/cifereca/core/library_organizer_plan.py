@@ -104,14 +104,21 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
         # Two independent books may propose the same vacant name. A page
         # cannot preselect either by order. Keep both explicit as conflicts.
         destinations = {}
+        # A proposed target occupied by a different source in this same
+        # review page is not an available destination, even if the independent
+        # naming preview has not observed the other operation yet.
+        sources = {}
         for entry in entries:
             if entry.operation in ("rename", "classify"):
                 destinations.setdefault(entry.proposed, set()).add(entry.placement_id)
+                sources.setdefault(entry.current, set()).add(entry.placement_id)
         entries = tuple(
             OrganizerDryRunEntry(e.placement_id, e.operation, e.current,
                                  e.proposed, "destination_conflict")
             if e.operation in ("rename", "classify")
-            and len(destinations[e.proposed]) > 1 else e for e in entries)
+            and (len(destinations[e.proposed]) > 1
+                 or any(pid != e.placement_id for pid in sources.get(e.proposed, ())))
+            else e for e in entries)
         if (not scope.bound() or sqlite_source_stamp(scope.database) != anchor.stamp
                 or run_organizer_review(scope.service, scope,
                                         cursor=anchor if anchor.offset else None) != fresh):
