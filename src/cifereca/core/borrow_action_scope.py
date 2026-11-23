@@ -70,6 +70,27 @@ def borrow_claim_key(account: Account, item: SearchResult) -> str | None:
     return "loan.borrow.v1:" + digest
 
 
+def borrow_cycle_claim_key(
+    account: Account, item: SearchResult, generation: int,
+) -> str | None:
+    """Derive an inert, versioned key for a *separately authorized* loan cycle.
+
+    This does not reserve a cycle, establish completion of a previous loan,
+    or grant permission for a POST. The caller must use an atomic durable
+    generation protocol and independently verify the prior cycle's end.
+    Generation 1 deliberately retains the existing one-shot v1 key.
+    """
+    if type(generation) is not int or not 1 <= generation <= 1_000_000:
+        return None
+    original = borrow_claim_key(account, item)
+    if original is None or generation == 1:
+        return original
+    digest = sha256(json.dumps(
+        [original, generation], separators=(",", ":"),
+    ).encode("ascii")).hexdigest()
+    return "loan.borrow.v2:" + digest
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class BorrowActionScopeLease:
     """Non-authorizing, ABA-resistant reference to one selected notice."""
@@ -190,5 +211,5 @@ def capture_borrow_action_scope(
 
 __all__ = [
     "BorrowActionScopeLease", "capture_borrow_action_scope",
-    "borrow_claim_key",
+    "borrow_claim_key", "borrow_cycle_claim_key",
 ]
