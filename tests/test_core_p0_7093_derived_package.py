@@ -262,3 +262,48 @@ def test_capacity_cancellation_is_independent_of_recovery(tmp_path, phase):
         assert Path(intent.staged_path).samefile(intent.candidate_path)
     finally:
         db.close()
+
+def test_fresh_derived_receipt_listing_revokes_old_page_before_queued_worker(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        _, _, _, c, tasks, renders = rig(service)
+        before = db.metadata_get(reservation.key)
+        assert c.request("list")
+        page = finish(tasks)
+        assert page.choices and c.page is page
+        assert c.request("list")
+        # The next worker has not run, but the preceding receipt cannot be
+        # verified or simulated through the old activation.
+        assert c.page is None and c.busy
+        assert c.broker.verify(token=page.choices[0].token, confirmed=True) is None
+        assert not c.request("list")
+        renewed = finish(tasks)
+        assert c.page is renewed and renewed is not page
+        assert renewed.choices and renewed.choices[0].token != page.choices[0].token
+        assert db.metadata_get(reservation.key) == before
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_derived_overview_revokes_verified_simulation_token_immediately(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        _, _, _, c, tasks, renders = rig(service)
+        before = db.metadata_get(reservation.key)
+        assert c.request("list")
+        page = finish(tasks)
+        assert c.request("verify", choice=page.choices[0])
+        reviewed = finish(tasks)
+        assert reviewed is not None and c.reviewed == reviewed
+        assert c.request("overview")
+        assert c.reviewed is None and c.page is None and c.busy
+        assert c.broker.simulate(token=reviewed, confirmed=True) == "review_required"
+        finish(tasks)
+        assert not c.request("simulate", confirmed=True)
+        assert db.metadata_get(reservation.key) == before
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()

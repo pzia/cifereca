@@ -138,10 +138,21 @@ class BatchController:
         return admitted is True
 
     def cancel(self):
-        if self.stop is None or not self.current() or self.stop.is_set():
+        if not self.current():
             return False
-        self.stop.set()
-        self.render(None, "cancelling")
+        if self.stop is not None:
+            if self.stop.is_set():
+                return False
+            self.stop.set()
+            self.render(None, "cancelling")
+            return True
+        if self.page is None:
+            return False
+        # The last page may still own an active Core continuation while the
+        # user is idle. Revoke it immediately, not on a future worker.
+        self._cancel_token(self.page.token)
+        self.page = None
+        self.render(None, "cancelled")
         return True
 
     def _cancel_token(self, token):
@@ -241,10 +252,12 @@ class OriginPlugin:
             include.set_sensitive(ready)
             start.set_sensitive(ready)
             following.set_sensitive(ready and page is not None and page.can_continue)
-            cancel.set_sensitive(state == "busy")
+            cancel.set_sensitive(state == "busy" or (ready and page is not None))
             detail.set_visible(True)
             detail.set_text({"busy": "Comparaison documentaire en cours…",
-                             "cancelling": "Arrêt demandé…"}.get(state, display(page)))
+                             "cancelling": "Arrêt demandé…",
+                             "cancelled": "Revue annulée. Nouvelle consultation explicite nécessaire."}
+                            .get(state, display(page)))
 
         controller = self.controller(host, render)
         # Capture the toggle on the UI thread at the explicit preview click.

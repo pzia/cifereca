@@ -56,6 +56,17 @@ def _displayable_scope_coordinate(value):
                         for ch in value))
 
 
+def _displayable_reference_coordinate(value):
+    """Only the local *display* of exact refs rejects deceptive Unicode.
+
+    Persisted SourceReference identifiers remain untouched, including those
+    needed for historical evidence, recovery and rights assessment.
+    """
+    return (type(value) is str and 0 < len(value) <= 256
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
 def _descriptive_pair(title, author):
     if (not _public_bibliographic_text(title, required=True, limit=512)
             or not title.strip()
@@ -84,12 +95,12 @@ def _loan_titles(service, scope):
         # Count the exact account's occurrence BEFORE medium, edition or
         # descriptive filters; a contradictory sibling cannot disappear
         # from the ambiguity check. Other accounts remain independent.
-        if type(loan.id) is str and 0 < len(loan.id) <= 256:
+        if _displayable_reference_coordinate(loan.id):
             counts[loan.id] += 1
         if loan.medium != "digital":
             continue
         key = (loan.record_id or loan.id, loan.id)
-        if not all(type(value) is str and 0 < len(value) <= 256 for value in key):
+        if not all(_displayable_reference_coordinate(value) for value in key):
             continue
         pair = _descriptive_pair(loan.title, loan.author)
         if pair is not None:
@@ -157,6 +168,13 @@ def _snapshot(storage, scope, kind, loan_titles, title, authors, offset=0):
                 except ValueError:
                     # A malformed row is not a documentary match; preserve
                     # valid neighbours in this explicitly partial window.
+                    continue
+                # The transport allows wider identifier characters than
+                # provenance UI labels. Never launder a forged branch,
+                # edition or occurrence into the user's decision view.
+                if not all(_displayable_reference_coordinate(value)
+                           for value in (source.branch, source.edition_id,
+                                         source.resource_id)):
                     continue
                 observed_at = None
                 conflicting = False

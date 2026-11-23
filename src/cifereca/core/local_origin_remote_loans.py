@@ -56,6 +56,18 @@ def _text(value, *, empty=False):
                     for ch in value))
 
 
+def _local_observation_label(value):
+    """Provider timestamps are observations, not fresh-network evidence.
+
+    ISO 8601 parsing in Python accepts arbitrary one-character separators,
+    including bidi/format controls. The private comparison must not echo
+    those controls into an account/loan provenance review.
+    """
+    return (value if type(value) is str and 20 <= len(value) <= 40
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value) else None)
+
+
 def _reader(session):
     reader = getattr_static(session, "loan_inventory_snapshot", None)
     if (not callable(reader)
@@ -227,7 +239,8 @@ def compare_remote_loan_catalogue(service, choice, *, confirmed=False,
                         or snapshot.status not in ("success", "partial")):
                     return report("unavailable")
                 candidates, truncated = _matches(snapshot, choice, title, authors)
-                result = report("partial", candidates, truncated, snapshot.observed_at)
+                result = report("partial", candidates, truncated,
+                                _local_observation_label(snapshot.observed_at))
             return result if live() else report("scope_changed")
     except Exception:
         return report("unavailable" if requested else "excluded")

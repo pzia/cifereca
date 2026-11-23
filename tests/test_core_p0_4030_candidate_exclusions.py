@@ -69,3 +69,48 @@ def test_individual_and_batch_share_path_veto_before_hash_or_c_search(
     assert hashed == [ordinary_path] and searched == [True]
     assert rows(store) == before and retained.read_bytes() == ordinary_path.read_bytes() == BYTES
     assert not page["may_write_origin_or_right"]
+
+
+@pytest.mark.parametrize("field", ["identity_id", "placement_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_local_origin_scope_rejects_non_displayable_exact_ids_before_any_sql_or_hash(
+    store, tmp_path, monkeypatch, field, spoof,
+):
+    service, root, pid = _service(store, tmp_path)
+    path = Path(store.placement_get(pid)["path"])
+    before, content = rows(store), path.read_bytes()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a spoofed exact scope must not reach SQLite")
+
+    monkeypatch.setattr(preview, "_snapshot", forbidden)
+    requested = {"identity_id": "A", "placement_id": pid}
+    requested[field] += spoof + "FORGED"
+    result = preview.preview_local_origin_suggestion(
+        store, library_root=root, **requested,
+    )
+    assert result["status"] == "excluded" and result["reason"] == "invalid_scope"
+    assert not result["physical_bytes_verified"] and not result["may_write_origin_or_right"]
+    if field == "identity_id":
+        assert preview.ordinary_suggestion_path(
+            str(path), library_root=root, identity_id=requested[field],
+            directory="A",
+        ) is None
+    assert rows(store) == before and path.read_bytes() == content
+
+
+def test_safe_scope_identifiers_still_receive_read_only_preview(store, tmp_path):
+    service, root, pid = _service(store, tmp_path)
+    path = Path(store.placement_get(pid)["path"])
+    assert preview._displayable_scope_id("A")
+    assert preview._displayable_scope_id(pid)
+    assert preview.ordinary_suggestion_path(
+        str(path), library_root=root, identity_id="A", directory="A",
+    ) == path
+    before, content = rows(store), path.read_bytes()
+    result = preview.preview_local_origin_suggestion(
+        store, library_root=root, identity_id="A", placement_id=pid,
+    )
+    assert result["status"] == "documentary_candidate"
+    assert result["physical_bytes_verified"] and not result["may_write_origin_or_right"]
+    assert rows(store) == before and path.read_bytes() == content
