@@ -246,3 +246,16 @@ def test_manual_action_requirement_is_diagnostic_not_actual_consent():
     assert outcome.status == "eligible"
     assert outcome.reason_code == "borrower_eligible_unconfirmed"
     assert not hasattr(outcome, "consent") and not hasattr(outcome, "admitted")
+
+
+@pytest.mark.parametrize("bad", [
+    "reader\nforged", "reader\tforged", "reader\u00a0forged",
+])
+def test_borrower_evidence_rejects_nonprintable_scope_coordinates(bad):
+    # Never accept hidden control/Unicode separators as distinct borrower
+    # identities or as a provider-attested branch coordinate.
+    for field in ("borrower_id", "record_id", "docbase"):
+        outcome = decide(ev=replace(proof(), **{field: bad}))
+        assert outcome.status == "unverified"
+        assert outcome.reason_code == "evidence_scope_mismatch"
+        assert not outcome.blocked

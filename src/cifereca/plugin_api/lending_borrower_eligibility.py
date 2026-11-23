@@ -56,7 +56,7 @@ class BorrowerEligibilityFact:
 
 def _bounded(value: object, *, allow_empty: bool = False) -> bool:
     return (type(value) is str and len(value) <= 1024
-            and "\x00" not in value and (allow_empty or bool(value)))
+            and value.isprintable() and (allow_empty or bool(value)))
 
 
 def assess_borrower_eligibility(
