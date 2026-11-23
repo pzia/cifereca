@@ -326,7 +326,41 @@ class Storage:
             generation = previous.get("cycle_generation", 1)
             if type(generation) is not int or not 1 <= generation < 10000:
                 return False, {"status": "verification_unavailable"}
-            history_key = "loan.borrow.history.v1:" + key[len("loan.borrow.v1:"):] + ":" + str(generation)
+            history_prefix = (
+                "loan.borrow.history.v1:"
+                + key[len("loan.borrow.v1:"):] + ":"
+            )
+            # Generation 3+ must not reuse a spent operation_id from
+            # generation 1, even if this process lost its in-memory set.
+            # Every intervening archived checkpoint must still be intact;
+            # missing/corrupt history is uncertainty, never a fresh right.
+            seen_operations = {previous_operation_id}
+            for older_generation in range(1, generation):
+                archived = db.execute(
+                    "SELECT value FROM metadata WHERE key=?",
+                    (history_prefix + str(older_generation),),
+                ).fetchone()
+                if (archived is None or type(archived[0]) is not str
+                        or not 0 < len(archived[0]) <= 4096):
+                    return False, {"status": "verification_unavailable"}
+                try:
+                    older = json.loads(archived[0])
+                except (TypeError, ValueError):
+                    return False, {"status": "verification_unavailable"}
+                if (type(older) is not dict
+                        or older.get("schema") != 1
+                        or older.get("operation") != "loan.borrow"
+                        or older.get("status") != "confirmed"
+                        or older.get("request_accepted") is not True
+                        or older.get("verification") != "positive_active_loan"
+                        or older.get("cycle_generation", 1) != older_generation
+                        or type(older.get("operation_id")) is not str
+                        or older["operation_id"] in seen_operations):
+                    return False, {"status": "verification_unavailable"}
+                seen_operations.add(older["operation_id"])
+            if operation_id in seen_operations:
+                return False, {"status": "verification_unavailable"}
+            history_key = history_prefix + str(generation)
             history = db.execute(
                 "SELECT value FROM metadata WHERE key=?", (history_key,),
             ).fetchone()
