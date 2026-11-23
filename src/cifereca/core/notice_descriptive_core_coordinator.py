@@ -13,7 +13,7 @@ from .notice_c_cover_index import canonical_cover_document_ref
 from .notice_consolidation_lineage import descriptive_execution_key
 from .notice_consolidation_inputs import admit_descriptive_facts
 from .notice_consolidator_selection import select_consolidator
-from .notice_descriptive_runner_adapter import propose_registered_descriptive_materialization
+from .notice_consolidator_runner import InstalledTextConsolidator\nfrom .notice_descriptive_runner_adapter import propose_registered_descriptive_materialization
 from .notice_descriptive_materialization_store import publish_descriptive_materialization
 
 
@@ -36,8 +36,17 @@ def run_descriptive_core_job(
     )
     if selection is None:
         raise ValueError("consolidator_not_selected")
-    if (type(installed.source_sha256) is not str
-            or type(installed.source) is not str
+    if (type(installed) is not InstalledTextConsolidator
+            or any(type(value) is not str for value in (
+                installed.canonical_type, installed.scope, installed.plugin_id,
+                installed.version, installed.schema_id, installed.source,
+                installed.source_sha256,
+            ))
+            or (installed.canonical_type, installed.scope, installed.plugin_id,
+                installed.version, installed.schema_id) != (
+                    selection.canonical_type, selection.scope,
+                    selection.plugin_id, selection.version, selection.schema_id,
+                )
             or sha256(installed.source.encode("utf-8")).hexdigest()
                != installed.source_sha256):
         raise ValueError("installed_consolidator_mismatch")
