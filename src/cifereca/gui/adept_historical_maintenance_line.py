@@ -317,8 +317,10 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
                               else "Comparer l’inventaire ADEPT local")
             for index, item in enumerate(selected_rows, 1):
                 if examining_holds:
-                    selection.append_text(f"{index}. {item['title']} — {item['provider_id']} / "
-                                          f"{item['credential_id']} / {item['provider_loan_id']}")
+                    selection.append_text(f"{index}. {_ledger_label(item['title'])} — "
+                                          f"{_hold_coordinate(item['provider_id'])} / "
+                                          f"{_hold_coordinate(item['credential_id'])} / "
+                                          f"{_hold_coordinate(item['provider_loan_id'])}")
                 else:
                     selection.append_text(
                         f"{index}. Acquisition {item['acquisition_id']} — profil {item['recorded_adept_profile_id']}"
