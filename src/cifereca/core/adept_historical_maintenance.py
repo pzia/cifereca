@@ -219,7 +219,7 @@ def _hold_display_title(value):
     Invalid provider text must not impersonate a second review line.
     """
     return (value if type(value) is str and 0 < len(value) <= 256
-            and value.strip()
+            and value.strip() and value == value.strip()
             and all(category(char) not in ("Cc", "Cf", "Cs", "Zl", "Zp")
                     for char in value)
             else "Référence de prêt historique")
