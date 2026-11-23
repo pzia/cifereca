@@ -88,8 +88,10 @@ def publish_descriptive_materialization(
         raise ValueError("descriptive_journal_binding_required")
     if expected_execution_key is not None:
         if (type(expected_execution_key) is not str
-                or len(expected_execution_key) != 64
-                or any(ch not in "0123456789abcdef" for ch in expected_execution_key)):
+                or not expected_execution_key.startswith("notice-c-exec-v1:")
+                or len(expected_execution_key) != len("notice-c-exec-v1:") + 64
+                or any(ch not in "0123456789abcdef"
+                       for ch in expected_execution_key[len("notice-c-exec-v1:"):])):
             raise ValueError("invalid_descriptive_cas")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
