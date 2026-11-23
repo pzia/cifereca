@@ -107,11 +107,18 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
         for entry in entries:
             if entry.operation in ("rename", "classify"):
                 destinations.setdefault(entry.proposed, set()).add(entry.placement_id)
+        # A single placement may also receive conflicting advice from two
+        # independent operations. Neither is safe to preselect as a winner.
+        per_placement = {}
+        for entry in entries:
+            if entry.operation in ("rename", "classify"):
+                per_placement.setdefault(entry.placement_id, set()).add(entry.proposed)
         entries = tuple(
             OrganizerDryRunEntry(e.placement_id, e.operation, e.current,
                                  e.proposed, "destination_conflict")
             if e.operation in ("rename", "classify")
-            and len(destinations[e.proposed]) > 1 else e for e in entries)
+            and (len(destinations[e.proposed]) > 1
+                 or len(per_placement[e.placement_id]) > 1) else e for e in entries)
         if (not scope.bound() or sqlite_source_stamp(scope.database) != anchor.stamp
                 or run_organizer_review(scope.service, scope,
                                         cursor=anchor if anchor.offset else None) != fresh):
