@@ -52,6 +52,18 @@ valeur ni un autre consentement.
 et la projection de disponibilité inconnue en Accueil ; ce contrat
 ne prouve aucun quota fournisseur restant.
 
+## Parcours de connexion livré dans Paramètres (#7894)
+
+L'éditeur déclaratif présente désormais, pour chaque connexion configurée,
+son état d'activation enregistré. La ligne suit immédiatement le changement
+du commutateur, distingue une modification non enregistrée et revient à l'état
+enregistré si l'utilisateur annule le changement. Pour les fournisseurs qui
+proposent une vérification explicite, son résultat est visible au même endroit :
+connexion temporaire réussie puis refermée, diagnostic sans preuve de connexion,
+ou diagnostic indisponible. Aucune session durable, expiration ou révocation
+n'est inférée de cette vérification ponctuelle. L'affichage seul n'effectue
+aucune requête fournisseur.
+
 ## Écarts d'acceptation encore ouverts
 
 1. **Migration fournisseur contrôlée** des URL Gallica/Kobo vers `url`,
