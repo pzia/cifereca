@@ -101,6 +101,7 @@ def assess_borrower_eligibility(
             # branches can share docbase and record IDs. Never promote a
             # collection-less notice to borrower-specific eligibility.
             or not _bounded(notice.source_collection)
+            or any(c in notice.source_collection for c in ("\n", "\r"))
             or notice.source_provider != account.provider_id
             or notice.source_credential != account.credential_id
             or notice.medium != "digital"):
