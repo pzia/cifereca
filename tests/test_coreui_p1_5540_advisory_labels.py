@@ -82,3 +82,19 @@ def test_advisory_settings_are_uniform_across_provider_ids(provider_id):
     assert saved["options"]["ceiling"] == "0"
     assert saved["options"]["linked_ceiling"]["linked-a"] == {"digital": "99", "physical": "3"}
     assert editor["invalid_saved_snapshot"] is False
+
+
+@pytest.mark.parametrize("private_label", (
+    "access_token:abc", "refresh_token=abc", "client_secret:abc",
+    "sessionid=abc", "Set-Cookie: session=abc", "X-API-Key: abc",
+    "jwt=abc",
+))
+def test_settings_connection_title_never_echoes_credential_markers(private_label):
+    from cifereca.gui.settings_account_editor import _public_connection_title
+    descriptor = NS(display_name="Fournisseur de test")
+    title = _public_connection_title(descriptor, {"label": private_label})
+    assert title == "Fournisseur de test — Connexion"
+    descriptor = NS(display_name=private_label)
+    assert _public_connection_title(descriptor, {"label": "Compte public"}) == (
+        "Fournisseur — Compte public"
+    )
