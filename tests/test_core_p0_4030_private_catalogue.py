@@ -558,3 +558,51 @@ def test_private_scope_discovery_refuses_spoofed_display_coordinates_before_bind
         service, request, evidence=evidence,
     ) == ()
     assert not calls and rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("field", ["branch_id", "edition_id", "right_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_private_cached_source_identifiers_cannot_spoof_origin_review(
+    private_rig, field, spoof,
+):
+    service, request, account, session, calls, path, key, snap = private_rig
+    before_data = path.read_bytes()
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute("UPDATE source_references SET " + field + "=? "
+                   "WHERE identity_id='A' AND provider_id='seller' AND "
+                   "credential_id='card-A' AND account_id='buyer-A' "
+                   "AND reference_kind='loan'",
+                   ({"branch_id": key.branch, "edition_id": key.edition_id,
+                     "right_id": key.right_id}[field] + spoof + "FORGED",))
+    before = rows(service.storage)
+    result = _run(private_rig)
+    assert result["status"] == "partial" and result["candidates"] == ()
+    assert not result["coverage_complete"] and not result["association_authorized"]
+    assert not result["may_write_origin_or_right"] and not calls
+    assert rows(service.storage) == before and path.read_bytes() == before_data
+
+
+@pytest.mark.parametrize("field", ["id", "record_id"])
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_private_loan_occurrence_coordinate_never_enters_cached_match(
+    private_rig, field, spoof,
+):
+    service, request, account, session, calls, path, key, snap = private_rig
+    original = service.last_loans[0]
+    value = getattr(original, field)
+    service.last_loans[0] = replace(original, **{field: value + spoof + "FORGED"})
+    before, data = rows(service.storage), path.read_bytes()
+    result = _run(private_rig)
+    assert result["status"] == "partial" and result["candidates"] == ()
+    assert not result["may_write_origin_or_right"] and not calls
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_safe_private_reference_is_not_lost_by_local_display_policy(private_rig):
+    service, request, account, session, calls, path, *_ = private_rig
+    result = _run(private_rig)
+    candidate, = result["candidates"]
+    assert candidate.source.branch == "loans"
+    assert candidate.source.edition_id == "edition"
+    assert candidate.source.resource_id == "loan-1"
+    assert not calls
