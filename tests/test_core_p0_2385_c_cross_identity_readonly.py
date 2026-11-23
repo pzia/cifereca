@@ -45,7 +45,7 @@ def test_same_title_without_attested_origin_does_not_join_public_c(tmp_path):
     with open_core(tmp_path, notice_work_admission=_budget()) as core:
         _real_origins(core.storage, tmp_path)
         a, b = _rows()
-        unrelated = _admitted("Même titre", "unrelated-edition", source_provider="seller-c")
+        unrelated = _admitted("Même titre", "unrelated-edition", source_provider="seller-c", thumbnail_url=A_URL)
         pairs = search._ingest_public_search_c(
             core.library, [a, b, unrelated], identity_id="profile-a", now=100,
             require_public_cover_witness=True,
