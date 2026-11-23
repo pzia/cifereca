@@ -72,7 +72,7 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
     if not contributed:
         contributed = list(fallback)
     # Management pages remain reachable to recover from broken/disabled UI.
-    contributed += [p for p in fallback if p.route in {"plugins", "settings", "readers"} and all(x.route != p.route for x in contributed)]
+    contributed += [p for p in fallback if p.route in {"plugins", "settings", "readers", "public_catalogue"} and all(x.route != p.route for x in contributed)]
     # Retired product route: older installed UI plugins cannot resurrect it.
     # Filter before invoking an untrusted factory to prevent bookings I/O.
     resolved = [page for page in resolve_pages(contributed) if page.route != "bookings"]
@@ -112,7 +112,7 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
             )
             if not is_current():
                 return
-            recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings", "readers"}), None)
+            recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings", "readers", "public_catalogue"}), None)
             if recovery is None:
                 continue
             widget = recovery.factory(host)
@@ -166,7 +166,12 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
 
 
 def build_standard_page(window, route, *, Gtk, PluginManagerPage):
-    builders = {"dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
+    from .notice_c_public_catalogue_page import build_public_catalogue_page
+    def public_catalogue_page():
+        from gi.repository import GLib
+        return build_public_catalogue_page(window, Gtk=Gtk, GLib=GLib)
+    builders = {"public_catalogue": public_catalogue_page,
+                "dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
                 "search": window._build_search_page, "history": window._build_history_page,
                 "library": window._build_library_page,
                 "readers": window._build_readers_page,
