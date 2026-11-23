@@ -45,6 +45,18 @@ def _decode(raw):
         refs = payload["source_evidence_keys"]
         if type(refs) is not list or any(type(ref) is not list for ref in refs):
             raise ValueError
+        if (len(refs) > 128 or any(
+            len(ref) != 3 or any(type(value) is not str for value in ref)
+            for ref in refs
+        )):
+            raise ValueError
+        if (type(payload["version"]) is not int
+                or type(payload["inherited"]) is not bool
+                or any(type(payload[field]) is not str for field in (
+                    "execution_key", "canonical_type", "target_edition_id",
+                    "scope", "plugin_id", "plugin_version", "schema_id", "value",
+                ))):
+            raise ValueError
         payload["source_evidence_keys"] = tuple(tuple(ref) for ref in refs)
         return DescriptiveMaterialization(**payload)
     except (TypeError, ValueError, KeyError, UnicodeError, RecursionError) as exc:
