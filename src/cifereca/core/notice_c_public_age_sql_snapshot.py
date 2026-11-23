@@ -26,3 +26,32 @@ def public_age_facts_txn(db, document):
         return public_age_descriptive_facts(persisted.observation)
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
         return ()
+
+
+def capture_public_age_sources_txn(db, *, documents, target_edition_id):
+    """Coordinator-compatible authoritative snapshot of exact public sources.
+
+    The caller must obtain documents from a vetted Core source inventory.
+    No strong relation is inferred: foreign editions are rejected by the
+    existing admission gate unless a separate attested-link producer exists.
+    A bounded, duplicate-free snapshot prevents arbitrary catalogue scans.
+    """
+    if (type(documents) not in (tuple, list) or len(documents) > 128
+            or type(target_edition_id) is not str
+            or not target_edition_id or len(target_edition_id) > 160):
+        raise ValueError("invalid_public_age_snapshot_scope")
+    facts = []
+    seen = set()
+    for document in documents:
+        key = _opaque_key(document)
+        if key is None or document.kind != "public_catalogue":
+            raise ValueError("invalid_public_age_snapshot_document")
+        if key in seen:
+            continue
+        seen.add(key)
+        for fact in public_age_facts_txn(db, document):
+            if fact["edition_id"] == target_edition_id:
+                facts.append(fact)
+                if len(facts) > 512:
+                    raise ValueError("public_age_snapshot_too_large")
+    return tuple(facts), {}
