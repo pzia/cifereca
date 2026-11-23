@@ -224,6 +224,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 type(a.unique_id) is not str
                 or len(a.unique_id) > 1024
                 or "\x00" in a.unique_id
+                or not a.unique_id.isprintable()
                 or type(a.is_primary) is not bool
                 # The empty upstream ID is reserved for the primary borrower.
                 or (a.is_primary is False and not a.unique_id)
