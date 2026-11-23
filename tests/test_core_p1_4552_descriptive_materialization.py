@@ -93,7 +93,7 @@ def test_forged_result_or_materialization_fails_closed():
         )
     with pytest.raises(ValueError, match="stale_descriptive_materialization"):
         require_current_descriptive_materialization(
-            replace(old, value="fabricated"), selection=SELECTION,
+            replace(old, execution_key="notice-c-exec-v1:" + "0" * 64), selection=SELECTION,
             admitted=facts, installed_source_sha256=SOURCE,
         )
     with pytest.raises(ValueError, match="invalid_descriptive_materialization"):
