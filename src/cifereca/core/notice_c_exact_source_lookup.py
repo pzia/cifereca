@@ -35,6 +35,7 @@ def _valid_coordinates(value: object) -> bool:
         and type(medium) is str and medium in ("digital", "physical", "unknown")
         and (revision is None or (
             type(revision) is str and _IDENTIFIER.fullmatch(revision) is not None
+            and "://" not in revision and ".." not in revision
         ))
     )
 
