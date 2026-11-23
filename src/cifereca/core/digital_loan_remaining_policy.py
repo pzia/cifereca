@@ -12,6 +12,13 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 
+def _safe_identifier(value: object, *, optional: bool = False) -> bool:
+    """Exact private scope identifiers cannot contain control characters."""
+    return (type(value) is str and (optional or bool(value))
+            and len(value) <= 1024
+            and all(ord(char) >= 32 and ord(char) != 127 for char in value))
+
+
 @dataclass(frozen=True, slots=True)
 class DigitalCapacityScope:
     identity_id: str
@@ -22,9 +29,8 @@ class DigitalCapacityScope:
     branch: Literal["digital"] = "digital"
 
     def __post_init__(self) -> None:
-        if (self.branch != "digital" or type(self.branch) is not str
-                or any(type(value) is not str or (not value and name not in ("account_id", "borrower_id"))
-                       or len(value) > 1024 or "\x00" in value
+        if (type(self.branch) is not str or self.branch != "digital"
+                or any(not _safe_identifier(value, optional=name in ("account_id", "borrower_id"))
                        for name, value in (
                            ("identity_id", self.identity_id),
                            ("provider_id", self.provider_id),
@@ -77,8 +83,7 @@ class DigitalInventoryReceipt:
         if (type(self.scope) is not DigitalCapacityScope
                 or type(self.active_loan_ids) is not tuple
                 or len(self.active_loan_ids) > 10000
-                or any(type(value) is not str or not value
-                       or len(value) > 1024 or "\x00" in value
+                or any(not _safe_identifier(value)
                        for value in self.active_loan_ids)
                 or not _valid_time(self.observed_at)
                 or type(self.epoch) is not int or self.epoch < 0
