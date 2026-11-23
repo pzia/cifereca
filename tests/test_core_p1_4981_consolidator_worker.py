@@ -188,3 +188,14 @@ def test_double_run_detects_a_non_deterministic_worker(monkeypatch):
     with pytest.raises(ValueError, match="non_deterministic_consolidator"):
         invoke()
     assert values == []
+
+
+def test_q3_specialized_plugin_business_choice_keeps_core_lineage():
+    """Owner-approved Q3: plugin policy can choose a non-first source."""
+    policy = SOURCE.replace('row = rows[0]', 'row = sorted(rows, key=lambda item: item["value"])[-1]')
+    rows = (fact("10+"), {**fact("13+"), "source_id": "publisher", "evidence_id": "proof2"})
+    result = invoke(source=policy, source_facts=rows)
+    assert result.value == "13+"
+    assert result.source_evidence_keys == (("publisher", TARGET, "proof2"),)
+    assert not result.inherited
+    assert result.plugin_id == "plugin.age.alpha"
