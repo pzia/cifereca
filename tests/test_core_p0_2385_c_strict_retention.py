@@ -3,6 +3,7 @@
 All mutations here are on a disposable SQLite fixture only, never a real
 library. An authorized eviction is different from an unqualified DELETE.
 """
+import json
 import pytest
 
 from cifereca.core import search_orchestration as search
@@ -34,7 +35,7 @@ def _seed(core, tmp_path):
 
 
 @pytest.mark.parametrize("remove_fence", [False, True])
-def test_unqualified_source_loss_does_not_leave_false_current_cover(tmp_path, remove_fence):
+def test_legacy_source_loss_keeps_attested_c_offline(tmp_path, remove_fence):
     with open_core(tmp_path, notice_work_admission=_budget()) as core:
         pairs, document, canonical = _seed(core, tmp_path)
         source = pairs[0][1]
@@ -49,10 +50,10 @@ def test_unqualified_source_loss_does_not_leave_false_current_cover(tmp_path, re
             db.execute("DELETE FROM metadata WHERE key=?", (key,))
             if remove_fence:
                 db.execute("DELETE FROM metadata WHERE key=?", (fence_key,))
-        # C still retains the provenance; the strict N2 freshness path must
-        # not use the unverified contribution to make a current cover choice.
+        # Retained C is authoritative even if a legacy cleanup did not write
+        # an eviction tombstone. No regression of six-view offline N2 reads.
         assert read_consolidated_notice_cover(core.storage, document) == canonical
-        assert read_current_consolidated_public_cover(core.storage, document) is None
+        assert read_current_consolidated_public_cover(core.storage, document) == canonical
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
 
@@ -68,5 +69,32 @@ def test_qualified_source_evictions_keep_durable_c_readable_as_current(tmp_path)
         # evicted=True durable CAS fences; no network or reparsing is needed.
         assert read_consolidated_notice_cover(core.storage, document) == canonical
         assert read_current_consolidated_public_cover(core.storage, document) == canonical
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
+
+
+def test_matching_epoch_with_foreign_fence_proof_cannot_reuse_stale_cover(tmp_path):
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        pairs, document, canonical = _seed(core, tmp_path)
+        source = pairs[0][1]
+        with core.storage._lock, core.storage._connect() as db:
+            key = _opaque_key(source.document)
+            assert key is not None and key.startswith(_PREFIX)
+            fence_key = _FENCE_PREFIX + key[len(_PREFIX):]
+            original, = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (fence_key,),
+            ).fetchone()
+            forged = json.loads(original)
+            assert forged["epoch"] == source.epoch
+            forged["proof"] = "0" * 64
+            db.execute("DELETE FROM metadata WHERE key=?", (key,))
+            db.execute("UPDATE metadata SET value=? WHERE key=?", (
+                json.dumps(forged, sort_keys=True, separators=(",", ":")),
+                fence_key,
+            ))
+        # C persists for audit, but a foreign proof with the same generation
+        # cannot authenticate the removed source's candidate for N2.
+        assert read_consolidated_notice_cover(core.storage, document) == canonical
+        assert read_current_consolidated_public_cover(core.storage, document) is None
         assert core.storage.entitlements() == []
         assert core.storage.acquisitions() == []
