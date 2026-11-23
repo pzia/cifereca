@@ -23,11 +23,19 @@ def validate_provider_account_limits(
     if type(rows) not in (list, tuple):
         raise ProviderAccountLimitError("Invalid configured provider accounts")
     limits: dict[str, int] = {}
+    declared: set[str] = set()
     for descriptor in descriptors:
         provider = getattr(descriptor, "id", None)
         if type(provider) is not str or not provider.strip():
             raise ProviderAccountLimitError("Invalid provider descriptor")
         provider = provider.strip().lower()
+        # An installed provider has ONE authoritative account declaration.
+        # First/last-wins duplicates can loosen a limit (1 -> 2) depending
+        # on discovery order, or silently mask an unbounded descriptor.
+        # This read-only preflight must reject ambiguous source ownership.
+        if provider in declared:
+            raise ProviderAccountLimitError("Ambiguous provider descriptor")
+        declared.add(provider)
         limit = getattr(descriptor, "max_accounts_per_identity", None)
         if limit is not None:
             if type(limit) is not int or limit < 1:
