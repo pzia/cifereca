@@ -71,6 +71,10 @@ def admit_descriptive_facts(
             or type(attested_strong_links) is not dict
             or len(attested_strong_links) > MAX_RELATED):
         raise ValueError("invalid_consolidation_batch")
+    # Validate key types before any lookup: a non-string hash-colliding key
+    # could otherwise run foreign __eq__ during edition membership checks.
+    if any(type(other) is not str for other in attested_strong_links):
+        raise ValueError("invalid_strong_link")
     for other, proof in attested_strong_links.items():
         if (not _identifier(other) or not _identifier(proof)
                 or other == target_edition_id):
