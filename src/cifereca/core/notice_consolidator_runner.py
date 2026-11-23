@@ -17,7 +17,7 @@ import sys
 
 from .notice_canonical_text_schema import select_text_schema, validate_text_schema_result
 from .notice_consolidation_inputs import admit_descriptive_facts
-from .notice_consolidation_lineage import descriptive_lineage_key
+from .notice_consolidation_lineage import descriptive_execution_key
 from .notice_consolidation_result_validation import validate_descriptive_result
 from .notice_consolidator_selection import select_consolidator
 
@@ -124,8 +124,13 @@ def run_registered_text_consolidator(
         source_facts=source_facts,
         attested_strong_links=attested_strong_links,
     )
-    # Public DTOs are forgeable; only this Core lineage gate is authoritative.
-    descriptive_lineage_key(selection=selected, admitted=admitted)
+    # Validate the complete revision lineage AND installed executable digest
+    # before dispatch. A plugin source update without a version bump cannot
+    # inherit the same future materialization/cache identity.
+    descriptive_execution_key(
+        selection=selected, admitted=admitted,
+        installed_source_sha256=installed.source_sha256,
+    )
     if not admitted.exact and not admitted.inherited:
         return None
 
