@@ -288,3 +288,19 @@ def test_runner_rejects_execution_lineage_failure_before_worker(monkeypatch):
     monkeypatch.setattr(runner, "_run_worker", forbidden)
     with pytest.raises(ValueError, match="invalid_consolidator_source_digest"):
         invoke()
+
+
+@pytest.mark.parametrize("field", [
+    "canonical_type", "scope", "plugin_id", "version", "schema_id",
+])
+def test_installed_binding_hostile_identity_rejected_before_foreign_equality(field):
+    """Core never invokes a forged selector object's Python comparator."""
+    class HostileIdentity:
+        def __eq__(self, _):
+            raise AssertionError("foreign installed metadata equality")
+
+        def __ne__(self, _):
+            raise AssertionError("foreign installed metadata inequality")
+
+    with pytest.raises(ValueError, match="installed_consolidator_mismatch"):
+        invoke(installed=installed(**{field: HostileIdentity()}))
