@@ -2,7 +2,9 @@
 import json
 import sqlite3
 
-from cifereca.core.notice_c_public_age_sql_snapshot import (\n    public_age_facts_txn, capture_public_age_sources_txn,\n)
+from cifereca.core.notice_c_public_age_sql_snapshot import (
+    public_age_facts_txn, capture_public_age_sources_txn,
+)
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import (
     _opaque_key, _encode_source_row,
