@@ -68,7 +68,9 @@ def test_public_title_description_cover_survive_source_expiry_reboot_offline(
         assert (hit.title, hit.author, hit.description) == (
             row.title, row.author, row.description,
         )
-        assert hit.cover_state == "available" and not hit.stale
+        # A manually dropped short-lived source cannot certify current freshness.
+        # Its separately persisted canonical cover remains available.
+        assert hit.cover_state == "available" and hit.stale
         known = merge_public_notice_c_known_rows(
             [], page, identity_id="bob",
         )
