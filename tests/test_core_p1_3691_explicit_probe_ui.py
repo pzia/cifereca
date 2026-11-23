@@ -42,6 +42,7 @@ def _harness(monkeypatch, *, enabled_sentinel=True, option_missing=False, return
                 text="off" if option_missing else "auto-post")},
             "explicit_probe_button": Widget(),
             "explicit_probe_status": Widget(),
+            "connection_lifecycle_status": Widget(),
         }
         e["probe_rendered_baseline"] = {
             "enabled": e["enabled"].get_active(),
@@ -285,3 +286,24 @@ def test_result_after_saved_option_update_is_visible_for_exact_new_form(monkeypa
     args, _ = submits[-1]
     args[2](args[1]())
     assert "Session temporaire refermée" in editor["explicit_probe_status"].subtitle
+
+
+def test_explicit_probe_result_is_visible_on_connection_lifecycle(monkeypatch):
+    editor, submits, _, action = _harness(monkeypatch)
+    action.return_value = NS(status="connected_ephemeral")
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[0]
+    args[2](args[1]())
+    assert editor["connection_lifecycle_status"].subtitle == (
+        "Test de connexion réussi · session temporaire refermée"
+    )
+
+
+def test_unverified_probe_result_is_visible_on_connection_lifecycle(monkeypatch):
+    editor, submits, _, action = _harness(monkeypatch)
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[0]
+    args[2](args[1]())
+    assert editor["connection_lifecycle_status"].subtitle == (
+        "Diagnostic effectué · connexion non attestée"
+    )
