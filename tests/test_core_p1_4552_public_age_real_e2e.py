@@ -23,7 +23,6 @@ def test_real_public_age_consolidation_survives_restart(tmp_path):
         storage, source, field_path=("search_result", "thumbnail_url"),
         cover_inventory_complete=False,
     )
-    from cifereca.core.notice_canonical_text_schema import CanonicalTextSchema
     # The public observation is structured JSON; the selected plugin schema
     # must explicitly allow its serialized representation.
     schema = replace(SCHEMA, max_bytes=4096)
