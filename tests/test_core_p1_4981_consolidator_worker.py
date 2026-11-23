@@ -226,3 +226,22 @@ def test_real_worker_memory_budget_rejects_oversized_allocation():
         invoke(source=excessive)
     # A failed isolated worker does not poison the next valid execution.
     assert invoke().value == "13+"
+
+
+def test_q3_business_reducer_is_order_invariant_and_preserves_exact_evidence():
+    """A specialized installed reducer must not depend on provider arrival order."""
+    policy = SOURCE.replace(
+        'row = rows[0]',
+        'row = sorted(rows, key=lambda item: (item["value"], item["source_id"]))[-1]',
+    )
+    first = fact("10+")
+    second = {**fact("13+"), "source_id": "publisher", "evidence_id": "proof2"}
+    third = {**fact("12+"), "source_id": "library", "evidence_id": "proof3"}
+    expected = invoke(source=policy, source_facts=(first, second, third))
+    assert expected.value == "13+"
+    assert expected.source_evidence_keys == (("publisher", TARGET, "proof2"),)
+    assert expected.inherited is False
+    assert expected.plugin_id == "plugin.age.alpha"
+    for reordered in ((third, first, second), (second, third, first),
+                      (second, first, third)):
+        assert invoke(source=policy, source_facts=reordered) == expected
