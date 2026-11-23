@@ -145,3 +145,16 @@ def test_boolean_or_wrong_types_do_not_coerce_completeness_or_epoch():
         inventory(epoch=True)
     with pytest.raises(ValueError, match="invalid_capacity_evaluation_context"):
         decision(epoch=True)
+
+
+@pytest.mark.parametrize("bad", ("line\\nfeed", "tab\\tvalue", "return\\rvalue", "delete\\x7fvalue", "null\\x00value"))
+@pytest.mark.parametrize("field", ("identity_id", "provider_id", "credential_id", "account_id", "borrower_id"))
+def test_capacity_scope_rejects_control_characters_in_every_selector(field, bad):
+    with pytest.raises(ValueError, match="invalid_digital_capacity_scope"):
+        replace(SCOPE, **{field: bad})
+
+
+@pytest.mark.parametrize("bad", ("loan\\nsecond", "loan\\tsecond", "loan\\rsecond", "loan\\x7fsecond", "loan\\x00second"))
+def test_inventory_receipt_rejects_control_characters_in_loan_ids(bad):
+    with pytest.raises(ValueError, match="invalid_digital_inventory_receipt"):
+        inventory(active_loan_ids=(bad,))
