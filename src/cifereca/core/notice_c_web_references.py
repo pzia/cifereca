@@ -38,6 +38,14 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
     """
     from .search_orchestration import _public_catalog_url, _is_public_web_evidence
 
+    # Source coordinates are an admission boundary, not user-defined
+    # objects allowed to run equality, formatting or URL policy hooks.
+    if (any(type(value) is not str or not 0 < len(value) <= 512
+            for value in (provider_id, source_ref, record_id, edition_id,
+                          source_revision))
+            or type(observed_at) is not int or not 1 <= observed_at < 2**63):
+        raise ValueError("invalid_public_web_source_coordinates")
+
     if (type(raw) is not dict or set(raw) != {"schema", "links"}
             or type(raw["schema"]) is not int or raw["schema"] != 1
             or type(raw["links"]) is not list
