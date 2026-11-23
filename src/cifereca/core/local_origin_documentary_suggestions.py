@@ -61,8 +61,14 @@ def _matching_source_url(storage, matches, url):
     by_document = {}
     matched = []
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
+        with storage._lock:
+            db = storage._connect()
+            # A borrowed connection may belong to an unrelated writer.
+            # Never enter its context manager and accidentally commit it.
+            if db.in_transaction:
+                return None
+            with db:
+                db.execute("BEGIN")
             for index, match in enumerate(matches):
                 hit = match.hit
                 if not is_canonical_cover_document(hit.document):
