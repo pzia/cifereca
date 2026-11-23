@@ -1,7 +1,7 @@
-"""#2385: a retained Notice C is searchable without inventing freshness.
+"""#2385: a retained Notice C stays searchable without inventing source freshness.
 
 These tests mutate ONLY a disposable SQLite fixture, not real provider
-records or user library state. Qualified Core eviction carries an advanced
+records or user library state. Canonical cover availability is independent\nfrom the freshness of a missing short-lived source. Qualified eviction carries an advanced
 CAS fence; manual/legacy loss does not.
 """
 import pytest
@@ -57,7 +57,7 @@ def test_unqualified_source_loss_remains_searchable_but_stale(tmp_path, delete_f
         assert page.known_documents == 1
         assert page.known_matches == 2
         assert len(page.hits) == 1 and len(page.matching_sources) == 2
-        assert all(hit.stale and hit.cover_state == "pending"
+        assert all(hit.stale and hit.cover_state == "available"
                    for hit in page.matching_sources)
         assert page.hits[0].document == document
         assert not page.has_more
