@@ -61,23 +61,29 @@ def _matching_source_url(storage, matches, url):
     by_document = {}
     matched = []
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
-            for index, match in enumerate(matches):
-                hit = match.hit
-                if not is_canonical_cover_document(hit.document):
-                    continue
-                if hit.document not in by_document:
-                    by_document[hit.document] = _read_current_public_web_references(db, hit.document)
-                snapshot, pairs = by_document[hit.document]
-                if snapshot is None or snapshot.epoch != hit.epoch:
-                    return None
-                if any(
-                    (ref.provider_id, ref.record_id, ref.edition_id, ref.observed_at, ref.url)
-                    == (hit.provider_id, hit.record_id, hit.edition_id, hit.observed_at, url)
-                    for _, ref in pairs
-                ):
-                    matched.append(index)
+        with storage._lock:
+            db = storage._connect()
+            # A borrowed connection may belong to an unrelated writer.
+            # Never enter its context manager and accidentally commit it.
+            if db.in_transaction:
+                return None
+            with db:
+                db.execute("BEGIN")
+                for index, match in enumerate(matches):
+                    hit = match.hit
+                    if not is_canonical_cover_document(hit.document):
+                        continue
+                    if hit.document not in by_document:
+                        by_document[hit.document] = _read_current_public_web_references(db, hit.document)
+                    snapshot, pairs = by_document[hit.document]
+                    if snapshot is None or snapshot.epoch != hit.epoch:
+                        return None
+                    if any(
+                        (ref.provider_id, ref.record_id, ref.edition_id, ref.observed_at, ref.url)
+                        == (hit.provider_id, hit.record_id, hit.edition_id, hit.observed_at, url)
+                        for _, ref in pairs
+                    ):
+                        matched.append(index)
     except (sqlite3.Error, ValueError, TypeError, RuntimeError):
         # A failed optional reference read leaves the title/author comparison.
         return None
