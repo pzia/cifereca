@@ -127,7 +127,19 @@ def _documentary_nature(metadata, dc):
     return next(iter(categories)) if len(categories) == 1 else None
 
 
-def _read_epub_details(stream):
+def _source_url_claims(metadata, dc):
+    """Read literal OPF claims for comparison, without resolving any URL."""
+    nodes = metadata.findall(dc + "source") + metadata.findall(dc + "identifier")
+    if len(nodes) > 32:
+        return frozenset()
+    return frozenset(
+        value for node in nodes
+        if not len(node) and (value := node.text or "").startswith("https://")
+        and len(value) <= 512
+    )
+
+
+def _read_epub_details(stream, *, include_source_claims=False):
     """Pure bounded metadata read; restore caller position, do not close.
 
     ISBN is a descriptive claim in this file, not verified external origin.
@@ -180,7 +192,10 @@ def _read_epub_details(stream):
             allow_refinements = (package.get("version", "").startswith("3.")
                                  and "onix:" not in prefix.casefold())
             isbns = _explicit_isbns(package, metadata[0], opf, dc, allow_refinements=allow_refinements)
-            return title, authors, isbns, _documentary_nature(metadata[0], dc)
+            details = title, authors, isbns, _documentary_nature(metadata[0], dc)
+            if include_source_claims:
+                return (*details, _source_url_claims(metadata[0], dc))
+            return details
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
             zlib.error, ElementTree.ParseError):
@@ -204,7 +219,7 @@ def read_epub_description(stream):
     return value[:2] if value is not None else None
 
 
-def read_verified_epub_details(path: Path, expected_signature):
+def read_verified_epub_details(path: Path, expected_signature, *, include_source_claims=False):
     """Open only the inode already hashed by the outer candidate review.
 
     The original pinned file and outer name recheck remain live until
@@ -219,7 +234,7 @@ def read_verified_epub_details(path: Path, expected_signature):
             return None
         with os.fdopen(file_fd, "rb") as stream:
             file_fd = None
-            value = _read_epub_details(stream)
+            value = _read_epub_details(stream, include_source_claims=include_source_claims)
             if _file_signature(os.fstat(stream.fileno())) != expected_signature:
                 return None
             return value

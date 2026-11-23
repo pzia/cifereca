@@ -23,6 +23,7 @@ _LABELS = {
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
     "isbn_title_author_concordant": "ISBN déclaré, titre et auteur concordants",
+    "opf_source_url_concordant": "URL déclarée dans l’EPUB, titre et auteur concordants",
     "isbn_claim_ambiguous": "ISBN déclaré ambigu",
     "isbn_claim_divergent": "ISBN déclarés divergents",
     "title_concordant_author_unverified": "Titre concordant, auteur non vérifié",
