@@ -173,8 +173,10 @@ def test_remote_inventory_has_own_one_use_action_in_detail_and_revocation(case, 
         done(result)
         done(result)
         if change == "none":
-            assert len(groups) == count + 1
-            text = repr(groups[-1])
+            assert len(groups) == count + 2
+            assert groups[-1][0] == "Classement documentaire — lecture seule"
+            assert groups[-2][0] == "Inventaire privé de prêts — lecture seule"
+            text = repr(groups[-2])
             assert "Occurrence : fresh-loan" in text and "Branche canonique non attestée" in text
             assert "titre et fichier locaux non transmis" in text
         else:
