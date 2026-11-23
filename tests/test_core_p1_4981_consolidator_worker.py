@@ -245,3 +245,62 @@ def test_q3_business_reducer_is_order_invariant_and_preserves_exact_evidence():
     for reordered in ((third, first, second), (second, third, first),
                       (second, first, third)):
         assert invoke(source=policy, source_facts=reordered) == expected
+
+
+def test_runtime_execution_identity_changes_with_installed_code_not_manifest(monkeypatch):
+    """#4552: the actual runner gates on executable digest, not just version."""
+    from cifereca.core import notice_consolidator_runner as runner
+
+    real_key = runner.descriptive_execution_key
+    seen = []
+
+    def capture(*, selection, admitted, installed_source_sha256):
+        key = real_key(
+            selection=selection, admitted=admitted,
+            installed_source_sha256=installed_source_sha256,
+        )
+        seen.append((installed_source_sha256, key))
+        return key
+
+    monkeypatch.setattr(runner, "descriptive_execution_key", capture)
+    assert invoke().value == "13+"
+    # A harmless source edit keeps the manifest version and evidence unchanged.
+    edited = SOURCE + "\n# reviewed patch without a manifest bump\n"
+    assert invoke(source=edited).value == "13+"
+    assert len(seen) == 2
+    assert seen[0][0] == sha256(SOURCE.encode()).hexdigest()
+    assert seen[1][0] == sha256(edited.encode()).hexdigest()
+    assert seen[0][1] != seen[1][1]
+    assert all(key.startswith("notice-c-exec-v1:") for _, key in seen)
+
+
+def test_runner_rejects_execution_lineage_failure_before_worker(monkeypatch):
+    """A failed execution-key gate cannot dispatch untrusted plugin code."""
+    from cifereca.core import notice_consolidator_runner as runner
+
+    def reject(**_):
+        raise ValueError("invalid_consolidator_source_digest")
+
+    def forbidden(_):
+        raise AssertionError("worker must not run after failed lineage validation")
+
+    monkeypatch.setattr(runner, "descriptive_execution_key", reject)
+    monkeypatch.setattr(runner, "_run_worker", forbidden)
+    with pytest.raises(ValueError, match="invalid_consolidator_source_digest"):
+        invoke()
+
+
+@pytest.mark.parametrize("field", [
+    "canonical_type", "scope", "plugin_id", "version", "schema_id",
+])
+def test_installed_binding_hostile_identity_rejected_before_foreign_equality(field):
+    """Core never invokes a forged selector object's Python comparator."""
+    class HostileIdentity:
+        def __eq__(self, _):
+            raise AssertionError("foreign installed metadata equality")
+
+        def __ne__(self, _):
+            raise AssertionError("foreign installed metadata inequality")
+
+    with pytest.raises(ValueError, match="installed_consolidator_mismatch"):
+        invoke(installed=installed(**{field: HostileIdentity()}))
