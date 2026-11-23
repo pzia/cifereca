@@ -781,6 +781,7 @@ class TaskRunner:
                     "borrow_scope_changed", "borrow_scope_unverified",
                     "borrow_capability_unavailable", "borrow_execution_unavailable",
                     "borrow_previous_attempt", "borrow_checkpoint_unavailable",
+                    "borrow_cycle_not_ended",
                     "borrow_active_loan_observed", "borrow_not_submitted",
                     "borrow_result_unverified",
                 }:

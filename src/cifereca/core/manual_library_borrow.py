@@ -12,6 +12,7 @@ from uuid import uuid4
 from ..models import Account, Loan, SearchResult
 from ..plugin_api import LendingActionAdmission, BorrowRequestNotSubmitted
 from ..plugin_api.lending_capabilities import assess_lending_operation
+from ..providers.base import ManualBorrowPolicy
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
@@ -165,7 +166,18 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
             return reject("local_claim_scope_invalid")
         # A malformed prior checkpoint is spent even if decoding returns None.
         if service.storage.metadata_get(claim_key) is not None:
-            return reject("local_previous_attempt")
+            # A confirmed former loan may be eligible for a NEW cycle. This
+            # passive UI read never contacts the provider or infers that the
+            # previous loan has ended; the next human click must verify it.
+            prior = service.storage.loan_borrow_state(claim_key)
+            policy = getattr(session.descriptor, "manual_borrow_policy", None)
+            if (type(policy) is not ManualBorrowPolicy
+                    or type(policy.reborrow_inventory_branch) is not str
+                    or type(prior) is not dict
+                    or prior.get("status") != "confirmed"
+                    or prior.get("request_accepted") is not True
+                    or prior.get("verification") != "positive_active_loan"):
+                return reject("local_previous_attempt")
         if capture_borrow_action_scope(
                 service, item, candidates[0], session,
                 expected_identity_id=identity_id) is None:
@@ -384,7 +396,12 @@ def manual_borrow(
         if not callable(getattr_static(type(session), "borrow_explicit_with_claim", None)):
             return _result("unsupported", "borrow_execution_unavailable")
         prior = service.storage.loan_borrow_state(key)
-        if prior is not None:
+        policy = getattr(session.descriptor, "manual_borrow_policy", None)
+        if service.storage.metadata_get(key) is not None and (
+                type(prior) is not dict
+                or type(policy) is not ManualBorrowPolicy
+                or type(policy.reborrow_inventory_branch) is not str
+                or prior.get("status") != "confirmed"):
             return _result("verification_unavailable", "borrow_previous_attempt")
     except Exception:
         return _result("blocked", "borrow_scope_unverified")
@@ -403,10 +420,37 @@ def manual_borrow(
     if not admission.admitted or not current():
         return _result("blocked", "borrow_scope_changed")
 
+    if prior is not None:
+        # Only an explicit user action reaches this fresh provider GET. A
+        # retained positive claim is not, by itself, proof that a prior loan
+        # has finished. Do not attempt the POST after ambiguous or incomplete
+        # inventory, even if a catalogue button was offered.
+        try:
+            from ..plugin_api.loan_inventory import read_loan_inventory
+            from .borrow_cycle_evidence import completed_manual_borrow_cycle
+            snapshot = read_loan_inventory(
+                session, account, descriptor=session.descriptor,
+                scope_current=current, typed_only=True,
+            )
+            if (not current() or not completed_manual_borrow_cycle(
+                    previous_claim=prior, snapshot=snapshot, account=account,
+                    item=item, branch=policy.reborrow_inventory_branch,
+            )):
+                return _result("blocked", "borrow_cycle_not_ended")
+        except Exception:
+            return _result("blocked", "borrow_cycle_not_ended")
+    if not current():
+        return _result("blocked", "borrow_scope_changed")
     operation_id = uuid4().hex
     try:
-        claimed, receipt = service.storage.loan_borrow_claim_once(
-            key, operation_id)
+        if prior is None:
+            claimed, receipt = service.storage.loan_borrow_claim_once(
+                key, operation_id)
+        else:
+            claimed, receipt = service.storage.loan_borrow_claim_next_cycle(
+                key, prior["operation_id"], prior["verified_loan_id"],
+                operation_id,
+            )
         if not claimed:
             return _result("verification_unavailable", "borrow_previous_attempt")
     except Exception:
