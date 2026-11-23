@@ -9,6 +9,7 @@ from threading import Thread
 
 from ..core.notice_c_catalogue_query import search_public_catalogue_view
 from .notice_c_public_catalogue_widget import render_public_catalogue_view
+from .notice_c_public_catalogue_web_actions import append_public_catalogue_web_actions
 
 _MODES = (
     ("list", "Liste"), ("grid", "Grille"), ("compact", "Compact"),
@@ -64,6 +65,13 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
             content.append(empty)
         else:
             content.append(render_public_catalogue_view(view, Gtk=Gtk))
+            if mode in ("detail", "sources"):
+                append_public_catalogue_web_actions(
+                    window, content, view.rows, Gtk=Gtk, GLib=GLib,
+                    current=lambda: (not getattr(window, "_closed", False)
+                                     and state["generation"] == generation
+                                     and epoch == identity_epoch()),
+                )
         if page:
             previous = Gtk.Button(label="Page précédente")
             previous.connect("clicked", lambda _: set_page(page - 1))
