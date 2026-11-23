@@ -44,6 +44,8 @@ class LocalOriginPublicReport:
     coverage_complete: bool = False
     fresh_network_verified: bool = False
     association_authorized: bool = False
+    # Qualification of the one response, independent of catalogue coverage.
+    window_status: str = "unverified"
 
 
 @dataclass(frozen=True, slots=True, repr=False)

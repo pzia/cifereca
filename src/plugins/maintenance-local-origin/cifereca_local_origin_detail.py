@@ -158,9 +158,14 @@ def known_rows(page):
 
 
 def public_rows(report):
+    window_status = report.window_status
+    window_label = ("Complétude de la réponse non établie." if type(window_status) is not str else {
+        "incomplete": "Réponse catalogue partielle.",
+        "declared_complete": "Réponse déclarée complète pour cette requête.",
+    }.get(window_status, "Complétude de la réponse non établie."))
     lines = [
         ("Portée", "Comparaison documentaire uniquement ; aucune origine ni droit attestés."),
-        ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
+        ("Couverture", window_label + " Fraîcheur réseau non vérifiée."),
     ]
     for hit in report.matches:
         # Every displayed coordinate comes from this one explicit catalogue

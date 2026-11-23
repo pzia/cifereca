@@ -170,8 +170,9 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
     """
     called = False
 
-    def report(status, candidates=()):
+    def report(status, candidates=(), *, window_status="unverified"):
         return {"status": status, "candidates": candidates,
+                "window_status": window_status,
                 "provider_access_performed": called, "coverage_complete": False,
                 "fresh_network_verified": False, "association_authorized": False,
                 "may_write_origin_or_right": False}
@@ -227,6 +228,8 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             if not live():
                 return report("scope_changed")
             if (type(response) is not ProviderSearchResponse
+                    or type(response.partial) is not bool
+                    or type(response.catalogue_complete) not in (bool, type(None))
                     or type(response.results) is not list or len(response.results) > _MAX_RESULTS
                     or type(response.public_notices) is not tuple
                     or len(response.public_notices) > _MAX_RESULTS
@@ -300,7 +303,18 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             }
             candidates = tuple(sorted(
                 candidates, key=lambda item: evidence_rank.get(item.comparison, 6)))
-            result = report("partial", candidates)
+            # The producer can qualify its one response, never the whole
+            # catalogue. An omitted or inadmissible row prevents a complete
+            # verdict even when the producer declared one.
+            if (response.partial or response.catalogue_complete is False
+                    or len(candidates) != len(response.results)
+                    or len(claims) != len(response.results)):
+                window_status = "incomplete"
+            elif response.catalogue_complete is True:
+                window_status = "declared_complete"
+            else:
+                window_status = "unverified"
+            result = report("partial", candidates, window_status=window_status)
         return result if live() else report("scope_changed")
     except Exception:
         # Never expose supplier exceptions, account details or private path.
