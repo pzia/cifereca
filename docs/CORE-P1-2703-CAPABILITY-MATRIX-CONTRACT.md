@@ -253,3 +253,9 @@ attesté du fournisseur. La projection n'a aucune méthode d'autorisation
 ou d'exécution. Les sept familles ne sont pas revendiquées comme observées
 sur les serveurs réels : ce contrat sert à afficher les lacunes et à guider
 les recettes/plugins à venir, et ne clôt pas seul #2703.
+
+
+## Détail opérationnel dans Paramètres — #7899
+
+Sous la synthèse des sept familles, le panneau existant expose chaque opération effectivement présente dans le snapshot Core : opération, scope, statut, provenance et mode. Les états explicites enabled=False et connected=False sont affichés comme « source désactivée » et « connexion absente », sans transformer une déclaration de code en droit.
+Le panneau n'affiche ni identité, ni compte, ni credential, ni édition, ni référence de preuve, ni texte libre du producteur. Une ligne absente n'est pas créée artificiellement et reste « preuve indisponible » dans la famille correspondante. La consultation reste sans I/O et sans admission d'action ; la recette réelle par source demeure nécessaire.
