@@ -1,0 +1,38 @@
+"""#2385: a public C is documentary, not scoped to the Search caller identity."""
+from cifereca.core import search_orchestration as search
+from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+from tests.test_core_p0_4982_search_atomic_groups import _budget, _rows
+from tests.test_core_p0_4982_notice_work_runtime import open_core
+from tests.test_core_p0_6366_library_recent_public_c import _real_origins, A_URL, B_URL
+
+
+def test_public_c_cold_read_independent_of_search_identity(tmp_path, monkeypatch):
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        a, b = _rows()
+        pairs = search._ingest_public_search_c(
+            core.library, [a, b], identity_id="profile-a", now=100,
+            require_public_cover_witness=True,
+        )
+        assert len(pairs) == 2
+        document = a._core_notice_canonical_cover_document_ref
+        first = read_consolidated_notice_cover(core.storage, document)
+        assert first is not None
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a second identity must not trigger provider ingestion")
+
+    monkeypatch.setattr(search, "_ingest_public_search_c", forbidden)
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        # The public C read API has no identity argument. Both profiles read
+        # the same persisted public documentary reference, not private rights.
+        for identity_id in ("profile-a", "profile-b"):
+            assert identity_id
+            current = read_consolidated_notice_cover(core.storage, document)
+            assert current == first
+            assert {source.provider_id for source in current.sources} == {
+                "seller-a", "seller-b",
+            }
+            assert {cover.url for cover in current.candidates} == {A_URL, B_URL}
+        assert core.storage.entitlements() == []
+        assert core.storage.acquisitions() == []
