@@ -285,7 +285,7 @@ def test_sync_and_backup_evidence_share_one_read_only_transversal_family():
     ("Prêt", "loan.inventory"),
     ("Acquisition", "acquisition.download"),
     ("DRM", "drm.license"),
-    ("Transversal", "sync.remote_inventory"),
+    ("Transversal", "sync.scheduled_refresh"),
 ])
 @pytest.mark.parametrize(("status", "source_kind", "expected"), [
     ("supported", "account_observation", "observation, action non autorisée"),
