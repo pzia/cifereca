@@ -1,6 +1,7 @@
 """#7244: a hold disappearing during a slow review invalidates its page."""
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 from cifereca.core.adept_historical_maintenance import (
     HistoricalReviewRequest, run_historical_hold_review,
 )
@@ -12,11 +13,14 @@ class HistoricalHoldQueueDriftTests(unittest.TestCase):
         object.__setattr__(request, "service", service)
         object.__setattr__(request, "identity", "identity")
         object.__setattr__(request, "database", "/tmp/not-used.sqlite")
-        with patch.object(HistoricalReviewRequest, "bound", return_value=True), \\
-             patch("cifereca.core.adept_historical_maintenance.sqlite_source_stamp",
-                   return_value=("stable",)), \\
-             patch("cifereca.core.loan_download_retry_review.review_loan_download_retries",
-                   side_effect=[(), (object(),)]) as queue:
+        changed = SimpleNamespace(source=SimpleNamespace(kind="loan"), adept_hold=True)
+        with (
+            patch.object(HistoricalReviewRequest, "bound", return_value=True),
+            patch("cifereca.core.adept_historical_maintenance.sqlite_source_stamp",
+                  return_value=("stable",)),
+            patch("cifereca.core.loan_download_retry_review.review_loan_download_retries",
+                  side_effect=[(), (changed,)]) as queue,
+        ):
             self.assertIsNone(run_historical_hold_review(service, request))
             self.assertEqual(queue.call_count, 2)
 
