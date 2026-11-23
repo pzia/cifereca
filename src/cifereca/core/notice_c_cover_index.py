@@ -299,6 +299,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
             item["provider"], item["source_revision"], item["proof"],
         )
         if (any(type(x) is not str or _IDENTIFIER.fullmatch(x) is None
+                or "://" in x or ".." in x
                 for x in (provider, revision, proof))
                 or type(item["observed_at"]) is not int
                 or not 0 <= item["observed_at"] <= _MAX_EPOCH
