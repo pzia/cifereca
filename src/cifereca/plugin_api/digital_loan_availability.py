@@ -108,8 +108,14 @@ def digital_loan_availability_lines(
     if not rows:
         return ("Reste inconnu — aucun compte emprunteur vérifié.",)
     lines = []
+    seen_scopes: set[tuple[str, str, str, str | None, str]] = set()
     for record in rows:
         if (type(record) is not DigitalLoanAvailability
+                or type(record.identity_id) is not str
+                or type(record.provider_id) is not str
+                or type(record.credential_id) is not str
+                or (record.borrower_id is not None
+                    and type(record.borrower_id) is not str)
                 or record.identity_id != identity_id
                 or record.status != "unknown"
                 or record.remaining is not None
@@ -129,6 +135,13 @@ def digital_loan_availability_lines(
                     type(record.personal_ceiling) is not int
                     or not 0 <= record.personal_ceiling <= 99))):
             return ("Reste inconnu — projection des comptes invalide.",)
+        scope = (record.identity_id, record.provider_id,
+                 record.credential_id, record.borrower_id, record.branch)
+        if scope in seen_scopes:
+            # Repeated exact borrower/account/branch rows would double count
+            # observed loans and misrepresent the completeness of a summary.
+            return ("Reste inconnu — portée des comptes dupliquée.",)
+        seen_scopes.add(scope)
         name = (
             record.provider_label + " · " + record.connection_label
             + " · " + record.borrower_label

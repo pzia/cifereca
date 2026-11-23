@@ -109,3 +109,26 @@ def descriptive_lineage_key(
     except (ValueError, TypeError, UnicodeError) as exc:
         raise ValueError("invalid_lineage_encoding") from exc
     return "notice-c-desc-v1:" + hashlib.sha256(raw).hexdigest()
+
+
+def descriptive_execution_key(
+    *, selection: ExplicitSelection, admitted: ConsolidationInputs,
+    installed_source_sha256: str,
+) -> str:
+    """Cache identity additionally bound to the reviewed installed executable.
+
+    A plugin update with an unchanged manifest version must never reuse a
+    previously materialized value. The caller must verify the source hash
+    against the installed code independently, before using this key.
+    """
+    if (type(installed_source_sha256) is not str
+            or len(installed_source_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in installed_source_sha256)):
+        raise ValueError("invalid_consolidator_source_digest")
+    lineage = descriptive_lineage_key(selection=selection, admitted=admitted)
+    raw = json.dumps(
+        ("cifereca.notice-c.descriptive-execution.v1", lineage,
+         installed_source_sha256),
+        separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")
+    return "notice-c-exec-v1:" + hashlib.sha256(raw).hexdigest()

@@ -71,6 +71,10 @@ def admit_descriptive_facts(
             or type(attested_strong_links) is not dict
             or len(attested_strong_links) > MAX_RELATED):
         raise ValueError("invalid_consolidation_batch")
+    # Validate key types before any lookup: a non-string hash-colliding key
+    # could otherwise run foreign __eq__ during edition membership checks.
+    if any(type(other) is not str for other in attested_strong_links):
+        raise ValueError("invalid_strong_link")
     for other, proof in attested_strong_links.items():
         if (not _identifier(other) or not _identifier(proof)
                 or other == target_edition_id):
@@ -83,9 +87,17 @@ def admit_descriptive_facts(
         if type(row) is not dict:
             rejected += 1
             continue
+        # Source records cross a plugin boundary. Even a real dict may carry
+        # arbitrary Python keys whose __eq__ is invoked by dict.get; verify
+        # every key before looking up any field, and never compare a foreign
+        # canonical_type value to the Core-selected type.
+        if any(type(key) is not str for key in row):
+            rejected += 1
+            continue
         # A future plugin type is just a validated value; no hardcoded
         # whitelist of age/genre/etc. Keep any rights-like type out of scope.
-        if row.get("canonical_type") != canonical_type:
+        if (type(row.get("canonical_type")) is not str
+                or row["canonical_type"] != canonical_type):
             rejected += 1
             continue
         source_id = row.get("source_id")
