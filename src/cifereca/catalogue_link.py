@@ -159,6 +159,12 @@ def catalogue_notice_url(row, *, base=None, provider=None):
         if _unsafe_url_controls(value) or any(char.isspace() for char in value):
             continue
         candidate = urljoin(base, value) if reference else value
+        # A relative source coordinate must not silently change authority.
+        if reference and not urlsplit(value).scheme:
+            origin = urlsplit(reference)
+            target = urlsplit(candidate)
+            if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
+                continue
         safe = catalogue_url({'friendly_url': candidate})
         if not safe:
             continue
