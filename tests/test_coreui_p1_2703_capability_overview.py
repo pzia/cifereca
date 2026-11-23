@@ -429,7 +429,8 @@ def test_p1_2703_same_operation_code_and_account_observation_keep_distinct_scope
             identity_id="alice", account_id="private-borrower",
             credential_id="private-credential",
             status="partial", implementation_state="implemented",
-            source_kind="account_observation", enabled=False, connected=False,
+            source_kind="account_observation", reason="partial_account_observation",
+            enabled=False, connected=False,
         ),
     ))
     text = source_capability_labels((matrix,))[0]
