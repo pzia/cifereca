@@ -216,6 +216,14 @@ def build_provider_account_editor(
         "Activée dans les paramètres · session non vérifiée"
     )
     group.add(lifecycle)
+    # Reflect unsaved activation changes immediately; this remains a local
+    # configuration draft and never claims an authenticated provider session.
+    def update_lifecycle(switch, _param):
+        lifecycle.set_subtitle(
+            ("Activée" if switch.get_active() is True else "Désactivée")
+            + " dans les paramètres · modification non enregistrée · session non vérifiée"
+        )
+    enabled.connect("notify::active", update_lifecycle)
     # A malformed persisted label must never be stringified into the GTK
     # editor and later saved as a plausible account name on an unrelated edit.
     # Display a safe descriptor fallback while preserving the original row.
