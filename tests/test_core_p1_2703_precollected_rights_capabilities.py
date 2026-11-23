@@ -205,7 +205,7 @@ def test_no_rights_snapshot_preserves_the_previous_projection():
     lambda snapshot: object.__setattr__(snapshot, "rights", list(snapshot.rights)),
     lambda snapshot: object.__setattr__(snapshot, "rights", snapshot.rights * 2),
     lambda snapshot: object.__setattr__(snapshot.rights[0], "evidence_ref", ""),
-    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "bad\\x00scope"),
+    lambda snapshot: object.__setattr__(snapshot.scope, "credential_id", "bad\x00scope"),
 ))
 def test_mutated_rights_snapshot_cannot_be_projected_to_coreui(mutate):
     # Revalidate nested rights and exact source branches at read time. These
