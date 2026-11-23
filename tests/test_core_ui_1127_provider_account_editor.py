@@ -87,7 +87,7 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     )
     assert len(container.children) == 1
     group = container.children[0]
-    assert group.title == "PARIS — paris-a"
+    assert group.title == "PARIS — Bibliothèque"
     assert [row.title for row in group.children][:3] == [
         "Compte activé", "Libellé local", "Identité (ID)"
     ]
@@ -102,6 +102,33 @@ def test_paris_rows_keep_password_obscured_and_same_identity_defaults():
     assert editor["deleted"] is False
     assert delete in group.children[-1].suffixes
     assert "destructive-action" in delete.classes
+
+
+
+def test_settings_header_never_discloses_opaque_credential_id_or_private_label():
+    private_credential = "https://private.example/?token=secret-credential"
+    editor, _, container, _ = _render("paris", data={
+        "id": private_credential, "label": "Paris personnel",
+        "identity_id": "alice", "credentials": {}, "options": {},
+    })
+    assert container.children[0].title == "PARIS — Paris personnel"
+    # Changing the visual label must not rebind any persisted account.
+    assert editor["id"] == private_credential
+    editor, _, container, _ = _render("paris", data={
+        "id": private_credential,
+        "label": "https://private.example/?token=leaked",
+        "identity_id": "alice", "credentials": {}, "options": {},
+    })
+    assert container.children[0].title == "PARIS — Connexion"
+    assert "private.example" not in container.children[0].title
+    assert editor["id"] == private_credential
+
+
+def test_settings_header_without_saved_label_stays_generic_and_private():
+    _, _, container, _ = _render("paris", data={
+        "id": "authorization: Bearer SECRET", "identity_id": "alice",
+    })
+    assert container.children[0].title == "PARIS — Connexion"
 
 
 def test_paris_url_and_identity_fallbacks_are_unchanged():
