@@ -120,7 +120,13 @@ def validate_text_schema_result(
     """
     if (type(result) is not ValidatedDescriptiveResult
             or type(selection) is not ExplicitSelection
-            or not _valid_schema(schema)):
+            or not _valid_schema(schema)
+            or any(type(value) is not str for value in (
+                selection.canonical_type, selection.scope,
+                selection.plugin_id, selection.version, selection.schema_id,
+                result.canonical_type, result.plugin_id,
+                result.plugin_version, result.schema_id))
+            or type(result.inherited) is not bool):
         raise ValueError("invalid_canonical_text_validation_context")
     if (schema.canonical_type, schema.scope, schema.plugin_id,
             schema.plugin_version, schema.schema_id) != (
