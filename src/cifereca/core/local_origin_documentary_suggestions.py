@@ -54,7 +54,9 @@ def _comparison(hit, title, author):
 
 def _matching_source_url(storage, matches, url):
     """Return a single corroborated hit index from one bounded C snapshot."""
-    if type(url) is not str or not matches:
+    if (type(url) is not str or not 0 < len(url) <= 4096
+            or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for ch in url) or not matches):
         return None
     by_document = {}
     matched = []
@@ -108,6 +110,7 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             or (author is not None and any(
                 unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
                 for ch in author))
+            or (now is not None and (type(now) is not int or now < 0))
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
         raise ValueError("invalid_documentary_suggestion_request")
@@ -146,10 +149,12 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
             and displayable(hit.docbase)
             # These coordinates are rendered alongside the title in the
             # local review; even a malformed C DTO must not spoof a label.
-            and all(displayable(getattr(hit, field)) for field in (
-                "provider_id", "record_id", "edition_id",
-                "source_revision", "medium", "media_format",
-            )))
+            and all((value is None or (type(value) is str and len(value) <= 512))
+                    and displayable(value)
+                    for value in (getattr(hit, field) for field in (
+                        "provider_id", "record_id", "edition_id",
+                        "source_revision", "medium", "media_format",
+                    ))))
     )
     if (type(source_urls) is frozenset and len(source_urls) == 1
             and page == 0 and not found.has_more and len(matches) == found.known_matches):
