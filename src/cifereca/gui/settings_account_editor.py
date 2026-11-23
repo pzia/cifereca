@@ -169,7 +169,9 @@ def _public_connection_title(descriptor: Any, data: dict[str, Any]) -> str:
                 and not any(marker in value.casefold() for marker in (
                     "http://", "https://", "token=", "secret=", "password=",
                     "authorization:", "bearer ", "cookie=", "apikey=",
-                    "api_key=", "signature=",
+                    "api_key=", "signature=", "access_token",
+                    "refresh_token", "client_secret", "sessionid=",
+                    "set-cookie:", "x-api-key", "jwt=",
                 )))
 
     provider_label = getattr(descriptor, "display_name", None)
