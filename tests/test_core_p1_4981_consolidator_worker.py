@@ -198,3 +198,4 @@ def test_q3_specialized_plugin_business_choice_keeps_core_lineage():
     assert result.value == "13+"
     assert result.source_evidence_keys == (("publisher", TARGET, "proof2"),)
     assert not result.inherited
+    assert result.plugin_id == "plugin.age.alpha"
