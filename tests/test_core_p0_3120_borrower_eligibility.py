@@ -228,3 +228,21 @@ def test_linked_borrower_requires_nonempty_stable_id_without_losing_primary_alia
         assert result.reason_code == "scope_unverified"
     else:
         assert result.reason_code == "borrower_eligible_unconfirmed"
+
+
+@pytest.mark.parametrize("collection", [None, "", "\n", "\x00"])
+def test_missing_or_ambiguous_collection_cannot_attest_borrower_permission(collection):
+    """Same record/docbase may occur in two distinct provider branches."""
+    item = replace(notice(), source_collection=collection)
+    event = proof(item=item)
+    outcome = decide(item=item, ev=event)
+    assert outcome.status == "unverified"
+    assert outcome.reason_code == "scope_unverified"
+    assert not outcome.blocked
+
+
+def test_exact_collection_still_preserves_attested_negative_and_positive():
+    item = notice(collection="digital-branch")
+    assert decide(item=item, ev=proof(item=item)).status == "eligible"
+    assert decide(item=item, ev=proof(item=item, quota_state="exhausted")).status == "blocked"
+    assert decide(item=item, ev=proof(item=notice(collection="other-branch"))).reason_code == "evidence_scope_mismatch"
