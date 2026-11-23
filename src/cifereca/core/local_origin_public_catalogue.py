@@ -273,15 +273,19 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             # public response claims it for multiple records or formats.
             # Keep every candidate and downgrade only the otherwise exact
             # descriptive claim; do not merge editions or select a winner.
-            by_isbn = defaultdict(set)
+            # Repeated source coordinates do not prove that two independently
+            # returned public objects designate the same edition. The local
+            # view intentionally omits unverified source revision/row IDs.
+            # Counting individual occurrences (not distinct projected keys)
+            # therefore refuses an exact-edition claim for *either* twin.
+            by_isbn = defaultdict(int)
             for candidate in candidates:
                 for isbn in candidate.isbns:
-                    by_isbn[isbn].add((candidate.docbase, candidate.record_id,
-                                       candidate.medium, candidate.media_format))
+                    by_isbn[isbn] += 1
             candidates = tuple(
                 replace(candidate, comparison="isbn_claim_ambiguous")
                 if (candidate.comparison == "isbn_title_author_concordant"
-                    and any(len(by_isbn[isbn]) > 1 for isbn in candidate.isbns))
+                    and any(by_isbn[isbn] > 1 for isbn in candidate.isbns))
                 else candidate for candidate in candidates)
             # Explicit evidence order only within this one public window.
             # Keep supplier order for ties and all ambiguous editions; no
