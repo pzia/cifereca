@@ -16,10 +16,13 @@ from ..plugin_api import AuthenticationRequired, Cancelled, TemporaryUnavailable
 from ..plugin_api import ProviderSearchResponse, PublicSearchNotice, ProviderSearchWithFacets
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
 from .local_origin_suggestion_preview import _PublicComparisonEvidence, _verified_candidate
-from .local_origin_epub_evidence import read_verified_epub_bibliography, _isbn13
+from .local_origin_epub_evidence import read_verified_epub_details, _isbn13
 from .local_origin_documentary_suggestions import _fold
 from .public_search_projection import project_public_search_results
-from .search_orchestration import _inert_search_source_state, _session_search_capabilities
+from .search_orchestration import (
+    _inert_search_source_state, _is_public_web_evidence, _public_catalog_url,
+    _session_search_capabilities,
+)
 
 _MAX_RESULTS = 50
 
@@ -213,10 +216,10 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 return report("scope_changed")
             if local[6] not in ("epub", "kepub"):
                 return report("excluded")
-            details = read_verified_epub_bibliography(path, signature)
+            details = read_verified_epub_details(path, signature, include_source_claims=True)
             if details is None or not live():
                 return report("excluded")
-            title, authors, isbns = details
+            title, authors, isbns, _, source_urls = details
             called = True
             try:
                 response = session.search_with_response_facets(
@@ -238,6 +241,7 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             claims = [id(notice.result) for notice in response.public_notices
                       if type(notice) is PublicSearchNotice]
             candidates = []
+            source_matches = []
             for row in response.results:
                 projected = projections.get(id(row))
                 if (projected is None or claims.count(id(row)) != 1
@@ -264,10 +268,23 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                         or not _displayable_coordinate(projected.format, optional=True)):
                     continue
                 remote = _isbns(projected.metadata)
+                comparison = _comparison(title, authors, isbns, projected, remote)
+                # Only a literal URL admitted for this exact public parser
+                # row can corroborate an OPF claim. The URL never becomes a
+                # lookup argument or a link exposed by this review.
+                if (len(source_urls) == 1 and type(row.friendly_url) is str
+                        and row.friendly_url in source_urls):
+                    evidence = row.metadata.get("public_url_evidence")
+                    if (_is_public_web_evidence(evidence, provider_id)
+                            and _public_catalog_url(
+                                row.friendly_url, evidence=evidence, provider_id=provider_id,
+                                record_id=projected.record_id,
+                            ) == row.friendly_url):
+                        source_matches.append(len(candidates))
                 candidates.append(PublicCatalogueCandidate(
                     projected.source_provider, projected.record_id, projected.docbase,
                     projected.medium, projected.title, projected.author,
-                    projected.format, remote, _comparison(title, authors, isbns, projected, remote),
+                    projected.format, remote, comparison,
                 ))
             # A matching ISBN does not identify one edition when the same
             # public response claims it for multiple records or formats.
@@ -287,10 +304,24 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 if (candidate.comparison == "isbn_title_author_concordant"
                     and any(by_isbn[isbn] > 1 for isbn in candidate.isbns))
                 else candidate for candidate in candidates)
+            # Keep a shared URL ambiguous across editions. A URL alone also
+            # cannot override contradictory bibliographic evidence.
+            if len(source_matches) == 1:
+                index = source_matches[0]
+                candidate = candidates[index]
+                if candidate.comparison in (
+                    "isbn_title_author_concordant", "title_author_concordant",
+                ):
+                    candidates = (
+                        *candidates[:index],
+                        replace(candidate, comparison="opf_source_url_concordant"),
+                        *candidates[index + 1:],
+                    )
             # Explicit evidence order only within this one public window.
             # Keep supplier order for ties and all ambiguous editions; no
             # ranking here proves source, acquisition, licence or freshness.
             evidence_rank = {
+                "opf_source_url_concordant": -1,
                 "isbn_title_author_concordant": 0,
                 "title_author_concordant": 1,
                 "isbn_claim_ambiguous": 2,

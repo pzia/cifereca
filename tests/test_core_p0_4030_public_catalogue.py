@@ -1,6 +1,7 @@
 """#4030: one explicit public catalogue comparison, no supplier right."""
 from dataclasses import replace
 from types import SimpleNamespace as NS
+from xml.sax.saxutils import escape
 
 import pytest
 
@@ -27,10 +28,11 @@ def _row(record="one", **changes):
 
 
 @pytest.fixture
-def rig(store, tmp_path):
+def rig(store, tmp_path, request):
+    opf_extra = getattr(request, "param", "")
     root, path, pid = _local_epub(store, tmp_path, META +
         '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/">'
-        'urn:isbn:9780306406157</dc:identifier>')
+        'urn:isbn:9780306406157</dc:identifier>' + opf_extra)
     owner = NS(identity_id="A", directory_name="A")
     service = NS(storage=store, config=Config(root), current_identity=owner,
                  identity_by_id=lambda i: owner if i == "A" else None,
@@ -63,6 +65,60 @@ def rig(store, tmp_path):
 def _run(service, request, **kwargs):
     return search_local_public_catalogue(service, request, provider_id="new-catalogue",
                                          **{"confirmed": True, **kwargs})
+
+
+_OPF_URL = "https://catalogue.example.org/books/source-edition"
+
+
+def _opf_claim(field, value):
+    return (f'<dc:{field} xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            f'{escape(value)}</dc:{field}>')
+
+
+@pytest.mark.parametrize("rig,case", [
+    (_opf_claim("source", _OPF_URL), "source"),
+    (_opf_claim("identifier", _OPF_URL), "identifier"),
+    (_opf_claim("source", _OPF_URL), "unattested"),
+    (_opf_claim("source", _OPF_URL), "duplicate"),
+    (_opf_claim("source", _OPF_URL), "title_conflict"),
+    (_opf_claim("source", _OPF_URL + "/"), "different_literal"),
+    (_opf_claim("source", _OPF_URL) + _opf_claim("source", _OPF_URL + "-2"), "multiple_claims"),
+    (_opf_claim("source", _OPF_URL + "?token=synthetic"), "delivery_token"),
+], indirect=["rig"])
+def test_explicit_catalogue_compares_only_literal_corroborated_opf_url(rig, case):
+    service, session, request, calls, path = rig
+    before, data = rows(service.storage), path.read_bytes()
+    url = _OPF_URL + "?token=synthetic" if case == "delivery_token" else _OPF_URL
+    marker = "new-catalogue.public_search_product_card"
+    exact = _row("source", friendly_url=url, metadata=(
+        {} if case == "unattested" else {"public_url_evidence": marker}
+    ), title="Autre titre" if case == "title_conflict" else "Roman commun")
+    other = _row("isbn")
+    if case == "duplicate":
+        other = replace(other, friendly_url=url,
+                        metadata={**other.metadata, "public_url_evidence": marker})
+    supplied = [other, exact]
+
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return ProviderSearchResponse(
+            supplied, public_notices=tuple(PublicSearchNotice(row) for row in supplied),
+        )
+
+    session.search_with_response_facets = search
+    result = _run(service, request)
+    assert result["status"] == "partial"
+    assert calls == [("Roman commun", "digital", {"field": "title", "content_types": ()})]
+    if case in ("source", "identifier"):
+        assert [(r.record_id, r.comparison) for r in result["candidates"]] == [
+            ("source", "opf_source_url_concordant"), ("isbn", "isbn_title_author_concordant"),
+        ]
+    else:
+        assert len(result["candidates"]) == 2
+        assert all(r.comparison != "opf_source_url_concordant" for r in result["candidates"])
+    assert url not in repr(result)
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert rows(service.storage) == before and path.read_bytes() == data
 
 
 def test_explicit_public_lookup_keeps_isbn_ambiguity_without_persistence(rig):

@@ -19,6 +19,7 @@ _LABELS = {
     "title_concordant_author_unknown": "Titre concordant, auteur inconnu",
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
+    "opf_source_url_concordant": "URL déclarée dans l’EPUB, titre et auteur concordants",
     "isbn_title_author_concordant": "ISBN déclaré, titre et auteur concordants",
     "isbn_claim_ambiguous": "ISBN déclaré ambigu",
     "isbn_claim_divergent": "ISBN déclarés divergents",
@@ -27,6 +28,7 @@ _LABELS = {
 
 
 _DOCUMENTARY_STRENGTH = {
+    "opf_source_url_concordant": -1,
     "isbn_title_author_concordant": 0,
     "title_author_concordant": 1,
     # An ISBN claimed by multiple editions is not an exact edition source.
