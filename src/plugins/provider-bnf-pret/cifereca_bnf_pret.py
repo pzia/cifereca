@@ -30,6 +30,7 @@ DESCRIPTOR = ProviderDescriptor(
     borrower_public_edition_branches_v1=(("BNF_PRET", "digital", "BNF_PRET", None),),
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="BNF_PRET", verification="active_only",
+        reborrow_inventory_branch="bnf_html",
     ),
     description='Catalogue, fiches et prêts du portail lecteur BnF, par HTTPX.',
     capabilities=ProviderCapabilities(authentication=True, multiple_credentials=True, loans=True,
@@ -524,6 +525,7 @@ class BnfProviderSession(ProviderSession):
                 reason_code=None if complete else 'inventory_not_exhaustive',
             ),),
             reason_code=None if complete else 'inventory_not_exhaustive',
+            observed_at=(datetime.now(timezone.utc).isoformat() if complete else None),
         )
 
     def _core_owner_binding(self, account_id, identity_id):
