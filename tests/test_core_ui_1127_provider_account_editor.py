@@ -22,10 +22,17 @@ class Widget:
         self.children = []
         self.suffixes = []
         self.visible = True
+        self.handlers = {}
     def set_title(self, value): self.title = value
     def set_subtitle(self, value): self.subtitle = value
     def set_text(self, value): self.text = value
-    def set_active(self, value): self.active = value
+    def set_active(self, value):
+        self.active = value
+        for callback in self.handlers.get("notify::active", ()):
+            callback(self, None)
+    def get_active(self): return self.active
+    def connect(self, signal, callback):
+        self.handlers.setdefault(signal, []).append(callback)
     def set_sensitive(self, value): self.sensitive = value
     def set_visible(self, value): self.visible = value
     def set_valign(self, _value): pass
@@ -596,3 +603,13 @@ def test_account_lifecycle_distinguishes_saved_activation_from_live_session():
         rows = container.children[0].children
         lifecycle, = (row for row in rows if row.title == "Connexion · état enregistré")
         assert lifecycle.subtitle == expected
+        # Switch changes the same row immediately, without saving or probing.
+        editor, _, container2, _ = _render(data={
+            "id": "connection-b", "identity_id": "alice", "enabled": enabled,
+            "label": "Compte local", "credentials": {}, "options": {},
+        })
+        editor["enabled"].set_active(not enabled)
+        row2, = (row for row in container2.children[0].children
+                 if row.title == "Connexion · état enregistré")
+        assert "modification non enregistrée" in row2.subtitle
+        assert ("Désactivée" if enabled else "Activée") in row2.subtitle
