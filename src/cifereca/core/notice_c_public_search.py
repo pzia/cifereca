@@ -417,20 +417,21 @@ def search_public_notice_c(
     if (type(query) is not str or not 2 <= len(query.strip()) <= 160
             # An invisible bidi/format control cannot become a silent
             # partial or zero-result documentary query in a shared C cursor.
-            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in query)
+            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for char in query)
             or type(field) is not str or field not in _FIELDS
             or type(scope) is not str or scope not in _SCOPES
             or type(provider_ids) is not tuple or len(provider_ids) > 128
             or any(type(provider) is not str or not 1 <= len(provider) <= 64
                    for provider in provider_ids)
-            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
                    for provider in provider_ids for char in provider)
             or type(content_types) is not tuple or len(content_types) > 32
             or any(type(value) is not str or not 0 < len(value) <= 64
                    for value in content_types)
-            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
                    for value in content_types for char in value)
             or (age is not None and (type(age) is not int or not 0 <= age < 18))
+            or (age is None and age_kind is not None)
             or (age_kind is not None and (type(age_kind) is not str or age_kind not in
                 ('interest', 'reading', 'publisher', 'recommended')))
             or type(group_by_document) is not bool
