@@ -144,7 +144,8 @@ def confirm_organizer_dry_run(scope, report, plan, *, confirmed=False):
     """Confirm the displayed dry-run only after fresh exact re-evaluation."""
     if (confirmed is not True or type(plan) is not OrganizerDryRunPlan
             or plan.scope is not scope or plan.confirmed is not False
-            or plan.executable is not False or not plan.entries):
+            or plan.executable is not False or not plan.entries
+            or not any(entry.state == "review_only" for entry in plan.entries)):
         return None
     fresh = prepare_organizer_dry_run(
         scope, report, confirmed=True, group_index=plan.group_index,
