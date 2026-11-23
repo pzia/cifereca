@@ -155,6 +155,30 @@ def _saved_option_of_exact_account(
     return value if type(value) is str else None
 
 
+def _public_connection_title(descriptor: Any, data: dict[str, Any]) -> str:
+    """Settings title uses a public local label, never an opaque credential ID.
+
+    The configured account's internal ID may contain a token or an upstream
+    identifier. Keep its exact value for persistence and action scopes, not
+    Gtk titles/screenshots. User-editable labels are display-only and must
+    not accidentally contain URL, authorization or bearer material.
+    """
+    def public(value: object) -> bool:
+        return (type(value) is str and 1 <= len(value) <= 80
+                and value == value.strip() and value.isprintable()
+                and not any(marker in value.casefold() for marker in (
+                    "http://", "https://", "token=", "secret=", "password=",
+                    "authorization:", "bearer ", "cookie=", "apikey=",
+                    "api_key=", "signature=",
+                )))
+
+    provider_label = getattr(descriptor, "display_name", None)
+    provider_label = provider_label if public(provider_label) else "Fournisseur"
+    account_label = data.get("label") if type(data) is dict else None
+    account_label = account_label if public(account_label) else "Connexion"
+    return f"{provider_label} — {account_label}"
+
+
 def build_provider_account_editor(
     *, data: dict[str, Any], provider_id: str, account_id: str,
     descriptor: Any, configured_identities: list[dict[str, Any]],
@@ -162,7 +186,7 @@ def build_provider_account_editor(
     observed_borrowers: Any = (), observed_loans: Any = (),
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
-    group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
+    group = Adw.PreferencesGroup(); group.set_title(_public_connection_title(descriptor, data)); accounts_container.append(group)
     # An SSO or otherwise authenticated source may declare no credential field.
     # It is still a personal account, never an anonymous catalogue.
     account_bound = (
