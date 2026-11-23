@@ -267,7 +267,7 @@ def analyse_capture(path):
                         overlaps += 1
                     active_end = max(active_end, end)
             counts["overlapping_exact_public_get_observed"] = overlaps
-    except (OSError, BadZipFile, KeyError, ValueError, TypeError,
+    except (OSError, BadZipFile, KeyError, ValueError, TypeError, RuntimeError,
             UnicodeError, json.JSONDecodeError):
         return {"status": "invalid_capture"}
     return {"status": "reviewed", "counts": dict(sorted(counts.items())),
