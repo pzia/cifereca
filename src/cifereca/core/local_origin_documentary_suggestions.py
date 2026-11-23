@@ -54,7 +54,9 @@ def _comparison(hit, title, author):
 
 def _matching_source_url(storage, matches, url):
     """Return a single corroborated hit index from one bounded C snapshot."""
-    if type(url) is not str or not matches:
+    if (type(url) is not str or not 0 < len(url) <= 4096
+            or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   for ch in url) or not matches):
         return None
     by_document = {}
     matched = []
