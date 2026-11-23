@@ -680,3 +680,44 @@ def test_p1_5540_unscoped_legacy_option_never_migrates_to_two_accounts():
                        "legacy.endpoint": "https://historical.example"},
     )
     assert editor["option_fields"]["endpoint"].text == "https://historical.example"
+
+
+def test_p1_5540_linked_readers_keep_exact_credential_and_branch_limits():
+    """Paris-like linked-reader limits are local preferences, never quotas."""
+    from cifereca.models import Account
+    from cifereca.plugin_api import BorrowerScopedOptionField
+    from cifereca.gui.borrower_scoped_options import linked_borrower_choices
+
+    spec = BorrowerScopedOptionField(
+        key="linked_limits", label="Maximum local",
+        branches=(("digital", "Numérique"), ("physical", "Physique")),
+        default="4", advisory_loan_limit=True,
+    )
+    saved = {"reader-a": {"digital": "3", "physical": "8"}}
+    observations = [
+        Account(display_name="Lecteur A", unique_id="reader-a", is_primary=False,
+                provider_id="paris", credential_id="credential-a", identity_id="alice"),
+        Account(display_name="Lecteur B", unique_id="reader-b", is_primary=False,
+                provider_id="paris", credential_id="credential-a", identity_id="alice"),
+        Account(display_name="Lecteur tiers", unique_id="reader-c", is_primary=False,
+                provider_id="paris", credential_id="credential-b", identity_id="alice"),
+        Account(display_name="Autre profil", unique_id="reader-d", is_primary=False,
+                provider_id="paris", credential_id="credential-a", identity_id="bob"),
+        Account(display_name="Compte primaire", unique_id="primary", is_primary=True,
+                provider_id="paris", credential_id="credential-a", identity_id="alice"),
+    ]
+    readers = linked_borrower_choices(
+        saved, spec, observations, provider_id="paris",
+        credential_id="credential-a", identity_id="alice",
+    )
+    assert [borrower for borrower, _ in readers] == ["reader-a", "reader-b"]
+    assert all("reader-c" not in label and "reader-d" not in label
+               for _, label in readers)
+    # The same persisted branch settings are editable offline, without
+    # inventing additional observed borrowers or requiring provider I/O.
+    offline = linked_borrower_choices(
+        saved, spec, (), provider_id="paris",
+        credential_id="credential-a", identity_id="alice",
+    )
+    assert [borrower for borrower, _ in offline] == ["reader-a"]
+    assert saved == {"reader-a": {"digital": "3", "physical": "8"}}
