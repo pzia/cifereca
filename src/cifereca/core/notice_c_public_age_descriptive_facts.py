@@ -12,7 +12,7 @@ import json
 
 from .notice_c_public_age import decode_public_age_observation
 from .notice_consolidation_inputs import admit_descriptive_facts
-from .notice_source_observation import NoticeSourceObservation
+from .notice_source_observation import NoticeSourceObservation, admit_source_notice
 
 
 def public_age_descriptive_facts(observation: NoticeSourceObservation) -> tuple[dict, ...]:
@@ -24,6 +24,20 @@ def public_age_descriptive_facts(observation: NoticeSourceObservation) -> tuple[
     if type(observation) is not NoticeSourceObservation:
         return ()
     key = observation.key
+    # Rebuild the Core admission digest from the exact raw snapshot. A forged
+    # or mutated DTO cannot lend its revision to otherwise plausible facts.
+    try:
+        restored = admit_source_notice(
+            key=key, parser_id=observation.parser_id,
+            parser_version=observation.parser_version,
+            observed_at=observation.observed_at,
+            raw_fields=observation.fields_copy(), status=observation.status,
+        )
+    except (ValueError, TypeError, AttributeError, UnicodeError):
+        return ()
+    if (restored.source_revision != observation.source_revision
+            or restored.raw_json != observation.raw_json):
+        return ()
     if (key.visibility != "public" or key.identity_id is not None
             or key.credential_id is not None or key.account_id is not None
             or key.branch_id != "search.public.catalogue"
