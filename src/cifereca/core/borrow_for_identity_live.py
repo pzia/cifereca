@@ -268,6 +268,8 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             capability=capability, account=account, notice=item,
             evidence=row.edition_evidence,
         )
+        if exact_offer.status == "blocked":
+            return "borrower_blocked"
         if exact_offer.status != "eligible":
             return "permission_unverified"
         key = borrow_claim_key(account, item)

@@ -28,7 +28,7 @@ _MAX_NAME = 80
 
 BorrowOfferRejection = Literal[
     "scope_unverified", "lender_unavailable", "capability_unverified",
-    "permission_unverified", "previous_attempt", "conflicting_observations",
+    "permission_unverified", "borrower_blocked", "previous_attempt", "conflicting_observations",
     "context_changed", "local_check_failed",
 ]
 

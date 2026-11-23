@@ -833,3 +833,51 @@ def test_held_lender_click_revokes_if_unrelated_observation_is_newly_rejected(ha
     assert _click(service, original, original.options[0].option_id,
                   first, extra).status == "revoked"
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_state", "renewal_pending"),
+    ("account_state", "inactive"),
+    ("quota_state", "exhausted"),
+    ("permission", "denied"),
+    ("item_offer", "unavailable"),
+])
+def test_p1_3120_attested_exact_denial_is_distinct_from_unknown(harness, field, value):
+    service, _account, session = harness
+    row = _candidate()
+    denied = replace(row, edition_evidence=replace(
+        row.edition_evidence, **{field: value},
+    ))
+    preview = _preview(service, denied)
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("borrower_blocked",)
+    assert preview.executable is False
+    assert session.calls == 0
+    assert service.current_identity.identity_id == "default"
+
+
+@pytest.mark.parametrize("field", [
+    "account_state", "quota_state", "permission", "item_offer",
+])
+def test_p1_3120_missing_exact_fact_remains_unverified(harness, field):
+    service, _account, session = harness
+    row = _candidate()
+    unknown = replace(row, edition_evidence=replace(
+        row.edition_evidence, **{field: "unknown"},
+    ))
+    preview = _preview(service, unknown)
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("permission_unverified",)
+    assert session.calls == 0
+
+
+def test_p1_3120_denial_for_different_edition_does_not_block_exact_offer(harness):
+    service, _account, session = harness
+    row = _candidate()
+    foreign = replace(row, edition_evidence=replace(
+        row.edition_evidence, record_id="other-record", quota_state="exhausted",
+    ))
+    preview = _preview(service, foreign)
+    assert preview.options == ()
+    assert "borrower_blocked" not in preview.rejection_reasons
+    assert session.calls == 0
