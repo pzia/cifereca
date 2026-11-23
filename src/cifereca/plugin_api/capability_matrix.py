@@ -63,9 +63,14 @@ class CapabilityEvidence:
             if (type(value) is not str or len(value) > 256
                     or "\0" in value or "\n" in value or "\r" in value):
                 raise ValueError("capability_invalid_scope")
-        if (self.status not in _STATUSES
+        # Cached/frozen DTOs can be forged after construction. Check the
+        # primitive types before set membership: unhashable lists/dicts must
+        # fail as contract violations, not escape as TypeError in CoreUI.
+        if (type(self.status) is not str or self.status not in _STATUSES
+                or type(self.implementation_state) is not str
                 or self.implementation_state not in _IMPLEMENTATIONS
-                or self.mode not in _MODES or self.source_kind not in _KINDS
+                or type(self.mode) is not str or self.mode not in _MODES
+                or type(self.source_kind) is not str or self.source_kind not in _KINDS
                 or type(self.schema_version) is not int or self.schema_version != 1):
             raise ValueError("capability_invalid_contract")
         if (type(self.evidence_ref) is not str or len(self.evidence_ref) > 256
