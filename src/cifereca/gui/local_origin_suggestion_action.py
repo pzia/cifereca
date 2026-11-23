@@ -154,9 +154,14 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                         window.toast((reason or "Comparaison publique indisponible") +
                                      " ; aucune absence attestée. Nouvelle revue nécessaire.")
                         return
+                    window_status = report.get("window_status")
+                    window_label = ("Complétude de la réponse non établie." if type(window_status) is not str else {
+                        "incomplete": "Réponse catalogue partielle.",
+                        "declared_complete": "Réponse déclarée complète pour cette requête.",
+                    }.get(window_status, "Complétude de la réponse non établie."))
                     lines = [
                         ("Portée", "Comparaison documentaire uniquement ; aucune origine ni droit attestés."),
-                        ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
+                        ("Couverture", window_label + " Fraîcheur réseau non vérifiée."),
                     ]
                     for entry in report["candidates"]:
                         if type(entry) is not PublicCatalogueCandidate or entry.provider_id != selected.provider_id:

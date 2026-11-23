@@ -218,6 +218,8 @@ class LocalOriginDetailReadBrokerImpl:
                                                    "unavailable", "response_unverified", "auth_required",
                                                    "access_denied", "rate_limited", "timeout", "cancelled")
                     or type(result.get("provider_access_performed")) is not bool
+                    or type(result.get("window_status")) is not str
+                    or result["window_status"] not in ("unverified", "incomplete", "declared_complete")
                     or any(result.get(flag) is not False for flag in (
                         "coverage_complete", "fresh_network_verified",
                         "association_authorized", "may_write_origin_or_right"))
@@ -234,6 +236,7 @@ class LocalOriginDetailReadBrokerImpl:
                     row.author, row.media_format, row.isbns, row.comparison,
                 ) for row in result["candidates"]),
                 result["provider_access_performed"],
+                window_status=result["window_status"],
             )
             return report if live() else None
         except Exception:

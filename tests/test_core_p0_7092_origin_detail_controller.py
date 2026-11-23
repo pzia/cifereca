@@ -6,7 +6,8 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactory
-from tests.test_core_p0_4030_public_catalogue import rig, store, rows
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+from tests.test_core_p0_4030_public_catalogue import _row, rig, store, rows
 from tests.test_core_p0_4030_suggestion_operator import _more_public
 
 ROOT = Path(__file__).resolve().parents[1] / "src/plugins/maintenance-local-origin"
@@ -54,6 +55,43 @@ def test_mount_is_inert_and_public_action_is_explicit_one_shot(rig):
     assert len(groups) == 3 and "aucune origine ni droit" in str(groups[1]).lower()
     assert groups[2][0] == "Classement documentaire — lecture seule"
     assert "aucune absence attestée" in repr(groups[2]) or "Partielle" in repr(groups[2])
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("complete,partial,include_unqualified,label", [
+    (True, False, False, "Réponse déclarée complète pour cette requête."),
+    (False, False, False, "Réponse catalogue partielle."),
+    (True, True, False, "Réponse catalogue partielle."),
+    (True, False, True, "Réponse catalogue partielle."),
+    (None, False, False, "Complétude de la réponse non établie."),
+])
+def test_catalogue_response_window_is_distinct_from_catalogue_coverage(
+        rig, complete, partial, include_unqualified, label):
+    service, session, request, calls, path = rig
+    before, data = rows(service.storage), path.read_bytes()
+    valid = _row()
+    results = [valid] + ([_row("unqualified")] if include_unqualified else [])
+
+    def search(query, scope, **kwargs):
+        calls.append(query)
+        return ProviderSearchResponse(
+            results, partial=partial, catalogue_complete=complete,
+            public_notices=(PublicSearchNotice(valid),),
+        )
+
+    session.search_with_response_facets = search
+    _, _, _, _, tasks, actions, groups, _ = mounted(rig)
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert actions["public-0"][2]()
+    work, done = tasks[-1]
+    report = work()
+    done(report)
+    assert calls == ["Roman commun"]
+    assert report.coverage_complete is report.fresh_network_verified is False
+    assert report.association_authorized is False
+    assert len(report.matches) == 1
+    assert ("Couverture", label + " Fraîcheur réseau non vérifiée.") in groups[1][1]
     assert rows(service.storage) == before and path.read_bytes() == data
 
 
