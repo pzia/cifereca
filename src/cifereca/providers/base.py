@@ -187,7 +187,7 @@ def valid_account_option_url(field: AccountOptionField, value: str) -> bool:
             if re.search(r"%(?![0-9A-Fa-f]{2})", path):
                 return False
             path = unquote(path, errors="strict")
-            if any(ord(ch) < 32 or ord(ch) == 127 or ch in
+            if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 or ch in
                    "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
                    for ch in path):
                 return False
