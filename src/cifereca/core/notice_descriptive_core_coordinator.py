@@ -52,7 +52,11 @@ def run_descriptive_core_job(
         raise ValueError("installed_consolidator_mismatch")
     if identity != expected_identity:
         raise ValueError("installed_consolidator_mismatch")
-    if sha256(installed.source.encode("utf-8")).hexdigest() != installed.source_sha256:
+    try:
+        source_digest = sha256(installed.source.encode("utf-8")).hexdigest()
+    except UnicodeError as exc:
+        raise ValueError("installed_consolidator_mismatch") from exc
+    if source_digest != installed.source_sha256:
         raise ValueError("installed_consolidator_mismatch")
     # Source snapshot and work identity are derived under the same read lock.
     with storage._lock, storage._connect() as db:
