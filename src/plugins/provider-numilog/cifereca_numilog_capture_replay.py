@@ -65,6 +65,7 @@ def _private_request_header(name):
             "cookie", "authorization", "token", "session", "credential",
             "secret", "signature", "ticket", "password", "apikey",
             "accesskey", "oauth", "saml", "bearer", "private", "sso",
+            "csrf", "xsrf", "nonce",
         ))
         or normalized.startswith(("xauth", "xamz", "xgoog"))
     )

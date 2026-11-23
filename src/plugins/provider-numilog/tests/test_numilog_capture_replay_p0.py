@@ -147,7 +147,8 @@ def test_duplicate_capture_index_or_body_is_never_accepted_as_a_receipt(tmp_path
 @pytest.mark.parametrize("private_header", [
     "X-API-Key", "X-Access-Key", "X-Session-ID", "X-Auth-Context",
     "X-Secret-Key", "X-Credential", "X-Signature", "X-SSO-Ticket",
-    "X-User-Key", "X-OAuth-Assertion",
+    "X-User-Key", "X-OAuth-Assertion", "X-CSRF-Token", "X-XSRF-Token",
+    "X-Request-Nonce",
 ])
 def test_private_header_alias_is_not_qualified_as_anonymous_get(tmp_path, private_header):
     entry = _entry("a", HTML)
