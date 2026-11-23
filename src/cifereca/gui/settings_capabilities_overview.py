@@ -99,6 +99,8 @@ def source_capability_labels(matrices: Sequence[CapabilityMatrix]) -> tuple[str,
         detail = tuple(
             f"{row.operation} [{row.scope}] : {row.status} "
             f"({row.source_kind}, {row.mode})"
+            + (" · source désactivée" if row.enabled is False else "")
+            + (" · connexion absente" if row.connected is False else "")
             for row in sorted(matrix.observations,
                               key=lambda row: (row.operation, row.scope, row.field))
         )
