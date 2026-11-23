@@ -9,6 +9,7 @@ class Pages:
         definitions = [
             ("dashboard", "Accueil", "view-dashboard-symbolic", "usage"),
             ("search", "Recherche", "system-search-symbolic", "usage"),
+            ("public_catalogue", "Catalogue public", "view-list-symbolic", "usage"),
             ("library", "Bibliothèque", "accessories-dictionary-symbolic", "usage"),
             ("readers", "Liseuses", "drive-removable-media-symbolic", "usage"),
             ("recent", "Récents", "document-open-recent-symbolic", "usage"),
