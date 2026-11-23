@@ -70,8 +70,8 @@ def test_unicode_display_label_remains_readable_and_counts_unknown():
 
 
 @pytest.mark.parametrize("bad", [
-    "Public\\u202eSECRET", "Public\\u2066SECRET\\u2069",
-    "Public\\u200bSECRET", "Public\\ufeffSECRET",
+    "Public\u202eSECRET", "Public\u2066SECRET\u2069",
+    "Public\u200bSECRET", "Public\ufeffSECRET",
 ])
 def test_unicode_format_controls_cannot_spoof_public_account_labels(bad):
     for attribute in ("provider_label", "connection_label", "borrower_label"):
