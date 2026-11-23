@@ -185,7 +185,10 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                 "known_matches": suggestions.known_matches if suggestions is not None else None,
                 "more_matches": suggestions.has_more if suggestions is not None else False,
                 "suggestions": tuple((x.hit.title, x.hit.author, x.hit.provider_id,
-                                      x.comparison, x.hit.stale)
+                                      x.comparison, x.hit.stale,
+                                      x.hit.record_id, x.hit.docbase,
+                                      x.hit.edition_id, x.hit.medium,
+                                      x.hit.media_format, x.hit.observed_at)
                                      for x in suggestions.suggestions)
                                 if suggestions is not None else (),
             })

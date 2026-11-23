@@ -1,5 +1,7 @@
 """#7092 presentation of the public cache-only batch port."""
 from threading import Event
+from datetime import datetime, timezone
+from unicodedata import category
 
 from cifereca.plugin_api import MaintenanceToolInfo, MaintenancePlan, MaintenanceResult
 from cifereca.plugin_api.local_origin_review import LocalOriginBatchPage
@@ -10,6 +12,22 @@ _LABELS = {
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
 }
+
+
+def _displayable_source_coordinate(value, *, limit=512):
+    return (type(value) is str and 0 < len(value) <= limit
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
+
+
+def _c_observation_text(value):
+    if type(value) is not int or not 0 <= value <= 253402300799:
+        return "Date d'observation C indisponible"
+    try:
+        return "Observation C (UTC) : " + datetime.fromtimestamp(
+            value, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return "Date d'observation C indisponible"
 
 
 def display(page):
@@ -37,6 +55,12 @@ def display(page):
                 m.title, m.author, m.provider_id,
                 _LABELS.get(m.comparison, "Comparaison descriptive"),
                 "Notice ancienne" if m.stale else "Notice en cache",
+                "Référence C : " + m.record_id if _displayable_source_coordinate(m.record_id) else "",
+                "Collection C : " + m.docbase if _displayable_source_coordinate(m.docbase) else "",
+                "Édition C : " + m.edition_id if _displayable_source_coordinate(m.edition_id) else "",
+                "Support C : " + m.medium if _displayable_source_coordinate(m.medium) else "",
+                "Format C : " + m.media_format if _displayable_source_coordinate(m.media_format) else "",
+                _c_observation_text(m.observed_at),
             ) if part))
         if row.more_matches:
             if row.reason == "declared_unverified_comparison":

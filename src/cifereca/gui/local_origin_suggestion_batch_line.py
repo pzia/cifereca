@@ -21,7 +21,10 @@ def _display(page):
             lines.append("Non évalué : budget, chemin ou preuves insuffisantes.")
             continue
         lines.append(f"{row['known_matches']} correspondance(s) connue(s) ; absence non prouvée.")
-        for title, author, provider, comparison, stale in row["suggestions"]:
+        for candidate in row["suggestions"]:
+            # The plugin batch also carries six documentary C coordinates.
+            # Keep the legacy five-field GTK projection until its own contract evolves.
+            title, author, provider, comparison, stale = candidate[:5]
             lines.append(" · ".join(str(part) for part in (
                 title, author, provider, _LABELS.get(comparison, "Comparaison descriptive"),
                 "Notice ancienne" if stale else "Notice en cache",

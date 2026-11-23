@@ -10,6 +10,14 @@ class KnownOriginMatch:
     provider_id: str
     comparison: str
     stale: bool
+    # Additive, already retained public-C source coordinates. These are
+    # documentary facts only, not an OriginLink or a provider acquisition.
+    record_id: str = ""
+    docbase: str = ""
+    edition_id: str = ""
+    medium: str = ""
+    media_format: str | None = None
+    observed_at: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
