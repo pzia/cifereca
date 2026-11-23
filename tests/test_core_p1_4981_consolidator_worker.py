@@ -199,3 +199,18 @@ def test_q3_specialized_plugin_business_choice_keeps_core_lineage():
     assert result.source_evidence_keys == (("publisher", TARGET, "proof2"),)
     assert not result.inherited
     assert result.plugin_id == "plugin.age.alpha"
+
+
+def test_real_worker_cannot_promote_inherited_proof_over_exact_source():
+    """Q9: a plugin's specialized policy cannot override Core lineage rules."""
+    related = fact("10+", edition=FOREIGN)
+    exact = fact("13+")
+    with pytest.raises(ValueError, match="exact_source_evidence_has_priority"):
+        invoke(
+            source=SOURCE.replace('rows = facts["exact"] or facts["inherited"]',
+                                  'rows = facts["inherited"] or facts["exact"]')
+                         .replace('"inherited": not bool(facts["exact"])',
+                                  '"inherited": bool(facts["inherited"])'),
+            source_facts=(exact, related),
+            attested_strong_links={FOREIGN: "strong:confirmed"},
+        )
