@@ -2466,10 +2466,14 @@ class Storage:
         return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
 
     def relocate_local_path(self, old_path: Path, new_path: Path, *, identity_id: str, provider_id: str) -> None:
+        from .core.canonical_publication import _canonical_write_transaction
+
         old_text = str(old_path.expanduser().resolve())
         new_text = str(new_path.expanduser().resolve())
         now = int(time.time())
-        with self._lock, self._connect() as db:
+        # The broker may unlink the old name after this returns. WAL NORMAL
+        # is insufficient if a power loss can roll back the new path.
+        with _canonical_write_transaction(self) as db:
             db.execute("SAVEPOINT relocate_local_path")
             try:
                 # A user declaration still names the OLD file and contains

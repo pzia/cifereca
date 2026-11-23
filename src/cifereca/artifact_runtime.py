@@ -2091,26 +2091,48 @@ class LibraryMaintenanceBrokerImpl:
                     except FileExistsError:
                         raise _LibraryFilenameConflict("Collision de nom")
                     created_target = True
-                expected_old = os.stat(old, follow_symlinks=False)
-                expected_new = os.stat(new, follow_symlinks=False)
                 try:
+                    from .core.library_inventory import _open_root
+
+                    expected_old = os.stat(old, follow_symlinks=False)
+                    expected_new = os.stat(new, follow_symlinks=False)
+                    # Persist the destination bytes and directory entry
+                    # before SQLite can make it the authoritative pathname.
+                    with ExitStack() as descriptors:
+                        directory_fd = _open_root(new.parent)
+                        descriptors.callback(os.close, directory_fd)
+                        target_fd = os.open(
+                            new.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                            dir_fd=directory_fd,
+                        )
+                        descriptors.callback(os.close, target_fd)
+                        target_stat = os.fstat(target_fd)
+                        if (not stat.S_ISREG(target_stat.st_mode)
+                                or any(getattr(target_stat, key) != getattr(expected_new, key)
+                                       for key in attrs)):
+                            raise _LibraryFilenameConflict("Destination modifiée avant enregistrement")
+                        os.fsync(target_fd)
+                        os.fsync(directory_fd)
                     self.service.storage.relocate_local_path(
                         old, new,
                         identity_id=str(row.get("identity_id") or ""),
                         provider_id=str(row.get("provider_id") or "local"),
                     )
                 except Exception:
-                    # A failed DB transaction leaves the original path valid.
-                    # Remove only OUR new hardlink and only if it still points
-                    # at that original inode. Never delete someone else's file.
+                    # Remove our temporary name only when the DB still
+                    # witnesses the old path. Preserve both on an uncertain
+                    # commit outcome or a name that changed concurrently.
                     if created_target:
                         try:
+                            current_placement = self.service.storage.placement_get(row["placement_id"])
                             old_stat = os.stat(old, follow_symlinks=False)
                             new_stat = os.stat(new, follow_symlinks=False)
-                            if ((old_stat.st_dev, old_stat.st_ino)
+                            original = before.st_dev, before.st_ino
+                            if (current_placement and current_placement.get("path") == str(old)
+                                    and original == (old_stat.st_dev, old_stat.st_ino)
                                     == (new_stat.st_dev, new_stat.st_ino)):
                                 new.unlink()
-                        except OSError:
+                        except (OSError, sqlite3.Error, RuntimeError):
                             pass
                     raise
                 # A crash at this point leaves a valid, extra old hardlink;
