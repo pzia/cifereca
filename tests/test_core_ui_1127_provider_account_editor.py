@@ -22,17 +22,18 @@ class Widget:
         self.children = []
         self.suffixes = []
         self.visible = True
-        self.handlers = {}
     def set_title(self, value): self.title = value
     def set_subtitle(self, value): self.subtitle = value
     def set_text(self, value): self.text = value
     def set_active(self, value):
         self.active = value
-        for callback in self.handlers.get("notify::active", ()):
+        for callback in getattr(self, "_signal_callbacks", {}).get("notify::active", ()):
             callback(self, None)
     def get_active(self): return self.active
     def connect(self, signal, callback):
-        self.handlers.setdefault(signal, []).append(callback)
+        if not hasattr(self, "_signal_callbacks"):
+            self._signal_callbacks = {}
+        self._signal_callbacks.setdefault(signal, []).append(callback)
     def set_sensitive(self, value): self.sensitive = value
     def set_visible(self, value): self.visible = value
     def set_valign(self, _value): pass
