@@ -663,7 +663,7 @@ def search_public_notice_c(
                 observed_at=source.observed_at,
                 last_seen_at=bib.last_seen_at,
                 epoch=consolidated.epoch,
-                cover_state="pending" if unqualified_retention else aggregate_cover,
+                cover_state=aggregate_cover,
                 stale=unqualified_retention or now - bib.last_seen_at > _STALE_AFTER,
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
