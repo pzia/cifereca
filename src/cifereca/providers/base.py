@@ -282,6 +282,7 @@ class ManualBorrowPolicy:
     schema: str = "cifereca.manual-borrow/1"
     # Observed loan account alias is plugin-owned, never inferred by Core.
     observed_loan_account_alias: str | None = None
+    reborrow_inventory_branch: str | None = None
 
     def __post_init__(self) -> None:
         from re import fullmatch
@@ -306,7 +307,11 @@ class ManualBorrowPolicy:
                 or (self.observed_loan_account_alias is not None
                     and (type(self.observed_loan_account_alias) is not str
                          or fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",
-                                      self.observed_loan_account_alias) is None))):
+                                      self.observed_loan_account_alias) is None)
+                or (self.reborrow_inventory_branch is not None
+                    and (type(self.reborrow_inventory_branch) is not str
+                         or fullmatch(r"[a-z][a-z0-9_-]{0,47}",
+                                      self.reborrow_inventory_branch) is None))):
             raise ValueError("invalid_manual_borrow_policy")
 
 
