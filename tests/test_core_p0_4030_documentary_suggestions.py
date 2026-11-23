@@ -216,3 +216,50 @@ def test_local_documentary_comparison_refuses_malformed_public_hit_title(
     observed = suggest_known_public_documents(store, title="Roman commun", now=101)
     assert tuple(item.hit for item in observed.suggestions) == (good,)
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("spoof", ["\x85", "\u202e", "\u2028", "\u200d", "\u2066"])
+def test_known_c_spoofed_collection_is_excluded_before_local_comparison(
+    store, monkeypatch, spoof,
+):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as suggestions
+
+    _seed(store, record_id="unsafe", title="Roman commun", author="Autrice")
+    _seed(store, record_id="safe", title="Roman commun", author="Autrice")
+    original = suggestions.search_public_notice_c
+
+    def malformed(*args, **kwargs):
+        page = original(*args, **kwargs)
+        altered = tuple(replace(hit, docbase="PUBLIC" + spoof + "FAKE")
+                        if hit.record_id == "unsafe" else hit for hit in page.hits)
+        return replace(page, hits=altered)
+
+    monkeypatch.setattr(suggestions, "search_public_notice_c", malformed)
+    before = rows(store)
+    page = suggestions.suggest_known_public_documents(
+        store, title="Roman commun", author="Autrice", now=101,
+    )
+    assert page.status == "partial" and not page.coverage_complete
+    assert page.known_matches == 2
+    assert [hit.hit.record_id for hit in page.suggestions] == ["safe"]
+    assert not page.provider_access_performed and not page.may_write_origin_or_right
+    assert rows(store) == before
+
+
+def test_known_c_oversize_or_missing_collection_is_not_provenance(store, monkeypatch):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as suggestions
+    _seed(store, record_id="item", title="Roman commun", author="Autrice")
+    original = suggestions.search_public_notice_c
+
+    for malformed_value in (None, "", "A" * 513):
+        def malformed(*args, **kwargs):
+            page = original(*args, **kwargs)
+            return replace(page, hits=tuple(replace(hit, docbase=malformed_value)
+                                             for hit in page.hits))
+        monkeypatch.setattr(suggestions, "search_public_notice_c", malformed)
+        page = suggestions.suggest_known_public_documents(store, title="Roman commun")
+        assert page.status == "partial" and page.known_matches == 1
+        assert page.suggestions == () and not page.coverage_complete
+        assert not page.may_write_origin_or_right and not page.provider_access_performed
