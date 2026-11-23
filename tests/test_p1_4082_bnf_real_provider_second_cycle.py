@@ -155,3 +155,41 @@ def test_real_bnf_provider_empty_activity_allows_second_explicit_cycle(tmp_path)
         assert service.storage.metadata_get(key) != previous
     finally:
         service.close()
+
+
+def test_real_bnf_provider_empty_loading_widget_never_starts_second_post(tmp_path):
+    service, session, account, item, state = _service(tmp_path)
+    try:
+        assert _click(service, account, item)["status"] == "confirmed"
+        assert state["post"] == 1
+        key = borrow_claim_key(account, item)
+        previous = service.storage.metadata_get(key)
+        # A 200 response alone is insufficient when the widget is loading.
+        state["activity"] = '<section class="active-loans" aria-busy="true"></section>'
+        before = len(state["calls"])
+        denied = _click(service, account, item)
+        assert denied["status"] == "blocked"
+        assert denied["reason_code"] == "borrow_cycle_not_ended"
+        assert state["calls"][before:] == [("GET", "/my_profile/activity")]
+        assert state["post"] == 1
+        assert service.storage.metadata_get(key) == previous
+    finally:
+        service.close()
+
+
+def test_real_bnf_provider_missing_widget_never_starts_second_post(tmp_path):
+    service, session, account, item, state = _service(tmp_path)
+    try:
+        assert _click(service, account, item)["status"] == "confirmed"
+        key = borrow_claim_key(account, item)
+        previous = service.storage.metadata_get(key)
+        # A successful HTML response without the official widget is not zero.
+        state["activity"] = "<html><body>Service indisponible</body></html>"
+        before = len(state["calls"])
+        denied = _click(service, account, item)
+        assert denied["status"] != "confirmed"
+        assert state["post"] == 1
+        assert ("POST", "/loans/activation") not in state["calls"][before:]
+        assert service.storage.metadata_get(key) == previous
+    finally:
+        service.close()
