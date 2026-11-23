@@ -156,6 +156,7 @@ def valid_account_option_url(field: AccountOptionField, value: str) -> bool:
         return False
     if (type(value) is not str or not 1 <= len(value) <= 2048
             or value != value.strip() or not value.isprintable()
+            or any(ch.isspace() for ch in value)
             or "\\" in value):
         return False
     try:
