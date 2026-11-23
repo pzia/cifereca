@@ -212,19 +212,34 @@ def main(argv=None) -> int:
     selection.add_argument("--changed-files", type=Path)
     selection.add_argument("--full", action="store_true")
     selection.add_argument("--scenario", choices=ALL + OPTIONAL_UX)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--github-output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if (not 1 <= args.shard_count <= 8
+            or not 0 <= args.shard_index < args.shard_count):
+        parser.error("invalid GTK shard index/count")
     paths = args.changed_files.read_text(encoding="utf-8").splitlines() if args.changed_files else []
-    scenarios = (args.scenario,) if args.scenario else select(paths, full=args.full)
+    total_scenarios = (args.scenario,) if args.scenario else select(paths, full=args.full)
     mode = "manual-targeted" if args.scenario else (
-        "full" if scenarios == ALL else "selected" if scenarios else "docs-only"
+        "full" if total_scenarios == ALL else "selected" if total_scenarios else "docs-only"
+    )
+    # Exact, stable modulo partition. The union is the entire selected gate,
+    # not a reduced acceptance suite; every scenario executes exactly once.
+    scenarios = tuple(
+        scenario for index, scenario in enumerate(total_scenarios)
+        if index % args.shard_count == args.shard_index
     )
     with args.github_output.open("a", encoding="utf-8") as output:
         output.write("scenarios=" + " ".join(scenarios) + "\n")
         output.write(f"count={len(scenarios)}\n")
         output.write(f"total={len(ALL)}\n")
         output.write(f"mode={mode}\n")
-    print(f"GTK E2E selection: {len(scenarios)}/{len(ALL)}: {', '.join(scenarios) or 'docs only'}")
+        output.write(f"shard_index={args.shard_index}\n")
+        output.write(f"shard_count={args.shard_count}\n")
+    print(f"GTK E2E selection: {len(scenarios)}/{len(ALL)} "
+          f"(shard {args.shard_index + 1}/{args.shard_count}): "
+          f"{', '.join(scenarios) or 'none'}")
     return 0
 
 if __name__ == "__main__":
