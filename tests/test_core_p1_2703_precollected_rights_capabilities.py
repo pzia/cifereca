@@ -73,7 +73,8 @@ def test_kobo_positive_rights_observation_is_partial_non_authorizing_read():
     assert row.reason == "rights_observation_no_action"
     assert row.source_kind == "account_observation"
     assert row.evidence_ref == "cifereca.rights.observation/1"
-    assert row.connected is True and row.enabled is True
+    # Catalogue readiness is not proof that this credential is online.
+    assert row.connected is None and row.enabled is True
     assert row.authorizes_mutation is False
     assert kobo.exact(
         "personal_inventory.rights", "account",

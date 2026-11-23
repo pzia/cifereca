@@ -66,6 +66,15 @@ def capability_matrices_with_precollected_evidence(
     if set(descriptors) != set(by_provider):
         raise ValueError("capability_provider_not_registered")
 
+    # A public catalogue can be ready while an unrelated borrower account
+    # is expired. Provider-level availability is not account connectivity.
+    # Without an exact account-session fact, retain a known disconnection
+    # or report unknown; never promote cached rights/loans to online.
+    account_connection = {
+        provider: (False if ready is False else None)
+        for provider, ready in currently_connected.items()
+    }
+
     extras: dict[str, list[CapabilityEvidence]] = defaultdict(list)
     for source in sync_sources:
         if type(source) is not SyncSourceRef:
@@ -102,7 +111,7 @@ def capability_matrices_with_precollected_evidence(
         extras[provider].extend(
             replace(
                 row, enabled=True,
-                connected=currently_connected[provider],
+                connected=account_connection[provider],
             )
             for row in projected.observations
             if (row.operation == "loan.inventory" and row.scope == "account")
@@ -139,7 +148,7 @@ def capability_matrices_with_precollected_evidence(
             evidence_ref="cifereca.rights.observation/1" if observed else "",
             reason=("rights_observation_no_action" if observed else
                     "rights_observation_" + snapshot.status),
-            enabled=True, connected=currently_connected[provider],
+            enabled=True, connected=account_connection[provider],
         ))
 
     return tuple(

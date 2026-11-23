@@ -172,3 +172,25 @@ def test_no_snapshots_preserves_the_existing_code_only_inventory():
             service, "alice",
         ) for row in matrix.observations
     )
+
+
+def test_catalogue_readiness_does_not_requalify_cached_loan_account_as_online():
+    service, _ = _rig()
+    # A public catalogue is ready for Kobo, but the precollected inventory
+    # has no evidence that this specific credential/account session is live.
+    snapshot = replace(
+        _loan_snapshot(),
+        scope=LoanInventoryScope("alice", "kobo", "a-kobo", "owner-A"),
+    )
+    matrix = _by_provider(
+        LibraryService.capability_matrices_with_precollected_evidence(
+            service, "alice", loan_snapshots=(snapshot,),
+        )
+    )["kobo"]
+    row = matrix.exact(
+        "loan.inventory", "account", identity_id="alice",
+        account_id="owner-A", credential_id="a-kobo",
+    )
+    assert row.status == "supported"
+    assert row.connected is None
+    assert row.authorizes_mutation is False
