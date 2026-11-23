@@ -122,7 +122,12 @@ class GuidedOrganizer:
         page = self.page
         if action == "preview":
             operation = lambda: self.broker.preview(identity_id=self.identity_id, confirmed=True)
-        elif action == "next" and page is not None and page.has_more:
+        elif (action == "next" and page is not None and page.has_more
+              and not page.selected and not page.dry_run_state):
+            # A selected keeper set or prepared dry-run belongs to this exact
+            # page. Going to another page would silently discard its review
+            # and its confirmation token. Require explicit revise/cancel or a
+            # new preview, never an implicit cross-page confirmation.
             operation = lambda: self.broker.next_page(token=page.token, confirmed=True)
         elif action == "select" and page is not None and page.eligible and not page.selected and not page.dry_run_state:
             operation = lambda: self.broker.select_all_advice(token=page.token, confirmed=True)
@@ -143,6 +148,12 @@ class GuidedOrganizer:
         else:
             return False
 
+        # A new explicit preview supersedes the old keeper/rename advice at
+        # click time, not when a queued worker eventually reaches Core.
+        # This revokes only this view's exact page token. Next-page, select,
+        # prepare and confirm deliberately consume their current page instead.
+        if action == "preview" and page is not None:
+            self._cancel_token(page)
         from threading import Event
         stop = self.stop = Event()
         self._pending_page = page
@@ -302,7 +313,8 @@ class OrganizerPlugin:
 
         def render(page, busy):
             start.set_sensitive(not busy)
-            following.set_sensitive(not busy and page is not None and page.has_more)
+            following.set_sensitive(not busy and page is not None and page.has_more
+                                    and not page.selected and not page.dry_run_state)
             accept.set_sensitive(not busy and page is not None and bool(page.eligible) and not page.selected and not page.dry_run_state)
             prepared = page is not None and page.dry_run_state == "prepared"
             simulation_scope.remove_all()

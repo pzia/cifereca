@@ -182,3 +182,80 @@ def test_supplier_failure_is_partial_refusal_not_zero_or_retry(rig, failure, sta
     assert len(toasts) == 1 and label in toasts[0]
     assert "aucune absence attestée" in toasts[0] and "PRIVATE" not in toasts[0]
     assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_public_comparison_shows_distinct_formats_for_the_same_isbn_and_record(rig):
+    from dataclasses import replace
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    from tests.test_core_p0_4030_public_catalogue import _row
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+
+    service, session, request, calls, path = rig
+    a = _row("same")
+    b = replace(_row("same"), id="public:same:pdf", format="PDF")
+    envelope = ProviderSearchResponse(
+        [a, b], public_notices=(PublicSearchNotice(a), PublicSearchNotice(b)),
+    )
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return envelope
+    session.search_with_response_facets = search
+    before, content = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(rig)
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert "Collection C :" in repr(groups[0])
+    assert "Dernière observation C" in repr(groups[0])
+    assert actions["public-0"][2]()
+    deliver(tasks)
+    report = repr(next(g for g in groups if g[0] == "Catalogue public — new-catalogue"))
+    ranked = repr(next(g for g in groups
+                       if g[0] == "Classement documentaire — lecture seule"))
+    # The individual public report AND the cross-surface ranking must retain
+    # the edition distinction; the earlier C review makes ranking available.
+    assert report.count("ISBN déclaré ambigu") == 2
+    assert report.count("Référence catalogue : same") == 2
+    assert report.count("Collection catalogue : CATALOGUE") == 2
+    assert report.count("Format catalogue : EPUB") == 1
+    assert report.count("Format catalogue : PDF") == 1
+    assert "ISBN déclarés par le catalogue : 9780306406157" in report
+    assert ranked.count("Format catalogue : EPUB") == 1
+    assert ranked.count("Format catalogue : PDF") == 1
+    assert "Collection catalogue : CATALOGUE" in ranked
+    assert not toasts and len(calls) == 1
+    assert rows(service.storage) == before and path.read_bytes() == content
+    dispose()
+
+
+def test_untrusted_known_c_collection_label_cannot_spoof_both_review_surfaces():
+    import importlib.util
+    from dataclasses import replace
+    from pathlib import Path
+    from cifereca.plugin_api.local_origin_detail import (
+        LocalOriginDetailMatch, LocalOriginDetailPage,
+    )
+
+    plugin = (Path(__file__).resolve().parents[1] / "src/plugins"
+              / "maintenance-local-origin/cifereca_local_origin_detail.py")
+    spec = importlib.util.spec_from_file_location("origin_spoof_render", plugin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    good = LocalOriginDetailMatch(
+        "seller", "same", "PUBLIC", "edition", "Roman commun", "Autrice",
+        "title_author_concordant", False, 100,
+    )
+    page = LocalOriginDetailPage(
+        "page", 1, (good,), 1, False, False, "partial",
+        "verified_epub_opf_description",
+    )
+    for value in (None, "PUBLIC" + "\u202e" + "FAKE", "PUBLIC" + "\x85" + "FAKE"):
+        poisoned = replace(page, matches=(replace(good, docbase=value),))
+        local = repr(module.known_rows(poisoned))
+        ranked = repr(module.ranked_documentary_rows((("known-c", poisoned),)))
+        assert "Collection C :" not in local and "Collection C :" not in ranked
+        assert "Roman commun" in local and "Roman commun" in ranked
+        assert "FAKE" not in local and "FAKE" not in ranked
+    assert "Collection C : PUBLIC" in repr(module.known_rows(page))
+    assert "Collection C : PUBLIC" in repr(
+        module.ranked_documentary_rows((("known-c", page),))
+    )

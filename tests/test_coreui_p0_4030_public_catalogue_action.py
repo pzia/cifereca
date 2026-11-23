@@ -87,3 +87,38 @@ def test_late_public_response_cannot_populate_new_detail(rig):
     begin_local_public_web_selection(host, "library")
     done(result)
     assert len(groups) == 1
+
+
+def test_public_legacy_detail_retains_same_isbn_distinct_formats(rig):
+    from dataclasses import replace
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    from tests.test_core_p0_4030_public_catalogue import _row
+    from tests.test_core_p0_3171_atomic_publication_v14 import rows
+
+    host, button, tasks, groups, _ = _ui(rig)
+    service, session, _, calls, path = rig
+    a = _row("same")
+    b = replace(_row("same"), id="public:same:pdf", format="PDF")
+    response = ProviderSearchResponse(
+        [a, b], public_notices=(PublicSearchNotice(a), PublicSearchNotice(b)),
+    )
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return response
+    session.search_with_response_facets = search
+    before, content = rows(service.storage), path.read_bytes()
+    button.callback(button)
+    work, done, _ = tasks[-1]
+    value = work()
+    assert value["status"] == "partial"
+    done(value)
+    done(value)
+    text = repr(groups[-1])
+    assert text.count("ISBN déclaré ambigu") == 2
+    assert text.count("Référence catalogue : same") == 2
+    assert text.count("Collection catalogue : CATALOGUE") == 2
+    assert text.count("Format catalogue : EPUB") == 1
+    assert text.count("Format catalogue : PDF") == 1
+    assert "ISBN déclarés par le catalogue : 9780306406157" in text
+    assert len(calls) == 1 and rows(service.storage) == before
+    assert path.read_bytes() == content

@@ -1,5 +1,7 @@
 """#7092 contextual provenance presentation, without GTK or private Core imports."""
 from datetime import datetime, timezone
+from unicodedata import category
+from heapq import nsmallest
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
@@ -48,34 +50,65 @@ _SURFACE_LABEL = {
 }
 
 
-def ranked_documentary_rows(compared):
-    """Present the explicitly reviewed windows, never produce a right or origin.
+def _displayable_c_docbase(value):
+    # C source coordinates are documentary hints, not a trusted UI channel.
+    return (type(value) is str and 0 < len(value) <= 512
+            and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                        for ch in value))
 
-    Rank documentary evidence before family preference; public precedes
-    purchases then loans ONLY at equal evidence strength. An exact attested
-    provider origin is excluded upstream from this local-origin tool.
+
+def _public_action_title(provider_id, ordinal):
+    # The GTK host rejects action titles longer than 256 characters.
+    # Keep the ordinary provider-specific title; a long exact identifier
+    # remains in the account-independent choice detail, never truncated
+    # into a misleading provider identity.
+    direct = "Envoyer le titre à " + provider_id
+    return direct if len(direct) <= 256 else f"Envoyer le titre — catalogue {ordinal}"
+
+
+def ranked_documentary_rows(compared):
+    """Top ten from explicit review windows, bounded independently of pages.
+
+    Evidence precedes catalogue family; ties preserve observation order.
+    This projection creates neither a right, a provider source nor a new
+    request. Only the displayed top ten need remain in working memory.
     """
-    candidates = []
-    for family, report in compared:
-        if family not in _SURFACE_PRIORITY:
-            continue
-        for match in report.matches:
-            strength = _DOCUMENTARY_STRENGTH.get(match.comparison, 8)
-            provider = (match.provider_id if family in ("known-c", "public")
-                        else report.provider_id)
-            record = (match.record_id if family == "public" else
-                      match.edition_id if family in ("known-c", "purchase", "loan",
-                                                     "remote-loan") else "")
-            candidates.append((
-                strength, _SURFACE_PRIORITY[family],
-                match.title,
-                _SURFACE_LABEL[family] + " · " + provider
-                + (" · édition/référence : " + record if record else "")
-                + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
-            ))
-    if not candidates:
+    total = 0
+
+    def candidates():
+        nonlocal total
+        for family, report in compared:
+            if family not in _SURFACE_PRIORITY:
+                continue
+            for match in report.matches:
+                total += 1
+                strength = _DOCUMENTARY_STRENGTH.get(match.comparison, 8)
+                provider = (match.provider_id if family in ("known-c", "public")
+                            else report.provider_id)
+                record = (match.record_id if family == "public" else
+                          match.edition_id if family in ("known-c", "purchase", "loan",
+                                                         "remote-loan") else "")
+                yield (
+                    strength, _SURFACE_PRIORITY[family],
+                    match.title,
+                    _SURFACE_LABEL[family] + " · " + provider
+                    + (" · édition/référence : " + record if record else "")
+                    + (" · Collection catalogue : " + match.docbase
+                       + " · Support catalogue : " + match.medium
+                       + (" · Format catalogue : " + match.media_format
+                          if match.media_format else "")
+                       if family == "public" else "")
+                    + (" · Collection C : " + match.docbase
+                       if family == "known-c" and _displayable_c_docbase(match.docbase)
+                       else "")
+                    + " · " + _LABELS.get(match.comparison, "Comparaison descriptive"),
+                )
+
+    # nsmallest maintains input order for equal (evidence, family) keys.
+    # Unlike sorting every retained page this stores only ten comparisons.
+    strongest = nsmallest(10, candidates(), key=lambda row: row[:2])
+    if not strongest:
         return ()
-    candidates.sort(key=lambda row: (row[0], row[1]))
     rows = [
         ("Portée", "Fenêtres explicitement comparées seulement ; tri documentaire, "
          "jamais attribution de provenance, d'achat, de prêt ou de droit."),
@@ -83,12 +116,11 @@ def ranked_documentary_rows(compared):
          "Un reçu fournisseur attesté n'est pas une simple suggestion."),
         ("Couverture", "Partielle, sans fraîcheur réseau ni inventaire exhaustif attestés."),
     ]
-    rows.extend((title, description) for _, _, title, description in candidates[:10])
-    if len(candidates) > 10:
-        rows.append(("Limite", f"{len(candidates) - 10} candidats examinés de plus, "
+    rows.extend((title, description) for _, _, title, description in strongest)
+    if total > len(strongest):
+        rows.append(("Limite", f"{total - len(strongest)} candidats examinés de plus, "
                      "non affichés dans cet aperçu classé ; aucune absence attestée."))
     return tuple(rows)
-
 
 def known_rows(page):
     lines = [
@@ -98,10 +130,22 @@ def known_rows(page):
         ("Résultats connus", str(page.known_matches)),
     ]
     for hit in page.matches:
+        observed = "Dernière observation C : date indisponible"
+        if type(hit.observed_at) is int and 0 <= hit.observed_at <= 253402300799:
+            try:
+                observed = ("Dernière observation C (UTC) : "
+                            + datetime.fromtimestamp(hit.observed_at, tz=timezone.utc)
+                            .strftime("%Y-%m-%d %H:%M"))
+            except (OverflowError, OSError, ValueError):
+                pass
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, hit.edition_id,
+            hit.author, hit.provider_id,
+            "Référence C : " + hit.record_id,
+            "Collection C : " + hit.docbase if _displayable_c_docbase(hit.docbase) else "",
+            "Édition C : " + hit.edition_id,
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
             "Notice ancienne" if hit.stale else "Notice en cache",
+            observed,
         ) if x)))
     if not page.matches:
         verdict = ("Correspondances C connues, aucune fiche présentable sur cette page ; "
@@ -119,8 +163,15 @@ def public_rows(report):
         ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
     ]
     for hit in report.matches:
+        # Every displayed coordinate comes from this one explicit catalogue
+        # response, not from the local EPUB, an attested right or a C write.
         lines.append((hit.title, " · ".join(x for x in (
-            hit.author, hit.provider_id, hit.record_id, ", ".join(hit.isbns),
+            hit.author, hit.provider_id,
+            "Référence catalogue : " + hit.record_id,
+            "Collection catalogue : " + hit.docbase,
+            "Support catalogue : " + hit.medium,
+            "Format catalogue : " + hit.media_format if hit.media_format else "",
+            "ISBN déclarés par le catalogue : " + ", ".join(hit.isbns) if hit.isbns else "",
             _LABELS.get(hit.comparison, "Comparaison descriptive"),
         ) if x)))
     if not report.matches:
@@ -258,7 +309,7 @@ class DetailController:
                     if not self.current():
                         return
                     self.host.add_action(
-                        "public-" + str(index), "Envoyer le titre à " + choice.provider_id,
+                        "public-" + str(index), _public_action_title(choice.provider_id, index + 1),
                         "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement.",
                         lambda selected=choice, original=value: self.search(selected, original),
                     )
@@ -341,7 +392,7 @@ class DetailController:
                    if kind == "private" else "remote-loan-" + str(
                        index - 1 - len(original.public_choices) - len(original.private_choices)))
             if kind == "public":
-                title = "Envoyer le titre à " + choice.provider_id
+                title = _public_action_title(choice.provider_id, index)
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
                 action = lambda selected=choice: self.search(selected, original)
             elif kind == "private":
