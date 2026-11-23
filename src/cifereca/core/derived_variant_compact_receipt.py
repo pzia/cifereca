@@ -193,5 +193,8 @@ def review_compact_capacity(storage):
             count, total = _measure_compact_in_transaction(db)
     return {"count": count, "payload_bytes": total,
             "record_capacity": _MAX_PROOFS, "payload_capacity": _MAX_PROOF_TOTAL,
+            "remaining_record_slots": _MAX_PROOFS - count,
+            "remaining_payload_bytes": _MAX_PROOF_TOTAL - total,
+            "admission_saturated": count >= _MAX_PROOFS or total >= _MAX_PROOF_TOTAL,
             "retention_authorized": False, "quota_refund_authorized": False,
             "destructive_cleanup_allowed": False}
