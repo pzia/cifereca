@@ -61,7 +61,7 @@ def test_prepared_confirmation_is_not_displaced_by_attempted_pagination():
     assert controller.page is None and len(tasks) == 1
     work, done = tasks.pop()
     work()
-    assert calls == [("confirm", {"token": page.token})]
+    assert calls == [("confirm", {"token": page.token, "confirmed": True})]
     done(None)
     assert not controller.busy
     assert not controller.request("next")
@@ -75,6 +75,6 @@ def test_ordinary_unselected_page_continues_through_one_worker_only():
     assert not calls and len(tasks) == 1
     work, done = tasks.pop()
     work()
-    assert calls == [("next", {"token": page.token})]
+    assert calls == [("next", {"token": page.token, "confirmed": True})]
     done(None)
     assert not controller.busy
