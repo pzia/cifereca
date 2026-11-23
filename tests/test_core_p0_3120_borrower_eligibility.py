@@ -228,3 +228,21 @@ def test_linked_borrower_requires_nonempty_stable_id_without_losing_primary_alia
         assert result.reason_code == "scope_unverified"
     else:
         assert result.reason_code == "borrower_eligible_unconfirmed"
+
+
+@pytest.mark.parametrize("consent_flag", [False, None, "yes", 1])
+def test_new_borrow_eligibility_requires_an_explicit_manual_action_contract(consent_flag):
+    # Even all-positive borrower-specific observations must not elevate a
+    # forged or downgraded action capability without manual confirmation.
+    outcome = decide(ev=proof(), cap=capability(explicit_action_required=consent_flag))
+    assert outcome.status == "unavailable"
+    assert outcome.reason_code == "capability_unavailable"
+    assert not outcome.blocked
+    assert not hasattr(outcome, "admitted")
+
+
+def test_manual_action_requirement_is_diagnostic_not_actual_consent():
+    outcome = decide(ev=proof(), cap=capability(explicit_action_required=True))
+    assert outcome.status == "eligible"
+    assert outcome.reason_code == "borrower_eligible_unconfirmed"
+    assert not hasattr(outcome, "consent") and not hasattr(outcome, "admitted")
