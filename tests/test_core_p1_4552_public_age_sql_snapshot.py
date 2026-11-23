@@ -2,7 +2,7 @@
 import json
 import sqlite3
 
-from cifereca.core.notice_c_public_age_sql_snapshot import public_age_facts_txn
+from cifereca.core.notice_c_public_age_sql_snapshot import (\n    public_age_facts_txn, capture_public_age_sources_txn,\n)
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import (
     _opaque_key, _encode_source_row,
@@ -47,3 +47,32 @@ def test_sql_snapshot_rejects_other_source_document():
     document = _seed(db, source)
     other = notice_cover_document_ref(replace(source.key, record_id="search:other"))
     assert public_age_facts_txn(db, other) == ()
+
+
+def test_sql_capture_matches_coordinator_contract():
+    db = sqlite3.connect(":memory:")
+    source = observation()
+    document = _seed(db, source)
+    facts, links = capture_public_age_sources_txn(
+        db, documents=(document, document),
+        target_edition_id=source.key.edition_id,
+    )
+    assert len(facts) == 1
+    assert links == {}
+    other, links = capture_public_age_sources_txn(
+        db, documents=(document,), target_edition_id="edition:other",
+    )
+    assert other == () and links == {}
+
+
+def test_sql_capture_rejects_invalid_inventory():
+    import pytest
+    db = sqlite3.connect(":memory:")
+    with pytest.raises(ValueError, match="invalid_public_age_snapshot_scope"):
+        capture_public_age_sources_txn(
+            db, documents=tuple([None] * 129), target_edition_id="edition:one",
+        )
+    with pytest.raises(ValueError, match="invalid_public_age_snapshot_document"):
+        capture_public_age_sources_txn(
+            db, documents=(None,), target_edition_id="edition:one",
+        )
