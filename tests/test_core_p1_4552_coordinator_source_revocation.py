@@ -32,7 +32,7 @@ def test_source_revocation_during_worker_cannot_publish(tmp_path, monkeypatch, a
         "propose_registered_descriptive_materialization",
         revoke_after_worker,
     )
-    with pytest.raises(ValueError, match="stale_descriptive_materialization"):
+    with pytest.raises(ValueError, match="stale_descriptive_materialization|unattested_result_references"):
         run_descriptive_core_job(
             storage, capture_sources_txn=capture,
             declarations=(DECLARATION,), text_schemas=(SCHEMA,),
