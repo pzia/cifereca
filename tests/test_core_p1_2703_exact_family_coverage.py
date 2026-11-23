@@ -110,3 +110,23 @@ def test_no_observation_is_a_gap_not_a_provider_refusal():
     assert all(x.missing and x.evidence == () for x in empty.values())
     assert all(x.unsupported_count == 0 and x.supported_count == 0
                for x in empty.values())
+
+
+@pytest.mark.parametrize("field", (
+    "status", "implementation_state", "mode", "source_kind",
+))
+@pytest.mark.parametrize("malformed", ([], {}, ["supported"]))
+def test_mutated_unhashable_capability_enums_fail_closed(field, malformed):
+    fact = row("loan.borrow")
+    matrix = CapabilityMatrix("synthetic", (fact,))
+    object.__setattr__(fact, field, malformed)
+    with pytest.raises(ValueError, match="^capability_invalid_contract$"):
+        exact_capability_families(
+            matrix, scope="account", identity_id="alice",
+            account_id="reader-a", credential_id="card-a",
+        )
+    with pytest.raises(ValueError, match="^capability_invalid_contract$"):
+        matrix.exact(
+            "loan.borrow", "account", identity_id="alice",
+            account_id="reader-a", credential_id="card-a",
+        )
