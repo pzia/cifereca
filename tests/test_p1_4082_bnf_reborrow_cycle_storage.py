@@ -123,3 +123,54 @@ def test_concurrent_rearm_allows_only_one_process_and_is_scope_local(tmp_path):
     finally:
         first.close()
         second.close()
+
+
+
+def test_third_cycle_rejects_operation_id_spent_two_generations_ago(tmp_path):
+    db = Storage(tmp_path / "historical-replay.sqlite3")
+    try:
+        key = _confirmed(db, op="cycle-one", loan="loan-1")
+        assert db.loan_borrow_claim_next_cycle(
+            key, "cycle-one", "loan-1", "cycle-two",
+        )[0]
+        assert db.loan_borrow_finish(
+            key, "cycle-two", status="confirmed", accepted=True,
+            verified_loan_id="loan-2",
+        )["status"] == "confirmed"
+        checkpoint = db.metadata_get(key)
+        # The prior implementation checked only the immediately previous
+        # operation_id and would accept reusing the original spent one.
+        assert not db.loan_borrow_claim_next_cycle(
+            key, "cycle-two", "loan-2", "cycle-one",
+        )[0]
+        assert db.metadata_get(key) == checkpoint
+        ok, current = db.loan_borrow_claim_next_cycle(
+            key, "cycle-two", "loan-2", "cycle-three",
+        )
+        assert ok and current["cycle_generation"] == 3
+        assert current["operation_id"] == "cycle-three"
+    finally:
+        db.close()
+
+
+def test_missing_or_corrupt_older_history_refuses_next_cycle(tmp_path):
+    db = Storage(tmp_path / "historical-integrity.sqlite3")
+    try:
+        key = _confirmed(db, op="cycle-one", loan="loan-1")
+        assert db.loan_borrow_claim_next_cycle(
+            key, "cycle-one", "loan-1", "cycle-two",
+        )[0]
+        assert db.loan_borrow_finish(
+            key, "cycle-two", status="confirmed", accepted=True,
+            verified_loan_id="loan-2",
+        )["status"] == "confirmed"
+        history = "loan.borrow.history.v1:" + key.split(":")[-1] + ":1"
+        assert db.metadata_get(history)
+        before = db.metadata_get(key)
+        db.metadata_set(history, "corrupt-checkpoint")
+        assert not db.loan_borrow_claim_next_cycle(
+            key, "cycle-two", "loan-2", "cycle-three",
+        )[0]
+        assert db.metadata_get(key) == before
+    finally:
+        db.close()
