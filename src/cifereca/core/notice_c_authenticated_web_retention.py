@@ -39,6 +39,9 @@ def _epoch(value):
 
 def validated_private_web_field(raw, provider):
     """Closed durable descriptive shape, no provider callbacks or URL secrets."""
+    if (type(provider) is not str or not 1 <= len(provider) <= 64
+            or not provider.isascii() or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", provider)):
+        return None
     if (type(raw) is not dict or set(raw) != {"schema", "connection_epoch", "links"}
             or type(raw["schema"]) is not int or raw["schema"] != 1
             or not _epoch(raw["connection_epoch"])
