@@ -13,10 +13,11 @@ from __future__ import annotations
 import re
 from cifereca_bnf_pret_web import (
     MAX_HTML_BYTES, WebParseError, _dom, _Node,
+    ORIGIN, ProfileScope, parse_loans,
 )
 
 SCHEMA = "bnf.borrow.dom-qualification/1"
-PAGES = frozenset(("profile", "detail", "confirmation"))
+PAGES = frozenset(("profile", "detail", "confirmation", "activity"))
 _SAFE_TAGS = frozenset((
     "html", "body", "main", "header", "footer", "nav", "section",
     "article", "div", "span", "p", "strong", "small", "b", "em",
@@ -114,6 +115,8 @@ def _empty(page: str, status: str = "ok") -> dict[str, object]:
         "identity_bound": False, "quota_verified": False,
         "offer_verified": False, "borrow_permission_verified": False,
         "authorized": False, "eligibility": "unverified",
+        **({"activity_shape": "unknown", "activity_verified": False}
+           if page == "activity" else {}),
     }
 
 
@@ -161,6 +164,24 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
         root = _dom(html)
     except (WebParseError, UnicodeError, ValueError, RecursionError):
         return _empty(page, "unrecognized")
+
+    if page == "activity":
+        # Structural rehearsal only. A locally supplied HTML document has
+        # no authenticated HTTP status, origin or owner attestation. The
+        # dummy scope is never exported or passed to Core/rights storage.
+        dummy = ProfileScope("offline", "offline", "offline")
+        try:
+            snapshot = parse_loans(html, page_url=ORIGIN + "/my_profile/activity",
+                                   expected=dummy, observed=dummy)
+        except (WebParseError, UnicodeError, ValueError, RecursionError):
+            return _empty(page, "unrecognized")
+        if not snapshot.exhaustive:
+            report["activity_shape"] = "partial"
+        elif snapshot.loans:
+            report["activity_shape"] = "nonempty_candidate"
+        else:
+            report["activity_shape"] = "empty_candidate"
+        return report
 
     visited = list(_walk(root))
     books = [node for node, _ in visited
