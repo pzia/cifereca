@@ -58,20 +58,27 @@ def catalogue_source_capabilities(
         if authenticated:
             if accounts is None:
                 accounts = tuple(accounts_for_identity(identity_id)) if callable(accounts_for_identity) else ()
+            # Missing or anonymous credentials are not a real private account.
             matching = {
-                getattr(account, "credential_id", None) for account in accounts
+                credential for account in accounts
                 if getattr(account, "identity_id", None) == identity_id
                 and getattr(account, "provider_id", None) == provider_id
+                and type(credential := getattr(account, "credential_id", None)) is str
+                and credential and credential != "__public__"
             }
             connected = any(
                 getattr(session, "provider_id", None) == provider_id
-                and getattr(session, "credential_id", None) in matching
+                and type(credential := getattr(session, "credential_id", None)) is str
+                and credential in matching
                 and getattr(session, "connected", None) is True
                 for session in sessions
             )
         else:
+            # A private session for the same plugin is not an anonymous
+            # catalogue session and must not imply public availability.
             connected = any(
                 getattr(session, "provider_id", None) == provider_id
+                and getattr(session, "credential_id", None) == "__public__"
                 and getattr(session, "connected", None) is True
                 for session in sessions
             )
