@@ -109,3 +109,34 @@ def test_foreign_account_and_changed_notice_never_read(monkeypatch):
         service, item, identity_id="reader", account_id="account")
     item.source_account_id = "other"
     assert read() is None and events == []
+
+
+def test_advisory_property_is_never_evaluated_at_preparation(monkeypatch):
+    service, item, state, events = _synthetic_scope(monkeypatch)
+    key = ("synthetic", "credential")
+    original = service._sessions[key]
+
+    class Hostile:
+        @property
+        def borrower_information_for(self):
+            events.append("unexpected descriptor")
+            return original.borrower_information_for
+
+        def borrower_information_display(self, *args):
+            return original.borrower_information_display(*args)
+
+    service._sessions[key] = Hostile()
+    assert prepare_borrower_information(
+        service, item, identity_id="reader", account_id="account") is None
+    assert events == []
+
+
+def test_replaced_provider_method_revokes_prepared_read(monkeypatch):
+    service, item, state, events = _synthetic_scope(monkeypatch)
+    read = prepare_borrower_information(
+        service, item, identity_id="reader", account_id="account")
+    assert callable(read)
+    session = service._sessions[("synthetic", "credential")]
+    session.borrower_information_display = lambda *args: events.append("replacement")
+    assert read() is None
+    assert events == []

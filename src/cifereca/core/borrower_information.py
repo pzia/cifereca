@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from time import time
+from inspect import getattr_static, isfunction
 
 from ..models import Account, SearchResult
 from .borrow_action_scope import capture_borrow_action_scope
@@ -72,9 +73,19 @@ def prepare_borrower_information(service, item, *, identity_id, account_id):
 
         if not current():
             return None
-        observe = getattr(session, "borrower_information_for", None)
-        project = getattr(session, "borrower_information_display", None)
-        if not callable(observe) or not callable(project) or not current():
+        names = ("borrower_information_for", "borrower_information_display")
+        abi = tuple(getattr_static(session, name, None) for name in names)
+        # As for the selected delivery ABI, descriptors/properties are not
+        # admissible methods: evaluating them could run I/O during preparation.
+        if not all(isfunction(method) for method in abi):
+            return None
+
+        def abi_current():
+            return all(getattr_static(session, name, None) is method
+                       for name, method in zip(names, abi))
+
+        observe, project = (getattr(session, name) for name in names)
+        if not callable(observe) or not callable(project) or not current() or not abi_current():
             return None
 
         from threading import Lock
@@ -88,13 +99,13 @@ def prepare_borrower_information(service, item, *, identity_id, account_id):
                     return None
                 used = True
             try:
-                if not current():
+                if not current() or not abi_current():
                     return None
                 observation = observe(item, account)
-                if not current():
+                if not current() or not abi_current():
                     return None
                 values = _display_values(project(observation, item, account))
-                return values if current() else None
+                return values if current() and abi_current() else None
             except Exception:
                 return None
 
