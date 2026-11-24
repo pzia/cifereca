@@ -20,6 +20,10 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # migrated forward transactionally.
 CURRENT_SCHEMA_VERSION = 17
 
+# Match the bounded catalogue/variant dependency scan during relocation.
+# Exhaustion is not evidence that an acquisition checkpoint is absent.
+_MAX_RELOCATION_ACQUISITION_ROWS = 100_000
+
 # Frozen 0.8.1 migration cohort, NEVER live provider business policy.
 # v15's persistent generic cardinality table governs modern connections.
 _LEGACY_V5_SINGLE_CONNECTION_PROVIDERS = ("kobo",)
@@ -2663,10 +2667,12 @@ class Storage:
                 if old_text != new_text:
                     import json as _json
                     from .core.duplicate_maintenance_guard import _mentions_exact_path
-                    for (raw,) in db.execute(
-                        "SELECT metadata_json FROM acquisition_ledger"
-                    ):
-                        if type(raw) is not str or len(raw) > 1024 * 1024:
+                    for index, (raw,) in enumerate(db.execute(
+                        "SELECT metadata_json FROM acquisition_ledger LIMIT ?",
+                        (_MAX_RELOCATION_ACQUISITION_ROWS + 1,),
+                    )):
+                        if (index >= _MAX_RELOCATION_ACQUISITION_ROWS
+                                or type(raw) is not str or len(raw) > 1024 * 1024):
                             raise ValueError("relocate_acquisition_context_unavailable")
                         try:
                             value = _json.loads(raw)
