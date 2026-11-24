@@ -316,7 +316,8 @@ class NoticeWorkRuntime:
                         worker.add_done_callback(self._worker_finished)
         # Existing admitted maintenance worker, no extra pool or network.
         # Durable snapshots suffice when original bytes cannot be exported.
-        control.check_cancelled()
+        if control.cancelled():
+            return outcome
         for diagnostic, state in resume_captures(
                 self._storage, lambda diagnostic: resolve_replay_capture_members(
                     self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
