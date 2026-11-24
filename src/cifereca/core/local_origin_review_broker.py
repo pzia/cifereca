@@ -43,6 +43,8 @@ class LocalOriginBatchReadBrokerImpl:
                     file=r["file"], status=r["status"], reason=r["reason"],
                     known_matches=r["known_matches"], more_matches=r["more_matches"],
                     suggestions=tuple(KnownOriginMatch(*m) for m in r["suggestions"]),
+                    c_window_status=r["c_window_status"],
+                    unindexed_sources=r["unindexed_sources"],
                 ) for r in result["entries"]),
                 has_more=result["has_more"], can_continue=following is not None,
             )
