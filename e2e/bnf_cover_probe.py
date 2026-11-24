@@ -915,12 +915,17 @@ def main() -> int:
         )
 
     def complete():
+        def advisory_checkpoint(stage):
+            stages.append("borrower_advisory_" + phase + "_" + stage)
+            report["last_stage"] = stages[-1]
+            save()
+
+        phase = "normal"
+        advisory_checkpoint("setup")
         from borrower_information_native_contract import verify_native_advisory
-        stages.append("borrower_advisory_native")
-        report["last_stage"] = stages[-1]
-        save()
         for changed in (False, True):
-            verify_native_advisory(changed)
+            phase = "stale" if changed else "normal"
+            verify_native_advisory(changed, checkpoint=advisory_checkpoint)
         report["checks"]["borrower_advisory_native_read_only"] = True
         report["checks"]["borrower_advisory_native_stale_callback"] = True
         report["status"] = "PASS"
