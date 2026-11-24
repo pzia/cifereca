@@ -167,3 +167,22 @@ def test_relocation_checkpoint_scan_budget_never_authorizes_unseen_rows(
         _assert_unchanged(service, placement_id, old, new)
     with service.storage._lock, service.storage._connect() as db:
         assert db.execute("SELECT * FROM acquisition_ledger").fetchall() == prior
+
+
+@pytest.mark.parametrize("encoding", ["literal", "json", "escaped", "unknown_escape"])
+def test_generic_metadata_checkpoint_blocks_relocation_without_stranding_path(
+    tmp_path, encoding,
+):
+    service, placement_id, old, new, broker, plan = _case(tmp_path)
+    key = "synthetic.checkpoint"
+    value = {
+        "literal": str(old),
+        "json": json.dumps({"resume": [str(old)]}),
+        "escaped": json.dumps({"resume": [str(old)]}).replace("/", r"\/"),
+        "unknown_escape": r"invalid\u",
+    }[encoding]
+    service.storage.metadata_set(key, value)
+    with pytest.raises(ValueError, match="relocate_generic_metadata_requires_relink"):
+        broker.run(plan, Control())
+    _assert_unchanged(service, placement_id, old, new)
+    assert service.storage.metadata_get(key) == value
