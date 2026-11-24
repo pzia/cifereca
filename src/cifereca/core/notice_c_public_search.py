@@ -631,13 +631,15 @@ def search_public_notice_c(
                 # Never substitute older canonical text for it. Rebind
                 # admitted live N2 only if its exact proof still matches.
                 continue
-            # A missing transient body is compatible with legacy retention,
-            # but an existing fence must not contradict the retained source.
-            # The fingerprint binds revision and projection, not title/URL.
+            # Keep the retained C bibliography searchable even after a
+            # legacy/unqualified source loss, but do not portray its age or
+            # cover as current unless a Core-produced eviction fence attests
+            # the exact next epoch. An incompatible fence means the retained
+            # source was superseded, not merely evicted.
             try:
                 fence = _decode_source_fence(absent_fences.get(source_ref))
                 if fence is not None and (
-                    fence['epoch'] < source.source_epoch
+                    fence['epoch'] != source.source_epoch + int(fence.get('evicted') is True)
                     or fence['proof'] not in {
                         _source_fingerprint(source, ('search_result', 'thumbnail_url'), complete)
                         for complete in (True, False)
@@ -645,6 +647,7 @@ def search_public_notice_c(
                 ):
                     unindexed += 1
                     continue
+                unqualified_retention = fence is None or fence.get('evicted') is not True
             except ValueError:
                 unindexed += 1
                 continue
@@ -661,7 +664,7 @@ def search_public_notice_c(
                 last_seen_at=bib.last_seen_at,
                 epoch=consolidated.epoch,
                 cover_state=aggregate_cover,
-                stale=now - bib.last_seen_at > _STALE_AFTER,
+                stale=unqualified_retention or now - bib.last_seen_at > _STALE_AFTER,
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
                 language_observation=bib.language_observation,
