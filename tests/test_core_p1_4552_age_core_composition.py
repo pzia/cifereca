@@ -1,7 +1,8 @@
 """Q12 composition from independently trusted archive through the real Core pump."""
 from hashlib import sha256
 import json
-from threading import Event, Thread
+from threading import Event
+from concurrent.futures import ThreadPoolExecutor
 from time import time
 
 import pytest
@@ -93,24 +94,24 @@ def test_core_explicit_registry_executes_durable_job_after_restart(tmp_path):
 def test_lifecycle_guard_refuses_concurrent_mutation_without_waiting(tmp_path, monkeypatch):
     with open_core(tmp_path) as core:
         entered, release = Event(), Event()
-        original = core.plugins.state.set_priority
+        state_type = type(core.plugins.state)
+        original = state_type.set_priority
 
         def blocking(*args):
             entered.set()
             assert release.wait(10)
             return original(*args)
 
-        monkeypatch.setattr(core.plugins.state, "set_priority", blocking)
-        worker = Thread(target=core.plugins.set_priority, args=("plugin.age.alpha", None))
-        worker.start()
-        try:
-            assert entered.wait(5)
-            with pytest.raises(ValueError, match="lifecycle_busy"):
-                with core.plugins.hold_descriptive_lifecycle():
-                    pytest.fail("concurrent lifecycle admitted")
-        finally:
-            release.set()
-            worker.join(10)
-        assert not worker.is_alive()
+        monkeypatch.setattr(state_type, "set_priority", blocking)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker = executor.submit(core.plugins.set_priority, "plugin.age.alpha", None)
+            try:
+                assert entered.wait(5)
+                with pytest.raises(ValueError, match="lifecycle_busy"):
+                    with core.plugins.hold_descriptive_lifecycle():
+                        pytest.fail("concurrent lifecycle admitted")
+            finally:
+                release.set()
+            worker.result(timeout=10)
         with core.plugins.hold_descriptive_lifecycle():
             core.plugins.refresh()
