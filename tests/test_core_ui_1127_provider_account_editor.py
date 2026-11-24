@@ -757,3 +757,14 @@ def test_p1_5540_probe_result_invalidated_even_after_draft_revert():
     editor["fields"]["password"].set_text("original")
     assert editor["_probe_draft_revision"] == 2
     assert "non vérifiée" in lifecycle.subtitle
+
+
+def test_p1_5540_owner_edit_invalidates_probe():
+    editor, _, _, _ = _render(interactive=True, data={
+        "id": "a", "identity_id": "alice", "enabled": True,
+    })
+    lifecycle = editor["connection_lifecycle_status"]
+    lifecycle.set_subtitle("Test de connexion réussi")
+    editor["identity"].set_text("bob")
+    assert editor["_probe_draft_revision"] == 1
+    assert "non vérifiée" in lifecycle.subtitle
