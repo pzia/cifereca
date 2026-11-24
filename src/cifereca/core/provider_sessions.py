@@ -486,6 +486,41 @@ def runtime_acquisition_binding(self, provider_id: str) -> str | None:
         return None
 
 
+def configured_connection_observation(self, row) -> str:
+    """Local session observation for an exact saved account; no provider I/O."""
+    from .loan_action_scope import _inert_session_state
+    if type(row) is not dict or row.get("enabled", True) is not True:
+        return "unknown"
+    owner, provider, credential = (row.get(k) for k in ("identity_id", "provider", "id"))
+    if any(type(v) is not str or not v or v != v.strip() for v in (owner, provider, credential)):
+        return "unknown"
+    try:
+        matches = [r for r in self.config.provider_accounts(enabled_only=False)
+                   if type(r) is dict and r.get("provider") == provider and r.get("id") == credential]
+        if len(matches) != 1 or matches[0] != row:
+            return "unknown"
+        key = self._session_key(provider, credential)
+        session = self._sessions.get(key)
+        state = _inert_session_state(session)
+        if state is None or state.get("provider_id") != provider or state.get("credential_id") != credential:
+            return "unknown"
+        if not any(type(a) is Account and a.identity_id == owner
+                   and a.provider_id == provider and a.credential_id == credential
+                   for a in self.accounts):
+            return "unknown"
+        if state.get("credentials") != row.get("credentials", {}) or state.get("options") != row.get("options", {}):
+            return "unknown"
+        if self._sessions.get(key) is not session:
+            return "unknown"
+        if state.get("connected") is True:
+            return "connected"
+        if state.get("connected") is False:
+            return "expired" if state.get("sync_reconnect_reason") == "session_expired" else "disconnected"
+    except Exception:
+        return "unknown"
+    return "unknown"
+
+
 def provider_diagnostic_state(self) -> dict[str, Any]:
     """Expose typed session state, never call an untrusted plugin's serializer.
 
