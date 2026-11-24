@@ -403,3 +403,31 @@ def test_paris_real_inventory_cardinality_preserves_branch_coverage(count):
         assert s.client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("entrypoint", ["loans", "loan_inventory_snapshot"])
+def test_bnf_cancelled_activity_never_returns_inventory(entrypoint):
+    from cifereca.plugin_api import Cancelled
+
+    s, a, client = bnf()
+    original = client.activity
+    try:
+        first = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert first.status == "success" and len(first.loans) == 1
+        before = client.calls.count("activity")
+
+        def cancelled():
+            client.calls.append("activity")
+            raise Cancelled("synthetic cancellation")
+
+        client.activity = cancelled
+        with pytest.raises(Cancelled, match="synthetic cancellation"):
+            getattr(s, entrypoint)(a)
+        assert client.calls.count("activity") == before + 1
+        assert s._last_loan_inventory_evidence is None
+        client.activity = original
+        again = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert again.status == "success"
+        assert [row.id for row in again.loans] == [row.id for row in first.loans]
+    finally:
+        s.close()
