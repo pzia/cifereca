@@ -306,6 +306,77 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_integrated_core_advisory_uses_real_scope_and_provider(self):
+        from types import SimpleNamespace as NS
+        from cifereca.core.borrower_information import prepare_borrower_information
+        from cifereca.gui.borrower_information_action import advisory_text
+
+        for revocation in ("none", "source_before", "provider_before",
+                           "source_during", "connection_before", "account_before"):
+            with self.subTest(revocation=revocation):
+                state = {}
+                def after_detail():
+                    if revocation == "source_during":
+                        state["service"]._source_context_epoch += 1
+
+                session, account, item, calls = self.make(
+                    detail=UNAVAILABLE, after_detail=after_detail)
+                try:
+                    identity = NS(identity_id=account.identity_id)
+                    connection = {
+                        "identity_id": account.identity_id,
+                        "provider_id": account.provider_id,
+                        "credential_id": account.credential_id,
+                        "enabled": True,
+                    }
+                    service = NS(
+                        _source_context_epoch=0,
+                        accounts=[account],
+                        _sessions={(account.provider_id, account.credential_id): session},
+                        _session_key=lambda p, c: (p, c),
+                        identity_by_id=lambda i: identity if i == identity.identity_id else None,
+                        _provider_enabled_for_identity=lambda p, i: True,
+                        _session_for_account=lambda a: session if a is account else None,
+                        storage=NS(
+                            provider_connections=lambda **kwargs: [connection],
+                            identity_for_connection=lambda p, c: identity.identity_id,
+                        ),
+                    )
+                    state["service"] = service
+                    prepared = prepare_borrower_information(
+                        service, item, identity_id=identity.identity_id,
+                        account_id=account.unique_id,
+                    )
+                    self.assertTrue(callable(prepared))
+                    self.assertEqual(calls, [])
+                    if revocation == "source_before":
+                        service._source_context_epoch += 2
+                    elif revocation == "provider_before":
+                        session._epoch = "synthetic-reconnected"
+                    elif revocation == "connection_before":
+                        connection["enabled"] = False
+                    elif revocation == "account_before":
+                        service.accounts = [replace(account)]
+                    values = prepared()
+                    if revocation == "none":
+                        self.assertEqual(values["item_offer"], "unavailable")
+                        self.assertIsNone(values["remaining_quota"])
+                        self.assertEqual(values["permission"], "unknown")
+                        message = advisory_text(values)
+                        self.assertIn("Indisponibilité observée", message)
+                        self.assertIn("Permission : inconnue", message)
+                        self.assertNotIn(account.unique_id, message)
+                    else:
+                        self.assertIsNone(values)
+                    self.assertEqual(calls, [
+                        ("GET", "/my_profile/activity"),
+                        ("GET", "/resources/" + RID),
+                    ] if revocation in ("none", "source_during") else [])
+                    self.assertIsNone(prepared())
+                    self.assertEqual(session._borrow_post_attempts, set())
+                finally:
+                    session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
