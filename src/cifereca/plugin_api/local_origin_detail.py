@@ -118,6 +118,8 @@ class LocalOriginRemoteLoanReport:
     fresh_network_verified: bool = False
     association_authorized: bool = False
     local_description_transmitted: bool = False
+    # Producer's digital branch declaration, not an exhaustive inventory proof.
+    window_status: str = "unverified"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
