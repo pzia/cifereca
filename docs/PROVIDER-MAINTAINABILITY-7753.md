@@ -107,3 +107,22 @@ consent and at-most-once mappings must not be marked complete from this table.
 Paris uses a potentially mutating GET for its explicit borrow route; BnF uses its observed action sequence, not a common POST protocol. Neither may replay an ambiguous mutation. Correction to the earlier matrix: Paris successful empty ListLoans branches are complete; nonempty synthetic rows without raw provenance are unknown. BnF synthetic empty manual inventory is complete but rights/v2 remain partial (#7953). These are different authority boundaries.
 
 Exact-head reception: #7966 bcfb747768ae, PR CI 45367735750 success; #7967 42bac5d73a10, PR CI 45370618617 and ADEPT guard 45370619198 success. Remaining: complete package measurement, cancellation mapping and final integrated gates.
+
+
+## R5 — package-level measurement
+
+Baseline 5552518195074d598efb9d609f96b53f3a2bff96; comparison 75d8f5b42f92546e13a45a40840ac5250039abae. Enumerated top-level Python implementation modules via repository code search, fetched every listed path at both exact SHAs (six new paths return 404 at baseline). Counts match the baseline audit's 9 Paris and 17 BnF modules. Search enumeration is not an independent recursive tree audit. Tests and packaging metadata excluded.
+
+| Package | Modules before / after | Lines before / after | UTF-8 bytes before / after |
+|---|---:|---:|---:|
+| Paris | 9 / 13 | 4996 / 5041 | 246661 / 247923 |
+| BnF | 17 / 19 | 5151 / 5135 | 244361 / 242881 |
+| Total | 26 / 32 | 10147 / 10176 | 491022 / 490804 |
+
+Paris session + client concentration: 193695 / 246661 bytes (78.5%) to 122295 / 247923 (49.3%). BnF session + web: 128576 / 244361 (52.6%) to 114079 / 242881 (47.0%). Total package size essentially stable; maintainability improvement is redistribution and neutral adapter reuse, not wholesale code removal.
+
+Paris measured suffixes (prefix cifereca_paris): session, client, trace, borrow, formats, normalize, constants, bibliography, selected_staging; added pnb, transport, catalogue, selected_delivery. BnF (prefix cifereca_bnf_pret): session, web, http, opds2, paging, borrow, catalog, contract, download, dom_probe, selection, book_actions, observations, cover_matrix, qualification, signed_action, loan_selection; added history and borrow_qualification.
+
+R4 cancellation: Paris test_p1_3122_cancelled_loan_inventory.py::test_cancel_propagates_and_never_generates_inventory_status; BnF tests/test_core_p1_3122_paris_bnf_snapshots.py::test_bnf_cancelled_activity_never_returns_inventory. #7969 exact HEAD 2d150df3e816, PR CI 45371277218 success. Both legacy and typed inventory paths covered; cancellation is not partial success.
+
+Remaining: final integrated gates and qualification-only dependency verification. No live supplier qualification inferred.
