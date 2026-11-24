@@ -261,8 +261,8 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
                                SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
         runtime = NoticeWorkRuntime(db, tasks, clock=lambda: 100)
         try:
-            port = make_port(session, receipt.parser_family_digest,
-                             receipt.parser_implementation_digest)
+            from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+            port = qualify_public_search_replay(session, session.public_search_replay_capability())
             registry = PublicReplayRegistry((port,))
             assert runtime.install_replay_registry(registry) is True
             ref = runtime.request_public_replay(
@@ -304,5 +304,28 @@ def test_retained_replay_adapter_refuses_revoked_session(tmp_path, monkeypatch):
         with port.hold_input(token) as live:
             assert live is None
         assert len(calls) == 1
+    finally:
+        session.close()
+
+
+def test_declared_replay_capability_does_not_survive_reconnect(monkeypatch):
+    from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        capability = session.public_search_replay_capability()
+        port = qualify_public_search_replay(session, capability)
+        token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert port.read_input(token) is not None
+        session.close()
+        assert session.public_search_replay_capability() is None
+        session.connect()
+        new_token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert new_token != token
+        assert port.read_input(new_token) is None
+        with port.hold_input(new_token) as live:
+            assert live is None
+        fresh = qualify_public_search_replay(session, session.public_search_replay_capability())
+        assert fresh.read_input(new_token) is not None
+        assert len(calls) == 2
     finally:
         session.close()
