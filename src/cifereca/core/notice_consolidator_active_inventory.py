@@ -44,7 +44,8 @@ def _read_at(root, parts, limit):
 
 
 @contextmanager
-def hold_active_consolidator_inventory(manager, payload, *, expected_sha256):
+def hold_active_consolidator_inventory(manager, payload, *, expected_sha256,
+                                       expected_selection=None):
     """Yield enabled candidates while managed package mutations are fenced.
 
     No refresh, activation, import, filesystem writes or implicit trust.
@@ -55,6 +56,16 @@ def hold_active_consolidator_inventory(manager, payload, *, expected_sha256):
     if type(manager) is not PluginManager:
         raise ValueError("invalid_consolidator_manager")
     verified = qualify_consolidator_archive(payload, expected_sha256=expected_sha256)
+    # Absence from a single package's active inventory is meaningful only
+    # if that verified archive actually declared the requested coordinate.
+    if expected_selection is not None:
+        from .notice_consolidator_selection import select_consolidator
+        if select_consolidator(
+            tuple(row.declaration for row in verified.candidates),
+            canonical_type=expected_selection[0], scope=expected_selection[1],
+            selected_plugin_id=expected_selection[2], selected_version=expected_selection[3],
+        ) is None:
+            raise ValueError("consolidator_archive_selection_mismatch")
     store = manager.packages
     with package_mutation_lease(store.root):
         if store.active_version(verified.package_id) != verified.package_version:

@@ -11,11 +11,14 @@ def reconcile_active_descriptive_selection(
 
     Caller must serialize PluginManager lifecycle and supply an independently
     trusted archive digest for the configured owner. A disabled or absent
-    candidate yields a tombstone; invalid inventory leaves the prior pin intact.
+    candidate from the exact declared archive yields a tombstone; an unrelated
+    archive or invalid inventory leaves the prior pin intact.
     This is not an execution authorization.
     """
+    coordinate = (canonical_type, scope, selected_plugin_id, selected_version)
+    explicit = None if selected_plugin_id is None and selected_version is None else coordinate
     with hold_active_consolidator_inventory(
-        manager, payload, expected_sha256=expected_sha256,
+        manager, payload, expected_sha256=expected_sha256, expected_selection=explicit,
     ) as candidates:
         return configure_descriptive_selection(
             storage,
