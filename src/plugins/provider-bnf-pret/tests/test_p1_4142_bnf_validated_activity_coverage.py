@@ -197,3 +197,11 @@ def test_empty_but_incomplete_widget_does_not_claim_zero_loans(html):
     result = parsed(html)
     assert result.exhaustive is False
     assert result.status == "partial"
+
+
+@pytest.mark.parametrize("attribute", ['hidden', 'aria-hidden="true"'])
+def test_hidden_empty_active_widget_never_attests_zero(attribute):
+    result = parsed(f'<section class="active-loans" {attribute}></section>')
+    assert result.loans == ()
+    assert result.status == "partial"
+    assert result.exhaustive is False
