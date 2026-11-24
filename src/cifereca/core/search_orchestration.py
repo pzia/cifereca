@@ -2892,7 +2892,18 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     # N2 source or infers an association from an N3 HIT.
                     if retained is not None:
                         from .notice_c_search_receipt import record_search_receipt
-                        record_search_receipt(self.storage, row, persisted, retained, now=now)
+                        receipt = record_search_receipt(
+                            self.storage, row, persisted, retained, now=now,
+                        )
+                        register = getattr(self, "_notice_work_register_search_replay", None)
+                        if receipt is not None and callable(register):
+                            try:
+                                register(retained[0], receipt, identity_id)
+                            except (ValueError, TypeError, AttributeError, OSError, RuntimeError):
+                                # Optional replay qualification must not undo Search.
+                                logging.getLogger("cifereca").warning(
+                                    "TRACE notice c public search code=replay_registration_unavailable"
+                                )
                     row._core_notice_cover_document_ref = persisted.document
                     row._core_notice_cover_document_epoch = persisted.epoch
                     # A public C source is exactly related to ITS OWN
