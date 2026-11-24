@@ -140,6 +140,39 @@ class QualificationProbeTests(unittest.TestCase):
         self.assertEqual(result["pass_label"]["count"], 0)
         self.assert_no_authority(result)
 
+    def test_css_hidden_profile_labels_and_inline_chunks_are_not_candidates(self):
+        for attrs in ('style="DISPLAY: none !important"',
+                      'style="visibility: hidden"', 'aria-hidden=" TRUE "'):
+            with self.subTest(attrs=attrs):
+                html = (
+                    f'<section {attrs}><p>Prêts restants : 4</p>'
+                    '<p>Pass BnF lecture/culture valide</p></section>'
+                    f'<p>Vous avez encore droit à <span {attrs}>0</span> prêt</p>'
+                )
+                report = qualify_bnf_borrow_dom(html, page="profile")
+                self.assertEqual(report["quota_label"]["count"], 0)
+                self.assertEqual(report["pass_label"]["count"], 0)
+                self.assert_no_authority(report)
+
+    def test_css_hidden_book_and_offer_markers_are_not_candidates(self):
+        for style in ("display: none", "visibility:hidden"):
+            with self.subTest(style=style):
+                report = qualify_bnf_borrow_dom(
+                    f'<div style="{style}">' + DETAIL + '</div>', page="detail")
+                self.assertEqual(report["status"], "book_scope_unrecognized")
+                self.assert_no_authority(report)
+                detail = DETAIL.replace(
+                    '<p>Plusieurs exemplaires disponibles</p>',
+                    f'<div style="{style}"><p>Plusieurs exemplaires disponibles</p>'
+                    '<span class="lb_unavailable">Indisponible</span></div>',
+                )
+                report = qualify_bnf_borrow_dom(detail, page="detail")
+                self.assertEqual(report["copies_label"]["count"], 0)
+                self.assertEqual(report["unavailable_markers"], 0)
+                self.assertEqual(report["borrow_controls"], 1)
+                self.assert_no_authority(report)
+                self.assert_private_not_exposed(report)
+
     def test_nested_inline_confirmation_counted_once(self):
         html = CONFIRM.replace("Confirmer l'emprunt",
                                "<span>Confirmer l'<em>emprunt</em></span>")
