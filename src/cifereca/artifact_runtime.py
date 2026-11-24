@@ -2113,6 +2113,11 @@ class LibraryMaintenanceBrokerImpl:
                             raise _LibraryFilenameConflict("Destination modifiée avant enregistrement")
                         os.fsync(target_fd)
                         os.fsync(directory_fd)
+                    # Cancellation during fsync must not commit a stale
+                    # reviewed rename. The existing exception path removes
+                    # only our temporary name while SQLite still names old.
+                    if control is not None:
+                        control.check_cancelled()
                     self.service.storage.relocate_local_path(
                         old, new,
                         identity_id=str(row.get("identity_id") or ""),
