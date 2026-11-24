@@ -105,6 +105,27 @@ def publish_descriptive_materialization(
     the lease this is a staging-only port for unconfigured scopes. A durable
     selection always requires an exact held job.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return publish_descriptive_materialization_txn(
+            db, row, expected_execution_key=expected_execution_key,
+            capture_current_txn=capture_current_txn, journal_lease=journal_lease,
+            journal_now=journal_now, journal_clock=journal_clock, schema=schema,
+        )
+
+
+def publish_descriptive_materialization_txn(
+    db, row: DescriptiveMaterialization, *,
+    expected_execution_key: str | None, capture_current_txn,
+    journal_lease=None, journal_now=None, journal_clock=None, schema=None,
+):
+    """Same sole writer within a caller-owned transaction, including completion.
+
+    The caller must roll back the entire transaction if this raises. No
+    additional claim, commit, network, plugin code or external IO.
+    """
+    if not db.in_transaction:
+        raise ValueError("notice_work_transaction_required")
     key = _row_key(row)
     if journal_clock is not None and (journal_lease is None or not callable(journal_clock)):
         raise ValueError("descriptive_journal_binding_required")
@@ -117,69 +138,67 @@ def publish_descriptive_materialization(
                 or any(ch not in "0123456789abcdef"
                        for ch in expected_execution_key[len("notice-c-exec-v1:"):])):
             raise ValueError("invalid_descriptive_cas")
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        previous = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
-        existing = _decode(previous[0]) if previous else None
-        if (existing.execution_key if existing else None) != expected_execution_key:
-            raise ValueError("descriptive_materialization_cas_changed")
-        selection, admitted, digest = capture_current_txn(db)
-        pin = read_descriptive_selection_txn(
-            db, canonical_type=row.canonical_type, scope=row.scope,
-        )
-        published_pin = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
-        ).fetchone()
-        if pin is None and published_pin is not None:
-            raise ValueError("descriptive_selection_pin_missing")
-        require_descriptive_selection(pin, selection, digest, schema=schema)
-        _validate_pinned_schema(pin, row, selection, schema)
-        require_current_descriptive_materialization(
-            row, selection=selection, admitted=admitted,
-            installed_source_sha256=digest,
-        )
-        if pin is not None and journal_lease is None:
-            raise ValueError("descriptive_journal_binding_required")
-        if journal_lease is not None:
-            from . import notice_c_job_journal as journal
-            from .notice_c_cover_index import canonical_cover_document_ref
-            job = journal._held(db, journal_lease,
-                                journal_clock() if journal_clock is not None else journal_now)
-            input_digest = descriptive_selection_input_digest(row.execution_key, pin)
-            if pin is None:
-                expected = journal.public_job_spec(
-                    "recompute_aggregate", canonical_cover_document_ref(row.target_edition_id),
-                    input_digest=input_digest, implementation_digest=digest,
-                )
-            else:
-                expected = journal.descriptive_job_spec(
-                    target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
-                    scope=row.scope, input_digest=input_digest, implementation_digest=digest,
-                )
-            if job.spec != expected:
-                raise ValueError("descriptive_journal_snapshot_mismatch")
-        encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
-                             separators=(",", ":"))
-        if len(encoded.encode("utf-8")) > _MAX_ROW_BYTES:
-            raise ValueError("descriptive_materialization_unbounded")
+    previous = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+    existing = _decode(previous[0]) if previous else None
+    if (existing.execution_key if existing else None) != expected_execution_key:
+        raise ValueError("descriptive_materialization_cas_changed")
+    selection, admitted, digest = capture_current_txn(db)
+    pin = read_descriptive_selection_txn(
+        db, canonical_type=row.canonical_type, scope=row.scope,
+    )
+    published_pin = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
+    ).fetchone()
+    if pin is None and published_pin is not None:
+        raise ValueError("descriptive_selection_pin_missing")
+    require_descriptive_selection(pin, selection, digest, schema=schema)
+    _validate_pinned_schema(pin, row, selection, schema)
+    require_current_descriptive_materialization(
+        row, selection=selection, admitted=admitted,
+        installed_source_sha256=digest,
+    )
+    if pin is not None and journal_lease is None:
+        raise ValueError("descriptive_journal_binding_required")
+    if journal_lease is not None:
+        from . import notice_c_job_journal as journal
+        from .notice_c_cover_index import canonical_cover_document_ref
+        job = journal._held(db, journal_lease,
+                            journal_clock() if journal_clock is not None else journal_now)
+        input_digest = descriptive_selection_input_digest(row.execution_key, pin)
+        if pin is None:
+            expected = journal.public_job_spec(
+                "recompute_aggregate", canonical_cover_document_ref(row.target_edition_id),
+                input_digest=input_digest, implementation_digest=digest,
+            )
+        else:
+            expected = journal.descriptive_job_spec(
+                target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
+                scope=row.scope, input_digest=input_digest, implementation_digest=digest,
+            )
+        if job.spec != expected:
+            raise ValueError("descriptive_journal_snapshot_mismatch")
+    encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
+                         separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > _MAX_ROW_BYTES:
+        raise ValueError("descriptive_materialization_unbounded")
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, encoded),
+    )
+    if pin is not None:
         db.execute(
             "INSERT INTO metadata(key,value) VALUES(?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, encoded),
+            (_pin_key(key), str(pin.generation)),
         )
-        if pin is not None:
-            db.execute(
-                "INSERT INTO metadata(key,value) VALUES(?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (_pin_key(key), str(pin.generation)),
-            )
-        else:
-            db.execute("DELETE FROM metadata WHERE key=?", (_pin_key(key),))
-        if journal_lease is not None:
-            journal._complete_job_txn(
-                db, journal_lease,
-                now=journal_clock() if journal_clock is not None else journal_now,
-            )
+    else:
+        db.execute("DELETE FROM metadata WHERE key=?", (_pin_key(key),))
+    if journal_lease is not None:
+        journal._complete_job_txn(
+            db, journal_lease,
+            now=journal_clock() if journal_clock is not None else journal_now,
+        )
     return row
 
 
