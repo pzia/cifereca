@@ -165,7 +165,7 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     homepage="https://gallica.bnf.fr",
     account_options=(AccountOptionField("opds_url", "URL du catalogue OPDS",
-                                       default="https://gallica.bnf.fr/opds"),),
+                                       default="https://gallica.bnf.fr/opds", value_type="url", url_schemes=("http", "https")),),
     account_note=(
         "Accès public",
         "Aucun identifiant requis · EPUB + documents sonores publics Gallica",
