@@ -98,6 +98,7 @@ class PublicNoticeWorkPump:
     def _prepare_fetch(self, spec, lease, control):
         return self._fetch_execution.prepare(
             self._storage, spec, lease, control, clock=self._clock,
+            capture_directory=self._capture_directory,
         )
 
     def _prepare(self, spec, control):
