@@ -15,11 +15,15 @@ from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadFactor
 from cifereca.plugin_api.loan_inventory import (
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
+from cifereca.plugin_api import ProviderSearchResponse
 from tests.test_core_p0_4030_private_catalogue import private_rig
 from tests.test_core_p0_4030_public_catalogue import rig, store, rows
 
 
-@pytest.mark.parametrize("public_outcome", ["matches", "http_403"])
+@pytest.mark.parametrize("public_outcome", [
+    "matches", "http_401", "http_403", "http_429", "timeout",
+    "empty_partial", "empty_declared_complete", "empty_unverified",
+])
 def test_three_independent_explicit_catalogue_surfaces_keep_one_readonly_authority(
     private_rig, tmp_path, monkeypatch, public_outcome,
 ):
@@ -47,15 +51,27 @@ def test_three_independent_explicit_catalogue_surfaces_keep_one_readonly_authori
 
     session.loan_inventory_snapshot = inventory
     monkeypatch.setattr(remote, "acquisition_lock_file", lambda: tmp_path / "acquire.lock")
-    if public_outcome == "http_403":
+    if public_outcome.startswith("http_") or public_outcome == "timeout":
         def denied(title, scope, **kwargs):
             calls.append((title, scope, kwargs))
             req = httpx.Request("GET", "https://example.invalid/catalogue")
+            if public_outcome == "timeout":
+                raise httpx.ReadTimeout("PRIVATE fixture timeout", request=req)
             raise httpx.HTTPStatusError(
-                "fixture denied", request=req,
-                response=httpx.Response(403, request=req),
+                "PRIVATE fixture denied", request=req,
+                response=httpx.Response(int(public_outcome[5:]), request=req),
             )
         public_session.search_with_response_facets = denied
+    elif public_outcome.startswith("empty_"):
+        def empty(title, scope, **kwargs):
+            calls.append((title, scope, kwargs))
+            return ProviderSearchResponse(
+                [], partial=public_outcome == "empty_partial",
+                catalogue_complete={"empty_partial": False,
+                                    "empty_declared_complete": True,
+                                    "empty_unverified": None}[public_outcome],
+            )
+        public_session.search_with_response_facets = empty
 
     before, contents = rows(service.storage), path.read_bytes()
     broker = LocalOriginDetailReadFactory(service).for_activation(
@@ -87,12 +103,24 @@ def test_three_independent_explicit_catalogue_surfaces_keep_one_readonly_authori
             ("one", "isbn_claim_ambiguous"),
             ("two", "isbn_claim_ambiguous"),
         ]
-    else:
-        assert public_report.status == "access_denied"
+    elif public_outcome.startswith("empty_"):
+        assert public_report.status == "partial"
         assert public_report.matches == ()
+        assert public_report.window_status == {
+            "empty_partial": "incomplete",
+            "empty_declared_complete": "declared_complete",
+            "empty_unverified": "unverified",
+        }[public_outcome]
+    else:
+        assert public_report.status == {
+            "http_401": "auth_required", "http_403": "access_denied",
+            "http_429": "rate_limited", "timeout": "timeout",
+        }[public_outcome]
+        assert public_report.matches == ()
+        assert public_report.window_status == "unverified"
     assert broker.search_public(token=public.token, confirmed=True) is None
 
-    # A public 403 is not a veto on independently admitted local cache
+    # A public failure or empty window is not a veto on independently admitted local cache
     # comparison or the user's explicit read of one account's typed loans.
     private_report = broker.compare_private(token=private.token, confirmed=True)
     assert private_report is not None and private_report.status == "partial"
