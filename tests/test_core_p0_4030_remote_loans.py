@@ -349,3 +349,60 @@ def test_safe_typed_inventory_date_remains_visible_but_not_network_freshness(cas
     assert result["observed_at"] == "2026-01-01T00:00:00Z"
     assert not result["fresh_network_verified"] and not result["coverage_complete"]
     assert calls == ["typed_inventory"]
+
+
+@pytest.mark.parametrize("kind,expected", [
+    ("complete", "declared_digital_branches_complete"),
+    ("partial", "incomplete"),
+    ("pagination", "incomplete"),
+    ("unknown", "unverified"),
+    ("unknown_medium", "unverified"),
+    ("none", "unverified"),
+    ("physical_only", "unverified"),
+    ("truncated", "incomplete"),
+])
+def test_typed_loan_window_claim_is_visible_but_never_negative_authority(
+    case, monkeypatch, kind, expected,
+):
+    from tests.test_core_p0_7092_origin_detail_controller import mounted, deliver
+
+    service, request, account, session, path, calls, choice, observed = case
+    original = session.loan_inventory_snapshot
+
+    def reader(selected):
+        snapshot = original(selected)
+        branches = snapshot.branches
+        if kind == "partial":
+            return replace(snapshot, status="partial")
+        if kind == "pagination":
+            branches = (LoanBranchCoverage("loans", "digital", "partial", False),)
+        elif kind == "unknown":
+            branches = (LoanBranchCoverage("loans", "digital"),)
+        elif kind == "unknown_medium":
+            branches = (*branches, LoanBranchCoverage("other", "unknown"))
+        elif kind == "none":
+            branches = ()
+        elif kind == "physical_only":
+            branches = (LoanBranchCoverage("loans", "physical", "complete", True),)
+        elif kind == "truncated":
+            monkeypatch.setattr(remote, "_MAX_MATCHES", 0)
+        return replace(snapshot, branches=branches)
+
+    session.loan_inventory_snapshot = reader
+    before, data = rows(service.storage), path.read_bytes()
+    c, dispose, host, active, tasks, actions, groups, toasts = mounted(
+        (service, session, request, calls, path))
+    assert actions["preview"][2]()
+    deliver(tasks)
+    assert actions["remote-loan-0"][2]()
+    work, done = tasks[-1]
+    report = work()
+    assert report.status == "partial" and report.window_status == expected
+    assert not report.coverage_complete and not report.fresh_network_verified
+    assert not report.association_authorized and not report.local_description_transmitted
+    done(report)
+    assert "Fenêtre fournisseur" in repr(groups[-2])
+    assert "Aucune origine ni droit attestés" in repr(groups[-2])
+    assert calls == ["typed_inventory"]
+    assert rows(service.storage) == before and path.read_bytes() == data
+    dispose()
