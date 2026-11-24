@@ -616,7 +616,7 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
         # The visible traversal cannot count hidden loan cards. If a
         # collapsed/template card exists, visible positives remain usable
         # but their count cannot attest exhaustive coverage.
-        if hidden and node.has_class("js-loan"):
+        if hidden and (node is section or node.has_class("js-loan")):
             return True
         pending.extend((child, hidden) for child in node.children
                        if isinstance(child, _Node))
