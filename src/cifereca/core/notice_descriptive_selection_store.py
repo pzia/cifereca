@@ -111,3 +111,14 @@ def require_descriptive_selection(pin, selection, digest):
     if pin is not None and (pin.selection != selection
                             or pin.installed_source_sha256 != digest):
         raise ValueError("descriptive_selection_changed")
+
+
+def descriptive_selection_input_digest(execution_key, pin):
+    """Journal input identity includes the authority generation, if pinned."""
+    if pin is None:
+        return sha256(execution_key.encode("ascii")).hexdigest()
+    raw = json.dumps(
+        ("notice.c.descriptive-selection-input.v1", execution_key, pin.generation),
+        separators=(",", ":"),
+    ).encode("ascii")
+    return sha256(raw).hexdigest()
