@@ -225,7 +225,8 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         db.close()
 
 
-def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
+@pytest.mark.parametrize("version_change", (False, True))
+def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch, version_change):
     from types import SimpleNamespace
     from cifereca.core.notice_c_raw_input_receipt import read_public_raw_input_receipt
     from cifereca.core import notice_c_search_receipt
@@ -264,12 +265,24 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
             from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
             port = qualify_public_search_replay(session, session.public_search_replay_capability())
             registry = PublicReplayRegistry((port,))
-            assert runtime.stage_replay_port(port, receipt) is True
-            ref = runtime.request_public_replay(
-                source, receipt,
-                implementation_digest=receipt.parser_implementation_digest,
-                expected_generation=0,
-            )
+            assert runtime.register_search_replay(source, receipt, port) is None
+            if version_change:
+                # Model a qualified new parser against the still-live old
+                # input, without claiming retention through process restart.
+                monkeypatch.setattr(client, "_PARSER_IMPLEMENTATION_DIGEST",
+                                    sha256(b"numilog.public.search.test-upgrade").hexdigest())
+                upgraded = qualify_public_search_replay(
+                    session, session.public_search_replay_capability(),
+                )
+                ref = runtime.register_search_replay(source, receipt, upgraded)
+                assert ref is not None
+                assert runtime.register_search_replay(source, receipt, upgraded) == ref
+            else:
+                ref = runtime.request_public_replay(
+                    source, receipt,
+                    implementation_digest=receipt.parser_implementation_digest,
+                    expected_generation=0,
+                )
             deadline = monotonic() + 10
             while monotonic() < deadline:
                 job = journal.read_job(db, ref)
