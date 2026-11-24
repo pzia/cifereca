@@ -312,25 +312,17 @@ class LocalOriginDetailReadBrokerImpl:
             )
             if not live():
                 return None
-            if following is not None:
-                with self._lock:
-                    if self._revoked or self._generation != generation:
-                        return None
-                    # Replace the consumed token with one continuation.
-                    # Never expose the private cursor or expand the active
-                    # per-catalogue choice budget.
-                    if next_token in self._private or len(self._private) >= 16:
-                        return None
-                    self._private[next_token] = (choice, view, generation, following)
-            if not live():
-                with self._lock:
-                    if next_token is not None:
-                        self._private.pop(next_token, None)
-                return None
             with self._lock:
                 if (self._revoked or self._generation != generation
                         or self._declaration_window is not declaration_window):
                     return None
+                # Publish the continuation and declaration window together.
+                # A superseded concurrent comparison must not consume an
+                # unreachable continuation slot or revive older advice.
+                if following is not None:
+                    if next_token in self._private or len(self._private) >= 16:
+                        return None
+                    self._private[next_token] = (choice, view, generation, following)
                 self._declaration_choices = {
                     candidate_token: (choice, row, continuation, view, generation)
                     for row, candidate_token in zip(result["candidates"], candidate_tokens)
@@ -338,6 +330,8 @@ class LocalOriginDetailReadBrokerImpl:
                 }
             if not live():
                 with self._lock:
+                    if next_token is not None:
+                        self._private.pop(next_token, None)
                     if self._declaration_window is declaration_window:
                         self._declaration_choices.clear()
                         self._native_preview = None
