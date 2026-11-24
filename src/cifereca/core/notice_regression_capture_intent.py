@@ -92,7 +92,7 @@ def export_capture(storage, diagnostic, *, members, directory=None):
         _, state = write_regression_capture(
             diagnostic_id=diagnostic, generation=record["generation"],
             members=safe, directory=directory)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         state = "failed"
     return _record_outcome(storage, key, row[0], record, state)
 
@@ -108,8 +108,19 @@ def _record_outcome(storage, key, previous, record, state):
         updated.pop("snapshots", None)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
-                   (json.dumps(updated, sort_keys=True), key, previous))
+        changed = db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
+                             (json.dumps(updated, sort_keys=True), key, previous))
+        if changed.rowcount == 0:
+            current = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            if current is None:
+                return None
+            winner = json.loads(current[0])
+            if state in ("complete", "partial") and winner["capture_state"] in ("pending", "failed"):
+                # A successful immutable export takes precedence over a concurrent failure.
+                db.execute("UPDATE metadata SET value=? WHERE key=?",
+                           (json.dumps(updated, sort_keys=True), key))
+            else:
+                return winner["capture_state"]
     return state
 
 
@@ -163,7 +174,7 @@ def resume_captures(storage, resolve_members, *, directory=None, limit=8):
             if row is not None:
                 record = json.loads(row[0])
                 if record["capture_state"] in ("pending", "failed"):
-                    _record_outcome(storage, key, row[0], record, state)
+                    state = _record_outcome(storage, key, row[0], record, state)
                 else:
                     state = record["capture_state"]
         outcomes.append((diagnostic, state))
