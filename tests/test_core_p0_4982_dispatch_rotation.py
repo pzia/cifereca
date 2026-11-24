@@ -212,3 +212,35 @@ def test_circuit_blocked_preserves_cursor_and_does_not_stop_local_lane():
     tick = policy.tick(view.read, lambda _: pytest.fail("wrong offer port"),
                        offer_lane=offer_lane)
     assert [int(ref.key, 16) for ref in tick.handles] == [1, 2]
+
+
+def test_network_circuit_lanes_both_progress_with_continuous_local_work():
+    from cifereca.core.notice_c_dispatch_rotation import _PURCHASE_LANE
+
+    fetch, local = KINDS[0], KINDS[3]
+    lanes = (fetch, local, _PURCHASE_LANE)
+    view = JournalView([row(kind, index + 1)
+                        for index, kind in enumerate(lanes * 3)])
+    policy = PublicDispatchRotation(lanes)
+    counts = Counter()
+    seen = set()
+    for _ in range(48):
+        network_used = False
+
+        def offer_lane(kind, ref):
+            nonlocal network_used
+            if kind != local:
+                if network_used:
+                    return RotationOffer("circuit_blocked")
+                network_used = True
+            counts[kind] += 1
+            seen.add(ref.key)
+            view.replace(ref)
+            return RotationOffer("accepted", ref)
+
+        tick = policy.tick(view.read, lambda _: pytest.fail("wrong offer port"),
+                           offer_lane=offer_lane)
+        assert len(tick.handles) <= 2 and tick.examined <= 32
+    assert counts[local] == 48
+    assert min(counts[fetch], counts[_PURCHASE_LANE]) >= 16
+    assert seen == set(view.rows)

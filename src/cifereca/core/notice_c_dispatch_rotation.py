@@ -128,7 +128,11 @@ class PublicDispatchRotation:
                     continue
                 more = True
                 if len(handles) == _SUBMIT_BUDGET:
-                    self._next = index
+                    # A circuit refusal earlier in this tick must not lose
+                    # its next opportunity merely because local work filled
+                    # the global budget. Otherwise a hot network lane can
+                    # repeatedly win over the other network lane.
+                    self._next = next((lane for lane in order if lane in blocked_lanes), index)
                     return RotationTick(tuple(handles), examined, corrupt, duplicates, True)
                 check()
                 ref = page.refs[position]
