@@ -18,7 +18,7 @@ from .notice_c_reparse_requests import (
 from .notice_cover_repository import _opaque_key, _persist_notice_cover_txn
 from .notice_cover_projection import project_notice_cover_attribute
 from .notice_source_observation import NoticeSourceObservation, _id
-from .notice_parse_witness import review_admitted_source_parse_witness
+from .notice_parse_witness import admitted_source_scope_sha256, review_admitted_source_parse_witness
 from .notice_parse_witness_store import _PREFIX as _WITNESS_PREFIX, _decode as _decode_witness
 from .notice_parse_witness_alert import record_parse_witness_review_txn
 from .notice_c_work_bridge import WitnessRejectedPublication
@@ -170,7 +170,7 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         )
         # Recheck the currently approved pin under the same publication lock.
         # A late approval must protect the last healthy source too.
-        scope = raw.admitted_source_scope_sha256(result.key, parser_id=result.parser_id)
+        scope = admitted_source_scope_sha256(result.key, parser_id=result.parser_id)
         pin = db.execute("SELECT value FROM metadata WHERE key=?",
                          (_WITNESS_PREFIX + scope,)).fetchone()
         if pin is not None:
