@@ -193,3 +193,20 @@ def test_recover_archive_linked_before_sqlite_outcome(tmp_path, monkeypatch, raw
         assert intent.pending_capture_ids(db) == ()
     finally:
         db.close(final=True)
+
+
+@pytest.mark.parametrize("name", ("baseline.json", "last_healthy.json", "current_parse.json",
+                                  "environment.json", "diff.json"))
+def test_resolver_cannot_fabricate_omitted_snapshot(tmp_path, name):
+    db = Storage(tmp_path / "snapshot.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            diagnostic = enqueue_capture_txn(sql, scope="a"*64, generation=1,
+                review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                input_digest=sha256(b"body").hexdigest())
+        assert export_capture(db, diagnostic, members={name: b"{}"},
+                              directory=tmp_path) == "failed"
+        assert not list(tmp_path.glob("*.zip"))
+    finally:
+        db.close(final=True)
