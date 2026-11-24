@@ -49,3 +49,25 @@ def test_public_age_job_empty_inventory_abstains():
         selected_version="1.0", target_edition_id="edition:1",
         now=100, lease_seconds=30,
     ) is None
+
+
+def test_public_age_job_rejects_unbounded_or_callback_inventory_before_dispatch():
+    import pytest
+
+    class ForeignInventory:
+        def __iter__(self):
+            raise AssertionError("foreign iterator must not execute")
+
+    with patch(
+        "cifereca.core.notice_c_public_age_consolidation.run_descriptive_core_job",
+    ) as runner:
+        for inventory in (ForeignInventory(), ["doc"] * 129, "doc"):
+            with pytest.raises(ValueError, match="invalid_public_age_snapshot_scope"):
+                run_public_age_descriptive_job(
+                    object(), source_documents=inventory,
+                    declarations=(), text_schemas=(), installed=None,
+                    scope="public", selected_plugin_id="plugin.age",
+                    selected_version="1.0", target_edition_id="edition:1",
+                    now=100, lease_seconds=30,
+                )
+        runner.assert_not_called()
