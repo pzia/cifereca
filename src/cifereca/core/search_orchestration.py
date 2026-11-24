@@ -2898,7 +2898,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                         register = getattr(self, "_notice_work_register_search_replay", None)
                         if receipt is not None and callable(register):
                             try:
-                                register(retained[0], receipt, identity_id)
+                                register(retained[0], persisted, receipt, identity_id)
                             except (ValueError, TypeError, AttributeError, OSError, RuntimeError):
                                 # Optional replay qualification must not undo Search.
                                 logging.getLogger("cifereca").warning(
