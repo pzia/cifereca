@@ -144,6 +144,7 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     approved = _decode(pin[0], scope)
     review = review_admitted_source_parse_witness(
         approved.baseline, observation=candidate, input_sha256=input_digest,
+        publication_review=True,
     )
     record_parse_witness_review_txn(
         db, key=candidate.key, parser_id=candidate.parser_id,
