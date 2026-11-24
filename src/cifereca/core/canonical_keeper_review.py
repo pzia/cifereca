@@ -19,6 +19,7 @@ from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 from .canonical_dedup_preview import preview_canonical_duplicate
 from .derived_variant_publication import _file_signature
 from .library_inventory import _open_root
+from .library_sqlite_freshness import sqlite_source_stamp
 
 
 _MAX_ROWS = 4096
@@ -106,6 +107,9 @@ def review_canonical_keeper(
             return blocked("nested_transaction")
         if storage.schema_version() < 14:
             return blocked("schema_unavailable")
+        stamp = sqlite_source_stamp(storage.path)
+        if stamp is None:
+            return blocked("inspection_unavailable")
 
         def snapshot():
             with storage._lock:
@@ -250,6 +254,12 @@ def review_canonical_keeper(
                                excluded=excluded)
         except (OSError, ValueError):
             return blocked("physical_evidence_changed", eligible=len(eligible),
+                           excluded=excluded)
+        # A new checkpoint, declaration or reference may be committed after
+        # an earlier pair passed its own dependency check without changing
+        # the selected placement rows. Never publish that mixed SQL image.
+        if sqlite_source_stamp(storage.path) != stamp:
+            return blocked("snapshot_changed", eligible=len(eligible),
                            excluded=excluded)
         return CanonicalKeeperReview(
             "review_required", "aesthetic_preference_only",
