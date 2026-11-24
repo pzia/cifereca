@@ -75,6 +75,8 @@ def write_regression_capture(*, diagnostic_id, generation, members, directory=No
                                    for name, data in expected.items())):
                         raise ValueError("regression_capture_conflict")
         return target, manifest["status"]
+    except (zipfile.BadZipFile, RuntimeError, EOFError, UnicodeError, NotImplementedError) as exc:
+        raise ValueError("regression_capture_conflict") from exc
     finally:
         os.unlink(temporary)
 
