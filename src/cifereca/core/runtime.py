@@ -111,6 +111,28 @@ class CiferecaCore:
         if notice_work is not None and activate_plugins and not no_plugins:
             from .notice_c_purchase_runtime import install_purchase_runtime
             install_purchase_runtime(library, notice_work)
+            if notice_replay_registry is None:
+                from .notice_c_public_search_replay import qualify_public_search_replay
+                from .notice_c_public_search_replay import _anonymous_session
+
+                def register_search_replay(session, receipt, identity_id):
+                    # The admitted Search producer must still be the exact
+                    # registered public singleton, enabled for this profile.
+                    provider_id = getattr(session, "provider_id", None)
+                    if not _anonymous_session(session, provider_id):
+                        return False
+                    with library._source_context_lock:
+                        key = library._session_key(provider_id, "__public__")
+                        if (library._sessions.get(key) is not session
+                                or library._provider_enabled_for_identity(
+                                    provider_id, identity_id) is not True):
+                            return False
+                        capability = session.public_search_replay_capability()
+                        port = qualify_public_search_replay(session, capability)
+                        return notice_work.stage_replay_port(port, receipt)
+
+                library._notice_work_register_search_replay = register_search_replay
+            library._notice_work_request_public_replay = notice_work.request_public_replay
         return cls(
             config=config,
             storage=storage,
