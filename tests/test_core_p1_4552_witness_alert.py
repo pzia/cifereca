@@ -116,3 +116,55 @@ def test_capture_diagnostics_rejects_unbounded_or_foreign_payloads():
             raise OSError("journal unavailable")
 
     report_capture_diagnostic(BrokenJournal(), "a"*64, "partial", rejected=True)
+
+
+def test_capture_budget_preserves_parser_context_when_observations_are_large(tmp_path):
+    import json
+    from hashlib import sha256
+    from cifereca.core.notice_parse_witness import admitted_source_scope_sha256
+    from cifereca.core.notice_parse_witness_store import _PREFIX as pin_prefix
+    from cifereca.core.notice_parse_witness_alert import review_publication_txn
+    from cifereca.core.notice_regression_capture_intent import (
+        _PREFIX as capture_prefix, export_capture,
+    )
+    from tests.test_core_p1_4552_persistent_parse_witness import RESPONSE, observation
+    import zipfile
+
+    db = Storage(tmp_path / "budget.sqlite")
+    try:
+        put(db)
+        current = observation(version="1.0.0")
+        scope = admitted_source_scope_sha256(KEY, parser_id=current.parser_id)
+        pin = db.metadata_get(pin_prefix + scope)
+        # Fit the old three snapshots in 16 KiB, leaving only 32 bytes
+        # for environment.json, which previously disappeared entirely.
+        fields = {"Title": "Un titre", "ExtraA": "a" * 7900, "ExtraB": "b"}
+        sample = observation(fields=fields)
+        size = 16384 - 32 - sum(len(v.encode("utf-8")) for v in (
+            pin, current.raw_json, sample.raw_json,
+        ))
+        assert 0 < size < 8190
+        fields["ExtraB"] += "b" * size
+        candidate = observation(fields=fields)
+        assert len(candidate.raw_json.encode("utf-8")) + len(pin.encode("utf-8")) + len(current.raw_json.encode("utf-8")) == 16384 - 32
+        digest = sha256(RESPONSE).hexdigest()
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            reject, diagnostic = review_publication_txn(
+                sql, current=current, candidate=candidate, input_digest=digest,
+                implementation_digest="a" * 64,
+            )
+        assert reject and diagnostic
+        snapshots = json.loads(db.metadata_get(capture_prefix + diagnostic))["snapshots"]
+        assert sum(len(v.encode("utf-8")) for v in snapshots.values()) <= 16384
+        assert json.loads(snapshots["environment.json"])["implementation_sha256"] == "a" * 64
+        assert json.loads(snapshots["environment.json"])["input_sha256"] == digest
+        assert "current_parse.json" not in snapshots
+        assert export_capture(db, diagnostic, members={}, directory=tmp_path) == "partial"
+        archive, = tmp_path.glob("*.zip")
+        with zipfile.ZipFile(archive) as result:
+            manifest = json.loads(result.read("manifest.json"))
+            assert "environment.json" not in manifest["omitted"]
+            assert "current_parse.json" in manifest["omitted"]
+    finally:
+        db.close(final=True)

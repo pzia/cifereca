@@ -167,7 +167,11 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     }
     bounded = {}
     remaining = 16384
-    for name, value in snapshots.items():
+    # Technical context (parser versions and input/implementation digests)
+    # is needed even for a partial archive. Reserve it before the potentially
+    # large baseline and observation snapshots, without raising the budget.
+    for name in ("environment.json", "baseline.json", "last_healthy.json", "current_parse.json"):
+        value = snapshots[name]
         size = len(value.encode("utf-8"))
         if size <= remaining:
             bounded[name] = value
