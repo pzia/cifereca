@@ -900,3 +900,43 @@ def test_fresh_account_blocker_is_distinct_from_unknown(harness, facts):
     assert _preview(service, row, now=999).rejection_reasons == ("scope_unverified",)
     assert session.connected is True
     assert session.calls == 0
+
+
+@pytest.mark.parametrize(("missing", "changes"), [
+    ("evidence", {"permission": "denied"}),
+    ("evidence", {"quota_state": "exhausted"}),
+    ("evidence", {"account_state": "renewal_pending"}),
+    ("edition_evidence", {"remaining_loans": 0}),
+    ("edition_evidence", {"subscription": "expired"}),
+    ("edition_evidence", {"permission": "denied"}),
+])
+def test_independent_fresh_negative_is_projected_without_second_fact(
+    harness, missing, changes,
+):
+    service, account, session = harness
+    row = _candidate()
+    retained = "edition_evidence" if missing == "evidence" else "evidence"
+    row = replace(row, **{
+        missing: None, retained: replace(getattr(row, retained), **changes),
+    })
+    preview = _preview(service, row)
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("borrower_blocked",)
+    assert session.calls == 0
+    assert service.storage.metadata_get(borrow_claim_key(account, row.notice)) is None
+    assert _preview(service, row, now=1).rejection_reasons == ("scope_unverified",)
+
+
+def test_independent_positive_or_foreign_exact_denial_is_not_a_blocker(harness):
+    service, account, session = harness
+    row = _candidate()
+    assert _preview(service, replace(
+        row, edition_evidence=None,
+    )).rejection_reasons == ("permission_unverified",)
+    assert _preview(service, replace(
+        row, evidence=None,
+        edition_evidence=replace(
+            row.edition_evidence, record_id="different-record", permission="denied",
+        ),
+    )).rejection_reasons == ("scope_unverified",)
+    assert session.calls == 0
