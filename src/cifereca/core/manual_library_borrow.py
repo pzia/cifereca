@@ -494,7 +494,11 @@ def manual_borrow(
             return _result("blocked", "borrow_scope_changed")
         loan = session.borrow_explicit_with_claim(
             item, account, admission=admission, claimed_receipt=receipt,
-            confirmed=True, core_scope_current=lambda: current(),
+            confirmed=True, core_scope_current=lambda: (
+                current() and observed_borrow_eligibility(
+                    session, account, item, fact,
+                )[0] != "blocked"
+            ),
         )
         if (not current() or type(loan) is not Loan
                 or loan.record_id != item.record_id
