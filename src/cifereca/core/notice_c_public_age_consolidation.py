@@ -39,3 +39,27 @@ def run_public_age_descriptive_job(
         expected_generation=expected_generation,
         expected_execution_key=expected_execution_key,
     )
+
+
+def run_origin_linked_age_descriptive_job(
+    storage, *, group_document, declarations, text_schemas, installed,
+    scope, selected_plugin_id, selected_version, target_edition_id,
+    now, lease_seconds, expected_generation=0, expected_execution_key=None,
+):
+    """Reattest the directed group at capture and fenced publication."""
+    from .notice_c_public_age_inheritance import capture_origin_linked_age_sources_txn
+
+    def capture(db):
+        return capture_origin_linked_age_sources_txn(
+            db, group_document=group_document, target_edition_id=target_edition_id,
+        )
+
+    return run_descriptive_core_job(
+        storage, capture_sources_txn=capture,
+        declarations=declarations, text_schemas=text_schemas,
+        installed=installed, canonical_type="age", scope=scope,
+        selected_plugin_id=selected_plugin_id, selected_version=selected_version,
+        target_edition_id=target_edition_id, now=now, lease_seconds=lease_seconds,
+        expected_generation=expected_generation,
+        expected_execution_key=expected_execution_key,
+    )
