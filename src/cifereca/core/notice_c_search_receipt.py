@@ -5,6 +5,7 @@ from time import monotonic, time
 
 from ..plugin_api import ProviderError
 from .notice_c_raw_input_receipt import record_public_raw_input_receipt
+from .search_orchestration import _CORE_PUBLIC_COVER_WITNESS
 
 
 def record_search_receipt(storage, row, source, retained, *, now):
@@ -15,6 +16,7 @@ def record_search_receipt(storage, row, source, retained, *, now):
         return None
     evidence = getattr(row, "_core_notice_parse_input", None)
     if (type(evidence) is not tuple or len(evidence) != 7
+            or evidence[0] is not _CORE_PUBLIC_COVER_WITNESS
             or evidence[1:5] != (
                 source.observation.key, source.observation.raw_json,
                 source.observation.parser_id, source.observation.parser_version)
