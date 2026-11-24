@@ -199,7 +199,7 @@ def test_empty_but_incomplete_widget_does_not_claim_zero_loans(html):
     assert result.status == "partial"
 
 
-@pytest.mark.parametrize("attribute", ['hidden', 'aria-hidden="true"'])
+@pytest.mark.parametrize("attribute", ['hidden', 'aria-hidden="true"', 'aria-hidden="TRUE"', 'aria-hidden=" true "'])
 def test_hidden_empty_active_widget_never_attests_zero(attribute):
     # DOM.walk() ignores hidden sections entirely: no recognized visible widget
     # exists, so the correct fail-closed outcome is a parsing error.
