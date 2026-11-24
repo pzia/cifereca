@@ -33,3 +33,29 @@ def test_capture_intent_rollback_restart_retry(tmp_path):
         assert len(list(tmp_path.glob("*.zip"))) == 1
     finally:
         db.close(final=True)
+
+
+def test_restart_drain_is_bounded_and_skips_completed(tmp_path):
+    from cifereca.core.notice_regression_capture_intent import pending_capture_ids, resume_captures
+    db = Storage(tmp_path / "drain.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            for scope in ("a"*64, "b"*64):
+                enqueue_capture_txn(sql, scope=scope, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"body").hexdigest())
+        calls = []
+        def resolve(diagnostic):
+            calls.append(diagnostic)
+            return {}
+        assert len(pending_capture_ids(db)) == 2
+        first = resume_captures(db, resolve, directory=tmp_path, limit=1)
+        assert len(first) == 1 and first[0][1] == "partial"
+        assert len(pending_capture_ids(db)) == 1
+        second = resume_captures(db, resolve, directory=tmp_path, limit=1)
+        assert len(second) == 1 and second[0][1] == "partial"
+        assert resume_captures(db, resolve, directory=tmp_path) == ()
+        assert len(set(calls)) == 2
+    finally:
+        db.close(final=True)
