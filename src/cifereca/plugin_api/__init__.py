@@ -32,6 +32,7 @@ from .capability_families import (
 )
 from .provider_rights_observation import (RIGHTS_OBSERVATION_CONTRACT, ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot)
 from .downloadable_resources import (
+    LegacyRightsResourceAdapter,
     DOWNLOADABLE_RESOURCE_CONTRACT, SourceReference, DownloadCapability,
     OptionalRightMetadata, ResourceObservation, ResourceSnapshot,
     DeliveryCandidate, RetryableContentDownload, from_legacy_rights_snapshot, as_legacy_rights_snapshot,
@@ -146,7 +147,7 @@ __all__ = [
     "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
-    "DeliveryCandidate", "RetryableContentDownload", "ContentTransferUnavailable", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
+    "LegacyRightsResourceAdapter", "DeliveryCandidate", "RetryableContentDownload", "ContentTransferUnavailable", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
     "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "RuntimeDispatchNotSubmitted", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",

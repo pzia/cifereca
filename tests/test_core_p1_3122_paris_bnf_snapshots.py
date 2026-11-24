@@ -252,3 +252,98 @@ def test_paris_connected_reader_replaced_mid_read_cannot_publish_loan_snapshot()
         assert snap.reason_code == "read_failed"
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("session_class", [ParisProviderSession, BnfProviderSession])
+def test_shared_adapter_on_real_provider_classes(session_class):
+    from cifereca.plugin_api import LegacyRightsResourceAdapter, ProviderSession
+    assert issubclass(session_class, LegacyRightsResourceAdapter)
+    assert session_class.downloadable_resource_snapshot is LegacyRightsResourceAdapter.downloadable_resource_snapshot
+    assert session_class.downloadable_selected_offer_snapshot is LegacyRightsResourceAdapter.downloadable_selected_offer_snapshot
+    assert session_class._downloadable_scope is LegacyRightsResourceAdapter._downloadable_scope
+    assert not hasattr(ProviderSession, "downloadable_resource_snapshot")
+
+
+@pytest.mark.parametrize("provider", ["paris", "bnf"])
+def test_real_provider_candidate_wrapper_preserves_revocation(provider, tmp_path):
+    from unittest.mock import Mock
+    from cifereca.plugin_api import ProviderCapabilityError
+    if provider == "paris":
+        a = account()
+        s = paris([a])
+        branch = "dilicom"
+    else:
+        s, a, _ = bnf()
+        branch = "bnf_html"
+    staged = tmp_path / "candidate.acsm"
+    def transfer(*args, **kwargs):
+        staged.write_bytes(b"synthetic")
+        a.identity_id = ""
+        return staged, "acsm"
+    s.rights_selected_delivery_candidate = Mock(side_effect=transfer)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+            s._downloadable_selected_delivery_candidate(
+                a, edition_id="edition", resource_id="loan", kind="loan",
+                branch=branch, selected_offer_id="offer", target_dir=tmp_path,
+            )
+        assert not staged.exists()
+        s.rights_selected_delivery_candidate.assert_called_once()
+    finally:
+        s.close()
+
+
+def test_bnf_synthetic_empty_inventory_is_not_negative_rights_evidence():
+    """#4480: manual inventory completeness is not rights revocation."""
+    s, a, client = bnf()
+    s.identity_broker = NS(accounts=lambda identity: [NS(
+        provider_id=a.provider_id, credential_id=a.credential_id,
+        account_id=a.unique_id, identity_id=identity, scope_version=2,
+    )] if identity == a.identity_id else [])
+    try:
+        first = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert len(first.loans) == 1
+        client.html = '<section class="active-loans"></section>'
+        empty = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert empty.status == "success" and not empty.loans
+        assert empty.branch_claims_complete("bnf_html", "digital")
+        rights = s.rights_observation_snapshot(a)
+        resources = s.downloadable_resource_snapshot(a)
+        assert not rights.rights and rights.coverage == "partial"
+        assert not resources.resources and resources.coverage == "partial"
+        assert resources.scope == rights.scope
+        assert resources.branch == rights.branch == "bnf_html"
+        assert not resources.authorizes_negative_reconciliation
+        assert not resources.authorizes_acquisition
+        client.html = BNF_HTML
+        again = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert again.status == "success" and len(again.loans) == 1
+        assert again.scope == first.scope == empty.scope
+        assert again.loans[0].id == first.loans[0].id
+        assert set(client.calls) <= {"login", "activity"}
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_bnf_zero_remaining_quota_preserves_active_inventory(count):
+    """#4480/#4063: remaining borrow capacity is not active-loan count."""
+    cards = "".join(
+        '<div class="js-loan">'
+        f'<a href="/resources/book-{i}">Synthetic novel {i}</a>'
+        f'<a href="/loans/loan-{i}">Private token action</a>'
+        '</div>' for i in range(count)
+    )
+    html = ('<p>Vous avez encore droit à <strong>0</strong> prêt</p>'
+            '<section class="active-loans">' + cards + '</section>')
+    s, a, client = bnf(html)
+    try:
+        snapshot = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert snapshot.status == "success"
+        assert snapshot.branch_claims_complete("bnf_html", "digital")
+        assert len(snapshot.loans) == count
+        assert len({row.id for row in snapshot.loans}) == count
+        assert all(row.identity_id == a.identity_id for row in snapshot.loans)
+        assert set(client.calls) <= {"login", "activity"}
+    finally:
+        s.close()

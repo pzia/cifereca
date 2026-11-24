@@ -126,7 +126,10 @@ def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resou
     return 'bnf.reader_acs4:' + hashlib.sha256(payload).hexdigest()
 
 
-class BnfProviderSession(ProviderSession):
+from cifereca.plugin_api import LegacyRightsResourceAdapter
+
+
+class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
     # BnF has a single digital loan branch; no implicit primary borrower.
     loan_absence_digital_branch = "bnf_html"
 
@@ -665,25 +668,6 @@ class BnfProviderSession(ProviderSession):
                 observed_at=observed, snapshot_ref='bnf_html.active_loans',
             )
 
-    def downloadable_resource_snapshot(self, account):
-        """#3723 v2: exact source observations, not permission or delivery."""
-        from cifereca.plugin_api import from_legacy_rights_snapshot
-        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
-
-    def downloadable_selected_offer_snapshot(
-        self, account, *, edition_id, resource_id, kind, branch,
-        explicit_user_action=False,
-    ):
-        """#3723 v2: selected provider offer, rights state descriptive only."""
-        from cifereca.plugin_api import from_legacy_rights_snapshot
-        return from_legacy_rights_snapshot(
-            self.rights_selected_delivery_offer_snapshot(
-                account, edition_id=edition_id, right_id=resource_id,
-                kind=kind, branch=branch,
-                explicit_user_action=explicit_user_action,
-            )
-        )
-
     def downloadable_selected_candidate_is_acsm(
         self, account, *, edition_id, resource_id, kind, branch, selected_offer_id,
     ):
@@ -730,49 +714,11 @@ class BnfProviderSession(ProviderSession):
         selected_offer_id, target_dir, explicit_user_action=False,
         admission_current=None,
     ):
-        """Stage one scoped ACSM/EPUB; Core owns SHA and any ADEPT completion."""
-        from cifereca.plugin_api import SourceReference, DeliveryCandidate
-        # Pin the caller scope *before* the underlying provider performs I/O.
-        # A rebind must not manufacture a candidate for the new owner.
-        scope = self._downloadable_scope(account)
-        path, hint = self.rights_selected_delivery_candidate(
-            account, edition_id=edition_id, right_id=resource_id,
-            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+        return self._stage_legacy_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
-            **({"admission_current": admission_current}
-               if admission_current is not None else {}),
-        )
-        # Compare the mutable caller against the frozen, previously valid
-        # scope. Reconstructing ProviderRightsScope *after* GET could itself
-        # raise on an empty/invalid account field, bypassing candidate cleanup.
-        if ((account.identity_id, account.provider_id,
-                account.credential_id, account.unique_id) != (
-                scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id)
-                or not _bnf_core_admission_current(admission_current)):
-            try:
-                staged = Path(path)
-                if (staged.parent == Path(target_dir) and staged.is_file()
-                        and not staged.is_symlink()):
-                    staged.unlink(missing_ok=True)
-            except (OSError, TypeError, ValueError):
-                pass
-            raise ProviderCapabilityError("selected_delivery_scope_changed")
-        return DeliveryCandidate(
-            source=SourceReference(
-                scope, branch,
-                edition_id, resource_id, kind,
-            ),
-            selected_offer_id=selected_offer_id, path=Path(path),
-            provider_hint=hint,
-        )
-
-    @staticmethod
-    def _downloadable_scope(account):
-        from cifereca.plugin_api import ProviderRightsScope
-        return ProviderRightsScope(
-            account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
+            admission_current=admission_current, admission_check=_bnf_core_admission_current,
         )
 
     def rights_selected_delivery_offer_snapshot(
@@ -1203,172 +1149,14 @@ class BnfProviderSession(ProviderSession):
         raise ProviderCapabilityError('bnf_borrow_requires_core_dispatch')
 
     def borrower_eligibility_for(self, item: SearchResult, account: Account):
-        """Fresh read-only *partial* borrower evidence for #2055.
-
-        Real BnF pages currently do not attest the subscription state,
-        remaining borrower quota or final borrow authorization separately.
-        Never infer their positivity from successful authentication, a
-        .button-borrow link or an observed CSRF form. Consequently this
-        method NEVER returns an eligible positive four-way result.
-
-        This intentionally unadvertised provider API is only preparation
-        for a future, independently qualified source contract. No POST,
-        no ACSM, no acquired right, no diagnostic payload containing IDs.
-        """
-        from cifereca.plugin_api import BorrowerOperationEvidence
-        with self._lock:
-            if (type(item) is not SearchResult
-                    or type(account) is not Account
-                    or item.source_provider != self.provider_id
-                    or item.source_credential != self.credential_id
-                    or item.docbase != 'BNF_PRET'
-                    or item.medium != 'digital'
-                    or type(item.record_id) is not str
-                    or not item.record_id or len(item.record_id) > 128
-                    or not self.connected or self._closed
-                    or len(self._accounts) != 1
-                    or account is not self._accounts[0]):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            epoch = self._epoch
-            borrower = (
-                account.unique_id, account.identity_id,
-                account.provider_id, account.credential_id, account.is_primary,
-            )
-            notice = (
-                item.id, item.record_id, item.docbase, item.medium,
-                item.source_provider, item.source_credential,
-                item.source_collection,
-            )
-            if (borrower[2:] != (
-                    self.provider_id, self.credential_id, account.is_primary)
-                    or not borrower[1] or type(borrower[4]) is not bool):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            broker = self.identity_broker
-            owner = (self._core_owner_binding(borrower[0], borrower[1])
-                     if broker is not None else None)
-            if broker is not None and (owner is None or owner[1] != (borrower[1],)):
-                raise ProviderConfigurationError('account_scope_mismatch')
-
-            def current():
-                return (
-                    not self._closed and self.connected is True
-                    and self._epoch == epoch
-                    and len(self._accounts) == 1
-                    and account is self._accounts[0]
-                    and self.identity_broker is broker
-                    and (account.unique_id, account.identity_id,
-                         account.provider_id, account.credential_id,
-                         account.is_primary) == borrower
-                    and (item.id, item.record_id, item.docbase, item.medium,
-                         item.source_provider, item.source_credential,
-                         item.source_collection) == notice
-                    and self.provider_id == borrower[2]
-                    and self.credential_id == borrower[3]
-                    and (broker is None or
-                         self._core_owner_binding(borrower[0], borrower[1]) == owner)
-                )
-
-            if not current():
-                raise ProviderConfigurationError('account_scope_mismatch')
-            # Existing positively observed loan is NOT a permission to
-            # open a second one. Never interpret absence on a partial
-            # activity page as a positive quota or availability signal.
-            loans = self._read_live_loans_locked(account)
-            if not current():
-                raise ProviderConfigurationError('account_scope_mismatch')
-            if any(loan.record_id == notice[1] for loan in loans):
-                raise ProviderCapabilityError('borrow_existing_loan')
-            try:
-                record = read_detail(self.client, notice[1])
-            except (ReaderHTTPError, WebParseError) as exc:
-                raise ProviderError(
-                    self._report_failure('borrow_eligibility', exc)) from None
-            if not current() or record.resource_id != notice[1]:
-                raise ProviderConfigurationError('account_scope_mismatch')
-            # The sole qualified negative is the literal "unavailable"
-            # marker *inside this exact book's microdata*. Missing marker
-            # remains UNKNOWN, never an affirmative "available".
-            return BorrowerOperationEvidence(
-                identity_id=borrower[1], provider_id=borrower[2],
-                credential_id=borrower[3], borrower_id=borrower[0],
-                docbase=notice[2], record_id=notice[1],
-                source_collection=notice[6], account_state='unknown',
-                quota_state='unknown',
-                item_offer=(
-                    'unavailable' if record.availability == 'unavailable'
-                    else 'unknown'
-                ), permission='unknown',
-            )
+        """Read-only partial evidence, never borrow authorization."""
+        from cifereca_bnf_pret_borrow_qualification import borrower_eligibility_for
+        return borrower_eligibility_for(self, item, account)
 
     def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
-        """Read-only inspection for #2055; never an authorization or POST.
-
-        Deliberately not declared as acquisition.borrow or called by search,
-        holdings, sync, startup or CoreUI. Future action admission must bind
-        the user's explicit confirmation to this same live account/session.
-        """
-        from cifereca_bnf_pret_borrow import (confirmation_link, activation_form,
-                                             _is_media_confirmation)
-        with self._lock:
-            if (type(item) is not SearchResult or item.source_provider != self.provider_id
-                    or item.source_credential != self.credential_id
-                    or item.docbase != 'BNF_PRET' or item.medium != 'digital'
-                    or type(item.record_id) is not str
-                    or not self.connected or self._closed
-                    or len(self._accounts) != 1 or account is not self._accounts[0]):
-                raise ProviderConfigurationError('account_scope_mismatch')
-            epoch = self._epoch
-            scope = (account.unique_id, account.identity_id,
-                     account.provider_id, account.credential_id)
-            if scope[2:] != (self.provider_id, self.credential_id) or not scope[1]:
-                raise ProviderConfigurationError('account_scope_mismatch')
-            broker = self.identity_broker
-            owner = (self._core_owner_binding(scope[0], scope[1])
-                     if broker is not None else None)
-            if broker is not None and (owner is None or owner[1] != (scope[1],)):
-                raise ProviderConfigurationError('account_scope_mismatch')
-
-            def current():
-                return (not self._closed and self.connected and self._epoch == epoch
-                        and len(self._accounts) == 1 and account is self._accounts[0]
-                        and (account.unique_id, account.identity_id,
-                             account.provider_id, account.credential_id) == scope
-                        and self.identity_broker is broker
-                        and (broker is None or
-                             self._core_owner_binding(scope[0], scope[1]) == owner))
-
-            # Fresh positive inventory is used only to reject a *known*
-            # existing loan, never to infer a right to borrow from absence.
-            loans = self._read_live_loans_locked(account)
-            if not current():
-                raise ProviderConfigurationError('account_scope_mismatch')
-            if any(loan.record_id == item.record_id for loan in loans):
-                raise ProviderCapabilityError('borrow_existing_loan')
-            try:
-                target = resource_url(item.record_id)
-                actual, html = self.client.request('GET', target)
-                if not current():
-                    raise ProviderConfigurationError('account_scope_mismatch')
-                link = confirmation_link(
-                    html, page_url=actual, resource_id=item.record_id)
-                # The form GET is not assumed side-effect free. This
-                # read-only preflight may inspect it but never visit it.
-                if _is_media_confirmation(link):
-                    return {'status': 'unverified',
-                            'reason_code': 'borrow_confirmation_effect_unknown'}
-                actual, confirmation = self.client.borrow_confirmation(
-                    link, resource_id=item.record_id)
-                if not current():
-                    raise ProviderConfigurationError('account_scope_mismatch')
-                # Do not return or log the action URL, CSRF or hidden fields.
-                activation_form(confirmation, page_url=actual,
-                                resource_id=item.record_id)
-                if not current():
-                    raise ProviderConfigurationError('account_scope_mismatch')
-                return {'status': 'unverified',
-                        'reason_code': 'borrow_confirmation_observed'}
-            except (ReaderHTTPError, WebParseError) as error:
-                raise ProviderError(self._report_failure('borrow_preflight', error)) from None
+        """Read-only qualification, not admission or mutation."""
+        from cifereca_bnf_pret_borrow_qualification import borrow_preflight
+        return borrow_preflight(self, item, account)
 
     def borrow_explicit_with_claim(
         self, item: SearchResult, account: Account, *,
