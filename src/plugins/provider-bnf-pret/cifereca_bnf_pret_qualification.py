@@ -49,11 +49,18 @@ _CONFIRM = re.compile(r"\bconfirmer\s+l[’']emprunt\b", re.IGNORECASE)
 _INLINE = frozenset(("span", "strong", "small", "b", "em", "a", "label", "i"))
 
 
+def _hidden(node: _Node) -> bool:
+    """Match the production parser's conservative inline visibility rules."""
+    style = "".join(node.attrs.get("style", "").lower().split())
+    return (node.tag in _HIDDEN or "hidden" in node.attrs
+            or node.attrs.get("aria-hidden", "").strip().lower() == "true"
+            or "display:none" in style or "visibility:hidden" in style)
+
+
 def _inline_visible_segments(node: _Node) -> tuple[str, ...]:
     """Bounded ephemeral label segments; never join across a block boundary."""
     def chunks(current: _Node, depth: int):
-        if (depth > 12 or current.tag in _HIDDEN or "hidden" in current.attrs
-                or current.attrs.get("aria-hidden") == "true"):
+        if depth > 12 or _hidden(current):
             # A skipped subtree cannot glue unrelated visible text together.
             yield None
             return
@@ -116,8 +123,7 @@ def _count(value: int) -> int:
 
 
 def _walk(node: _Node, path: tuple[str, ...] = ()):
-    if (node.tag in _HIDDEN or "hidden" in node.attrs
-            or node.attrs.get("aria-hidden") == "true"):
+    if _hidden(node):
         return
     tag = node.tag if node.tag in _SAFE_TAGS else "other"
     # The synthetic parser root is not a real HTML element.
