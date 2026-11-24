@@ -221,3 +221,45 @@ def test_revocation_before_job_allocation_leaves_no_obsolete_job(tmp_path, monke
             assert read_descriptive_selection_txn(sql, **SCOPE).generation == 2
     finally:
         db.close(final=True)
+
+
+def test_pinned_descriptive_job_does_not_replace_canonical_or_other_scope(tmp_path):
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_descriptive_selection_store import descriptive_selection_input_digest
+
+    db = Storage(tmp_path / "distinct.sqlite")
+    binding = installed()
+    selected = selection()
+    try:
+        canonical = journal.public_job_spec(
+            "recompute_aggregate", canonical_cover_document_ref(TARGET),
+            input_digest="a"*64, implementation_digest="b"*64,
+        )
+        other = journal.descriptive_job_spec(
+            target_edition_id=TARGET, canonical_type="age", scope="other:editions",
+            input_digest="a"*64, implementation_digest=binding.source_sha256,
+        )
+        refs = [journal.request_job(db, spec, now=99, expected_generation=0)
+                for spec in (canonical, other)]
+        pin = put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        current = journal.descriptive_job_spec(
+            target_edition_id=TARGET, **SCOPE,
+            input_digest=descriptive_selection_input_digest(row.execution_key, pin),
+            implementation_digest=binding.source_sha256,
+        )
+        assert len({journal._key(spec) for spec in (canonical, other, current)}) == 3
+        different_type = journal.descriptive_job_spec(
+            target_edition_id=TARGET, canonical_type="genre", scope=SCOPE["scope"],
+            input_digest=current.input_digest, implementation_digest=binding.source_sha256,
+        )
+        assert journal._key(different_type) != journal._key(current)
+        for ref, spec in zip(refs, (canonical, other)):
+            saved = journal.read_job(db, ref)
+            assert saved.spec == spec and saved.state == "pending"
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            assert journal._load(sql, journal._key(current)).state == "current"
+    finally:
+        db.close(final=True)
