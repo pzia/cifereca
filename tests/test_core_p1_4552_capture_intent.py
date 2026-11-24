@@ -59,3 +59,31 @@ def test_restart_drain_is_bounded_and_skips_completed(tmp_path):
         assert len(set(calls)) == 2
     finally:
         db.close(final=True)
+
+
+def test_failed_capture_backoff_survives_restart(tmp_path, monkeypatch):
+    from cifereca.core import notice_regression_capture_intent as intent
+    monkeypatch.setattr(intent.time, "time", lambda: 1000)
+    path = tmp_path / "fair.sqlite"
+    db = Storage(path)
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            for scope in ("a"*64, "b"*64):
+                enqueue_capture_txn(sql, scope=scope, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"body").hexdigest())
+        first, second = intent.pending_capture_ids(db)
+        assert export_capture(db, first, members={"response.raw": b"wrong"},
+                              directory=tmp_path) == "failed"
+        assert intent.pending_capture_ids(db, limit=1) == (second,)
+    finally:
+        db.close(final=True)
+    db = Storage(path)
+    try:
+        assert intent.pending_capture_ids(db, now=1001) == (second,)
+        assert intent.pending_capture_ids(db, now=1002) == (first, second)
+        assert intent.resume_captures(db, lambda _: {}, directory=tmp_path,
+                                      limit=1) == ((second, "partial"),)
+    finally:
+        db.close(final=True)
