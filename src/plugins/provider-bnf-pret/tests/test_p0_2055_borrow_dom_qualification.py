@@ -328,6 +328,33 @@ class QualificationProbeTests(unittest.TestCase):
         self.assert_no_authority(report)
         self.assert_private_not_exposed(report)
 
+    def test_activity_label_hints_do_not_change_inventory_shape(self):
+        for widget, shape in (
+            ('<section class="active-loans"></section>', "empty_candidate"),
+            ('<section class="active-loans" aria-busy="true"></section>', "partial"),
+            ('<section class="active-loans"><div class="js-loan">'
+             '<a href="/resources/USER_BOOK_ID">Alice PRIVATE title</a>'
+             '<a href="/loans/PRIVATE_LOAN_ID">Prêt</a></div></section>',
+             "nonempty_candidate"),
+        ):
+            for quota in ("0", "4"):
+                with self.subTest(shape=shape, quota=quota):
+                    html = ('<main><p>Vous avez encore droit à <strong>' + quota
+                            + '</strong> prêt</p>'
+                            '<p>Pass BnF lecture/culture valide</p>'
+                            '<p hidden>Prêts restants : 12</p>'
+                            + widget + '</main>')
+                    report = qualify_bnf_borrow_dom(html, page="activity")
+                    self.assertEqual(report["activity_shape"], shape)
+                    self.assertEqual(report["quota_label"],
+                                     {"count": 1, "tag_paths": ["main/p"]})
+                    self.assertEqual(report["pass_label"],
+                                     {"count": 1, "tag_paths": ["main/p"]})
+                    self.assertIs(report["activity_verified"], False)
+                    self.assert_no_authority(report)
+                    self.assert_private_not_exposed(report)
+                    self.assertNotIn(quota + " prêt", json.dumps(report, ensure_ascii=False))
+
     def test_stdin_cli_never_echoes_private_document_or_name(self):
         cmd = [
             sys.executable, str(REPO / "scripts/bnf_borrow_dom_probe.py"),
