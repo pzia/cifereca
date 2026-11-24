@@ -114,10 +114,12 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
     from cifereca_bnf_pret_borrow import (confirmation_link, activation_form,
                                          _is_media_confirmation)
     with self._lock:
-        if (type(item) is not SearchResult or item.source_provider != self.provider_id
+        if (type(item) is not SearchResult or type(account) is not Account
+                or item.source_provider != self.provider_id
                 or item.source_credential != self.credential_id
                 or item.docbase != 'BNF_PRET' or item.medium != 'digital'
                 or type(item.record_id) is not str
+                or not item.record_id or len(item.record_id) > 128
                 or not self.connected or self._closed
                 or len(self._accounts) != 1 or account is not self._accounts[0]):
             raise ProviderConfigurationError('account_scope_mismatch')
@@ -143,6 +145,8 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
                     and (item.id, item.record_id, item.docbase, item.medium,
                          item.source_provider, item.source_credential,
                          item.source_collection) == notice
+                    and self.provider_id == scope[2]
+                    and self.credential_id == scope[3]
                     and self.identity_broker is broker
                     and (broker is None or
                          self._core_owner_binding(scope[0], scope[1]) == owner))

@@ -122,6 +122,19 @@ class BorrowReadOnlyHTTPTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_session_coordinate_change_during_detail_refuses_confirmation(self):
+        for field in ("provider_id", "credential_id"):
+            with self.subTest(field=field):
+                def mutation():
+                    setattr(session, field, "synthetic-other")
+                session, account, item, calls = self.make(after_detail=mutation)
+                try:
+                    with self.assertRaisesRegex(ProviderConfigurationError, "account_scope_mismatch"):
+                        session.borrow_preflight(item, account)
+                    self.assertEqual(len(calls), 2)
+                finally:
+                    session.close()
+
     def test_missing_csrf_is_refused_without_leaking_html_or_posting(self):
         session, account, item, calls = self.make(
             confirmation=CONFIRM.replace("authenticity_token", "other_field"))
