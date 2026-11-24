@@ -388,3 +388,23 @@ def test_configured_capture_destination_used_by_maintenance(tmp_path, monkeypatc
         assert capture_status(core.storage, diagnostic) == {"capture_state": "partial"}
         assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
         assert not list(tmp_path.glob("cifereca-regression-*.zip"))
+
+
+@pytest.mark.parametrize("configured", (None, "absolute", "relative", "", 123, "/bad\x00path"))
+def test_capture_destination_configuration_without_optional_pump(tmp_path, configured):
+    import json
+
+    value = str(tmp_path / "chosen") if configured == "absolute" else configured
+    (tmp_path / "config.json").write_text(json.dumps({
+        "diagnostics": {"regression_capture_directory": value}
+    }), encoding="utf-8")
+    if configured not in (None, "absolute"):
+        with pytest.raises(ValueError, match="notice_capture_invalid_directory"):
+            open_core(tmp_path)
+        assert not (tmp_path / "state.sqlite").exists()
+    else:
+        with open_core(tmp_path) as core:
+            assert core.notice_work is None
+            assert core.library._notice_regression_capture_directory == (
+                tmp_path / "chosen" if configured == "absolute" else None)
+            assert not (tmp_path / "chosen").exists()
