@@ -128,14 +128,23 @@ def test_bnf_empty_partial_rights_preserve_existing_canonical_publication(tmp_pa
             db, library_root=root, path=path, source=source,
             snapshot=positive, final_sha256=SHA,
             delivery_receipt_ref="synthetic-bnf-delivery-0",
+            adept_receipt_ref="synthetic-adept-final-proof",
         )
-        before = (db.acquisitions(), db.placements(), path.read_bytes())
+        def provenance():
+            with db._lock, db._connect() as connection:
+                return tuple(
+                    tuple(sorted(map(tuple, connection.execute("SELECT * FROM " + table))))
+                    for table in ("artifacts", "source_references", "origin_links")
+                )
+
+        before = (db.acquisitions(), db.placements(), path.read_bytes(), provenance())
+        assert all(before[3])
         for observation in (positive, replace(
             positive, rights=(), status="partial", coverage="partial",
             pagination_complete=False,
         ), positive):
             service.snapshot = observation
             synchronize_account_source(service, account)
-            assert (db.acquisitions(), db.placements(), path.read_bytes()) == before
+            assert (db.acquisitions(), db.placements(), path.read_bytes(), provenance()) == before
     finally:
         db.close()
