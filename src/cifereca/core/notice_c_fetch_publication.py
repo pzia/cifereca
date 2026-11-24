@@ -16,6 +16,8 @@ from . import notice_c_job_journal as journal
 from .notice_c_fetch_authority import PublicFetchAuthority, PublicFetchPermit
 from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork, WitnessRejectedPublication
 from .notice_parse_witness_alert import review_publication_txn
+from .notice_parse_witness_store import _PREFIX as witness_prefix
+from .notice_parse_witness import admitted_source_scope_sha256
 from .notice_regression_capture_intent import export_capture
 from .notice_source_observation import NoticeSourceObservation
 from .notice_cover_projection import project_notice_cover_attribute
@@ -118,6 +120,12 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
         now = clock()
         if not journal._integer(now, minimum=1) or result.observed_at > now:
             raise UnavailableNoticeWork("notice_fetch_invalid_clock")
+        if evidence is None:
+            scope = admitted_source_scope_sha256(result.key, parser_id=result.parser_id)
+            if db.execute("SELECT 1 FROM metadata WHERE key=?",
+                          (witness_prefix + scope,)).fetchone() is not None:
+                # A legacy DTO cannot silently bypass an approved witness.
+                raise UnavailableNoticeWork("notice_fetch_parse_evidence_required")
         if evidence is not None:
             reject, diagnostic = review_publication_txn(
                 db, current=current.observation, candidate=result,
