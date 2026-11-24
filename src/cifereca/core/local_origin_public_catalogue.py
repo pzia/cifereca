@@ -160,6 +160,8 @@ def _isbns(metadata):
         if type(value) is str:
             values.append(value)
         elif type(value) is list:
+            if len(values) + len(value) > 32:
+                return ()
             values.extend(value)
     if len(values) > 32:
         return ()
@@ -348,9 +350,13 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             # Counting individual occurrences (not distinct projected keys)
             # therefore refuses an exact-edition claim for *either* twin.
             by_isbn = defaultdict(int)
-            for candidate in candidates:
-                for isbn in candidate.isbns:
-                    by_isbn[isbn] += 1
+            # An excluded or undeclared row can still make a returned ISBN
+            # claim ambiguous. Use these values only as a veto, never as
+            # display evidence or authority for that inadmissible row.
+            for raw in response.results:
+                if type(raw.metadata) is dict:
+                    for isbn in _isbns(raw.metadata):
+                        by_isbn[isbn] += 1
             candidates = tuple(
                 replace(candidate, comparison="isbn_claim_ambiguous")
                 if (candidate.comparison == "isbn_title_author_concordant"
