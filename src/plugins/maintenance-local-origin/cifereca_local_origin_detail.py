@@ -164,6 +164,7 @@ def public_rows(report):
     window_label = ("Complétude de la réponse non établie." if type(window_status) is not str else {
         "incomplete": "Réponse catalogue partielle.",
         "declared_complete": "Réponse déclarée complète pour cette requête.",
+        "cached_declared_complete": "Réponse vide déclarée complète, réutilisée du cache temporaire sans nouvelle requête.",
     }.get(window_status, "Complétude de la réponse non établie."))
     lines = [
         ("Portée", "Comparaison documentaire uniquement ; aucune origine ni droit attestés."),
