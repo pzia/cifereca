@@ -881,3 +881,22 @@ def test_p1_3120_denial_for_different_edition_does_not_block_exact_offer(harness
     assert preview.options == ()
     assert "borrower_blocked" not in preview.rejection_reasons
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("facts", [
+    {"remaining_loans": 0},
+    {"subscription": "renewal_pending"},
+    {"subscription": "expired"},
+    {"permission": "denied"},
+])
+def test_fresh_account_blocker_is_distinct_from_unknown(harness, facts):
+    service, account, session = harness
+    row = _candidate()
+    row = replace(row, evidence=replace(row.evidence, **facts))
+    preview = _preview(service, row)
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("borrower_blocked",)
+    assert _preview(service, row, now=1301).rejection_reasons == ("scope_unverified",)
+    assert _preview(service, row, now=999).rejection_reasons == ("scope_unverified",)
+    assert session.connected is True
+    assert session.calls == 0
