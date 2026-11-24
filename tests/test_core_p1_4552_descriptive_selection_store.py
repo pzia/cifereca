@@ -263,3 +263,30 @@ def test_pinned_descriptive_job_does_not_replace_canonical_or_other_scope(tmp_pa
             assert journal._load(sql, journal._key(current)).state == "current"
     finally:
         db.close(final=True)
+
+
+def test_configured_publication_cannot_bypass_journal_lease(tmp_path):
+    from cifereca.core.notice_descriptive_materialization_store import publish_descriptive_materialization
+
+    db = Storage(tmp_path / "no-bypass.sqlite")
+    binding = installed()
+    selected = selection()
+    try:
+        put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        admitted = admit_descriptive_facts(
+            target_edition_id=TARGET, canonical_type="age",
+            consolidator_id=selected.plugin_id, consolidator_version=selected.version,
+            source_facts=(fact(),), attested_strong_links={},
+        )
+        capture = lambda sql: (selected, admitted, binding.source_sha256)
+        with pytest.raises(ValueError, match="descriptive_journal_binding_required"):
+            publish_descriptive_materialization(
+                db, row, expected_execution_key=row.execution_key,
+                capture_current_txn=capture,
+            )
+        assert read_descriptive_materialization(
+            db, target_edition_id=TARGET, **SCOPE, capture_current_txn=capture,
+        ) == row
+    finally:
+        db.close(final=True)
