@@ -17,8 +17,9 @@ def walk(widget):
         child = child.get_next_sibling()
 
 
-def verify_native_advisory(selection_changed):
+def verify_native_advisory(selection_changed, *, checkpoint=lambda _stage: None):
     """Real GTK widgets and task runner; synthetic HTTPX, no live account."""
+    checkpoint("setup")
     from threading import Event
     from types import SimpleNamespace as NS
 
@@ -91,23 +92,28 @@ def verify_native_advisory(selection_changed):
         assert predicate(), "native advisory acceptance timed out"
 
     try:
+        checkpoint("render")
         assert add_borrower_information_action(panel, item)
         row = next(w for w in walk(box) if isinstance(w, Adw.ActionRow))
         button = next(w for w in walk(row)
                       if isinstance(w, Gtk.Button) and w.get_label() == "Consulter")
         initial = row.get_subtitle()
+        checkpoint("map")
         window.present()
         wait(button.get_mapped)
         assert calls == []
         assert "non vérifiées" in initial
+        checkpoint("click")
         button.emit("clicked")
         wait(entered.is_set)
         assert not button.get_sensitive()
         button.emit("clicked")  # even a retained signal cannot submit twice
         if selection_changed:
             window._search_detail_request_generation += 1
+        checkpoint("delivery")
         release.set()
         wait(lambda: bool(finished) and button.get_sensitive())
+        checkpoint("result")
         assert calls == [("GET", "/my_profile/activity"), ("GET", "/resources/" + RID)]
         if selection_changed:
             assert row.get_subtitle() == "Informations non vérifiées."
@@ -122,3 +128,4 @@ def verify_native_advisory(selection_changed):
         window.runner.close()
         window.destroy()
         session.close()
+    checkpoint("complete")
