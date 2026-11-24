@@ -1156,6 +1156,11 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         from cifereca_bnf_pret_borrow_qualification import borrower_eligibility_for
         return borrower_eligibility_for(self, item, account)
 
+    def borrower_information_for(self, item: SearchResult, account: Account):
+        """Explicit, read-only advisory observation; never used for admission."""
+        from cifereca_bnf_pret_borrow_qualification import borrower_eligibility_for
+        return borrower_eligibility_for(self, item, account, informational=True)
+
     def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
         """Read-only qualification, not admission or mutation."""
         from cifereca_bnf_pret_borrow_qualification import borrow_preflight
