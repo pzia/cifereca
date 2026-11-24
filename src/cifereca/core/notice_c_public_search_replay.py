@@ -107,7 +107,7 @@ def make_public_search_replay_port(
         matches = tuple(_observations(
             response, session, provider_id=provider_id,
             observed_at=source.observation.observed_at,
-            allow_coverless=source.observation.status == "partial",
+            allow_coverless=True,
         ))
         if (len(matches) != 1 or matches[0].key != source.observation.key
                 or notice_cover_document_ref(matches[0].key) != source.document):
