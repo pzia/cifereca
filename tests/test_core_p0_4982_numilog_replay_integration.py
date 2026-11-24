@@ -222,7 +222,7 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         tasks.close()
-        session.disconnect()
+        session.close()
         db.close()
 
 
@@ -253,6 +253,30 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
         ) is None
         assert "_core_notice_retained_input" not in row.__dict__
         assert len(calls) == 1
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        raw, ttl = session._read_retained_public_input(receipt.producer_token)
+        assert raw is not None and ttl > 0
+        with session._hold_retained_public_input(receipt.producer_token) as held:
+            ref = request_public_reparse(
+                db, source, receipt, held._body, now=100,
+                expected_generation=0,
+                implementation_digest=receipt.parser_implementation_digest,
+            )
+        tasks = TaskBrokerImpl(object(), max_workers=1, shared_admission=
+                               SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+        try:
+            port = make_port(session, receipt.parser_family_digest,
+                             receipt.parser_implementation_digest)
+            pump = PublicNoticeWorkPump(
+                db, tasks, clock=lambda: 100,
+                replay_registry=PublicReplayRegistry((port,)),
+            )
+            handle, = pump.tick().handles
+            assert handle.result(timeout=10) == "current"
+            assert journal.read_job(db, ref).state == "current"
+            assert len(calls) == 1
+        finally:
+            tasks.close()
     finally:
         session.close()
         db.close()
