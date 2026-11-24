@@ -27,3 +27,33 @@ New boundaries at after SHA: Paris catalogue 351 lines, PNB 552, transport 264, 
 PRs #7943, #7944, #7945, #7946, #7947, #7948 and #7950 merged after exact-head checks. #7946 head c0ef159decda: PR CI 45350890128, E2E 45350890179, docs 45350890112, full install 45350890247, ADEPT 45350890287, AST 45350890251 all success. #7950 head a751fea2200b: PR CI 45353349119 and ADEPT 45353349068 success after restoring trace logger binding.
 
 Remaining before closure: initial-baseline complete module inventory, explicit parity matrix mapped to test cases (including 0/1/N, ABA, revocation, staging and at-most-once), final integrated gates and dependency verification of qualification-only modules. Do not infer live provider qualification or close #7753 from line counts.
+
+## R4 — verified test inventory
+
+### `tests/test_core_p1_3122_real_manifest_lending_conformance.py`
+
+- `test_real_packages_publish_the_same_provider_id_version_and_lending_api`
+- `test_real_paris_manifest_matches_lending_methods_but_legacy_return_renew_unmapped`
+- `test_real_bnf_internal_acsm_does_not_become_public_download_or_mutation`
+- `test_real_manifest_retains_search_read_separation_without_unverified_actions`
+
+### `src/plugins/provider-paris/tests/test_p0_7231_acsm_offer_route.py`
+
+- `test_offer_bound_route_does_not_infer_from_media_format`
+- `test_signed_query_rotation_preserves_route_id`
+- `test_route_change_in_final_inventory_refuses_before_get`
+- `test_complete_source_cycle_reuses_route_class_without_new_inventory`
+- `test_real_selected_paris_route_reports_only_qualified_get_retry`
+
+### `src/plugins/provider-paris/tests/test_p0_3723_pnb_selected_staging.py`
+
+- `test_paris_selected_pnb_get_stage_swap_never_writes_outside`
+- `test_paris_selected_candidate_does_not_overwrite_existing_file`
+- `test_paris_atomic_candidate_link_swap_removes_candidate_from_old_inode`
+
+### `src/plugins/provider-bnf-pret/tests/test_p0_3723_staging_inode.py`
+
+- `test_bnf_acsm_staging_swap_never_writes_or_keeps_file_outside`
+- `test_bnf_valid_acsm_still_staged_exactly_once`
+
+Shared actual-class coverage in `tests/test_core_p1_3122_paris_bnf_snapshots.py`: two-branch uncertainty, partial positive coverage, failed branches, linked reader separation, BnF scoped empty inventory, wrong credential/closed session, invalid DOM, mid-read reader replacement, adapter opt-in and wrapper revocation. Shared adapter tests in `tests/test_p1_7753_legacy_rights_adapter.py`: single delegation, explicit action, scope/admission cleanup, outside staging and symlink preservation, non-publication candidate and ABA admission revocation. These are verified test definitions, not an assertion that every R4 scenario is covered on both providers.
