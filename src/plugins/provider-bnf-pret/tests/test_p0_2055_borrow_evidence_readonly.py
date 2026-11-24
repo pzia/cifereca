@@ -149,7 +149,7 @@ class EvidenceReadOnlyTests(unittest.TestCase):
     def test_epoch_change_during_detail_discards_even_negative_evidence(self):
         changed = {}
         def change():
-            changed["session"]._epoch += 1
+            changed["session"]._epoch = "synthetic-rebound-epoch"
         session, account, item, calls = self.make(
             detail=UNAVAILABLE, after_detail=change)
         changed["session"] = session
