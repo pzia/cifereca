@@ -129,7 +129,7 @@ def _noncontradictory_observations(
 
 
 def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
-             source_epoch: int, now: int,
+             source_epoch: int, now: int | None,
              expected_edition_id: str) -> BorrowForIdentityWitness | BorrowOfferRejection:
     """Rebind every coordinate to in-memory Core and owned SQLite state.
 
@@ -156,6 +156,8 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             or item.medium != "digital"):
         return "scope_unverified"
 
+    if now is None:
+        now = int(time())
     if (type(now) is not int or not 0 <= now - row.observed_at <= _MAX_AGE
             or row.edition_id != expected_edition_id):
         return "scope_unverified"
