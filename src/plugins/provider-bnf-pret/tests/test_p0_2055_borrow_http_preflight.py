@@ -156,5 +156,31 @@ class BorrowReadOnlyHTTPTests(unittest.TestCase):
             session.close()
 
 
+    def test_edition_change_during_detail_refuses_before_confirmation(self):
+        def mutation():
+            item.record_id = "different-edition"
+        session, account, item, calls = self.make(after_detail=mutation)
+        try:
+            with self.assertRaisesRegex(ProviderConfigurationError, "account_scope_mismatch"):
+                session.borrow_preflight(item, account)
+            self.assertEqual(calls, [
+                ("GET", "/my_profile/activity"),
+                ("GET", "/resources/" + RID),
+            ])
+        finally:
+            session.close()
+
+    def test_edition_change_during_confirmation_discards_observation(self):
+        def mutation():
+            item.record_id = "different-edition"
+        session, account, item, calls = self.make(after_confirmation=mutation)
+        try:
+            with self.assertRaisesRegex(ProviderConfigurationError, "account_scope_mismatch"):
+                session.borrow_preflight(item, account)
+            self.assertEqual(len(calls), 3)
+        finally:
+            session.close()
+
+
 if __name__ == "__main__":
     unittest.main()
