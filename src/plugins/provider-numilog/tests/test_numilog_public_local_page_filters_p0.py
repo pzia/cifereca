@@ -21,7 +21,7 @@ SOURCE = "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=br
 
 def session(monkeypatch):
     calls = []
-    def load(q, *, page, field):
+    def load(q, *, page, field, _retain_input=False):
         calls.append((q, page, field))
         return parse_public_search(HTML, SOURCE)
     monkeypatch.setattr(provider, "fetch_public_search", load)
