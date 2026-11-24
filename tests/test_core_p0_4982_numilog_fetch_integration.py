@@ -258,3 +258,68 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
         assert authority._closed
         authority.close()
         session.close()
+
+
+def test_normal_numilog_search_witness_gate_without_second_get(tmp_path, monkeypatch):
+    from cifereca.plugin_api import PublicSearchNotice
+    from cifereca.storage import Storage
+    from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+    from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+    from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
+    monkeypatch.syspath_prepend(str(PLUGIN))
+    import cifereca_numilog_public_client as client
+    import cifereca_numilog_public_provider as provider
+    body = HTML.read_bytes()
+    requests = []
+    def serve(request):
+        requests.append(request)
+        return httpx.Response(200, content=body, request=request,
+                              headers={"content-type": "text/html; charset=utf-8"})
+    monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", lambda **kwargs:
+                        httpx.Client(transport=httpx.MockTransport(serve), trust_env=False,
+                                     headers=kwargs.get("headers")))
+    monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir", lambda: tmp_path)
+    session = provider.NumilogPublicSession(
+        credential_id="__public__", label="Public", credentials={}, options={},
+        _retain_public_search_inputs=True,
+    )
+    session.connect()
+    db = Storage(tmp_path / "normal-search.sqlite")
+    owner = SimpleNamespace(storage=db)
+    try:
+        response = session.search_with_response_facets("loup", "catalog")
+        assert response.notice_parse_input == body
+        row, = search_orchestration._public_rows_from_response(response, session)
+        (_, source, canonical), = search_orchestration._ingest_public_search_c(
+            owner, [row], identity_id="alice", now=100,
+            require_public_cover_witness=True,
+        )
+        publish_approved_parse_witness(
+            db, observation=source.observation, response_bytes=body,
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(row.title),
+            ),), expected_generation=0,
+        )
+        # Inject a parser-output regression, with the original exact bytes.
+        broken = replace(response.results[0], title="Titre altéré")
+        candidate = replace(response, results=[broken],
+                            public_notices=(PublicSearchNotice(broken),))
+        projected, = search_orchestration._public_rows_from_response(candidate, session)
+        assert search_orchestration._ingest_public_search_c(
+            owner, [projected], identity_id="alice", now=101,
+            require_public_cover_witness=True,
+        ) == []
+        report = read_parse_witness_diagnostic(
+            db, key=source.observation.key, parser_id=source.observation.parser_id,
+        )
+        assert report["status"] == "parser_drift_suspected"
+        assert report["capture_state"] == "partial"
+        assert read_notice_cover(db, source.document) == source
+        assert read_consolidated_notice_cover(db, canonical.document) == canonical
+        assert len(requests) == 1
+        assert len(list(tmp_path.glob("cifereca-regression-*.zip"))) == 1
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close(final=True)
+        session.close()
