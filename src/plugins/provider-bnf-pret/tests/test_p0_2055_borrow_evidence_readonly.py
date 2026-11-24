@@ -107,6 +107,33 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_conflicting_unqualified_labels_never_grant_permission(self):
+        activity = (
+            '<p>Vous avez encore droit à 0 prêt</p>'
+            '<p>Vous avez encore droit à 4 prêts</p>'
+            '<p>Pass BnF lecture/culture valide</p>'
+            '<p>Pass BnF lecture/culture expiré</p>' + ACTIVITY
+        )
+        detail = DETAIL.replace(
+            "</article>", "<p>Plusieurs exemplaires disponibles</p></article>",
+        )
+        session, account, item, calls = self.make(activity=activity, detail=detail)
+        try:
+            facts = session.borrower_eligibility_for(item, account)
+            self.assertEqual(
+                (facts.account_state, facts.quota_state,
+                 facts.item_offer, facts.permission),
+                ("unknown", "unknown", "unknown", "unknown"),
+            )
+            self.assertEqual(calls, [
+                ("GET", "/my_profile/activity"),
+                ("GET", "/resources/" + RID),
+            ])
+            self.assertTrue(session.capabilities.borrow)
+            self.assertEqual(session._borrow_post_attempts, set())
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
