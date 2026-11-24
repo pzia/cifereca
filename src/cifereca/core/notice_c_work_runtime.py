@@ -179,8 +179,11 @@ class NoticeWorkRuntime:
                 return False
             registry = self._pending_replay_registry or self._replay_registry
             ports = () if registry is None else registry._ports
+            # Only one active implementation per provider/family in this
+            # live registry. A previous implementation must not dispatch
+            # fresh work under an obsolete version after replacement.
             ports = tuple(p for p in ports if
-                          (p.provider_id, p.parser_family_digest, p.implementation_digest) != key)
+                          (p.provider_id, p.parser_family_digest) != key[:2])
             self._pending_replay_registry = PublicReplayRegistry(ports + (port,))
         self.request_tick()
         return True
