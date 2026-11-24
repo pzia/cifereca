@@ -36,7 +36,7 @@ class FreshPublicParse:
     export_allowed: bool = False
 
 
-def prepare_public_fetch_publication(storage, authority, permit, result, *, clock):
+def prepare_public_fetch_publication(storage, authority, permit, result, *, clock, capture_directory=None):
     """Prepare publication from the admitted producer's actual observation.
 
     Trusted adapter only. The result MUST originate in the just-reserved
@@ -133,7 +133,7 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
                 def after_commit():
                     return export_capture(storage, diagnostic, members=(
                         {"response.raw": evidence.body} if evidence.export_allowed else {}
-                    ))
+                    ), directory=capture_directory)
                 return WitnessRejectedPublication(None if diagnostic is None else after_commit, diagnostic)
         if (result.status != "complete" or attribute.state != "available"
                 or not attribute.snapshot_complete):
