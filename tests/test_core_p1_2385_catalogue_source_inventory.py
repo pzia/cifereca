@@ -247,3 +247,61 @@ def test_catalogue_facade_preserves_optional_sync_abi_broker_denies_missing_owne
     )
     assert CatalogBrokerImpl(service).catalogue_source_capabilities() == ()
     assert CatalogBrokerImpl(service).catalogue_source_capabilities("") == ()
+
+
+def test_baen_activation_and_reconnection_do_not_grant_refresh_or_acquisition():
+    service, _ = _rig()
+    service.registry.register(_plugin("baen", search=True))
+    enabled = service._provider_enabled_for_identity
+    active = {"alice": False, "bob": True}
+    service._provider_enabled_for_identity = lambda name, identity: (
+        active[identity] if name == "baen" else enabled(name, identity)
+    )
+
+    def row(identity):
+        return next((r for r in catalogue_source_capabilities(
+            service, identity_id=identity,
+        ) if r.provider_id == "baen"), None)
+
+    assert row("alice") is None
+    assert row("bob").catalog_search_supported
+    assert not row("bob").catalog_search_available
+    service._sessions["baen"] = NS(
+        provider_id="baen", credential_id="__public__", connected=True,
+    )
+    assert row("alice") is None
+    assert row("bob").catalog_search_available
+    active["alice"] = True
+    assert row("alice").catalog_search_available
+    service._sessions["baen"].connected = False
+    for identity in ("alice", "bob"):
+        value = row(identity)
+        assert value.catalog_search_supported
+        assert not value.catalog_search_available
+        assert value.catalog_refresh == "unsupported"
+        assert not value.personal_inventory_available
+        assert value.acquisition == "separate_explicit"
+    service._sessions["baen"].connected = True
+    active["bob"] = False
+    assert row("bob") is None
+    assert row("alice").catalog_search_available
+
+
+def test_private_reconnection_never_reuses_previous_identity_readiness():
+    service, _ = _rig()
+    session = next(s for s in service._sessions.values()
+                   if s.provider_id == "numilog")
+    def row(identity):
+        return next(r for r in catalogue_source_capabilities(
+            service, identity_id=identity,
+        ) if r.provider_id == "numilog")
+    assert row("alice").personal_inventory_available
+    assert not row("bob").personal_inventory_available
+    session.connected = False
+    assert not row("alice").personal_inventory_available
+    assert not row("alice").catalog_search_available
+    session.connected = True
+    assert row("alice").personal_inventory_available
+    assert not row("bob").personal_inventory_available
+    assert not row("bob").catalog_search_available
+    assert row("alice").catalog_refresh == row("bob").catalog_refresh == "unsupported"
