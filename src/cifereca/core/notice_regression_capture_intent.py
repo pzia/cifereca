@@ -6,6 +6,7 @@ resolved again by an authorized caller, never copied into metadata.
 import hashlib
 import json
 import re
+import time
 
 from .notice_regression_capture import write_regression_capture
 
@@ -77,14 +78,20 @@ def export_capture(storage, diagnostic, *, members, directory=None):
             members=safe, directory=directory)
     except (OSError, ValueError):
         state = "failed"
+    updated = dict(record, capture_state=state)
+    if state == "failed":
+        attempts = min(record.get("attempts", 0) + 1, 16)
+        updated.update(attempts=attempts, retry_after=time.time() + min(3600, 2 ** attempts))
+    else:
+        updated.pop("retry_after", None)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
-                   (json.dumps(dict(record, capture_state=state), sort_keys=True), key, row[0]))
+                   (json.dumps(updated, sort_keys=True), key, row[0]))
     return state
 
 
-def pending_capture_ids(storage, *, limit=32):
+def pending_capture_ids(storage, *, limit=32, now=None):
     """Bounded restart inventory; no raw data or filesystem access."""
     if type(limit) is not int or not 1 <= limit <= 128:
         raise ValueError("invalid_capture_limit")
@@ -92,6 +99,7 @@ def pending_capture_ids(storage, *, limit=32):
         rows = db.execute(
             "SELECT key,value FROM metadata WHERE key GLOB ? ORDER BY key LIMIT 2048",
             (_PREFIX + "*",)).fetchall()
+    now = time.time() if now is None else now
     result = []
     for key, raw in rows:
         diagnostic = key[len(_PREFIX):]
@@ -99,7 +107,8 @@ def pending_capture_ids(storage, *, limit=32):
             continue
         try:
             record = json.loads(raw)
-            if record["capture_state"] in ("pending", "failed"):
+            if (record["capture_state"] in ("pending", "failed")
+                    and record.get("retry_after", 0) <= now):
                 result.append(diagnostic)
         except (ValueError, KeyError, TypeError):
             continue
