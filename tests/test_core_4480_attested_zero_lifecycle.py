@@ -4,6 +4,7 @@ The test deliberately supplies the exact hypothetical complete-scope input
 to the existing Core business transition. The real provider must still
 qualify that input; partial/unknown observations never supply it here.
 """
+from dataclasses import replace
 from types import SimpleNamespace
 
 from cifereca.core.canonical_publication import publish_completed_acquisition
@@ -60,16 +61,27 @@ def test_hypothetical_attested_zero_realizes_only_exact_right_then_reobserves(tm
                 )
             return provenance, db.acquisitions(), path.read_bytes()
 
-        persist([loan])
+        foreign = replace(loan, id="loan-foreign", record_id="edition-foreign",
+                          source_account_id="other")
+        persist([loan, foreign])
         entitlement_id = right()["entitlement_id"]
+        db.acquisition_put({
+            "acquisition_id": "synthetic-bnf-acquisition",
+            "entitlement_id": entitlement_id,
+            "provider_id": "bnf-pret", "credential_id": "bnf-reader",
+            "account_id": "bnf-reader", "item_id": "edition-0",
+            "status": "complete", "artifact_id": "sha256:" + SHA,
+            "identity_id": "A",
+        })
         before = publication()
+        assert len(before[1]) == 1
         assert tuple(map(len, before[0])) == (1, 1, 1, 2)
         assert right()["state"] == "active"
 
         # No supplier proof, or an exact complete scope of another account:
         # neither may turn this loan into a negative observation.
         assert persist([])["returned_realized"] == 0
-        assert persist([], {("bnf-pret", "bnf-reader", "other")})["returned_realized"] == 0
+        assert persist([], {("bnf-pret", "bnf-reader", "unknown")})["returned_realized"] == 0
         assert right()["state"] == "active"
         assert publication() == before
 
@@ -82,6 +94,8 @@ def test_hypothetical_attested_zero_realizes_only_exact_right_then_reobserves(tm
 
         persist([loan], scope)
         assert right()["state"] == "active"
+        assert next(row for row in db.entitlements()
+                    if row["loan_id"] == foreign.id)["state"] == "active"
         assert right()["entitlement_id"] == entitlement_id
         assert publication() == before
     finally:
