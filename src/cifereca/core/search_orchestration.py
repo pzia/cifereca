@@ -2869,19 +2869,19 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                 # Export only durable intents, after SQLite commit. Raw bytes
                 # are not export-authorized by a descriptive Search envelope.
                 from .notice_regression_capture_intent import export_capture
+                from .notice_parse_witness_alert import report_capture_diagnostic
                 for diagnostic in sorted(capture_ids):
                     try:
                         state = export_capture(
                             self.storage, diagnostic, members={},
                             directory=getattr(self, "_notice_regression_capture_directory", None),
                         )
-                        if state is not None:
-                            logging.getLogger("cifereca").warning(
-                                "NOTICE parser_witness_rejected diagnostic_id=%s capture_state=%s",
-                                diagnostic, state,
-                            )
                     except (ValueError, OSError, sqlite3.Error):
-                        pass
+                        state = "metadata_unavailable"
+                    if state is not None:
+                        report_capture_diagnostic(
+                            getattr(self, "diagnostics", None), diagnostic, state, rejected=True,
+                        )
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
                     retained = retained_inputs[position]
