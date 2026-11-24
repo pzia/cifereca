@@ -134,6 +134,35 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_negative_detail_is_not_published_as_core_admission_evidence(self):
+        session, account, item, calls = self.make(detail=UNAVAILABLE)
+        try:
+            facts = session.borrower_eligibility_for(item, account)
+            self.assertEqual(facts.item_offer, "unavailable")
+            self.assertIsNone(vars(session).get("borrower_eligibility_snapshot"))
+            self.assertTrue(session.capabilities.borrow)
+            self.assertEqual(session._borrow_post_attempts, set())
+            self.assertEqual(len(calls), 2)
+        finally:
+            session.close()
+
+    def test_epoch_change_during_detail_discards_even_negative_evidence(self):
+        changed = {}
+        def change():
+            changed["session"]._epoch += 1
+        session, account, item, calls = self.make(
+            detail=UNAVAILABLE, after_detail=change)
+        changed["session"] = session
+        try:
+            with self.assertRaisesRegex(
+                    ProviderConfigurationError, "account_scope_mismatch"):
+                session.borrower_eligibility_for(item, account)
+            self.assertIsNone(vars(session).get("borrower_eligibility_snapshot"))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(session._borrow_post_attempts, set())
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
