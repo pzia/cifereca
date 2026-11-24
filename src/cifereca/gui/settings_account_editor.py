@@ -499,7 +499,7 @@ def build_provider_account_editor(
                 connect(signal, invalidate_probe)
 
         watch(enabled, "notify::active")
-        watch(identity_row, "notify::selected")
+        watch(identity_row, "changed")
         watch(label_row, "changed")
         for widget in (*fields.values(), *option_fields.values()):
             if isinstance(widget, _AccountChoiceText):
