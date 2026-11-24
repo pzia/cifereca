@@ -61,6 +61,7 @@ class PreparedDescriptive:
     expected_execution_key: str | None
     capture_current_txn: Callable
     schema: object
+    hold_input: Callable | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -253,7 +254,8 @@ class AggregateWorkBridge:
             aggregate = job.spec.kind in ("recompute_aggregate", "relink_notices")
             if descriptive:
                 if (type(prepared) is not PreparedDescriptive
-                        or not callable(prepared.capture_current_txn)):
+                        or not callable(prepared.capture_current_txn)
+                        or (prepared.hold_input is not None and not callable(prepared.hold_input))):
                     raise TypeError("notice_work_invalid_publication")
             else:
                 expected = PreparedAggregate if aggregate else PreparedSource
@@ -262,7 +264,9 @@ class AggregateWorkBridge:
                     raise TypeError("notice_work_invalid_publication")
             control.check_cancelled()
             event = None
-            with (nullcontext() if aggregate or descriptive else prepared.hold_input()):
+            guard = (nullcontext() if aggregate or (descriptive and prepared.hold_input is None)
+                     else prepared.hold_input())
+            with guard:
                 with self._storage._lock, self._storage._connect() as db:
                     db.execute("BEGIN IMMEDIATE")
                     # Check before any canonical write, then again before commit.
