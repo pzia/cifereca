@@ -2740,8 +2740,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
         from .notice_cover_repository import persist_notice_cover_many
         from .notice_c_cover_index import persist_exact_public_search_cover
         producing_rows = []
+        retained_inputs = []
         observations = []
         for row in rows:
+            retained = row.__dict__.pop("_core_notice_retained_input", None)
             if ((require_public_cover_witness or _CORE_LIVE_PUBLIC_C_WRITER.get())
                     and not _verified_public_cover_witness(row)):
                 # Do not promote an arbitrary legacy/private SearchResult to C.
@@ -2762,6 +2764,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
             if observed is None:
                 continue
             producing_rows.append(row)
+            retained_inputs.append(retained)
             observations.append(observed)
 
         if observations:
@@ -2879,7 +2882,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                         pass
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
-                    retained = row.__dict__.pop("_core_notice_retained_input", None)
+                    retained = retained_inputs[position]
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
                             "TRACE notice c public search code=source_persist_failed"
