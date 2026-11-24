@@ -104,7 +104,7 @@ class NoticeWorkRuntime:
         )
 
     def install_replay_registry(self, registry):
-        """Install qualified replay ports before the first dispatch.
+        """Install qualified replay ports at an idle dispatch boundary.
 
         Session owners retain responsibility for revocation through the
         read/hold callbacks. No transport or work request is initiated here.
@@ -112,7 +112,11 @@ class NoticeWorkRuntime:
         from .notice_c_reparse_execution import PublicReplayRegistry
 
         with self._lock:
-            if self._closed or self._dispatch_requested:
+            if self._closed or self._scan is not None or self._hint_pending:
+                return False
+            if self._progress["workers_submitted"] != sum(
+                    self._progress[key] for key in ("workers_current", "workers_retry",
+                    "workers_error", "workers_skipped", "workers_cancelled")):
                 return False
             if type(registry) is not PublicReplayRegistry:
                 raise ValueError("notice_reparse_invalid_registry")
