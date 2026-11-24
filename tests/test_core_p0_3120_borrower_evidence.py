@@ -229,3 +229,16 @@ def test_nonprintable_borrower_proof_coordinates_never_promote(
         "unverified", "borrower_scope_unverified",
     )
     assert decision.account_id == decision.credential_id == ""
+
+
+@pytest.mark.parametrize("availability", ["supported", "unsupported", "unavailable"])
+@pytest.mark.parametrize("branch", ["https://private.example/card", "x" * 65, "EBOOKS" + chr(10), "EBOOKS" + chr(0x202e)])
+def test_invalid_branch_never_escapes_in_diagnostic(branch, availability):
+    reader = account()
+    result = assess(
+        reader, evidence(reader, branch=branch), branch=branch,
+        capability=replace(SUPPORTED, availability=availability),
+    )
+    assert result.state != "eligible_observed"
+    assert result.branch == ""
+    assert branch not in repr(result)
