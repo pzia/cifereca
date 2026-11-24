@@ -23,6 +23,16 @@ def crash_writer(root, boundary):
                 os._exit(41)
 
         service.storage._connect().set_trace_callback(terminate_before_commit)
+    elif boundary == "after_cleanup":
+        original = Path.unlink
+        old = root / "library" / "Book.epub"
+
+        def terminate_after_cleanup(path, *args, **kwargs):
+            original(path, *args, **kwargs)
+            if path == old:
+                os._exit(43)
+
+        Path.unlink = terminate_after_cleanup
     else:
         relocate = service.storage.relocate_local_path
 
@@ -38,6 +48,7 @@ def crash_writer(root, boundary):
 @pytest.mark.parametrize("boundary,expected_exit,name", [
     ("before_commit", 41, "Book.epub"),
     ("after_commit", 42, "Author - Book.epub"),
+    ("after_cleanup", 43, "Author - Book.epub"),
 ])
 def test_fresh_storage_resolves_authoritative_bytes_after_writer_exit(
         tmp_path, boundary, expected_exit, name):
@@ -58,7 +69,10 @@ def test_fresh_storage_resolves_authoritative_bytes_after_writer_exit(
     assert result.returncode == expected_exit, result.stderr
     root = tmp_path / "library"
     old, new = root / "Book.epub", root / "Author - Book.epub"
-    assert old.samefile(new)
+    if boundary == "after_cleanup":
+        assert not old.exists() and new.is_file()
+    else:
+        assert old.samefile(new)
     with closing(Storage(tmp_path / "db.sqlite3")) as storage:
         placement, = storage.placements()
         entry, = storage.catalog_entries()
@@ -69,3 +83,6 @@ def test_fresh_storage_resolves_authoritative_bytes_after_writer_exit(
         assert named.read_bytes() == b"book-data"
         assert placement["artifact_id"] == "sha256:" + sha256(named.read_bytes()).hexdigest()
         assert storage.acquisitions() == [] and storage.entitlements() == []
+        assert storage.placement_for_path(named)["placement_id"] == placement["placement_id"]
+        other = new if named == old else old
+        assert storage.placement_for_path(other) is None
