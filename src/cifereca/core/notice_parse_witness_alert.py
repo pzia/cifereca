@@ -117,7 +117,8 @@ def read_parse_witness_diagnostic(storage, *, key, parser_id):
         return result
 
 
-def review_publication_txn(db, *, current, candidate, input_digest, implementation_digest):
+def review_publication_txn(db, *, current, candidate, input_digest, implementation_digest,
+                           replay_spec=None):
     """Shared trusted publication gate for replay and fresh parse.
 
     Call only after exact source/input admission and final publication CAS.
@@ -166,7 +167,7 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
             remaining -= size
     diagnostic = enqueue_capture_txn(
         db, scope=scope, generation=approved.generation, review=review,
-        input_digest=input_digest, snapshots=bounded,
+        input_digest=input_digest, snapshots=bounded, replay_spec=replay_spec,
     )
     alert_key = _ALERT_PREFIX + scope
     alert = json.loads(db.execute("SELECT value FROM metadata WHERE key=?",
