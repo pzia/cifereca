@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from cifereca.models import Account, SearchResult
-from .lending_capabilities import LendingOperationFact
+from .lending_capabilities import (
+    LendingOperationFact, BorrowerOperationEvidence as AccountBorrowerEvidence,
+)
 
 
 BorrowerEligibilityStatus = Literal["unavailable", "unverified", "blocked", "eligible"]
@@ -39,6 +41,24 @@ class BorrowerOperationEvidence:
     quota_state: str = "unknown"
     item_offer: str = "unknown"
     permission: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class BorrowerEligibilitySnapshot:
+    """Optional in-memory publication of already observed official facts.
+
+    A producer may atomically replace session.borrower_eligibility_snapshot
+    after its existing read, never by calling a provider from Core admission.
+    The epoch must be the current session generation (integer or string).
+    All rows were observed at observed_at (Unix seconds); omit unknown rows
+    or publish unknown fields, never carry forward older observations.
+    Clear on reconnect, borrower change, or invalidation. No persistence,
+    consent, positive authorization or BnF manual-policy change is implied.
+    """
+    observed_at: int
+    session_epoch: int | str
+    account_evidence: tuple[AccountBorrowerEvidence, ...] = ()
+    edition_evidence: tuple[BorrowerOperationEvidence, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,5 +196,5 @@ def assess_borrower_eligibility(
 
 __all__ = [
     "BorrowerEligibilityStatus", "BorrowerOperationEvidence",
-    "BorrowerEligibilityFact", "assess_borrower_eligibility",
+    "BorrowerEligibilityFact", "BorrowerEligibilitySnapshot", "assess_borrower_eligibility",
 ]

@@ -44,7 +44,7 @@ from .provider_purchase_enrichment import (
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
     BorrowerEligibilityStatus, BorrowerOperationEvidence,
-    BorrowerEligibilityFact, assess_borrower_eligibility,
+    BorrowerEligibilityFact, BorrowerEligibilitySnapshot, assess_borrower_eligibility,
 )
 from .lending_actions import (
     LENDING_ACTION_CONTRACT, LendingActionOrigin, LendingActionOriginPolicy,
@@ -131,7 +131,7 @@ __all__ = [
     "ProviderCollection", "ProviderCollectionSnapshot", "VirtualProviderEntry", "ProviderCollectionValidationError", "validate_provider_collection_snapshot",
     "INVENTORY_CONTRACT", "LoanInventoryScope", "LoanBranchCoverage", "LoanInventorySnapshot", "legacy_loan_inventory", "read_loan_inventory",
     "BorrowerEligibilityStatus", "BorrowerOperationEvidence",
-    "BorrowerEligibilityFact", "assess_borrower_eligibility",
+    "BorrowerEligibilityFact", "BorrowerEligibilitySnapshot", "assess_borrower_eligibility",
     "LENDING_ACTION_CONTRACT", "LendingActionOrigin", "LendingActionOriginPolicy",
     "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
     "LendingActionOutcome",

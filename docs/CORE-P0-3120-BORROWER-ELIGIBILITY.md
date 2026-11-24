@@ -60,3 +60,27 @@ consentement et état distant avant mutation.
 pas de collecte fournisseur, pas de raccordement autonome à l'UI ou à
 `borrow_digital` sans preuve DILICOM et recette réelle. #3120 reste ouvert
 pour cette intégration métier, la permission par opération et l'affichage.
+
+## Raccordement local de l'admission ordinaire (#3120)
+
+Un plugin qui possède déjà une observation officielle peut publier atomiquement
+`session.borrower_eligibility_snapshot` (type public `BorrowerEligibilitySnapshot`),
+avec les preuves par compte/branche et/ou édition, l'horodatage Unix et la
+génération de session réellement courante. Ne jamais publier à partir d'un
+plafond personnel, d'un résumé ambigu, d'un inventaire partiel ou de CanLoan.
+Remplacer le snapshot complet après une nouvelle observation, l'effacer à
+la reconnexion/invalidation. Les sessions legacy n'ont rien à implémenter.
+
+Core lit uniquement cette donnée mémoire, sans appeler de méthode fournisseur.
+Les preuves de plus de 300 secondes, futures, d'une autre génération ou d'un
+scope étranger ne constituent aucun veto. Une preuve négative exacte suffit;
+les deux preuves positives sont requises pour le diagnostic « observed ».
+Une preuve inconnue laisse intacte l'admission manuelle existante. Contrôle
+à l'affichage et avant le claim puis immédiatement avant le dispatch; un refus
+arrivé avant dispatch libère uniquement le claim prouvé non envoyé. Le contrôle
+ne s'applique pas à la vérification des prêts existants ni à l'attestation du
+résultat après dispatch. Le fournisseur demeure autorité finale de sa mutation.
+
+Aucun producteur réel Paris ou BnF n'est revendiqué par cette tranche : la
+qualification des champs réellement observés reste au plugin; le parcours BnF
+#2055 ne publie pas cette admission optionnelle et reste inchangé.
