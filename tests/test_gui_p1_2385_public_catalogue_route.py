@@ -1,4 +1,5 @@
 """#2385: public catalogue route is navigable with installed UI plugins."""
+import sqlite3
 from cifereca.builtin_ui.pages import Pages
 
 
@@ -98,8 +99,11 @@ def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monke
 
     def search(storage, text, **kwargs):
         calls.append((storage, text, kwargs))
+        if text == "Erreur":
+            raise sqlite3.OperationalError("database is locked")
         return NS(rows=(), known_documents=0, known_matches=0,
-                  status="partial", has_more=False)
+                  status="budget_exceeded" if text == "Limite" else "partial",
+                  has_more=False)
 
     monkeypatch.setattr(page, "Thread", ImmediateThread)
     monkeypatch.setattr(page, "search_public_catalogue_view", search)
@@ -127,6 +131,13 @@ def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monke
     assert fn(*args) is False
     assert "0 notice(s) C" in status.value
     assert "Aucune notice" in scroller.children[0].children[0].value
+    assert "absence dans le catalogue non démontrée" in scroller.children[0].children[0].value
+    entry.value = "Limite"
+    search_button.handlers["clicked"](search_button)
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "budget de lecture atteint" in status.value
+    assert "autres résultats possibles" in scroller.children[0].children[0].value
     field_filters.children[1].handlers["clicked"](field_filters.children[1])
     fn, args = pending.pop()
     fn(*args)
@@ -158,3 +169,10 @@ def test_public_catalogue_search_reads_core_and_rejects_old_identity_epoch(monke
     fn(*args)
     assert calls[-1][2]["age"] is None
     assert calls[-1][2]["age_kind"] is None
+
+    entry.value = "Erreur"
+    search_button.handlers["clicked"](search_button)
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "Catalogue indisponible" in status.value
+    assert not scroller.children[0].children
