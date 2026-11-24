@@ -190,6 +190,7 @@ capture **consentie** (le nom de fichier n'est jamais enregistré) :
 python3 scripts/bnf_borrow_dom_probe.py --page profile < /chemin/prive/profil.html
 python3 scripts/bnf_borrow_dom_probe.py --page detail < /chemin/prive/livre.html
 python3 scripts/bnf_borrow_dom_probe.py --page confirmation < /chemin/prive/confirmation.html
+python3 scripts/bnf_borrow_dom_probe.py --page activity < /chemin/prive/activite.html
 ```
 
 Le rapport `bnf.borrow.dom-qualification/1` ne comprend que : état
@@ -243,12 +244,12 @@ sur une page partielle ne constitue pas un quota disponible. Les tests HTTPX
 `MockTransport` incluent l'action tentante `.button-borrow`, le refus
 d'un prêt actif, le changement de profil/notice et l'offre indisponible.
 
-**P0 bloqué explicitement** : pour activer `acquisition.borrow`, il reste
+**Historique de la tranche 0.3.19 (supplanté par les arbitrages #2055/#3121 et #4063) :** pour qualifier la permission positive automatique, il restait
 à qualifier avec un compte réel consentant trois sources autorisées de
 preuves positives (abonnement Pass actif, quota disponible, permission
 d'emprunt pour cette édition), ainsi que le signal positif d'offre de
 l'édition. Les sélecteurs encore inconnus ne sont pas simulés comme vrais.
-Ni UI BnF active ni prêt réel : l'interface #4052 conserve son bouton masqué.
+Ce constat historique ne bloque plus le parcours manuel d'emprunt ; voir le contrat actuel #4063 en fin de document.
 La lecture source est volontairement une préparation et ne transforme pas
 une capacité de recherche en droit de prêt.
 
@@ -747,9 +748,12 @@ déclarent chacun `status=success`, la branche `bnf_html` en
 Ce signal ne dit rien des fichiers présents : le Core conserve son propre
 contrôle des placements, acquisitions, erreurs ADEPT et consentements.
 
-Une page vide sans preuve de zéro explicite, un chargeur/paginateur, une
-carte contradictoire, une donnée manquante ou un prêt non projetable impose
-`partial` sur les **deux** projections. Même une couverture complète ne
+Une page vide sans preuve de zéro explicite reste `partial` pour les droits
+et ressources v2 (#4480). L'inventaire direct peut néanmoins déclarer une
+section vide, fermée, visible et non paginée complète pour le parcours
+manuel (#4082) : ce résultat ne prouve pas une absence de droit.
+Un chargeur/paginateur, une carte contradictoire ou un prêt non projetable
+impose une couverture partielle ou un refus explicite selon le cas. Même une couverture complète ne
 permet pas la réconciliation négative des droits, ni une restitution, une
 acquisition automatique ou une suppression de fichier. Tests HTML synthétiques,
 sans requête de jeton ACSM.
@@ -776,3 +780,46 @@ L'affichage de valeurs positives et datées reste non qualifié en
 l'absence de preuve terrain liée au compte et à l'édition. Ne pas
 inventer de valeur ni présenter les tests synthétiques comme une
 recette réelle. Aucune mutation ou relance POST pour cette qualification.
+
+
+### Passation de qualification terrain #4063 / #4480 — 24/11/2026
+
+**État intégré :** consultation informative explicite dans la fiche, séparée
+du bouton Emprunter (#7987, #7989, #7990, #7995, #7997). Aucun GET à
+l'affichage ; un clic Consulter lance la lecture du compte et de l'édition
+scoppés, affiche l'heure de l'observation et les seules valeurs qualifiées.
+Le Pass, le quota, les exemplaires et la permission restent inconnus.
+Un changement de sélection/session invalide le résultat tardif. La recette
+GTK est synthétique, pas une preuve de la page BnF réelle.
+
+**Entrée terrain attendue (lecture seule, consentie, locale) :**
+
+- #4063 : page du compte connecté et fiche de l'édition exacte, avec
+  marqueurs visibles et non contradictoires. Relever localement leur
+  rattachement, leur sens et leur date ; ne pas déduire une permission
+  d'un contrôle d'emprunt ou d'une authentification.
+- #4480 : page officielle `/my_profile/activity` authentifiée, naturellement
+  sans prêt actif, complètement chargée, sans pagination restante.
+  Vérifier séparément le quota restant. Ne jamais provoquer un emprunt,
+  une restitution ou une suppression pour fabriquer ce cas.
+- Utiliser la commande `--page activity` ci-dessus sur une capture privée
+  déjà disponible (#8001). Les résultats `empty_candidate`,
+  `nonempty_candidate`, `partial` ou `unknown` décrivent une forme
+  structurelle ; `activity_verified=false` est inconditionnel. Une
+  étiquette `empty_candidate` n'atteste ni l'origine HTTP, ni le compte,
+  ni le vrai zéro actif. Ne pas transmettre le fichier source au dépôt.
+- Documenter seulement un compte rendu anonymisé des vérifications,
+  sans HTML brut, identifiants, valeurs de secrets, captures personnelles
+  ou URL signées. Si la forme réelle est qualifiée, construire ensuite
+  une fixture synthétique minimale dérivée de cette forme, avec cas
+  positifs, ambigus et contradictoires. Ne pas qualifier un sélecteur
+  par supposition.
+
+**Réception technique actuelle #4480 :** quota zéro 0/1/N (#7958, #8003),
+refus ou couverture partielle (#8004), isolation de session (#7979, #7993),
+transition métier hypothétique et provenance canonique (#7974, #7992).
+Les quatre critères autonomes sont reçus synthétiquement. La véritable
+preuve zéro actif et la fixture dérivée restent ouvertes. Le passage à
+une couverture complète des droits/v2 sur zéro réel exige cette preuve
+et sa CI ; le Core reste seul propriétaire de la transition métier.
+Aucune release ni mutation réelle n'est engagée par cette passation.
