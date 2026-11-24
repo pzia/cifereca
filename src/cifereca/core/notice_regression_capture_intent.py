@@ -91,7 +91,7 @@ def export_capture(storage, diagnostic, *, members, directory=None):
         if type(members) is not dict:
             raise ValueError("invalid_capture_members")
         safe = {name: value.encode("utf-8") for name, value in record.get("snapshots", {}).items()}
-        if set(members).intersection(safe) or "diff.json" in members:
+        if set(members) - {"response.raw"}:
             raise ValueError("capture_metadata_override")
         safe.update(members)
         safe["diff.json"] = json.dumps({k: record[k] for k in
