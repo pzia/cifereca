@@ -354,6 +354,10 @@ class LegacyRightsResourceAdapter:
 
     No capability is added to ProviderSession. The concrete provider retains
     scope validation, locking, consent and all network policy.
+
+    Paris DILICOM/SYRACUSE and BnF bnf_html retain distinct coverage
+    and signed-offer semantics. This adapter neither upgrades coverage
+    nor admits a mutation; a staged candidate is not a publication receipt.
     """
 
     def downloadable_resource_snapshot(self, account):
