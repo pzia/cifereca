@@ -628,7 +628,7 @@ def test_4480_reconnect_after_inner_read_cannot_publish_stale_snapshot(layer, pa
     "rights_observation_snapshot", "downloadable_resource_snapshot",
 ])
 @pytest.mark.parametrize("failure", [
-    "missing_widget", "auth_html", "http_failure", "auth_failure", "not_executed",
+    "missing_widget", "hidden_widget", "auth_html", "http_failure", "auth_failure", "not_executed",
 ])
 def test_4480_failed_activity_never_publishes_empty_rights(entrypoint, failure):
     from cifereca_bnf_pret_http import ReaderHTTPError
@@ -640,6 +640,8 @@ def test_4480_failed_activity_never_publishes_empty_rights(entrypoint, failure):
         assert session._observed_loans == {"loan-1": "edition-1"}
         if failure == "missing_widget":
             client.html = "<html><p>Unknown activity</p></html>"
+        elif failure == "hidden_widget":
+            client.html = '<div hidden><section class="active-loans"></section></div>'
         elif failure == "auth_html":
             client.html = '<input type="password" name="password">'
         elif failure == "not_executed":
@@ -665,7 +667,6 @@ def test_4480_failed_activity_never_publishes_empty_rights(entrypoint, failure):
     '<section class="active-loans"><div class="js-loan"></div></section>',
     '<section class="active-loans"><div class="load-more"></div></section>',
     '<section class="active-loans"><div><span></section>',
-    '<div hidden><section class="active-loans"></section></div>',
 ])
 def test_4480_incomplete_empty_activity_remains_partial_across_projections(html):
     session, account, client = fixture(html)
