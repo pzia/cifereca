@@ -18,6 +18,7 @@ from .notice_c_work_pump import DispatchTick, PublicNoticeWorkPump
 from .notice_c_fetch_execution import PublicFetchExecution
 from .notice_c_purchase_execution import PurchaseIntentExecution
 from .notice_regression_capture_intent import resume_captures
+from .notice_c_reparse_execution import resolve_replay_capture_members
 
 
 def validate_notice_work_admission(admission):
@@ -304,7 +305,10 @@ class NoticeWorkRuntime:
         # Existing admitted maintenance worker, no extra pool or network.
         # Durable snapshots suffice when original bytes cannot be exported.
         control.check_cancelled()
-        for diagnostic, state in resume_captures(self._storage, lambda _diagnostic: {}, limit=2):
+        for diagnostic, state in resume_captures(
+                self._storage, lambda diagnostic: resolve_replay_capture_members(
+                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
+                ), limit=2):
             self._report_capture(diagnostic, state)
         if type(outcome) is DispatchTick:
             with self._lock:
