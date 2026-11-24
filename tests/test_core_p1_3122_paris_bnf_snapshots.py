@@ -376,3 +376,30 @@ def test_bnf_real_session_core_cache_nonempty_empty_reobserved(tmp_path):
     finally:
         service.close()
         s.close()
+
+
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_paris_real_inventory_cardinality_preserves_branch_coverage(count):
+    a = account()
+    s = paris([a])
+    original = s.client.loans
+
+    def rows(upstream, borrower):
+        template = original(upstream, borrower)[0]
+        from dataclasses import replace
+        return [replace(template, id=f"{template.id}-{i}",
+                        record_id=f"{template.record_id}-{i}")
+                for i in range(count)]
+
+    s.client.loans = rows
+    try:
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert snap.status == "success"
+        assert len(snap.loans) == 2 * count
+        assert len({row.id for row in snap.loans}) == 2 * count
+        assert all(row.identity_id == a.identity_id for row in snap.loans)
+        assert snap.branch_claims_complete("dilicom", "digital") is (count == 0)
+        assert snap.branch_claims_complete("syracuse", "physical") is (count == 0)
+        assert s.client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
+    finally:
+        s.close()
