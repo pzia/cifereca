@@ -16,7 +16,7 @@ from cifereca.core.notice_c_dispatch_rotation import (
 from cifereca.task_admission import SharedTaskAdmission
 from cifereca.task_queue import TaskPriority
 
-KINDS = tuple(journal._KINDS)
+KINDS = ("fetch_source_notice", "reparse_cached_input", "relink_notices", "recompute_aggregate")
 
 
 class JournalView:
@@ -184,3 +184,9 @@ def test_validation_and_cancellation_do_not_advance_unoffered_candidate():
         policy.tick(view.read, offer, check_cancelled=check)
     assert accepted == [ref]
     assert policy.tick(view.read, offer).handles == (view.rows[f"{2:064x}"][1],)
+
+
+def test_descriptive_journal_kind_not_admitted_to_public_rotation():
+    assert "consolidate_descriptive" in journal._KINDS
+    with pytest.raises(ValueError, match="invalid_kinds"):
+        PublicDispatchRotation(("consolidate_descriptive",))

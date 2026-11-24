@@ -148,7 +148,6 @@ def test_corrupt_selection_fails_closed(tmp_path, raw):
 
 def test_reselection_requires_new_publication_generation(tmp_path):
     from cifereca.core import notice_c_job_journal as journal
-    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
     from cifereca.core.notice_descriptive_selection_store import descriptive_selection_input_digest
 
     db = Storage(tmp_path / "reselection.sqlite")
@@ -157,8 +156,8 @@ def test_reselection_requires_new_publication_generation(tmp_path):
     try:
         first = put(db, selected, binding.source_sha256, 0)
         row = coordinator.run_descriptive_core_job(db, **options(binding))
-        spec = journal.public_job_spec(
-            "recompute_aggregate", canonical_cover_document_ref(TARGET),
+        spec = journal.descriptive_job_spec(
+            target_edition_id=TARGET, **SCOPE,
             input_digest=descriptive_selection_input_digest(row.execution_key, first),
             implementation_digest=binding.source_sha256,
         )
@@ -202,7 +201,7 @@ def test_revocation_before_job_allocation_leaves_no_obsolete_job(tmp_path, monke
     binding = installed()
     selected = selection()
     put(db, selected, binding.source_sha256, 0)
-    original = journal.public_job_spec
+    original = journal.descriptive_job_spec
     specs = []
 
     def revoke_before_allocation(*args, **kwargs):
@@ -211,7 +210,7 @@ def test_revocation_before_job_allocation_leaves_no_obsolete_job(tmp_path, monke
         put(db, None, None, 1)
         return spec
 
-    monkeypatch.setattr(journal, "public_job_spec", revoke_before_allocation)
+    monkeypatch.setattr(journal, "descriptive_job_spec", revoke_before_allocation)
     try:
         with pytest.raises(ValueError, match="descriptive_selection_changed"):
             coordinator.run_descriptive_core_job(db, **options(binding))
@@ -220,5 +219,74 @@ def test_revocation_before_job_allocation_leaves_no_obsolete_job(tmp_path, monke
             sql.execute("BEGIN")
             assert journal._load(sql, journal._key(specs[0])) is None
             assert read_descriptive_selection_txn(sql, **SCOPE).generation == 2
+    finally:
+        db.close(final=True)
+
+
+def test_pinned_descriptive_job_does_not_replace_canonical_or_other_scope(tmp_path):
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_descriptive_selection_store import descriptive_selection_input_digest
+
+    db = Storage(tmp_path / "distinct.sqlite")
+    binding = installed()
+    selected = selection()
+    try:
+        canonical = journal.public_job_spec(
+            "recompute_aggregate", canonical_cover_document_ref(TARGET),
+            input_digest="a"*64, implementation_digest="b"*64,
+        )
+        other = journal.descriptive_job_spec(
+            target_edition_id=TARGET, canonical_type="age", scope="other:editions",
+            input_digest="a"*64, implementation_digest=binding.source_sha256,
+        )
+        refs = [journal.request_job(db, spec, now=99, expected_generation=0)
+                for spec in (canonical, other)]
+        pin = put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        current = journal.descriptive_job_spec(
+            target_edition_id=TARGET, **SCOPE,
+            input_digest=descriptive_selection_input_digest(row.execution_key, pin),
+            implementation_digest=binding.source_sha256,
+        )
+        assert len({journal._key(spec) for spec in (canonical, other, current)}) == 3
+        different_type = journal.descriptive_job_spec(
+            target_edition_id=TARGET, canonical_type="genre", scope=SCOPE["scope"],
+            input_digest=current.input_digest, implementation_digest=binding.source_sha256,
+        )
+        assert journal._key(different_type) != journal._key(current)
+        for ref, spec in zip(refs, (canonical, other)):
+            saved = journal.read_job(db, ref)
+            assert saved.spec == spec and saved.state == "pending"
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            assert journal._load(sql, journal._key(current)).state == "current"
+    finally:
+        db.close(final=True)
+
+
+def test_configured_publication_cannot_bypass_journal_lease(tmp_path):
+    from cifereca.core.notice_descriptive_materialization_store import publish_descriptive_materialization
+
+    db = Storage(tmp_path / "no-bypass.sqlite")
+    binding = installed()
+    selected = selection()
+    try:
+        put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        admitted = admit_descriptive_facts(
+            target_edition_id=TARGET, canonical_type="age",
+            consolidator_id=selected.plugin_id, consolidator_version=selected.version,
+            source_facts=(fact(),), attested_strong_links={},
+        )
+        capture = lambda sql: (selected, admitted, binding.source_sha256)
+        with pytest.raises(ValueError, match="descriptive_journal_binding_required"):
+            publish_descriptive_materialization(
+                db, row, expected_execution_key=row.execution_key,
+                capture_current_txn=capture,
+            )
+        assert read_descriptive_materialization(
+            db, target_edition_id=TARGET, **SCOPE, capture_current_txn=capture,
+        ) == row
     finally:
         db.close(final=True)

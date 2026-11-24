@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from . import notice_c_job_journal as journal
 
 _PURCHASE_LANE = "purchase_attested"
-_ORDER = tuple(journal._KINDS) + (_PURCHASE_LANE,)
+_ORDER = tuple(kind for kind in journal._KINDS if kind != "consolidate_descriptive") + (_PURCHASE_LANE,)
 _SCAN_BUDGET = 32
 _SUBMIT_BUDGET = 2
 

@@ -34,6 +34,7 @@ _KINDS = {
     "reparse_cached_input": 1,
     "relink_notices": 2,
     "recompute_aggregate": 3,
+    "consolidate_descriptive": 3,
 }
 _STATES = {"pending", "current", "stale", "error"}
 _REASONS = {"none", "dependency_changed", "input_superseded", "exhausted", "transient", "permanent"}
@@ -109,6 +110,25 @@ def public_job_spec(kind, document, *, input_digest, implementation_digest,
     return spec
 
 
+def descriptive_job_spec(*, target_edition_id, canonical_type, scope,
+                         input_digest, implementation_digest):
+    """Opaque, independent descriptive work coordinate; not an access grant."""
+    from .notice_consolidator_selection import _identifier
+    from .notice_c_cover_index import canonical_cover_document_ref
+    if not _identifier(canonical_type) or not _identifier(scope, max_len=160):
+        raise ValueError("notice_work_invalid_descriptive_scope")
+    edition = canonical_cover_document_ref(target_edition_id).source_key
+    raw = json.dumps(
+        ("notice.c.descriptive-job.v1", edition, canonical_type, scope),
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("ascii")
+    spec = JobSpec("consolidate_descriptive",
+                   "notice-c:descriptive:v1:" + sha256(raw).hexdigest(),
+                   input_digest, implementation_digest)
+    _check_spec(spec)
+    return spec
+
+
 def _check_spec(spec):
     if (type(spec) is not JobSpec or type(spec.kind) is not str
             or spec.kind not in _KINDS or type(spec.target) is not str
@@ -123,6 +143,14 @@ def _check_spec(spec):
                 or not spec.target.startswith(_PURCHASE_TARGET)
                 or not _digest(spec.target[len(_PURCHASE_TARGET):])):
             raise ValueError("notice_work_invalid_purchase_intent")
+        return
+    if spec.kind == "consolidate_descriptive":
+        prefix = "notice-c:descriptive:v1:"
+        if (not spec.target.startswith(prefix) or not _digest(spec.target[len(prefix):])
+                or spec.dependencies or spec.source_ref is not None
+                or spec.implementation_digest in (
+                    _INITIAL_PUBLIC_C_DIGEST, _INITIAL_GROUP_C_DIGEST)):
+            raise ValueError("notice_work_invalid_descriptive_spec")
         return
     prefix = ("notice-c:canonical-cover:v1:"
               if spec.kind in ("relink_notices", "recompute_aggregate")

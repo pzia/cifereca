@@ -85,11 +85,19 @@ def run_descriptive_core_job(
         )
     if not admitted.exact and not admitted.inherited:
         return None
-    spec = journal.public_job_spec(
-        "recompute_aggregate", canonical_cover_document_ref(target_edition_id),
-        input_digest=descriptive_selection_input_digest(execution_key, pin),
-        implementation_digest=installed.source_sha256,
-    )
+    if pin is None:
+        # Legacy trusted staging callers retain their existing journal ABI.
+        spec = journal.public_job_spec(
+            "recompute_aggregate", canonical_cover_document_ref(target_edition_id),
+            input_digest=descriptive_selection_input_digest(execution_key, pin),
+            implementation_digest=installed.source_sha256,
+        )
+    else:
+        spec = journal.descriptive_job_spec(
+            target_edition_id=target_edition_id, canonical_type=canonical_type,
+            scope=scope, input_digest=descriptive_selection_input_digest(execution_key, pin),
+            implementation_digest=installed.source_sha256,
+        )
     # Recheck authority before allocating a durable job. A concurrent
     # revocation must not allow an obsolete producer to supersede newer work.
     with storage._lock, storage._connect() as db:

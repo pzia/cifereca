@@ -102,7 +102,8 @@ def publish_descriptive_materialization(
     plugin callback and must not perform I/O outside this SQLite connection.
     With journal_lease supplied, validates the exact journal generation,
     fence, target and execution digests and completes it atomically. Without
-    the lease this is a staging-only port, not a scheduler publication.
+    the lease this is a staging-only port for unconfigured scopes. A durable
+    selection always requires an exact held job.
     """
     key = _row_key(row)
     if journal_clock is not None and (journal_lease is None or not callable(journal_clock)):
@@ -131,18 +132,25 @@ def publish_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
         )
+        if pin is not None and journal_lease is None:
+            raise ValueError("descriptive_journal_binding_required")
         if journal_lease is not None:
             from . import notice_c_job_journal as journal
             from .notice_c_cover_index import canonical_cover_document_ref
             job = journal._held(db, journal_lease,
                                 journal_clock() if journal_clock is not None else journal_now)
-            if (job.spec.kind != "recompute_aggregate"
-                    or job.spec.target != canonical_cover_document_ref(
-                        row.target_edition_id).source_key
-                    or job.spec.input_digest != descriptive_selection_input_digest(
-                        row.execution_key, pin
-                    )
-                    or job.spec.implementation_digest != digest):
+            input_digest = descriptive_selection_input_digest(row.execution_key, pin)
+            if pin is None:
+                expected = journal.public_job_spec(
+                    "recompute_aggregate", canonical_cover_document_ref(row.target_edition_id),
+                    input_digest=input_digest, implementation_digest=digest,
+                )
+            else:
+                expected = journal.descriptive_job_spec(
+                    target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
+                    scope=row.scope, input_digest=input_digest, implementation_digest=digest,
+                )
+            if job.spec != expected:
                 raise ValueError("descriptive_journal_snapshot_mismatch")
         encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
                              separators=(",", ":"))
