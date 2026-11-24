@@ -72,3 +72,49 @@ def export_capture(storage, diagnostic, *, members, directory=None):
         db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
                    (json.dumps(dict(record, capture_state=state), sort_keys=True), key, row[0]))
     return state
+
+
+def pending_capture_ids(storage, *, limit=32):
+    """Bounded restart inventory; no raw data or filesystem access."""
+    if type(limit) is not int or not 1 <= limit <= 128:
+        raise ValueError("invalid_capture_limit")
+    with storage._lock, storage._connect() as db:
+        rows = db.execute(
+            "SELECT key,value FROM metadata WHERE key GLOB ? ORDER BY key LIMIT 2048",
+            (_PREFIX + "*",)).fetchall()
+    result = []
+    for key, raw in rows:
+        diagnostic = key[len(_PREFIX):]
+        if not _SHA.fullmatch(diagnostic):
+            continue
+        try:
+            record = json.loads(raw)
+            if record["capture_state"] in ("pending", "failed"):
+                result.append(diagnostic)
+        except (ValueError, KeyError, TypeError):
+            continue
+        if len(result) == limit:
+            break
+    return tuple(result)
+
+
+def resume_captures(storage, resolve_members, *, directory=None, limit=8):
+    """Trusted local resolver only; call from maintenance worker, not GTK.
+
+    Resolver returns authorized members or an empty dict when unavailable.
+    Never calls a provider or fabricates original input.
+    """
+    if not callable(resolve_members):
+        raise ValueError("invalid_capture_resolver")
+    outcomes = []
+    for diagnostic in pending_capture_ids(storage, limit=limit):
+        try:
+            members = resolve_members(diagnostic)
+            if type(members) is not dict:
+                raise ValueError("invalid_capture_members")
+            state = export_capture(storage, diagnostic, members=members,
+                                   directory=directory)
+        except (OSError, ValueError):
+            state = "failed"
+        outcomes.append((diagnostic, state))
+    return tuple(outcomes)
