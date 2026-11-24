@@ -78,3 +78,33 @@ def test_revocation_never_removes_outside_staging(tmp_path):
             admission_check=lambda guard: False,
         )
     assert outside.read_bytes() == b"synthetic"
+
+
+def test_revocation_preserves_symlink_and_its_target(tmp_path):
+    adapter = LegacyRightsResourceAdapter()
+    account = SimpleNamespace(identity_id="alice", provider_id="synthetic",
+                              credential_id="cred", unique_id="borrower")
+    outside = tmp_path / "original.acsm"
+    outside.write_bytes(b"synthetic")
+    target = tmp_path / "stage"
+    target.mkdir()
+    link = target / "candidate.acsm"
+    link.symlink_to(outside)
+    guard = Mock(return_value=False)
+    admission_check = Mock(return_value=False)
+    adapter.rights_selected_delivery_candidate = Mock(return_value=(link, "acsm"))
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        adapter._stage_legacy_delivery_candidate(
+            account, edition_id="edition", resource_id="loan", kind="loan",
+            branch="synthetic", selected_offer_id="offer", target_dir=target,
+            admission_check=admission_check, admission_current=guard,
+            explicit_user_action=True,
+        )
+    adapter.rights_selected_delivery_candidate.assert_called_once_with(
+        account, edition_id="edition", right_id="loan", kind="loan",
+        branch="synthetic", delivery_offer_id="offer", target_dir=target,
+        explicit_user_action=True, admission_current=guard,
+    )
+    admission_check.assert_called_once_with(guard)
+    assert link.is_symlink()
+    assert outside.read_bytes() == b"synthetic"
