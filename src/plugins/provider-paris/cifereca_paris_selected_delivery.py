@@ -68,7 +68,7 @@ class ParisSelectedDeliveryOperations:
         """
         from cifereca_paris import (
             _paris_core_admission_current, _pnb_direct_url_observed,
-            _paris_pnb_acsm_route,
+            _paris_pnb_acsm_route, _TRACE_LOG,
         )
         route_witness = self._selected_acsm_route.get()
         self._selected_acsm_route.set(None)
