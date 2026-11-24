@@ -704,12 +704,18 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         if not card.closed:
             partial = True
             continue
-        lids, rids = _links(card, "loans"), _links(card, "resources")
+        # A visible card can still contain hidden template action links.
+        # Only its visible anchors can establish an observed loan identity.
+        anchors = tuple(n for n in visible_nodes(card) if n.tag == "a")
+        lids = {value for n in anchors
+                if (value := _id(n.attrs.get("href", ""), "loans"))}
+        rids = {value for n in anchors
+                if (value := _id(n.attrs.get("href", ""), "resources"))}
         if len(lids) != 1 or len(rids) != 1:
             partial = True
             continue
-        titles = {n.text() for n in card.walk() if n.tag == "a"
-                  and _id(n.attrs.get("href", ""), "resources") and n.text()}
+        titles = {n.text() for n in anchors
+                  if _id(n.attrs.get("href", ""), "resources") and n.text()}
         author_values = _properties(card).get("author", ())
         # A pathological card cannot flood a Loan model with unrelated text.
         # An excess is uncertainty, not a reason to discard the real loan.
