@@ -137,3 +137,33 @@ def test_same_scope_backup_is_an_immutable_archive_after_canonical_rename(tmp_pa
             "SELECT local_path,updated_at,identity_id FROM backup_items "
             "WHERE provider_id='local'"
         ).fetchone() == before == (str(old), 1, "id1")
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_relocation_checkpoint_scan_budget_never_authorizes_unseen_rows(
+    tmp_path, monkeypatch, count,
+):
+    from cifereca import storage as storage_module
+
+    service, placement_id, old, new, broker, plan = _case(tmp_path)
+    monkeypatch.setattr(storage_module, "_MAX_RELOCATION_ACQUISITION_ROWS", 1)
+    for index in range(count):
+        service.storage.acquisition_put({
+            "provider_id": "synthetic", "credential_id": "synthetic-account",
+            "identity_id": "id1", "item_id": f"unrelated-{index}",
+            "status": "attention_required", "metadata": {"phase": "index_pending"},
+        })
+    with service.storage._lock, service.storage._connect() as db:
+        prior = db.execute("SELECT * FROM acquisition_ledger").fetchall()
+    assert len(prior) == count
+    if count == 1:
+        result = broker.run(plan, Control())
+        assert result.ok and result.changed == 1
+        assert new.read_bytes() == b"book-data" and not old.exists()
+        assert service.storage.placement_get(placement_id)["path"] == str(new)
+    else:
+        with pytest.raises(ValueError, match="relocate_acquisition_context_unavailable"):
+            broker.run(plan, Control())
+        _assert_unchanged(service, placement_id, old, new)
+    with service.storage._lock, service.storage._connect() as db:
+        assert db.execute("SELECT * FROM acquisition_ledger").fetchall() == prior
