@@ -326,3 +326,50 @@ def test_postcommit_physical_drift_requires_recovery_not_success(
     else:
         assert new.is_symlink()
     # No speculative rollback or second writer on postcommit failure.
+
+
+@pytest.mark.parametrize("drift", ["sqlite", "old_name"])
+def test_postcommit_drift_during_hash_cannot_report_rename_success(
+    store, tmp_path, monkeypatch, drift,
+):
+    from contextlib import contextmanager
+    from cifereca.core import derived_variant_publication as publication
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data = old.read_bytes()
+    scope, page = _run(_service(store, root))
+    draft = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    accepted = confirm_organizer_dry_run(scope, page, draft, confirmed=True)
+    entry, = accepted.entries
+    new = root / scope.directory / entry.proposed
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr(execute, "_execution_fence_current",
+                        lambda s, lock: s is scope and s.storage is store)
+    original = publication._verified_variant_file
+    seen = []
+
+    @contextmanager
+    def with_drift(path, *args, **kwargs):
+        with original(path, *args, **kwargs) as check:
+            if path == new:
+                seen.append(path)
+                if drift == "sqlite":
+                    store.metadata_set("synthetic-postcheck-drift", "changed")
+                else:
+                    old.write_bytes(b"unrelated")
+            yield check
+
+    monkeypatch.setattr(publication, "_verified_variant_file", with_drift)
+    with InterProcessLock(lock_path) as lock:
+        result = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock, confirmed=True)
+    assert result == {"status": "recovery_required", "changed": None}
+    assert seen == [new]
+    assert new.read_bytes() == data and store.placement_get(pid)["path"] == str(new)
+    if drift == "old_name":
+        assert old.read_bytes() == b"unrelated"
+    else:
+        assert not old.exists()
