@@ -643,3 +643,38 @@ def test_safe_private_reference_is_not_lost_by_local_display_policy(private_rig)
     assert candidate.source.edition_id == "edition"
     assert candidate.source.resource_id == "loan-1"
     assert not calls
+
+
+def test_superseded_private_comparison_cannot_leave_unreachable_continuation(
+    private_rig, monkeypatch,
+):
+    from cifereca.core import local_origin_detail_broker as detail
+
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    key, snapshot = new_source()
+    persist_attested_source_references(service.storage, snapshot)
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    broker = detail.LocalOriginDetailReadBrokerImpl(
+        service, activation_current=lambda: True)
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: True, confirmed=True)
+    choices = {c.kind: c.token for c in page.private_choices}
+    assert set(choices) == {"purchase", "loan"}
+    before, data = rows(service.storage), path.read_bytes()
+    original = detail.compare_known_private_catalogue
+    newer = []
+
+    def interleaved(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs["kind"] == "loan":
+            assert result["next_cursor"] is not None
+            newer.append(broker.compare_private(token=choices["purchase"], confirmed=True))
+        return result
+
+    monkeypatch.setattr(detail, "compare_known_private_catalogue", interleaved)
+    assert broker.compare_private(token=choices["loan"], confirmed=True) is None
+    assert len(newer) == 1 and newer[0].status == "partial"
+    assert newer[0].next_token is None
+    assert not broker._private  # Both selectors consumed; no undisclosed cursor.
+    assert not calls and rows(service.storage) == before and path.read_bytes() == data
