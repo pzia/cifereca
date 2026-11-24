@@ -347,7 +347,13 @@ def assess_borrower_operation_eligibility(
     or a bypass of the provider's final borrow admission.
     """
     operation = "loan.borrow"
-    requested_branch = branch if type(branch) is str and branch else ""
+    # Never echo malformed/private branch coordinates in a diagnostic,
+    # including early returns for unsupported or unavailable capabilities.
+    requested_branch = (
+        branch if type(branch) is str and 0 < len(branch) <= 64
+        and all(c.isascii() and (c.isalnum() or c in "._-") for c in branch)
+        else ""
+    )
     def outcome(state: BorrowerEligibilityState, code: str):
         return BorrowerOperationEligibility(state, code, operation, requested_branch)
 
