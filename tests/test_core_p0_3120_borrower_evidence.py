@@ -198,3 +198,14 @@ def test_account_level_eligibility_rejects_unidentified_linked_reader(
         assert not status.account_id
     else:
         assert status.account_id == borrower
+
+@pytest.mark.parametrize("action_requirement", [False, None, "true", 1])
+def test_borrower_wide_positive_never_omits_explicit_user_action(action_requirement):
+    reader = account()
+    forged = replace(SUPPORTED, explicit_action_required=action_requirement)
+    status = assess(reader, evidence(reader), capability=forged)
+    assert (status.state, status.reason_code) == (
+        "unverified", "capability_unverified",
+    )
+    assert (status.identity_id, status.provider_id,
+            status.credential_id, status.account_id) == ("", "", "", "")
