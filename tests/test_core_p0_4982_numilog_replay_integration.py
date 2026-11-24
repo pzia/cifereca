@@ -365,3 +365,66 @@ def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
         assert len(calls) == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("configured", (False, True))
+def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured):
+    from types import SimpleNamespace
+    from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+    from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+    from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
+
+    session, client, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "search-witness.sqlite")
+    destination = tmp_path / "captures" if configured else tmp_path
+    monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir",
+                        lambda: tmp_path)
+    service = SimpleNamespace(storage=db, _notice_regression_capture_directory=
+                              destination if configured else None)
+    try:
+        response = session.search_with_response_facets("loup", "catalog")
+        rows = search_orchestration._public_rows_from_response(response, session)
+        row, = rows
+        search_orchestration._ingest_public_search_c(
+            service, rows, identity_id="alice", now=100,
+            require_public_cover_witness=True,
+        )
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        title = source.observation.fields_copy()["search_result"]["public_bibliography"]["title"]
+        publish_approved_parse_witness(
+            db, observation=source.observation, response_bytes=body,
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(title),
+            ),), expected_generation=0,
+        )
+        original_parse = client.parse_public_search
+
+        def drift(text, url):
+            page = original_parse(text, url)
+            return replace(page, items=tuple(replace(item, title=CORRECTED)
+                                             for item in page.items))
+
+        monkeypatch.setattr(client, "parse_public_search", drift)
+        # Expire the normal cache so the next ordinary Search parses the
+        # same recorded transport bytes, not an old cached parsed DTO.
+        cache_clock[0] += 61.
+        changed = session.search_with_response_facets("loup", "catalog")
+        changed_rows = search_orchestration._public_rows_from_response(changed, session)
+        search_orchestration._ingest_public_search_c(
+            service, changed_rows, identity_id="alice", now=161,
+            require_public_cover_witness=True,
+        )
+        assert read_notice_cover(db, source.document) == source
+        diagnostic = read_parse_witness_diagnostic(
+            db, key=source.observation.key, parser_id=source.observation.parser_id,
+        )
+        assert diagnostic["status"] == "parser_drift_suspected"
+        assert diagnostic["capture_state"] == "partial"
+        assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
+        if configured:
+            assert not list(tmp_path.glob("cifereca-regression-*.zip"))
+        assert len(calls) == 2
+    finally:
+        session.close()
+        db.close()
