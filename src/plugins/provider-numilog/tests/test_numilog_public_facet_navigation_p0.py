@@ -34,7 +34,7 @@ def session():
 
 def fake_search(monkeypatch):
     calls = []
-    def load(query, *, page=0, field="all"):
+    def load(query, *, page=0, field="all", _retain_input=False):
         calls.append((query, page, field))
         assert query == "jefferson" and page == 0 and field == "all"
         return parse_public_search(HTML, SEARCH_URL)
