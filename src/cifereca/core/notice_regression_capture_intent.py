@@ -8,7 +8,7 @@ import json
 import re
 import time
 
-from .notice_regression_capture import write_regression_capture
+from .notice_regression_capture import recover_regression_capture, write_regression_capture
 
 _MAX_INTENTS = 2048
 _PREFIX = "notice.c.regression-capture.v1:"
@@ -98,9 +98,23 @@ def export_capture(storage, diagnostic, *, members, directory=None):
             ("status", "fields", "input_sha256")}, sort_keys=True).encode()
         if "response.raw" in safe and hashlib.sha256(safe["response.raw"]).hexdigest() != record["input_sha256"]:
             raise ValueError("capture_input_changed")
-        _, state = write_regression_capture(
-            diagnostic_id=diagnostic, generation=record["generation"],
-            members=safe, directory=directory)
+        def recover():
+            return recover_regression_capture(
+                diagnostic_id=diagnostic, generation=record["generation"],
+                expected_members=safe, input_digest=record["input_sha256"],
+                directory=directory,
+            )
+        state = recover()
+        if state is None:
+            try:
+                _, state = write_regression_capture(
+                    diagnostic_id=diagnostic, generation=record["generation"],
+                    members=safe, directory=directory)
+            except ValueError:
+                # Another process may have linked a valid archive since the read.
+                state = recover()
+                if state is None:
+                    raise
     except (OSError, ValueError, TypeError):
         state = "failed"
     return _record_outcome(storage, key, row[0], record, state)
