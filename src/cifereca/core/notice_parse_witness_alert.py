@@ -67,8 +67,10 @@ def record_parse_witness_review_txn(db, *, key, parser_id, generation, review):
                       "fields": sorted(fields)}, sort_keys=True, separators=(",", ":"))
     previous = db.execute("SELECT value FROM metadata WHERE key=?",
                           (alert_key,)).fetchone()
-    if previous is not None and previous[0] == raw:
-        return False
+    if previous is not None:
+        prior = json.loads(previous[0])
+        if {k: prior.get(k) for k in ("generation", "status", "fields")} == json.loads(raw):
+            return False
     db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                (alert_key, raw))
