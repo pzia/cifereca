@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import sqlite3
+import time
 
 from cifereca.storage import Storage
 from cifereca.core.borrow_action_scope import borrow_claim_key
@@ -13,7 +15,15 @@ from tests.test_p1_4082_bnf_borrow_claim_observation import _account, _item
 
 
 def _reserve(path: str, key: str, operation: str) -> bool:
-    storage = Storage(Path(path))
+    # Retry only transient schema-initialization contention, never CAS failure.
+    for attempt in range(12):
+        try:
+            storage = Storage(Path(path))
+            break
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == 11:
+                raise
+            time.sleep(0.05 * (attempt + 1))
     try:
         return storage.loan_borrow_claim_next_cycle(
             key, "first", "loan-1", operation,
