@@ -183,6 +183,8 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                 "file": label, "reason": reason,
                 "status": "compared" if suggestions is not None else "not_assessed",
                 "known_matches": suggestions.known_matches if suggestions is not None else None,
+                "c_window_status": suggestions.status if suggestions is not None else None,
+                "unindexed_sources": suggestions.unindexed_sources if suggestions is not None else None,
                 "more_matches": suggestions.has_more if suggestions is not None else False,
                 "suggestions": tuple((x.hit.title, x.hit.author, x.hit.provider_id,
                                       x.comparison, x.hit.stale,

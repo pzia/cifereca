@@ -28,6 +28,8 @@ class LocalOriginFileAdvice:
     known_matches: int | None
     more_matches: bool
     suggestions: tuple[KnownOriginMatch, ...]
+    c_window_status: str | None = None
+    unindexed_sources: int | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)

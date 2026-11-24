@@ -251,3 +251,43 @@ def test_batch_safe_real_cursor_still_pages_without_search_or_right_mutation(sto
     assert first["has_more"] and second["page"] == 2
     assert not first["association_authorized"] and not second["association_authorized"]
     assert not first["provider_access_performed"] and not second["provider_access_performed"]
+
+
+@pytest.mark.parametrize("status,unindexed", [
+    ("partial", 0), ("partial", 3), ("budget_exceeded", 0),
+    ("budget_exceeded", 3),
+])
+def test_batch_retains_c_window_limits_through_public_broker_and_display(
+    store, tmp_path, monkeypatch, status, unindexed,
+):
+    from dataclasses import replace
+    from importlib.util import spec_from_file_location, module_from_spec
+    from cifereca.core.local_origin_review_broker import LocalOriginBatchReadBrokerImpl
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+
+    service, root, pid = _service(store, tmp_path)
+    path = Path(store.placement_get(pid)["path"])
+    original = documentary.search_public_notice_c
+    def limited(*args, **kwargs):
+        value = original(*args, **kwargs)
+        return replace(value, status=status, unindexed_sources=unindexed,
+                       has_more=status == "budget_exceeded")
+    monkeypatch.setattr(documentary, "search_public_notice_c", limited)
+    before, content = rows(store), path.read_bytes()
+    broker = LocalOriginBatchReadBrokerImpl(service)
+    page = broker.preview(identity_id="A", confirmed=True)
+    row, = page.entries
+    assert row.c_window_status == status and row.unindexed_sources == unindexed
+    assert row.known_matches == 1 and row.more_matches == (status == "budget_exceeded")
+    plugin = (Path(__file__).resolve().parents[1] / "src/plugins"
+              / "maintenance-local-origin/cifereca_local_origin.py")
+    spec = spec_from_file_location("batch_window_receipt", plugin)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rendered = module.display(page)
+    assert ("Budget de consultation C atteint" in rendered) == (status == "budget_exceeded")
+    assert ("source(s) C non indexée(s)" in rendered) == bool(unindexed)
+    assert "absence non prouvée" in rendered
+    assert not page.coverage_complete and not page.association_authorized
+    assert not page.provider_access_performed
+    assert rows(store) == before and path.read_bytes() == content
