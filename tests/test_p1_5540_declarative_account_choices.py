@@ -33,6 +33,8 @@ class ComboRow(Widget):
         self.model = tuple(model)
     def set_selected(self, index):
         self.selected = index
+        for callback in getattr(self, "_signal_callbacks", {}).get("notify::selected", ()):
+            callback(self, None)
     def get_selected(self):
         return self.selected
 
@@ -270,3 +272,25 @@ def test_headless_settings_draft_rejects_corrupt_original_label_even_with_clean_
         )
     assert cfg.data == before
     assert not cfg.path.exists()
+
+
+def test_legacy_choice_requires_explicit_repair_and_can_be_saved(tmp_path):
+    row = stored("cred-one", "alice", "retired-on")
+    editor, _ = render(row)
+    choice = editor["option_fields"]["authenticated_sync"]
+    assert editor["invalid_saved_snapshot"] is True
+    choice.row.set_selected(0)
+    assert editor["invalid_saved_snapshot"] is False
+    result = draft(tmp_path, [row], {"cred-one": choice.get_text()})
+    assert result.data["providers"]["accounts"][0]["options"]["authenticated_sync"] == "off"
+    assert row["options"]["authenticated_sync"] == "retired-on"
+    choice.row.set_selected(0xFFFFFFFF)
+    assert editor["invalid_saved_snapshot"] is True
+
+
+def test_choice_repair_does_not_clear_corrupt_snapshot():
+    row = stored("cred-one", "alice", "retired-on")
+    row["label"] = {"private": "DO_NOT_RENDER"}
+    editor, _ = render(row)
+    editor["option_fields"]["authenticated_sync"].row.set_selected(0)
+    assert editor["invalid_saved_snapshot"] is True
