@@ -135,3 +135,37 @@ def test_spent_claim_keeps_verification_precedence(harness):
     assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
     assert service.storage.loan_borrow_state(borrow_claim_key(account, item))["status"] == "confirmed"
     assert state["mutations"] == 1
+
+
+def test_observation_during_provider_read_does_not_erase_existing_loan(harness):
+    service, session, account, item, state = harness
+    state["active"] = True
+    original = session.client.loans
+
+    def loans(*args, **kwargs):
+        rows = original(*args, **kwargs)
+        _snapshot(session, account, item, account_changes={"remaining_loans": 0})
+        return rows
+
+    session.client.loans = loans
+    assert attempt(service, account, item)["status"] == "confirmed"
+    assert state["mutations"] == 0
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item))["status"] == "confirmed"
+
+
+def test_observation_after_mutation_does_not_erase_confirmation(harness):
+    service, session, account, item, state = harness
+    original = session.client.loans
+
+    def loans(*args, **kwargs):
+        rows = original(*args, **kwargs)
+        if state["mutations"]:
+            _snapshot(session, account, item, account_changes={"remaining_loans": 0})
+        return rows
+
+    session.client.loans = loans
+    assert attempt(service, account, item)["status"] == "confirmed"
+    assert state["mutations"] == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item))["status"] == "confirmed"
