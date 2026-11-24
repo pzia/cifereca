@@ -34,7 +34,7 @@ class _Node:
     closed: bool = False
 
     def walk(self):
-        if self.tag in _HIDDEN or "hidden" in self.attrs or self.attrs.get("aria-hidden") == "true":
+        if self.tag in _HIDDEN or "hidden" in self.attrs or self.attrs.get("aria-hidden", "").strip().lower() == "true":
             return
         yield self
         for child in self.children:
@@ -45,7 +45,7 @@ class _Node:
         return name in self.attrs.get("class", "").split()
 
     def text(self):
-        if self.tag in _HIDDEN or "hidden" in self.attrs or self.attrs.get("aria-hidden") == "true":
+        if self.tag in _HIDDEN or "hidden" in self.attrs or self.attrs.get("aria-hidden", "").strip().lower() == "true":
             return ""
         result = " ".join(c.text() if isinstance(c, _Node) else c for c in self.children)
         return " ".join(result.split())[:MAX_TEXT]
@@ -300,7 +300,7 @@ def _properties(root):
     result = {}
     allowed = {"name", "author", "publisher", "isbn", "inLanguage", "description"}
     def nodes(node):
-        if node.tag in _HIDDEN or "hidden" in node.attrs or node.attrs.get("aria-hidden") == "true":
+        if node.tag in _HIDDEN or "hidden" in node.attrs or node.attrs.get("aria-hidden", "").strip().lower() == "true":
             return
         yield node
         # Nested Person/Organization/Book names aren't the parent Book name.
@@ -531,7 +531,7 @@ def _loan_due_at(card: _Node) -> str | None:
                 ("itemscope" in node.attrs and
                  node.attrs.get("itemtype", "").rstrip("/").endswith("/Book"))):
             return  # skip nested recommendations and foreign card/book scopes
-        if node.tag in _HIDDEN or "hidden" in node.attrs or node.attrs.get("aria-hidden") == "true":
+        if node.tag in _HIDDEN or "hidden" in node.attrs or node.attrs.get("aria-hidden", "").strip().lower() == "true":
             return
         yield node
         for child in node.children:
@@ -549,7 +549,7 @@ def _loan_due_at(card: _Node) -> str | None:
     if len(tags) != 1 or tags[0].tag != "strong" or not tags[0].closed:
         return None
     strong = tags[0]
-    if ("hidden" in strong.attrs or strong.attrs.get("aria-hidden") == "true"
+    if ("hidden" in strong.attrs or strong.attrs.get("aria-hidden", "").strip().lower() == "true"
             or any(isinstance(x, _Node) for x in strong.children)):
         return None
     i = block.children.index(strong)
@@ -612,7 +612,7 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
         node, ancestor_hidden = pending.pop()
         attrs = node.attrs
         hidden = (ancestor_hidden or node.tag in _HIDDEN
-                  or "hidden" in attrs or attrs.get("aria-hidden") == "true"
+                  or "hidden" in attrs or attrs.get("aria-hidden", "").strip().lower() == "true"
                   or "display:none" in "".join(attrs.get("style", "").lower().split())
                   or "visibility:hidden" in "".join(attrs.get("style", "").lower().split()))
         # The visible traversal cannot count hidden loan cards. If a
