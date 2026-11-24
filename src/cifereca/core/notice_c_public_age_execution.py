@@ -39,13 +39,13 @@ def prepare_exact_public_age(storage, spec, control, *, hold_selected):
             raise UnavailableNoticeWork("notice_descriptive_consolidator_unavailable")
         require_descriptive_selection(pin, pin.selection, candidate.installed.source_sha256,
                                       schema=candidate.schema)
-        control.check_cancelled()
-        proposal = propose_registered_descriptive_materialization(
-            declarations=(candidate.declaration,), text_schemas=(candidate.schema,),
-            installed=candidate.installed, canonical_type="age", scope=scope,
-            selected_plugin_id=pin.selection.plugin_id, selected_version=pin.selection.version,
-            target_edition_id=target, source_facts=facts, attested_strong_links=links,
-        )
+    control.check_cancelled()
+    proposal = propose_registered_descriptive_materialization(
+        declarations=(candidate.declaration,), text_schemas=(candidate.schema,),
+        installed=candidate.installed, canonical_type="age", scope=scope,
+        selected_plugin_id=pin.selection.plugin_id, selected_version=pin.selection.version,
+        target_edition_id=target, source_facts=facts, attested_strong_links=links,
+    )
     control.check_cancelled()
     if proposal is None:
         raise UnavailableNoticeWork("notice_descriptive_no_publishable_result")

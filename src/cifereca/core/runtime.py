@@ -160,6 +160,37 @@ class CiferecaCore:
             notice_work=notice_work,
         )
 
+    def install_notice_age_execution(self, registry):
+        """Trusted startup owner only; explicitly provision independent archives.
+
+        No trust is derived from installed package receipts or plugin config.
+        Must run before the first Notice C heartbeat.
+        """
+        from .notice_consolidator_trusted_registry import TrustedConsolidatorRegistry
+        from .notice_c_public_age_execution import prepare_exact_public_age
+        from contextlib import contextmanager
+
+        if type(registry) is not TrustedConsolidatorRegistry:
+            raise ValueError("invalid_trusted_consolidator_archives")
+        if self.notice_work is None or self.plugins._disable_plugins:
+            return False
+        digests = registry.public_age_digests()
+        if not digests:
+            return False
+
+        @contextmanager
+        def hold(pin):
+            with self.plugins.hold_descriptive_lifecycle():
+                with registry.hold_selected(self.plugins, pin) as candidate:
+                    yield candidate
+
+        return self.notice_work.install_public_age_execution(
+            lambda spec, control: prepare_exact_public_age(
+                self.storage, spec, control, hold_selected=hold,
+            ),
+            implementation_digests=digests,
+        )
+
     def configure_notice_consolidator(
         self, payload, *, expected_sha256, canonical_type, scope,
         selected_plugin_id, selected_version, expected_generation,
@@ -170,12 +201,13 @@ class CiferecaCore:
         This selects configuration, never schedules execution.
         """
         from .notice_descriptive_active_config import reconcile_active_descriptive_selection
-        return reconcile_active_descriptive_selection(
-            self.storage, self.plugins, payload, expected_sha256=expected_sha256,
-            canonical_type=canonical_type, scope=scope,
-            selected_plugin_id=selected_plugin_id, selected_version=selected_version,
-            expected_generation=expected_generation,
-        )
+        with self.plugins.hold_descriptive_lifecycle():
+            return reconcile_active_descriptive_selection(
+                self.storage, self.plugins, payload, expected_sha256=expected_sha256,
+                canonical_type=canonical_type, scope=scope,
+                selected_plugin_id=selected_plugin_id, selected_version=selected_version,
+                expected_generation=expected_generation,
+            )
 
     @staticmethod
     def abort_directory_migration(*, config_path: Path | None = None, database_path: Path | None = None):

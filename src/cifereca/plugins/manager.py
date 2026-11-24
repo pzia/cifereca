@@ -5,6 +5,9 @@ import logging
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
+from functools import wraps
+from threading import RLock
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -102,6 +105,14 @@ class _RuntimeRecord:
     activation_brokers: ActivationBrokerResolver | None = None
 
 
+def _serialize_lifecycle(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lifecycle_lock:
+            return method(self, *args, **kwargs)
+    return call
+
+
 class PluginManager:
     """Manifest-first plugin runtime.
 
@@ -127,6 +138,7 @@ class PluginManager:
         python_dependencies: PythonDependencyManager | None = None,
         before_plugin_retire: Callable[[frozenset[str]], None] | None = None,
     ) -> None:
+        self._lifecycle_lock = RLock()
         self._before_plugin_retire = before_plugin_retire
         self._headless = bool(headless)
         self._builtin_ui = bool(builtin_ui) and not self._headless
@@ -148,6 +160,20 @@ class PluginManager:
         self._records: dict[str, _RuntimeRecord] = {}
         self._load_errors: list[str] = []
         self._import_roots: set[str] = set()
+
+    @contextmanager
+    def hold_descriptive_lifecycle(self):
+        """Core worker guard; never wait behind a lifecycle callback.
+
+        Managed mutation and the short package/SQL publication guard
+        serialize on this lock. Do not hold it while running a reducer.
+        """
+        if not self._lifecycle_lock.acquire(blocking=False):
+            raise ValueError("notice_descriptive_lifecycle_busy")
+        try:
+            yield
+        finally:
+            self._lifecycle_lock.release()
 
     def _diag(self, message: str, status: str, detail: dict[str, Any]) -> None:
         if self.diagnostics is not None:
@@ -173,6 +199,7 @@ class PluginManager:
             return None
         return issue
 
+    @_serialize_lifecycle
     def refresh(self) -> list[PluginStatus]:
         # Preserve already-active instances when their package, descriptor and
         # dependency graph are unchanged.  The previous implementation tore down
@@ -474,6 +501,7 @@ class PluginManager:
             return True
         return False
 
+    @_serialize_lifecycle
     def activate(self) -> list[PluginStatus]:
         self.refresh()
         descriptors = {plugin_id: record.descriptor for plugin_id, record in self._records.items()}
@@ -761,6 +789,7 @@ class PluginManager:
             self._deactivate_record(self._records[plugin_id])
         self._prune_inactive_import_roots()
 
+    @_serialize_lifecycle
     def deactivate_all(self) -> None:
         for record in reversed(list(self._records.values())):
             self._deactivate_record(record)
@@ -916,6 +945,7 @@ class PluginManager:
     def errors(self) -> list[str]:
         return list(self._load_errors)
 
+    @_serialize_lifecycle
     def set_enabled(self, plugin_id: str, enabled: bool) -> None:
         if plugin_id not in self._records:
             self.refresh()
@@ -965,6 +995,7 @@ class PluginManager:
         override = self.state.identity_enabled_override(plugin_id, str(identity_id))
         return True if override is None else bool(override)
 
+    @_serialize_lifecycle
     def set_identity_enabled(self, plugin_id: str, identity_id: str, enabled: bool | None) -> None:
         if plugin_id not in self._records:
             self.refresh()
@@ -972,6 +1003,7 @@ class PluginManager:
             raise KeyError(plugin_id)
         self.state.set_identity_enabled(plugin_id, str(identity_id), enabled)
 
+    @_serialize_lifecycle
     def set_priority(self, plugin_id: str, priority: int | None) -> None:
         self.state.set_priority(plugin_id, priority)
         self.refresh()
@@ -1013,6 +1045,7 @@ class PluginManager:
             roots.append(package.root)
         return manifests, roots
 
+    @_serialize_lifecycle
     def ensure_python_dependencies(self, *, activate: bool = True) -> list[dict[str, object]]:
         """Repair Python requirements on explicit request, never at discovery.
 
@@ -1029,6 +1062,7 @@ class PluginManager:
             self.activate()
         return self.python_dependencies.diagnostic(manifests)
 
+    @_serialize_lifecycle
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
         from cifereca.update_progress import update_phase
         with update_phase("plugin_inspect"):
@@ -1103,6 +1137,7 @@ class PluginManager:
             if backup_parent is not None:
                 shutil.rmtree(backup_parent, ignore_errors=True)
 
+    @_serialize_lifecycle
     def rollback(self, package_id: str) -> str:
         pointer = self.packages.pointer(package_id)
         current = pointer.get("active")
@@ -1139,6 +1174,7 @@ class PluginManager:
     def inspect_archive(self, archive: Path):
         return self.installer.inspect(Path(archive))
 
+    @_serialize_lifecycle
     def set_active_package_version(self, package_id: str, version: str) -> None:
         old_active = self.packages.active_version(package_id)
         package = self.packages.load(package_id, version)
@@ -1163,6 +1199,7 @@ class PluginManager:
                 self.activate()
             raise
 
+    @_serialize_lifecycle
     def remove_package(self, package_id: str, *, version: str | None = None) -> None:
         if version is None or version == self.packages.active_version(package_id):
             self._retire_package_runtime(package_id)
@@ -1300,6 +1337,7 @@ class PluginManager:
             raise KeyError(plugin_id)
         return self.config.get(plugin_id, record.descriptor.config_schema, scope_id=scope_id)
 
+    @_serialize_lifecycle
     def set_plugin_config(self, plugin_id: str, values: dict[str, Any], *, scope_id: str | None = None) -> dict[str, Any]:
         if plugin_id not in self._records:
             self.refresh()
@@ -1311,5 +1349,6 @@ class PluginManager:
         self.activate()
         return result
 
+    @_serialize_lifecycle
     def close(self) -> None:
         self.deactivate_all()
