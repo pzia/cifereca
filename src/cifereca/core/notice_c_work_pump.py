@@ -53,7 +53,7 @@ class PublicNoticeWorkPump:
 
     def __init__(self, storage, broker, *, clock=None, on_committed=None,
                  replay_registry=None, fetch_execution=None, purchase_execution=None,
-                 on_purchase_committed=None):
+                 on_purchase_committed=None, on_witness_rejected=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         if replay_registry is None:
@@ -82,6 +82,7 @@ class PublicNoticeWorkPump:
             prepare_fetch=(self._prepare_fetch if fetch_execution is not None
                            and fetch_execution.supported() else None),
             on_purchase_committed=on_purchase_committed,
+            on_witness_rejected=on_witness_rejected,
             claim_purchase=None if purchase_execution is None else purchase_execution.claim,
             prepare_purchase=None if purchase_execution is None else purchase_execution.prepare,
             finish_purchase=None if purchase_execution is None else purchase_execution.finish,
