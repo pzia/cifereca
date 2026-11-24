@@ -86,13 +86,13 @@ def test_absent_broker_sink_uses_one_structured_canonical_journal_event(caplog):
         s.close()
 
 
-def test_empty_partial_inventory_is_observed_without_claiming_any_absence():
+def test_empty_complete_inventory_keeps_cover_diagnostics_partial():
     s, account, _ = connected('<section class="active-loans"></section>')
     events = []
     s.diagnostics = NS(add=lambda *args, **kwargs: events.append(kwargs['detail']))
     try:
         result = s.loan_inventory_snapshot(account)
-        assert result.status == 'partial' and result.loans == ()
+        assert result.status == 'success' and result.loans == ()
         assert events[0]['loans'] == []
         assert events[0]['observed_count'] == 0
         assert events[0]['coverage'] == 'partial'
