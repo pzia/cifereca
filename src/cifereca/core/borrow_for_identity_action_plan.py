@@ -100,6 +100,7 @@ def prepare_cross_profile_lender_action_plan(
             witness = _witness(
                 service, row, context_epoch=context_epoch,
                 source_epoch=source_epoch,
+                now=now, expected_edition_id=expected_edition_id,
             )
             if type(witness) is not BorrowForIdentityWitness:
                 continue

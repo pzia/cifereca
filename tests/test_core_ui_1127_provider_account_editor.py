@@ -24,7 +24,10 @@ class Widget:
         self.visible = True
     def set_title(self, value): self.title = value
     def set_subtitle(self, value): self.subtitle = value
-    def set_text(self, value): self.text = value
+    def set_text(self, value):
+        self.text = value
+        for callback in getattr(self, "_signal_callbacks", {}).get("changed", ()):
+            callback(self)
     def set_active(self, value):
         self.active = value
         for callback in getattr(self, "_signal_callbacks", {}).get("notify::active", ()):
@@ -721,3 +724,47 @@ def test_p1_5540_linked_readers_keep_exact_credential_and_branch_limits():
     )
     assert [borrower for borrower, _ in offline] == ["reader-a"]
     assert saved == {"reader-a": {"digital": "3", "physical": "8"}}
+
+
+def test_p1_5540_empty_saved_option_never_resurrects_global_endpoint():
+    option = _url_option("endpoint", "Catalogue personnel",
+                         default="https://default.example",
+                         legacy_config_key="legacy.endpoint")
+    saved = {"id": "a", "provider": "synthetic", "identity_id": "alice",
+             "options": {"endpoint": ""}}
+    draft = dict(saved, options={})
+    editor, _, _, _ = _render(
+        "synthetic", data=draft, descriptor_options=[option],
+        legacy_values={"providers.accounts": [saved],
+                       "legacy.endpoint": "https://retired.example"},
+    )
+    assert editor["option_fields"]["endpoint"].text == ""
+
+
+def test_p1_5540_probe_result_invalidated_even_after_draft_revert():
+    editor, _, _, _ = _render(interactive=True, data={
+        "id": "a", "identity_id": "alice", "enabled": True,
+        "credentials": {"password": "original"},
+    })
+    lifecycle = editor["connection_lifecycle_status"]
+    status = editor["explicit_probe_status"]
+    lifecycle.set_subtitle("Test de connexion réussi")
+    status.set_subtitle("Connexion vérifiée")
+    assert editor["_probe_draft_revision"] == 0
+    editor["fields"]["password"].set_text("changed")
+    assert "non vérifiée" in lifecycle.subtitle
+    assert "Enregistrer" in status.subtitle
+    editor["fields"]["password"].set_text("original")
+    assert editor["_probe_draft_revision"] == 2
+    assert "non vérifiée" in lifecycle.subtitle
+
+
+def test_p1_5540_owner_edit_invalidates_probe():
+    editor, _, _, _ = _render(interactive=True, data={
+        "id": "a", "identity_id": "alice", "enabled": True,
+    })
+    lifecycle = editor["connection_lifecycle_status"]
+    lifecycle.set_subtitle("Test de connexion réussi")
+    editor["identity"].set_text("bob")
+    assert editor["_probe_draft_revision"] == 1
+    assert "non vérifiée" in lifecycle.subtitle

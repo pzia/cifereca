@@ -23,7 +23,7 @@ from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
     BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
-    _display_account_label, preview_borrow_for_identity,
+    _MAX_AGE, _display_account_label, preview_borrow_for_identity,
 )
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 from .primary_source_binding import configured_primary_source_current
@@ -129,51 +129,53 @@ def _noncontradictory_observations(
 
 
 def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
-             source_epoch: int) -> BorrowForIdentityWitness | BorrowOfferRejection:
+             source_epoch: int, now: int | None,
+             expected_edition_id: str) -> BorrowForIdentityWitness | BorrowOfferRejection:
     """Rebind every coordinate to in-memory Core and owned SQLite state.
 
     Never invoke session.accounts, source getters, provider operations, or
     remote eligibility checks. An unknown fact is a rejected preview option.
     """
     item, evidence = row.notice, row.evidence
+    exact_evidence = row.edition_evidence
     if (type(evidence) is not BorrowerOperationEvidence
-            or type(row.edition_evidence) is not ExactEditionBorrowerEvidence):
+            and type(exact_evidence) is not ExactEditionBorrowerEvidence):
         return "permission_unverified"
-    if (type(item) is not SearchResult
-            or type(row.edition_id) is not str
-            or type(row.observed_at) is not int
+    route = _observation_route(row)
+    if (route is None or type(row.observed_at) is not int
             or row.transfer_state not in ("unknown", "blocked")
-            or type(evidence.identity_id) is not str
-            or type(evidence.provider_id) is not str
-            or type(evidence.credential_id) is not str
-            or type(evidence.account_id) is not str
-            or evidence.operation != "loan.borrow"
-            or (evidence.provider_id, evidence.credential_id,
-                evidence.branch) != (
-                    item.source_provider, item.source_credential, item.docbase,
-                )
             or item.medium != "digital"):
+        return "scope_unverified"
+    identity_id, provider_id, credential_id, account_id = route[:4]
+    if (type(evidence) is BorrowerOperationEvidence
+            and evidence.operation != "loan.borrow"):
+        return "scope_unverified"
+
+    if now is None:
+        now = int(time())
+    if (type(now) is not int or not 0 <= now - row.observed_at <= _MAX_AGE
+            or row.edition_id != expected_edition_id):
         return "scope_unverified"
 
     try:
         # All cross-profile lenders must already be known locally; never
         # use the active reader's session as a substitute.
-        if (service.identity_by_id(evidence.identity_id) is None
+        if (service.identity_by_id(identity_id) is None
                 or service.storage.identity_for_connection(
-                    evidence.provider_id, evidence.credential_id,
-                ) != evidence.identity_id):
+                    provider_id, credential_id,
+                ) != identity_id):
             return "lender_unavailable"
         connections = service.storage.provider_connections(
-            identity_id=evidence.identity_id,
+            identity_id=identity_id,
         )
         if type(connections) is not list or len(connections) > 512:
             return "lender_unavailable"
         exact = [
             conn for conn in connections
             if type(conn) is dict
-            and conn.get("provider_id") == evidence.provider_id
-            and conn.get("credential_id") == evidence.credential_id
-            and conn.get("identity_id") == evidence.identity_id
+            and conn.get("provider_id") == provider_id
+            and conn.get("credential_id") == credential_id
+            and conn.get("identity_id") == identity_id
         ]
         # One enabled plus one disabled row is *not* a unique binding.
         # Align the preview with the durable claim and progress admission:
@@ -189,15 +191,15 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             if type(account) is Account and account.is_primary is True
             and (account.identity_id, account.provider_id,
                  account.credential_id, account.unique_id) == (
-                     evidence.identity_id, evidence.provider_id,
-                     evidence.credential_id, evidence.account_id,
+                     identity_id, provider_id,
+                     credential_id, account_id,
                  )
         ]
         if len(matches) != 1:
             return "lender_unavailable"
         account = matches[0]
         session_key = service._session_key(
-            evidence.provider_id, evidence.credential_id,
+            provider_id, credential_id,
         )
         session = service._sessions.get(session_key)
         state = _inert_session_state(session)
@@ -205,12 +207,12 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         if (state is None or rows is None
                 or state.get("connected") is not True
                 or state.get("_closed") is True
-                or state.get("provider_id") != evidence.provider_id
-                or state.get("credential_id") != evidence.credential_id
+                or state.get("provider_id") != provider_id
+                or state.get("credential_id") != credential_id
                 or sum(other is account for other in rows) != 1):
             return "lender_unavailable"
 
-        plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
+        plugin_id = service._provider_plugin_ids.get(provider_id)
         manager = service._plugin_manager
         if type(plugin_id) is not str or not plugin_id or manager is None:
             return "capability_unverified"
@@ -223,11 +225,11 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             return "capability_unverified"
         enabled_for = getattr(manager, "enabled_for_identity", None)
         if callable(enabled_for) and enabled_for(
-                plugin_id, evidence.identity_id) is not True:
+                plugin_id, identity_id) is not True:
             return "capability_unverified"
         descriptor = state.get("descriptor")
         if (type(descriptor) is not ProviderDescriptor
-                or descriptor.id != evidence.provider_id):
+                or descriptor.id != provider_id):
             return "capability_unverified"
         # Source selection is an installed, typed lender declaration, not a
         # Core brand name. The same saved-primary binding protects Paris and
@@ -243,8 +245,8 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 return "lender_unavailable"
             if (policy.source_selection_key is not None
                     and configured_primary_source_current(
-                        service, item, evidence.identity_id,
-                        provider_id=evidence.provider_id,
+                        service, item, identity_id,
+                        provider_id=provider_id,
                         selection_key=policy.source_selection_key,
                     ) is not True):
                 return "lender_unavailable"
@@ -259,8 +261,6 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             capability, account=account, branch=item.docbase,
             evidence=evidence,
         )
-        if eligibility.state != "eligible_observed":
-            return "permission_unverified"
         # #4662: borrower-wide readiness can be true while *this book*
         # is unavailable. Never qualify a different edition/collection,
         # a catalogue-only CanLoan hint, or a generic branch permission.
@@ -268,9 +268,13 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             capability=capability, account=account, notice=item,
             evidence=row.edition_evidence,
         )
-        if exact_offer.status == "blocked":
-            return "borrower_blocked"
-        if exact_offer.status != "eligible":
+        blocked = (eligibility.state == "temporarily_blocked"
+                   or exact_offer.status == "blocked")
+        # Either independently scoped negative is sufficient to explain
+        # a denial. Positive options still require both complete proofs.
+        if not blocked and (
+                eligibility.state != "eligible_observed"
+                or exact_offer.status != "eligible"):
             return "permission_unverified"
         key = borrow_claim_key(account, item)
         if key is None:
@@ -310,10 +314,12 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or state.get("connected") is not True
                 or state.get("_epoch", source_epoch) != session_epoch
                 or service.storage.identity_for_connection(
-                    evidence.provider_id, evidence.credential_id,
-                ) != evidence.identity_id):
+                    provider_id, credential_id,
+                ) != identity_id):
             return "context_changed"
-        lender = service.identity_by_id(evidence.identity_id)
+        if blocked:
+            return "borrower_blocked"
+        lender = service.identity_by_id(identity_id)
         name = _lender_label(getattr(lender, "label", None))
         return BorrowForIdentityWitness(
             account=account, notice=item, capability=capability,
@@ -378,6 +384,7 @@ def preview_live_borrow_for_current_identity(
             break
         witness = _witness(
             service, row, context_epoch=context, source_epoch=source,
+            now=now, expected_edition_id=expected_edition_id,
         )
         if isinstance(witness, BorrowForIdentityWitness):
             witnesses.append(witness)

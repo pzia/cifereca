@@ -321,7 +321,7 @@ def build_provider_account_editor(
                 fallback = _saved_option_of_exact_account(
                     config, provider_id, account_id, data, field.key,
                 )
-                if (not fallback and _sole_owner_of_legacy_provider_setting(
+                if (fallback is None and _sole_owner_of_legacy_provider_setting(
                         config, provider_id, account_id, data)):
                     # A retired global value has no owner metadata. Keep
                     # it only for the unique historical connection; the
@@ -332,7 +332,7 @@ def build_provider_account_editor(
             default = field.default if type(field.default) is str else ""
             selected = next(
                 (value for value in (fallback, default)
-                 if type(value) is str and value),
+                 if type(value) is str),
                 "",
             )
         if choice_mode:
@@ -483,4 +483,33 @@ def build_provider_account_editor(
         "explicit_probe_status": probe_status,
         "connection_lifecycle_status": lifecycle,
     }
+    # A completed diagnostic belongs to the exact draft at the click.
+    # Even an edit followed by a revert invalidates that observation.
+    editor["_probe_draft_revision"] = 0
+    if probe_status is not None:
+        def invalidate_probe(*_args):
+            editor["_probe_draft_revision"] += 1
+            update_lifecycle(enabled, None)
+            probe_status.set_subtitle(
+                "Enregistrer les modifications avant de tester le compte.")
+
+        def watch(widget, signal):
+            connect = getattr(widget, "connect", None)
+            if callable(connect):
+                connect(signal, invalidate_probe)
+
+        watch(enabled, "notify::active")
+        watch(identity_row, "changed")
+        watch(label_row, "changed")
+        for widget in (*fields.values(), *option_fields.values()):
+            if isinstance(widget, _AccountChoiceText):
+                watch(widget.row, "notify::selected")
+            elif isinstance(widget, _AccountBooleanText):
+                watch(widget.row, "notify::active")
+            else:
+                watch(widget, "changed")
+        for borrowers in scoped_option_fields.values():
+            for branches in borrowers.values():
+                for widget in branches.values():
+                    watch(widget, "changed")
     return editor, delete_button
