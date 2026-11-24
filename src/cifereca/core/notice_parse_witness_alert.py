@@ -187,3 +187,32 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     db.execute("UPDATE metadata SET value=? WHERE key=?",
                (json.dumps(alert, sort_keys=True, separators=(",", ":")), alert_key))
     return True, diagnostic
+
+
+def report_capture_diagnostic(diagnostics, diagnostic_id, capture_state, *, rejected=False):
+    """One canonical journal event for a closed Core capture outcome.
+
+    Only opaque diagnostic identifiers and closed states are admitted.
+    Journal delivery is best-effort and never changes publication.
+    """
+    from .notice_regression_capture_intent import _SHA
+
+    if diagnostics is None or type(capture_state) is not str:
+        return
+    if capture_state not in ("pending", "complete", "partial", "failed",
+                             "capacity_refused", "metadata_unavailable"):
+        return
+    if capture_state == "capacity_refused":
+        if diagnostic_id is not None:
+            return
+    elif type(diagnostic_id) is not str or not _SHA.fullmatch(diagnostic_id):
+        return
+    try:
+        diagnostics.add(
+            "NOTICE", "parser_witness_rejected" if rejected else "regression_capture_resumed",
+            "warning" if rejected else ("error" if capture_state == "failed"
+                                         else "partial" if capture_state == "partial" else "ok"),
+            detail={"diagnostic_id": diagnostic_id, "capture_state": capture_state},
+        )
+    except Exception:
+        pass
