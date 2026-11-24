@@ -299,6 +299,35 @@ class QualificationProbeTests(unittest.TestCase):
             self.assert_no_authority(result)
             self.assert_private_not_exposed(result)
 
+    def test_activity_shape_never_attests_authentication_or_absence(self):
+        for html, wanted, status in (
+            ('<section class="active-loans"></section>', "empty_candidate", "ok"),
+            ('<section class="active-loans" aria-busy="true"></section>', "partial", "ok"),
+            ('<div style="display:none"><section class="active-loans"></section></div>',
+             "partial", "ok"),
+            ('<p>Vous avez encore droit à 0 prêt</p>', "unknown", "unrecognized"),
+            ('<input type="password" value="PRIVATE_PASSWORD">', "unknown", "unrecognized"),
+        ):
+            with self.subTest(wanted=wanted, status=status):
+                report = qualify_bnf_borrow_dom(html, page="activity")
+                self.assertEqual(report["activity_shape"], wanted)
+                self.assertEqual(report["status"], status)
+                self.assertIs(report["activity_verified"], False)
+                self.assert_no_authority(report)
+                self.assert_private_not_exposed(report)
+
+    def test_activity_quota_zero_with_loan_is_not_empty_and_never_exports_ids(self):
+        html = ('<p>Vous avez encore droit à 0 prêt</p>'
+                '<section class="active-loans"><div class="js-loan">'
+                '<a href="/resources/USER_BOOK_ID">Alice PRIVATE title</a>'
+                '<a href="/loans/PRIVATE_LOAN_ID?token=SECRET_XYZ">Prêt</a>'
+                '</div></section>')
+        report = qualify_bnf_borrow_dom(html, page="activity")
+        self.assertEqual(report["activity_shape"], "nonempty_candidate")
+        self.assertIs(report["activity_verified"], False)
+        self.assert_no_authority(report)
+        self.assert_private_not_exposed(report)
+
     def test_stdin_cli_never_echoes_private_document_or_name(self):
         cmd = [
             sys.executable, str(REPO / "scripts/bnf_borrow_dom_probe.py"),
