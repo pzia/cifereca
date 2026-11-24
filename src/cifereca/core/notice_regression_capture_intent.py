@@ -10,6 +10,7 @@ import time
 
 from .notice_regression_capture import write_regression_capture
 
+_MAX_INTENTS = 2048
 _PREFIX = "notice.c.regression-capture.v1:"
 _SHA = re.compile(r"[0-9a-f]{64}")
 
@@ -41,8 +42,21 @@ def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshot
     if existing is None:
         count = db.execute("SELECT count(*) FROM metadata WHERE key GLOB ?",
                            (_PREFIX + "*",)).fetchone()[0]
-        if count >= 2048:
-            return None
+        if count >= _MAX_INTENTS:
+            # Reclaim only terminal metadata; never discard unfinished work.
+            rows = db.execute("SELECT key,value FROM metadata WHERE key GLOB ?",
+                              (_PREFIX + "*",)).fetchall()
+            terminal = []
+            for old_key, raw in rows:
+                try:
+                    old = json.loads(raw)
+                    if old["capture_state"] in ("complete", "partial"):
+                        terminal.append((old.get("finished_at", 0), old_key))
+                except (ValueError, KeyError, TypeError):
+                    continue
+            if not terminal:
+                return None
+            db.execute("DELETE FROM metadata WHERE key=?", (min(terminal)[1],))
         db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
                    (key, json.dumps(dict(payload, snapshots=snapshots, capture_state="pending"), sort_keys=True)))
     return diagnostic
@@ -90,6 +104,8 @@ def _record_outcome(storage, key, previous, record, state):
         updated.update(attempts=attempts, retry_after=time.time() + min(3600, 2 ** attempts))
     else:
         updated.pop("retry_after", None)
+        updated["finished_at"] = time.time()
+        updated.pop("snapshots", None)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
