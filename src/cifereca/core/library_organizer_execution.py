@@ -82,8 +82,19 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
         digest = artifact_id.removeprefix("sha256:")
         if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
             return {"status": "blocked", "changed": 0}
+        class ReviewedRenameControl:
+            # The existing writer already accepts cooperative cancellation.
+            # Preserve the exact pre-commit scope and lease across its own
+            # hashing, target validation and durability work.
+            def check_cancelled(self):
+                if (still_current() is not True or not scope.bound()
+                        or not _lock_ok(shared_lock)
+                        or not _execution_fence_current(scope, shared_lock)
+                        or sqlite_source_stamp(scope.database) != accepted.anchor.stamp):
+                    raise RuntimeError("organizer_review_revoked")
+
         invoked = True
-        result = broker.run(plan)
+        result = broker.run(plan, ReviewedRenameControl())
         post_stamp = sqlite_source_stamp(scope.database)
         if post_stamp is None:
             return {"status": "recovery_required", "changed": None}

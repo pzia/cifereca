@@ -325,8 +325,8 @@ def test_postcommit_physical_drift_requires_recovery_not_success(
     other = tmp_path / "unrelated.epub"
     other.write_bytes(data)
 
-    def writer_with_external_drift(self, plan):
-        result = original(self, plan)
+    def writer_with_external_drift(self, plan, control=None):
+        result = original(self, plan, control)
         assert result.ok and result.changed == 1
         calls.append(plan)
         if drift == "same_size_bytes":
@@ -398,3 +398,50 @@ def test_postcommit_drift_during_hash_cannot_report_rename_success(
         assert old.read_bytes() == b"unrelated"
     else:
         assert not old.exists()
+
+
+@pytest.mark.parametrize("revocation", ["view", "sqlite", "fence"])
+def test_rename_writer_refuses_revocation_after_destination_fsync(
+    store, tmp_path, monkeypatch, revocation,
+):
+    import os
+    import stat
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data, baseline = old.read_bytes(), store.placement_get(pid)
+    scope, page = _run(_service(store, root))
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
+    entry, = accepted.entries
+    new = root / scope.directory / entry.proposed
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    active, fence, reached = [True], [True], []
+    monkeypatch.setattr(execute, "_execution_fence_current",
+                        lambda s, lock: s is scope and fence[0])
+    original = os.fsync
+
+    def sync(fd):
+        original(fd)
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and new.exists() and not reached:
+            reached.append(True)
+            assert old.samefile(new)
+            if revocation == "view":
+                active[0] = False
+            elif revocation == "fence":
+                fence[0] = False
+            else:
+                store.metadata_set("synthetic-precommit-drift", "changed")
+
+    monkeypatch.setattr(os, "fsync", sync)
+    with InterProcessLock(lock_path) as lock:
+        result = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock, confirmed=True,
+            still_current=lambda: active[0],
+        )
+    assert reached == [True]
+    assert result == {"status": "recovery_required", "changed": None}
+    assert old.read_bytes() == data and not new.exists()
+    assert store.placement_get(pid) == baseline
