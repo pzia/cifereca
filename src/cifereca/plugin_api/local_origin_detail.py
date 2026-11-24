@@ -123,6 +123,40 @@ class LocalOriginRemoteLoanReport:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemotePurchaseChoice:
+    token: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemotePurchaseMatch:
+    branch: str
+    edition_id: str
+    purchase_id: str
+    title: str
+    observed_at: str | None
+    comparison: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOriginRemotePurchaseReport:
+    status: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    matches: tuple[LocalOriginRemotePurchaseMatch, ...]
+    window_truncated: bool
+    observed_at: str | None
+    provider_read_requested: bool
+    coverage_complete: bool = False
+    fresh_network_verified: bool = False
+    association_authorized: bool = False
+    local_description_transmitted: bool = False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class LocalOriginDetailPage:
     token: str
     page: int
@@ -138,6 +172,7 @@ class LocalOriginDetailPage:
     public_choices: tuple[LocalOriginPublicChoice, ...] = ()
     private_choices: tuple[LocalOriginPrivateChoice, ...] = ()
     remote_loan_choices: tuple[LocalOriginRemoteLoanChoice, ...] = ()
+    remote_purchase_choices: tuple[LocalOriginRemotePurchaseChoice, ...] = ()
 
 
 @runtime_checkable
@@ -164,6 +199,13 @@ class LocalOriginRemoteLoanReadBroker(LocalOriginDetailReadBroker, Protocol):
     """Optional typed private inventory comparison; no local title upload."""
     def compare_remote_loan(self, *, token: str,
                             confirmed: bool = False) -> LocalOriginRemoteLoanReport | None: ...
+
+
+@runtime_checkable
+class LocalOriginRemotePurchaseReadBroker(LocalOriginDetailReadBroker, Protocol):
+    """Optional typed private purchase comparison, never a declaration grant."""
+    def compare_remote_purchase(self, *, token: str,
+                                confirmed: bool = False) -> LocalOriginRemotePurchaseReport | None: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
