@@ -51,6 +51,10 @@ def display(page):
         if row.reason == "declared_unverified_comparison":
             lines.append("Origine déclarée par l’utilisateur, non attestée ; déclaration conservée.")
         lines.append(f"{row.known_matches} correspondance(s) connue(s) ; absence non prouvée.")
+        if row.c_window_status == "budget_exceeded":
+            lines.append("Budget de consultation C atteint ; d’autres notices peuvent exister.")
+        if type(row.unindexed_sources) is int and row.unindexed_sources > 0:
+            lines.append(f"{row.unindexed_sources} source(s) C non indexée(s) ; couverture non attestée.")
         for m in row.suggestions:
             lines.append(" · ".join(part for part in (
                 m.title, m.author, m.provider_id,
