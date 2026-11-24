@@ -57,10 +57,15 @@ class Transport:
             if self.mode == "partial":
                 changes["thumbnail_url"] = None
             row = verified_public(**changes)
-            return admit_public_search_catalogue(
+            observation = admit_public_search_catalogue(
                 row, identity_id="alice", observed_at=99 if self.mode == "old" else 100,
                 public_cover_url=row.thumbnail_url,
             )
+            if self.mode in ("witness_denied", "witness_allowed", "witness_changed_input"):
+                from cifereca.core.notice_c_fetch_publication import FreshPublicParse
+                body = b"changed" if self.mode == "witness_changed_input" else b"approved response"
+                return FreshPublicParse(observation, body, self.mode == "witness_allowed")
+            return observation
 
         return ReservedPublicFetch(permit, execute, lambda: self.calls.append("release"), nullcontext)
 
@@ -180,6 +185,61 @@ def test_dirty_request_refusal_rolls_back_fresh_source_and_does_not_retry(tmp_pa
         assert journal.read_job(db, ref).state == "error"
         assert transport.calls == ["reserve", "execute", "release"]
         assert pump.tick().handles == ()
+    finally:
+        tasks.close()
+        db.close()
+
+
+@pytest.mark.parametrize("mode", ("witness_denied", "witness_allowed", "witness_changed_input"))
+def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
+    import json
+    import zipfile
+    from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+    from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+    from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
+    monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir", lambda: tmp_path)
+    db = Storage(tmp_path / "witness-fetch.sqlite")
+    tasks = broker()
+    try:
+        source, canonical, authority, ref, transport, execution = setup(db, mode)
+        title = source.observation.fields_copy()["search_result"]["public_bibliography"]["title"]
+        publish_approved_parse_witness(
+            db, observation=source.observation, response_bytes=b"approved response",
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(title),
+            ),), expected_generation=0,
+        )
+        pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, fetch_execution=execution)
+        handle, = pump.tick().handles
+        changed = mode == "witness_changed_input"
+        assert handle.result(timeout=10) == ("current" if changed else "error")
+        assert journal.read_job(db, ref).state == ("current" if changed else "error")
+        projection = read_parse_witness_diagnostic(
+            db, key=source.observation.key, parser_id=source.observation.parser_id,
+        )
+        assert projection["generation"] == 1
+        if changed:
+            assert projection["status"] == "source_changed"
+            assert projection["capture_state"] == "not_recorded"
+            assert read_notice_cover(db, source.document).epoch == source.epoch + 1
+            assert not list(tmp_path.glob("*.zip"))
+        else:
+            assert projection["status"] == "parser_drift_suspected"
+            assert projection["capture_state"] == ("complete" if mode == "witness_allowed" else "partial")
+            assert read_notice_cover(db, source.document) == source
+            assert read_consolidated_notice_cover(db, canonical.document) == canonical
+            archive_path, = tmp_path.glob("*.zip")
+            with zipfile.ZipFile(archive_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                assert manifest["diagnostic_id"] == projection["capture_id"]
+                if mode == "witness_allowed":
+                    assert archive.read("response.raw") == b"approved response"
+                else:
+                    assert "response.raw" in manifest["omitted"]
+            assert pump.tick().handles == ()
+        assert transport.calls == ["reserve", "execute", "release"]
+        assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         tasks.close()
         db.close()
