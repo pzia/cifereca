@@ -261,21 +261,26 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
                 expected_generation=0,
                 implementation_digest=receipt.parser_implementation_digest,
             )
-        tasks = TaskBrokerImpl(object(), max_workers=1, shared_admission=
+        from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
+
+        tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
                                SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+        runtime = NoticeWorkRuntime(db, tasks, clock=lambda: 100)
         try:
             port = make_port(session, receipt.parser_family_digest,
                              receipt.parser_implementation_digest)
-            pump = PublicNoticeWorkPump(
-                db, tasks, clock=lambda: 100,
-                replay_registry=PublicReplayRegistry((port,)),
-            )
-            handle, = pump.tick().handles
+            registry = PublicReplayRegistry((port,))
+            assert runtime.install_replay_registry(registry) is True
+            scan = runtime.request_tick()
+            assert scan is not None
+            handle, = scan.result(timeout=10).handles
             assert handle.result(timeout=10) == "current"
             assert journal.read_job(db, ref).state == "current"
             assert len(calls) == 1
         finally:
+            runtime.close()
             tasks.close()
+        assert runtime.install_replay_registry(registry) is False
     finally:
         session.close()
         db.close()
