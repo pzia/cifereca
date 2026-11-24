@@ -344,22 +344,11 @@ class NoticeWorkRuntime:
         self._report_capture(diagnostic_id, capture_state, rejected=True)
 
     def _report_capture(self, diagnostic_id, capture_state, *, rejected=False):
-        if self._diagnostics is None:
-            return
-        # Existing canonical Diagnostics journal; no new UI or log store.
-        # Only a closed Core outcome crosses this boundary.
-        if capture_state not in ("pending", "complete", "partial", "failed",
-                                 "capacity_refused", "metadata_unavailable"):
-            return
-        try:
-            self._diagnostics.add(
-                "NOTICE", "parser_witness_rejected" if rejected else "regression_capture_resumed",
-                "warning" if rejected else ("error" if capture_state == "failed"
-                                             else "partial" if capture_state == "partial" else "ok"),
-                detail={"diagnostic_id": diagnostic_id, "capture_state": capture_state},
-            )
-        except Exception:
-            pass
+        from .notice_parse_witness_alert import report_capture_diagnostic
+
+        report_capture_diagnostic(
+            self._diagnostics, diagnostic_id, capture_state, rejected=rejected,
+        )
 
     def _notify_purchase(self):
         with self._lock:
