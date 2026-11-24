@@ -55,6 +55,15 @@ class PreparedAggregate:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class PreparedDescriptive:
+    # Trusted Core proposal and transaction-local reader, not a plugin callback.
+    row: object
+    expected_execution_key: str | None
+    capture_current_txn: Callable
+    schema: object
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class PreparedSource:
     publish: Callable[[sqlite3.Connection], bool]
     hold_input: Callable
@@ -73,7 +82,8 @@ class AggregateWorkBridge:
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
                  allow_reparse=False, allow_relink=False, prepare_fetch=None,
                  claim_purchase=None, prepare_purchase=None, on_purchase_committed=None,
-                 finish_purchase=None, on_witness_rejected=None):
+                 finish_purchase=None, on_witness_rejected=None,
+                 prepare_descriptive=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -101,6 +111,9 @@ class AggregateWorkBridge:
         self._finish_purchase = finish_purchase
         self._claim_purchase = claim_purchase
         self._prepare_purchase = prepare_purchase
+        if prepare_descriptive is not None and not callable(prepare_descriptive):
+            raise ValueError("notice_work_invalid_port")
+        self._prepare_descriptive = prepare_descriptive
         self._prepare_fetch = prepare_fetch
         self._allow_reparse = allow_reparse
         self._allow_relink = allow_relink
@@ -201,7 +214,9 @@ class AggregateWorkBridge:
                     and not (self._allow_reparse and not purchase and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
                     and not (self._allow_relink and job.spec.kind == "relink_notices")
                     and not (self._prepare_fetch is not None
-                             and job.spec.kind == "fetch_source_notice")):
+                             and job.spec.kind == "fetch_source_notice")
+                    and not (self._prepare_descriptive is not None
+                             and job.spec.kind == "consolidate_descriptive")):
                 return "unsupported"
             if job.state != "pending":
                 return "not_ready"
@@ -225,21 +240,29 @@ class AggregateWorkBridge:
         committed = False
         rejected = False
         fetch = job.spec.kind == "fetch_source_notice"
+        descriptive = job.spec.kind == "consolidate_descriptive"
         try:
             control.check_cancelled()
             if purchase:
                 prepared = self._prepare_purchase(job.spec, lease, control)
+            elif descriptive:
+                prepared = self._prepare_descriptive(job.spec, control)
             else:
                 prepared = (self._prepare_fetch(job.spec, lease, control) if fetch
                             else self._prepare(job.spec, control))
             aggregate = job.spec.kind in ("recompute_aggregate", "relink_notices")
-            expected = PreparedAggregate if aggregate else PreparedSource
-            if (type(prepared) is not expected or not callable(prepared.publish)
-                    or (not aggregate and not callable(prepared.hold_input))):
-                raise TypeError("notice_work_invalid_publication")
+            if descriptive:
+                if (type(prepared) is not PreparedDescriptive
+                        or not callable(prepared.capture_current_txn)):
+                    raise TypeError("notice_work_invalid_publication")
+            else:
+                expected = PreparedAggregate if aggregate else PreparedSource
+                if (type(prepared) is not expected or not callable(prepared.publish)
+                        or (not aggregate and not callable(prepared.hold_input))):
+                    raise TypeError("notice_work_invalid_publication")
             control.check_cancelled()
             event = None
-            with (nullcontext() if aggregate else prepared.hold_input()):
+            with (nullcontext() if aggregate or descriptive else prepared.hold_input()):
                 with self._storage._lock, self._storage._connect() as db:
                     db.execute("BEGIN IMMEDIATE")
                     # Check before any canonical write, then again before commit.
@@ -252,7 +275,17 @@ class AggregateWorkBridge:
                             source_key=job.spec.target,
                         )
                         before = _canonical_revision(db, document)
-                    outcome = prepared.publish(db)
+                    if descriptive:
+                        from .notice_descriptive_materialization_store import publish_descriptive_materialization_txn
+                        publish_descriptive_materialization_txn(
+                            db, prepared.row, expected_execution_key=prepared.expected_execution_key,
+                            capture_current_txn=prepared.capture_current_txn,
+                            journal_lease=lease, journal_now=self._clock(),
+                            journal_clock=self._clock, schema=prepared.schema,
+                        )
+                        outcome = True
+                    else:
+                        outcome = prepared.publish(db)
                     rejected = (type(outcome) is WitnessRejectedPublication
                                 and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
                     if rejected:
@@ -264,7 +297,8 @@ class AggregateWorkBridge:
                         if outcome is not True:
                             raise RetryableNoticeWork("notice_work_input_changed")
                         control.check_cancelled()
-                        journal._complete_job_txn(db, lease, now=self._clock())
+                        if not descriptive:
+                            journal._complete_job_txn(db, lease, now=self._clock())
                         if aggregate and self._on_committed is not None:
                             after = _canonical_revision(db, document)
                             if after is None or (before is not None and after < before):
