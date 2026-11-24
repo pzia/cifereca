@@ -70,13 +70,15 @@ class NoticeWorkProgress:
 class NoticeWorkRuntime:
     """Private lifecycle adapter; composition root owns the existing broker."""
 
-    def __init__(self, storage, broker, *, clock=None, replay_registry=None, diagnostics=None):
+    def __init__(self, storage, broker, *, clock=None, replay_registry=None, diagnostics=None,
+                 capture_directory=None):
         if type(broker) is not TaskBrokerImpl or broker.max_workers < 3:
             raise ValueError("notice_work_invalid_runtime_broker")
         validate_notice_work_admission(broker.shared_admission)
         self._broker = broker
         self._storage = storage
         self._diagnostics = diagnostics
+        self._capture_directory = capture_directory
         self._clock = clock
         self._replay_registry = replay_registry
         self._pending_replay_registry = None
@@ -102,6 +104,7 @@ class NoticeWorkRuntime:
             replay_registry=replay_registry,
             on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
+                capture_directory=self._capture_directory,
         )
 
     def install_replay_registry(self, registry):
@@ -128,6 +131,7 @@ class NoticeWorkRuntime:
                 purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
+                capture_directory=self._capture_directory,
             )
             self._replay_registry = registry
             self._pending_replay_registry = None
@@ -279,6 +283,7 @@ class NoticeWorkRuntime:
                 fetch_execution=execution, purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
+                capture_directory=self._capture_directory,
             )
             self._fetch_execution = execution
             self._fetch_authority = execution._authority
@@ -298,6 +303,7 @@ class NoticeWorkRuntime:
                 fetch_execution=self._fetch_execution, purchase_execution=execution,
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
+                capture_directory=self._capture_directory,
             )
             self._purchase_execution = execution
             return True
@@ -465,6 +471,7 @@ class NoticeWorkRuntime:
                     purchase_execution=self._purchase_execution,
                     on_purchase_committed=self._notify_purchase,
                     on_witness_rejected=self._notify_witness_rejected,
+                    capture_directory=self._capture_directory,
                 )
             pump = self._pump
             registry = self._replay_registry
@@ -488,7 +495,7 @@ class NoticeWorkRuntime:
         for diagnostic, state in resume_captures(
                 self._storage, lambda diagnostic: resolve_replay_capture_members(
                     self._storage, registry, diagnostic, clock=pump._clock,
-                ), limit=2):
+                ), directory=self._capture_directory, limit=2):
             self._report_capture(diagnostic, state)
         return outcome
 
