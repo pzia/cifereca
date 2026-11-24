@@ -227,6 +227,10 @@ def remote_loan_rows(report):
         ("Surface", "Inventaire de prêts explicitement relu ; titre et fichier locaux non transmis."),
         ("Couverture", "Partielle ; fraîcheur réseau non vérifiée. Aucune origine ni droit attestés."),
         ("Date de l’inventaire", report.observed_at or "Non renseignée"),
+        ("Fenêtre fournisseur", {"incomplete": "Lecture ou fenêtre numérique partielle.",
+         "declared_digital_branches_complete": "Branches numériques déclarées complètes ; exhaustivité globale non attestée.",
+         }.get(report.window_status if type(report.window_status) is str else None,
+               "Complétude des branches numériques non établie.")),
     ]
     for hit in report.matches:
         lines.append((hit.title, " · ".join(x for x in (
