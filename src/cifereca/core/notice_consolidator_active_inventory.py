@@ -68,6 +68,14 @@ def hold_active_consolidator_inventory(manager, payload, *, expected_sha256,
             raise ValueError("consolidator_archive_selection_mismatch")
     store = manager.packages
     with package_mutation_lease(store.root):
+        if expected_selection is not None:
+            selected_id = expected_selection[2]
+            # An inactive archive declaring the same plugin coordinate is
+            # not proof of absence if a different package currently owns it.
+            for active in store.active_packages():
+                if (active.manifest.package.id != verified.package_id
+                        and any(d.id == selected_id for d in active.manifest.plugins)):
+                    raise ValueError("consolidator_archive_selection_owner_mismatch")
         if store.active_version(verified.package_id) != verified.package_version:
             yield ()
             return
