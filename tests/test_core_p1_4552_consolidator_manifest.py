@@ -53,3 +53,27 @@ def test_missing_modified_and_duplicate_members_are_refused():
 
 def test_no_manifest_no_implicit_candidate():
     assert decode_consolidator_manifest([], verified_members={MEMBER: SOURCE}) == ()
+
+
+def test_real_package_manifest_binds_inert_owner():
+    from cifereca.plugins.manifest import parse_manifest
+    from cifereca.core.notice_consolidator_manifest import bind_verified_package_consolidators
+
+    owner = dict(id="plugin.age.alpha", type="meta.bundle",
+                 version="1.0.0", capabilities=["metadata.consolidator"])
+    raw = dict(manifest=1, package=dict(id="package.age", version="1.0.0"),
+               plugins=[owner], notice_text_consolidators=[row()])
+    package = parse_manifest(raw)
+    candidate, = bind_verified_package_consolidators(package, verified_members={MEMBER: SOURCE})
+    assert candidate.declaration.plugin_id == package.plugins[0].id
+    for changes in (
+        {"id": "plugin.age.foreign"},
+        {"version": "1.0.1"},
+        {"capabilities": []},
+        {"entrypoint": "unsafe:plugin"},
+        {"requires_brokers": ["tasks"]},
+        {"type": "provider.library", "entrypoint": "unsafe:plugin"},
+    ):
+        wrong = parse_manifest({**raw, "plugins": [{**owner, **changes}]})
+        with pytest.raises(ValueError, match="owner_mismatch"):
+            bind_verified_package_consolidators(wrong, verified_members={MEMBER: SOURCE})
