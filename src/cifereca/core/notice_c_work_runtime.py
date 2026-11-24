@@ -103,6 +103,30 @@ class NoticeWorkRuntime:
                 on_witness_rejected=self._notify_witness_rejected,
         )
 
+    def install_replay_registry(self, registry):
+        """Install qualified replay ports before the first dispatch.
+
+        Session owners retain responsibility for revocation through the
+        read/hold callbacks. No transport or work request is initiated here.
+        """
+        from .notice_c_reparse_execution import PublicReplayRegistry
+
+        with self._lock:
+            if self._closed or self._dispatch_requested:
+                return False
+            if type(registry) is not PublicReplayRegistry:
+                raise ValueError("notice_reparse_invalid_registry")
+            self._pump = PublicNoticeWorkPump(
+                self._storage, self._broker, clock=self._clock,
+                on_committed=self._notify, replay_registry=registry,
+                fetch_execution=self._fetch_execution,
+                purchase_execution=self._purchase_execution,
+                on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
+            )
+            self._replay_registry = registry
+            return True
+
     def install_fetch_execution(self, execution):
         """Trusted Core composition only, once, before any heartbeat hint.
 
