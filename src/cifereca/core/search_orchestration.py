@@ -2879,6 +2879,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                         pass
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
+                    retained = row.__dict__.pop("_core_notice_retained_input", None)
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
                             "TRACE notice c public search code=source_persist_failed"
@@ -2887,7 +2888,6 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     # Core stamps only a successfully accepted source and
                     # its durable epoch. A GTK widget never writes a second
                     # N2 source or infers an association from an N3 HIT.
-                    retained = row.__dict__.pop("_core_notice_retained_input", None)
                     if retained is not None:
                         from .notice_c_search_receipt import record_search_receipt
                         record_search_receipt(self.storage, row, persisted, retained, now=now)
