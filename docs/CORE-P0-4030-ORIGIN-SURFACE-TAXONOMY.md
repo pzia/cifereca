@@ -124,10 +124,30 @@ synthétique en preuve terrain ou en autorisation de GET.
 | Achats/prêts privés exacts, cache et continuation, choix d'un compte | `test_core_p0_4030_private_catalogue.py`, `test_core_p0_4030_real_purchase_c_comparison.py`, `test_core_p0_4030_private_cache_evidence_order.py` | Cache non réputé frais, dénominateur de couverture non attesté |
 | Relecture typée du seul inventaire de prêts sélectionné | `test_core_p0_4030_remote_loans.py` | Ne prouve aucune branche canonique, activation ni droit |
 | Priorité transverse sur les fenêtres explicitement consultées, classement par preuve puis public/achats/prêts à preuve égale | `test_core_p0_4030_cross_surface_ranking.py` (#7711, fusion `633029d`, PR CI verte) | Un ISBN revendiqué par plusieurs éditions reste ambigu ; classement documentaire seulement, une provenance attestée n'est jamais rétrogradée |
-| Occurrences publiques de même ISBN et référence, formats distincts, provenance de chaque coordonnée et âge de l'observation C locale | `test_core_p0_7092_origin_detail_public.py`, `test_coreui_p0_4030_public_catalogue_action.py` (#7713, **sous réserve de CI et fusion**) | Chaque format reste un candidat distinct ; la date C est l'observation conservée, ni fraîcheur réseau ni acquisition prouvée |
+| Occurrences publiques de même ISBN et référence, formats distincts, provenance de chaque coordonnée et âge de l'observation C locale | `test_core_p0_7092_origin_detail_public.py`, `test_coreui_p0_4030_public_catalogue_action.py` (#7713, fusion `3a75682e`, PR CI 45066973889 verte) | Chaque format reste un candidat distinct ; la date C est l'observation conservée, ni fraîcheur réseau ni acquisition prouvée |
 | Déclaration humaine distincte des attestations, consentement et révocation transactionnelle | `test_core_p0_4030_loan_declaration_bridge.py`, `test_core_p0_4030_purchase_declaration.py` | Writer existant #2797, droit exact préalable obligatoire, jamais `OriginLink(provider)` inventé |
 | Batch supervisé, annulation/ABA, scopes et budgets | `test_core_p0_4030_suggestion_batch.py`, `test_core_p0_4030_batch_native_reception.py` | Comparaison C locale seulement ; pas de balayage réseau silencieux |
 | Cohabitation des trois surfaces, 403 public sans veto privé, révocation de profil, invariance FS/SQLite | `test_core_p0_4030_three_surface_reception.py` (#7707, fusion `bc29ce1`, PR CI verte) | N'exécute ni téléchargement fournisseur ni prêt réel |
+
+### Réception technique vérifiée — 24/11/2026
+
+Les preuves suivantes sont intégrées à `main` (ancêtres vérifiés) et
+leurs workflows PR CI sont verts sur les HEAD respectifs :
+
+| Lot | Fusion | PR CI | Portée |
+| --- | --- | --- | --- |
+| #7713 | `3a75682e2ec5a65fd5637c6c32abfd91eaea15c3` | 45066973889 | Occurrences, éditions/formats distincts, projection locale |
+| #7749 | `6698c3cdc6ed3a8c6b52e52bdc4b8785eb97a770` | 45120325468 | Adaptateurs Gallica/Gutenberg, revue locale supervisée |
+| #7802 | `2ee32e41d0ca6ff96aba8caf857c038b398e7cf3` | 45127570530 | Adaptateur EbooksGratuits OPDS, requête de titre explicite sans livraison |
+| #8019 | `79b15df5414b9925fa694416693577cbabf4171e` | 45480112516 | Quatre parcours synthétiques : 401/403/429/timeout public, comparaison privée paginée, déclaration par writer canonique, refus du curseur périmé et révocation |
+
+Le témoin #8019 réunit sur un même Placement/EPUB et une même base SQLite
+les incidents publics, le consentement privé et le cycle réversible de
+déclaration. Les droits, SourceReference, OriginLink, Artifacts, Placements,
+catalogue, ledger et octets sont inchangés. La déclaration reste un énoncé
+utilisateur, jamais une acquisition attestée. Les fenêtres et le cache
+restent partiels et non qualifiés frais ; aucune preuve de TTL négatif
+réseau, recherche distante privée exhaustive, ou terrain n'est déduite.
 
 **Critères de clôture encore à arbitrer en réception :** la somme des témoins
 ci-dessus doit être confrontée au parcours complet de l'utilisateur, dont les
