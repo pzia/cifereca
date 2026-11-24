@@ -210,7 +210,9 @@ def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
                 expected_sha256=field_digest(title),
             ),), expected_generation=0,
         )
-        pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, fetch_execution=execution)
+        events = []
+        pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, fetch_execution=execution,
+                                    on_witness_rejected=lambda *event: events.append(event))
         handle, = pump.tick().handles
         changed = mode == "witness_changed_input"
         assert handle.result(timeout=10) == ("current" if changed else "error")
@@ -224,9 +226,11 @@ def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
             assert projection["capture_state"] == "not_recorded"
             assert read_notice_cover(db, source.document).epoch == source.epoch + 1
             assert not list(tmp_path.glob("*.zip"))
+            assert events == []
         else:
             assert projection["status"] == "parser_drift_suspected"
             assert projection["capture_state"] == ("complete" if mode == "witness_allowed" else "partial")
+            assert events == [(projection["capture_id"], projection["capture_state"])]
             assert read_notice_cover(db, source.document) == source
             assert read_consolidated_notice_cover(db, canonical.document) == canonical
             archive_path, = tmp_path.glob("*.zip")
