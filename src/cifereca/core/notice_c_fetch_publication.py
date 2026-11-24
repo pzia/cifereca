@@ -70,7 +70,6 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
             or result.parser_id != "core.search.public-cover"
             or result.parser_version != old.observation.parser_version
             or result.parser_version != "2"
-            or result.status != "complete"
             or old.attribute.field_path != ("search_result", "thumbnail_url")
             or not journal._integer(now, minimum=1)
             or not journal._integer(result.observed_at, minimum=1)
@@ -82,9 +81,7 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
         attribute = project_notice_cover_attribute(
             result, field_path=old.attribute.field_path, cover_inventory_complete=True,
         )
-        if (attribute.document != old.document
-                or attribute.state != "available"
-                or not attribute.snapshot_complete):
+        if attribute.document != old.document:
             raise UnavailableNoticeWork("notice_fetch_invalid_observation")
     except Exception:
         authority.revoke(permit.lease.ref)
@@ -138,6 +135,9 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
                         {"response.raw": evidence.body} if evidence.export_allowed else {}
                     ))
                 return WitnessRejectedPublication(None if diagnostic is None else after_commit, diagnostic)
+        if (result.status != "complete" or attribute.state != "available"
+                or not attribute.snapshot_complete):
+            raise UnavailableNoticeWork("notice_fetch_invalid_observation")
         key = _opaque_key(old.document)
         published = _persist_notice_cover_txn(
             db, result, attribute, key, old.attribute.field_path, True, current.epoch,
