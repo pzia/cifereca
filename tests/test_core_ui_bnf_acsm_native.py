@@ -131,3 +131,9 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
         window._closed=True;window.runner.close()
         for dialog in dialogs():dialog.destroy()
         window.destroy();device.close()
+
+
+@pytest.mark.parametrize("selection_changed", [False, True])
+def test_native_advisory_click_is_read_only_and_scope_bound(selection_changed):
+    from e2e.borrower_information_native_contract import verify_native_advisory
+    verify_native_advisory(selection_changed)
