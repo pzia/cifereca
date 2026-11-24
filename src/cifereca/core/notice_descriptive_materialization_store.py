@@ -136,13 +136,18 @@ def publish_descriptive_materialization(
             from .notice_c_cover_index import canonical_cover_document_ref
             job = journal._held(db, journal_lease,
                                 journal_clock() if journal_clock is not None else journal_now)
-            if (job.spec.kind != "recompute_aggregate"
-                    or job.spec.target != canonical_cover_document_ref(
-                        row.target_edition_id).source_key
-                    or job.spec.input_digest != descriptive_selection_input_digest(
-                        row.execution_key, pin
-                    )
-                    or job.spec.implementation_digest != digest):
+            input_digest = descriptive_selection_input_digest(row.execution_key, pin)
+            if pin is None:
+                expected = journal.public_job_spec(
+                    "recompute_aggregate", canonical_cover_document_ref(row.target_edition_id),
+                    input_digest=input_digest, implementation_digest=digest,
+                )
+            else:
+                expected = journal.descriptive_job_spec(
+                    target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
+                    scope=row.scope, input_digest=input_digest, implementation_digest=digest,
+                )
+            if job.spec != expected:
                 raise ValueError("descriptive_journal_snapshot_mismatch")
         encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
                              separators=(",", ":"))
