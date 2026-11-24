@@ -347,3 +347,32 @@ def test_bnf_zero_remaining_quota_preserves_active_inventory(count):
         assert set(client.calls) <= {"login", "activity"}
     finally:
         s.close()
+
+
+def test_bnf_real_session_core_cache_nonempty_empty_reobserved(tmp_path):
+    """#4480: exercise the persisted direct inventory, not rights revocation."""
+    from cifereca.services import _loan_cache_key
+    from tests.test_sync_state_contract import _service
+
+    service = _service(tmp_path)
+    s, a, client = bnf()
+    try:
+        service.accounts = [a]
+        service._sessions[service._session_key(a.provider_id, a.credential_id)] = s
+        key = _loan_cache_key(a)
+        first = service._loans_for_account(a, force=True)
+        assert len(first) == 1
+        assert len(service.storage.cache_get("account", key)) == 1
+        client.html = '<section class="active-loans"></section>'
+        assert service._loans_for_account(a, force=True) == []
+        assert service.storage.cache_get("account", key) == []
+        client.html = BNF_HTML
+        again = service._loans_for_account(a, force=True)
+        assert [row.id for row in again] == [row.id for row in first]
+        assert len(service.storage.cache_get("account", key)) == 1
+        assert service.storage.entitlements(provider_id="bnf-pret") == []
+        assert service.storage.acquisitions() == []
+        assert client.calls.count("activity") == 3
+    finally:
+        service.close()
+        s.close()
