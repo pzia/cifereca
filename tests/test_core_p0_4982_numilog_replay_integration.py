@@ -329,3 +329,23 @@ def test_declared_replay_capability_does_not_survive_reconnect(monkeypatch):
         assert len(calls) == 2
     finally:
         session.close()
+
+
+def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
+    from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        port = qualify_public_search_replay(session, session.public_search_replay_capability())
+        token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert port.read_input(token) is not None
+        # A non-reentrant navigation guard on this thread reproduces busy
+        # deterministically; the adapter must not attempt a blocking acquire.
+        with session._navigation_lock:
+            with pytest.raises(RetryableNoticeWork, match="provider_busy"):
+                with port.hold_input(token):
+                    pytest.fail("busy lease admitted")
+        with port.hold_input(token) as live:
+            assert live is not None
+        assert len(calls) == 1
+    finally:
+        session.close()
