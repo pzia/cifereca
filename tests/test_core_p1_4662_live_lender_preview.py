@@ -924,7 +924,7 @@ def test_independent_fresh_negative_is_projected_without_second_fact(
     assert preview.rejection_reasons == ("borrower_blocked",)
     assert session.calls == 0
     assert service.storage.metadata_get(borrow_claim_key(account, row.notice)) is None
-    assert _preview(service, row, now=0).rejection_reasons == ("scope_unverified",)
+    assert _preview(service, row, now=1).rejection_reasons == ("scope_unverified",)
 
 
 def test_independent_positive_or_foreign_exact_denial_is_not_a_blocker(harness):
