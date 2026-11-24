@@ -516,7 +516,10 @@ def _refresh_sync_page(self) -> None:
             )
             group.add(row)
         disclosure.set_child(group)
-        box.append(disclosure)
+        # Descriptor callbacks may change navigation or close the window.
+        # Never attach a catalogue snapshot captured for an obsolete scope.
+        if sync_action_scope_current(self, scope):
+            box.append(disclosure)
 
     def append_unavailable_connections():
         # Disabled cards cannot be routed through broker.synchronize_source,
