@@ -49,3 +49,33 @@ notification UI, ni pipeline fournisseur. Les domaines d'observation et
 versions de parseur doivent être validés par le Core à l'intégration
 #2385/#3724 ; les comparaisons sur fichiers privés sont locales et
 cloisonnées par identité.
+
+
+## Destination des captures de régression (intégration Core Q7)
+
+La clé de configuration locale `diagnostics.regression_capture_directory`
+accepte `null` (défaut : répertoire Téléchargements) ou un chemin absolu,
+éventuellement préfixé par `~` pour le dossier personnel. Exemple :
+
+```json
+{
+  "diagnostics": {
+    "regression_capture_directory": "/home/user/Diagnostics"
+  }
+}
+```
+
+Le Core lit cette valeur à l'ouverture, y compris sans admission du pump
+optionnel. Une valeur invalide est refusée avant ouverture de SQLite, sans
+repli implicite. Le dossier n'est créé qu'à l'export. Le même choix est
+transmis au Search normal, au replay, au fetch autorisé et à la reprise
+des intentions persistées. Il ne modifie ni l'activation du pump ni les
+autorisations d'export des octets source.
+
+Une modification de destination prend effet à la prochaine ouverture du Core ;
+les archives déjà produites ne sont pas déplacées. La configuration ne
+constitue pas une preuve que le dossier restera accessible au moment de
+l'écriture. Une erreur d'export conserve l'intention réessayable ; une
+archive partielle indique explicitement les membres omis. La présentation
+GTK et le changement dynamique de destination ne font pas partie de cette
+tranche.
