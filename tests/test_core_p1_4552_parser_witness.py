@@ -56,8 +56,8 @@ def test_same_input_and_parser_without_loss_is_unchanged():
 ])
 def test_source_bytes_changed_never_confirm_parser_bug(change):
     value = review(**change)
-    assert value.status == "source_changed"
-    assert value.affected_fields == ()
+    assert value.status == "parser_drift_suspected"
+    assert value.affected_fields
 
 
 @pytest.mark.parametrize("change", [
@@ -186,3 +186,13 @@ def test_cyclic_parse_is_not_classified():
 def test_stable_field_digest_refuses_nonadmissible_nested_values(value):
     with pytest.raises(ValueError, match="invalid_parser_witness_field"):
         field_digest(value)
+
+
+def test_changed_input_healthy_structure_and_changed_value_are_not_regressions():
+    b = witness((CriticalParseField(("title",), "string",
+                                    expected_sha256=field_digest(TITLE)),))
+    r = review(baseline=b, input_hash="3"*64, raw={"title": "New title"})
+    assert r.status == "source_changed" and r.affected_fields == ()
+    r = review(baseline=b, input_hash="3"*64, raw={"title": 123})
+    assert r.status == "parser_drift_suspected"
+    assert r.affected_fields == ("critical_field_1",)
