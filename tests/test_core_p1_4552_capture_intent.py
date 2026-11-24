@@ -63,7 +63,8 @@ def test_restart_drain_is_bounded_and_skips_completed(tmp_path):
 
 def test_failed_capture_backoff_survives_restart(tmp_path, monkeypatch):
     from cifereca.core import notice_regression_capture_intent as intent
-    monkeypatch.setattr(intent.time, "time", lambda: 1000)
+    from types import SimpleNamespace
+    monkeypatch.setattr(intent, "time", SimpleNamespace(time=lambda: 1000))
     path = tmp_path / "fair.sqlite"
     db = Storage(path)
     try:
@@ -91,7 +92,8 @@ def test_failed_capture_backoff_survives_restart(tmp_path, monkeypatch):
 
 def test_resolver_failure_backoff_and_status(tmp_path, monkeypatch):
     from cifereca.core import notice_regression_capture_intent as intent
-    monkeypatch.setattr(intent.time, "time", lambda: 1000)
+    from types import SimpleNamespace
+    monkeypatch.setattr(intent, "time", SimpleNamespace(time=lambda: 1000))
     db = Storage(tmp_path / "resolver.sqlite")
     try:
         with db._lock, db._connect() as sql:
