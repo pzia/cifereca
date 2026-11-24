@@ -506,6 +506,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     return
                 # Keep the admitted persisted values independent of later
                 # in-place configuration edits, including nested options.
+                draft_revision = e.get("_probe_draft_revision", 0)
                 admitted_account = deepcopy(current)
                 probe_method = admitted_core.explicit_provider_diagnostic
                 e["_probe_pending"] = True
@@ -522,6 +523,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 def callback_current():
                     if not (
                         self.service is admitted_core
+                        and e.get("_probe_draft_revision", 0) == draft_revision
                         and not getattr(self, "_closed", False)
                         and not e.get("deleted")
                         and (page_lifetime is None or page_lifetime.alive)
