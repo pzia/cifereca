@@ -15,7 +15,7 @@ from .notice_source_observation import (
     NoticeSourceKey, NoticeSourceObservation, admit_source_notice,
 )
 from .notice_parse_witness import (
-    CriticalParseField, ParseWitness, _valid_baseline,
+    CriticalParseField, ParseWitness, ParseWitnessReview, _valid_baseline,
     admitted_source_scope_sha256, review_admitted_source_parse_witness,
 )
 
@@ -194,7 +194,31 @@ def publish_approved_parse_witness(
         return ApprovedParseWitness(next_generation, baseline)
 
 
+
+def review_cached_parse_witness(
+    storage, *, observation: NoticeSourceObservation, response_bytes: bytes,
+):
+    """Review an authorized normal parse or offline replay against its pin.
+
+    The trusted Core caller supplies the actual already-authorized input.
+    No baseline is implicitly created, no network or notice mutation occurs.
+    """
+    if (type(observation) is not NoticeSourceObservation
+            or type(response_bytes) is not bytes
+            or not 0 < len(response_bytes) <= _MAX_RESPONSE_BYTES):
+        raise ValueError("invalid_parse_witness_input")
+    approved = read_approved_parse_witness(
+        storage, key=observation.key, parser_id=observation.parser_id,
+    )
+    if approved is None:
+        return ParseWitnessReview("unverified", ())
+    return review_admitted_source_parse_witness(
+        approved.baseline, observation=observation,
+        input_sha256=sha256(response_bytes).hexdigest(),
+    )
+
+
 __all__ = [
     "ApprovedParseWitness", "read_approved_parse_witness",
-    "publish_approved_parse_witness",
+    "publish_approved_parse_witness", "review_cached_parse_witness",
 ]

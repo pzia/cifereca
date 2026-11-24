@@ -130,3 +130,36 @@ def test_raw_input_budget_does_not_store_any_baseline(tmp_path, invalid):
         put(db, body=invalid)
     assert read_approved_parse_witness(db, key=KEY, parser_id="paris/notice") is None
     db.close(final=True)
+
+
+def test_cached_review_after_restart_hashes_actual_input_and_never_reapproves(tmp_path):
+    from cifereca.core.notice_parse_witness_store import review_cached_parse_witness
+    path = tmp_path / "replay.sqlite"
+    db = Storage(path)
+    current = observation(version="2.0.0", fields={"Title": "Un titre"})
+    assert review_cached_parse_witness(
+        db, observation=current, response_bytes=RESPONSE,
+    ).status == "unverified"
+    approved = put(db)
+    db.close(final=True)
+    db = Storage(path)
+    try:
+        report = review_cached_parse_witness(
+            db, observation=current, response_bytes=RESPONSE,
+        )
+        assert report.status == "parser_regression_confirmed"
+        assert report.affected_fields == ("critical_field_2",)
+        assert review_cached_parse_witness(
+            db, observation=current, response_bytes=b"changed",
+        ).status == "source_changed"
+        other = replace(KEY, identity_id="bob")
+        assert review_cached_parse_witness(
+            db, observation=observation(key=other), response_bytes=RESPONSE,
+        ).status == "unverified"
+        assert read_approved_parse_witness(
+            db, key=KEY, parser_id="paris/notice",
+        ) == approved
+        assert db.entitlements() == []
+        assert db.acquisitions() == []
+    finally:
+        db.close(final=True)
