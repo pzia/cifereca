@@ -193,3 +193,32 @@ def test_reselection_requires_new_publication_generation(tmp_path):
         assert current.ref.generation > previous.ref.generation
     finally:
         db.close(final=True)
+
+
+def test_revocation_before_job_allocation_leaves_no_obsolete_job(tmp_path, monkeypatch):
+    from cifereca.core import notice_c_job_journal as journal
+
+    db = Storage(tmp_path / "allocation.sqlite")
+    binding = installed()
+    selected = selection()
+    put(db, selected, binding.source_sha256, 0)
+    original = journal.public_job_spec
+    specs = []
+
+    def revoke_before_allocation(*args, **kwargs):
+        spec = original(*args, **kwargs)
+        specs.append(spec)
+        put(db, None, None, 1)
+        return spec
+
+    monkeypatch.setattr(journal, "public_job_spec", revoke_before_allocation)
+    try:
+        with pytest.raises(ValueError, match="descriptive_selection_changed"):
+            coordinator.run_descriptive_core_job(db, **options(binding))
+        assert len(specs) == 1
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            assert journal._load(sql, journal._key(specs[0])) is None
+            assert read_descriptive_selection_txn(sql, **SCOPE).generation == 2
+    finally:
+        db.close(final=True)
