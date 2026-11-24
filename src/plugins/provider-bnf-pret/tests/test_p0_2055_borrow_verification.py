@@ -61,7 +61,9 @@ class ActivationVerificationTests(unittest.TestCase):
                     )
 
     def test_stale_empty_activity_is_not_confirmation(self):
-        with self.assertRaisesRegex(WebParseError, "^borrow_activity_unverified$"):
+        # The fully observed empty page is still no evidence of POST success.
+        # A receipt without its claimed fresh loan remains unverified.
+        with self.assertRaisesRegex(WebParseError, "^borrow_receipt_unverified$"):
             verify_borrow_activation(
                 RECEIPT, BEFORE, resource_id="book-synthetic",
                 before=snapshot(BEFORE), expected_scope=SCOPE,
