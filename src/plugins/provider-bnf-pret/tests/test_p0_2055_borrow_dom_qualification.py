@@ -333,7 +333,7 @@ class QualificationProbeTests(unittest.TestCase):
             ('<section class="active-loans"></section>', "empty_candidate"),
             ('<section class="active-loans" aria-busy="true"></section>', "partial"),
             ('<section class="active-loans"><div class="js-loan">'
-             '<a href="/resources/USER_BOOK_ID">Alice PRIVATE title</a>'
+             '<a href="/resources/USER_BOOK_ID" itemscope itemtype="https://schema.org/Book">Alice PRIVATE title</a>'
              '<a href="/loans/PRIVATE_LOAN_ID">Prêt</a></div></section>',
              "nonempty_candidate"),
         ):
@@ -346,6 +346,7 @@ class QualificationProbeTests(unittest.TestCase):
                             + widget + '</main>')
                     report = qualify_bnf_borrow_dom(html, page="activity")
                     self.assertEqual(report["activity_shape"], shape)
+                    self.assertEqual(report["book_scopes"], 0)
                     self.assertEqual(report["quota_label"],
                                      {"count": 1, "tag_paths": ["main/p"]})
                     self.assertEqual(report["pass_label"],
