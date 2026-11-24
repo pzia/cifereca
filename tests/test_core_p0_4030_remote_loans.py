@@ -401,8 +401,9 @@ def test_typed_loan_window_claim_is_visible_but_never_negative_authority(
     assert not report.coverage_complete and not report.fresh_network_verified
     assert not report.association_authorized and not report.local_description_transmitted
     done(report)
-    assert "Fenêtre fournisseur" in repr(groups[-2])
-    assert "Aucune origine ni droit attestés" in repr(groups[-2])
+    inventory = next(g for g in groups if g[0] == "Inventaire privé de prêts — lecture seule")
+    assert "Fenêtre fournisseur" in repr(inventory)
+    assert "Aucune origine ni droit attestés" in repr(inventory)
     assert calls == ["typed_inventory"]
     assert rows(service.storage) == before and path.read_bytes() == data
     dispose()
