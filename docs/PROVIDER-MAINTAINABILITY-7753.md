@@ -92,3 +92,18 @@ empty BnF projection regression was integrated in #7953 (HEAD 82c28aeb5919,
 PR CI 45355408424 success). Paris inventory completeness remains unknown,
 not a BnF-style attestation. Missing explicit symmetric 0/1/N, invalid ACSM,
 consent and at-most-once mappings must not be marked complete from this table.
+
+
+## R4 — complementary reception at cf460365ad0a47ab09e508cd7a277559a17a6756
+
+| Scenario | Paris | BnF |
+|---|---|---|
+| 0/1/N inventory | Core test_paris_real_inventory_cardinality_preserves_branch_coverage (#7966) | Core test_bnf_validated_html_claims_scoped_coverage_including_empty and test_bnf_zero_remaining_quota_preserves_active_inventory (#7958) |
+| Explicit selected delivery consent | test_p1_3252_paris_selected_right_freshness.py::test_paris_invalid_selection_never_gets_content | test_p0_3633_selected_acsm_staging.py::test_foreign_right_edition_offer_or_policy_refused_before_any_get |
+| Invalid ACSM | test_p0_3723_pnb_selected_staging.py::test_paris_invalid_selected_acsm_never_stages_or_retries (#7967) | test_p0_3633_selected_acsm_staging.py::test_http_failures_stay_in_core_staging_boundary |
+| Ambiguous borrow, spent claim | test_p0_3723_claimed_borrow.py::test_unconfirmed_attempt_is_not_success_or_retry | test_p0_2055_borrow_explicit_execution.py::test_timeout_still_spends_claim_without_automatic_second_post |
+| Existing loan | test_p0_3723_claimed_borrow.py::test_existing_loan_never_repeats_borrow_or_download | test_p0_2055_borrow_explicit_execution.py::test_positive_existing_loan_refuses_before_post |
+
+Paris uses a potentially mutating GET for its explicit borrow route; BnF uses its observed action sequence, not a common POST protocol. Neither may replay an ambiguous mutation. Correction to the earlier matrix: Paris successful empty ListLoans branches are complete; nonempty synthetic rows without raw provenance are unknown. BnF synthetic empty manual inventory is complete but rights/v2 remain partial (#7953). These are different authority boundaries.
+
+Exact-head reception: #7966 bcfb747768ae, PR CI 45367735750 success; #7967 42bac5d73a10, PR CI 45370618617 and ADEPT guard 45370619198 success. Remaining: complete package measurement, cancellation mapping and final integrated gates.
