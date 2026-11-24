@@ -23,8 +23,10 @@ def record_search_receipt(storage, row, source, retained, *, now):
                 source.observation.parser_id, source.observation.parser_version)
             or session.provider_id != source.observation.key.provider_id
             or getattr(session, "credential_id", None) != "__public__"
-            or getattr(session, "credentials", None) != {}
-            or getattr(session, "_accounts", None) != []):
+            or type(getattr(session, "credentials", None)) is not dict
+            or session.credentials
+            or type(getattr(session, "_accounts", None)) is not list
+            or session._accounts):
         return None
     try:
         started = monotonic()
