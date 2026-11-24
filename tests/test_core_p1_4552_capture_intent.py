@@ -212,3 +212,47 @@ def test_resolver_cannot_fabricate_omitted_snapshot(tmp_path, name):
         assert not list(tmp_path.glob("*.zip"))
     finally:
         db.close(final=True)
+
+
+def test_busy_replay_capture_retries_without_blocking_batch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core import notice_regression_capture_intent as intent
+    from cifereca.core.notice_c_work_bridge import RetryableNoticeWork
+
+    clock = [1000]
+    monkeypatch.setattr(intent, "time", SimpleNamespace(time=lambda: clock[0]))
+    path = tmp_path / "busy.sqlite"
+    db = Storage(path)
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            for scope in ("a"*64, "b"*64):
+                enqueue_capture_txn(sql, scope=scope, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"body").hexdigest())
+        first, second = intent.pending_capture_ids(db)
+
+        def resolve(diagnostic):
+            if diagnostic == first:
+                raise RetryableNoticeWork("notice_reparse_provider_busy")
+            return {}
+
+        assert intent.resume_captures(db, resolve, directory=tmp_path) == (
+            (first, "failed"), (second, "partial"))
+        assert intent.capture_status(db, first) == {
+            "capture_state": "failed", "attempts": 1, "retry_after": 1002}
+        assert len(list(tmp_path.glob("*.zip"))) == 1
+        assert intent.pending_capture_ids(db) == ()
+    finally:
+        db.close(final=True)
+
+    db = Storage(path)
+    try:
+        clock[0] = 1002
+        assert intent.pending_capture_ids(db) == (first,)
+        assert intent.resume_captures(db, lambda _: {"response.raw": b"body"},
+                                      directory=tmp_path) == ((first, "partial"),)
+        assert len(list(tmp_path.glob("*.zip"))) == 2
+        assert intent.pending_capture_ids(db) == ()
+    finally:
+        db.close(final=True)

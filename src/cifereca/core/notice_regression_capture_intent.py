@@ -180,6 +180,8 @@ def resume_captures(storage, resolve_members, *, directory=None, limit=8):
     Resolver returns authorized members or an empty dict when unavailable.
     Never calls a provider or fabricates original input.
     """
+    from .notice_c_work_bridge import RetryableNoticeWork
+
     if not callable(resolve_members):
         raise ValueError("invalid_capture_resolver")
     outcomes = []
@@ -190,7 +192,9 @@ def resume_captures(storage, resolve_members, *, directory=None, limit=8):
                 raise ValueError("invalid_capture_members")
             state = export_capture(storage, diagnostic, members=members,
                                    directory=directory)
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, RetryableNoticeWork):
+            # A busy producer is not proof that its raw input is gone.
+            # Keep the intent retryable and continue the bounded batch.
             key = _PREFIX + diagnostic
             with storage._lock, storage._connect() as db:
                 row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
