@@ -88,8 +88,10 @@ def test_incomplete_known_c_scan_cannot_promote_optional_opf_claim(
         store, library_root=root, identity_id="A", placement_id=placement,
         explicitly_requested=True,
     )
-    match, = report["suggestions"].suggestions
-    assert match.comparison == "title_author_concordant"
+    matches = report["suggestions"].suggestions
+    exact = [m for m in matches if m.hit.record_id == "exact"]
+    assert exact and all(m.comparison == "title_author_concordant" for m in exact)
+    assert all(m.comparison != "opf_source_url_concordant" for m in matches)
     assert not report["association_authorized"] and not report["provider_access_performed"]
     assert URL not in repr(report)
     assert rows(store) == before and file.read_bytes() == data
