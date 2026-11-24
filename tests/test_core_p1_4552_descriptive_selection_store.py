@@ -144,3 +144,52 @@ def test_corrupt_selection_fails_closed(tmp_path, raw):
             put(db, None, None, 0)
     finally:
         db.close(final=True)
+
+
+def test_reselection_requires_new_publication_generation(tmp_path):
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_descriptive_selection_store import descriptive_selection_input_digest
+
+    db = Storage(tmp_path / "reselection.sqlite")
+    binding = installed()
+    selected = selection()
+    try:
+        first = put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        spec = journal.public_job_spec(
+            "recompute_aggregate", canonical_cover_document_ref(TARGET),
+            input_digest=descriptive_selection_input_digest(row.execution_key, first),
+            implementation_digest=binding.source_sha256,
+        )
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            previous = journal._load(sql, journal._key(spec))
+        assert previous.state == "current"
+        put(db, None, None, 1)
+        restored = put(db, selected, binding.source_sha256, 2)
+        admitted = admit_descriptive_facts(
+            target_edition_id=TARGET, canonical_type="age",
+            consolidator_id=selected.plugin_id, consolidator_version=selected.version,
+            source_facts=(fact(),), attested_strong_links={},
+        )
+        read = dict(target_edition_id=TARGET, **SCOPE,
+                    capture_current_txn=lambda sql: (selected, admitted, binding.source_sha256))
+        with pytest.raises(ValueError, match="stale_descriptive_selection_generation"):
+            read_descriptive_materialization(db, **read)
+        assert descriptive_selection_input_digest(row.execution_key, first) != (
+            descriptive_selection_input_digest(row.execution_key, restored))
+        renewed = coordinator.run_descriptive_core_job(
+            db, **{**options(binding), "now": 101,
+                   "expected_generation": previous.ref.generation,
+                   "expected_execution_key": row.execution_key},
+        )
+        assert renewed == row
+        assert read_descriptive_materialization(db, **read) == row
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN")
+            current = journal._load(sql, journal._key(spec))
+        assert current.state == "current"
+        assert current.ref.generation > previous.ref.generation
+    finally:
+        db.close(final=True)
