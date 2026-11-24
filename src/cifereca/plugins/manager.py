@@ -125,7 +125,9 @@ class PluginManager:
         brokers: dict[str, object] | None = None,
         core_services: dict[str, object] | None = None,
         python_dependencies: PythonDependencyManager | None = None,
+        before_plugin_retire: Callable[[frozenset[str]], None] | None = None,
     ) -> None:
+        self._before_plugin_retire = before_plugin_retire
         self._headless = bool(headless)
         self._builtin_ui = bool(builtin_ui) and not self._headless
         self._disable_plugins = bool(disable_plugins)
@@ -753,6 +755,8 @@ class PluginManager:
             order = topological_order(descriptors, affected)
         except DependencyError:
             order = sorted(affected)
+        if affected and self._before_plugin_retire is not None:
+            self._before_plugin_retire(frozenset(affected))
         for plugin_id in reversed(order):
             self._deactivate_record(self._records[plugin_id])
         self._prune_inactive_import_roots()
@@ -934,9 +938,13 @@ class PluginManager:
         for dependent_id, record in self._records.items():
             if any(dep.plugin == plugin_id for dep in record.descriptor.requires):
                 self._deactivate_dependents(dependent_id, seen)
+                if self._before_plugin_retire is not None:
+                    self._before_plugin_retire(frozenset((dependent_id,)))
                 self._deactivate_record(record)
 
     def _deactivate_plugin_and_dependents(self, plugin_id: str) -> None:
+        if self._before_plugin_retire is not None:
+            self._before_plugin_retire(frozenset((plugin_id,)))
         self._deactivate_dependents(plugin_id)
         record = self._records.get(plugin_id)
         if record is not None:

@@ -93,22 +93,70 @@ def set_descriptive_selection(storage, *, canonical_type, scope, selection,
         raise ValueError("invalid_descriptive_selection_generation")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        prior = read_descriptive_selection_txn(db, canonical_type=canonical_type, scope=scope)
-        generation = 0 if prior is None else prior.generation
-        if generation != expected_generation:
-            raise ValueError("descriptive_selection_generation_changed")
-        if prior is not None and (prior.selection, prior.installed_source_sha256, prior.schema_sha256) == (
-                selection, installed_source_sha256, schema_sha256):
-            return prior
-        if generation + 1 >= 2**63:
-            raise ValueError("invalid_descriptive_selection_generation")
-        pin = DescriptiveSelectionPin(generation + 1, selection, installed_source_sha256, schema_sha256)
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, json.dumps(asdict(pin), sort_keys=True, separators=(",", ":"))),
+        return _set_selection_txn(
+            db, key, canonical_type=canonical_type, scope=scope, selection=selection,
+            installed_source_sha256=installed_source_sha256,
+            expected_generation=expected_generation, schema_sha256=schema_sha256,
         )
-        return pin
+
+
+def _set_selection_txn(db, key, *, canonical_type, scope, selection,
+                       installed_source_sha256, expected_generation, schema_sha256):
+    prior = read_descriptive_selection_txn(db, canonical_type=canonical_type, scope=scope)
+    generation = 0 if prior is None else prior.generation
+    if generation != expected_generation:
+        raise ValueError("descriptive_selection_generation_changed")
+    if prior is not None and (prior.selection, prior.installed_source_sha256, prior.schema_sha256) == (
+            selection, installed_source_sha256, schema_sha256):
+        return prior
+    if generation + 1 >= 2**63:
+        raise ValueError("invalid_descriptive_selection_generation")
+    pin = DescriptiveSelectionPin(generation + 1, selection, installed_source_sha256, schema_sha256)
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, json.dumps(asdict(pin), sort_keys=True, separators=(",", ":"))),
+    )
+    return pin
+
+
+def revoke_descriptive_plugin_selections(storage, plugin_ids):
+    """Revoke only matching durable pins before a managed lifecycle retirement.
+
+    Reuse the selection CAS writer in one SQLite transaction. No positive
+    trust, archive selection, automatic fallback or plugin execution.
+    """
+    if (type(plugin_ids) is not frozenset
+            or any(not _identifier(value) for value in plugin_ids)):
+        raise ValueError("invalid_descriptive_retirement")
+    if not plugin_ids:
+        return
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        rows = db.execute("SELECT key,value FROM metadata WHERE key>=? AND key<?",
+                          (_PREFIX, _PREFIX + "\uffff")).fetchall()
+        for key, raw in rows:
+            try:
+                if type(raw) is not str or len(raw) > 4096:
+                    raise ValueError
+                payload = json.loads(raw)["selection"]
+                if payload is None:
+                    continue
+                selected = ExplicitSelection(**payload)
+                if key != _key(selected.canonical_type, selected.scope):
+                    raise ValueError
+            except (TypeError, ValueError, KeyError, RecursionError) as exc:
+                raise ValueError("corrupt_descriptive_selection_pin") from exc
+            if selected.plugin_id not in plugin_ids:
+                continue
+            prior = read_descriptive_selection_txn(
+                db, canonical_type=selected.canonical_type, scope=selected.scope,
+            )
+            _set_selection_txn(
+                db, key, canonical_type=selected.canonical_type, scope=selected.scope,
+                selection=None, installed_source_sha256=None,
+                expected_generation=prior.generation, schema_sha256=None,
+            )
 
 
 def require_descriptive_selection(pin, selection, digest, *, schema=None):

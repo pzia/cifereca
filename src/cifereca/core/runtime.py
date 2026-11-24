@@ -108,6 +108,7 @@ class CiferecaCore:
             library._notice_work_recover_search = notice_work.recover_search_sources
             library._notice_work_search_committed = notice_work.request_tick
         llm = optional_llm_service(config)
+        from .notice_descriptive_selection_store import revoke_descriptive_plugin_selections
         plugins = PluginManager(
             builtin_ui=builtin_ui,
             headless=not builtin_ui,
@@ -119,6 +120,7 @@ class CiferecaCore:
             state_store=state_store,
             config_store=plugin_config_store,
             diagnostics=diagnostics,
+            before_plugin_retire=lambda ids: revoke_descriptive_plugin_selections(storage, ids),
         )
         if activate_plugins:
             plugins.activate()
@@ -156,6 +158,23 @@ class CiferecaCore:
             plugins=plugins,
             brokers=brokers,
             notice_work=notice_work,
+        )
+
+    def configure_notice_consolidator(
+        self, payload, *, expected_sha256, canonical_type, scope,
+        selected_plugin_id, selected_version, expected_generation,
+    ):
+        """Trusted lifecycle owner only; explicit independently verified archive.
+
+        Call on the serialized plugin lifecycle owner, not a plugin broker.
+        This selects configuration, never schedules execution.
+        """
+        from .notice_descriptive_active_config import reconcile_active_descriptive_selection
+        return reconcile_active_descriptive_selection(
+            self.storage, self.plugins, payload, expected_sha256=expected_sha256,
+            canonical_type=canonical_type, scope=scope,
+            selected_plugin_id=selected_plugin_id, selected_version=selected_version,
+            expected_generation=expected_generation,
         )
 
     @staticmethod
