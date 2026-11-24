@@ -18,6 +18,7 @@ class BorrowerInformationalObservation:
     source_collection: str | None
     session_epoch: str
     observed_at: int
+    source_account_id: str | None = None
     pass_state: str = "unknown"
     remaining_quota: int | None = None
     available_copies: int | None = None
@@ -53,6 +54,20 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account, *,
                 or len(self._accounts) != 1
                 or account is not self._accounts[0]):
             raise ProviderConfigurationError('account_scope_mismatch')
+        source_account = item.source_account_id
+        def advisory_notice_current():
+            return (
+                (item.source_account_id is None or
+                 (type(item.source_account_id) is str
+                  and item.source_account_id == account.unique_id))
+                and item.source_account_id == source_account
+                and type(item.metadata) is dict
+                and item.metadata.get("catalogue_access") != "shared_read_only"
+                and item.metadata.get("search_provenance") != "known_catalog_stale"
+            )
+
+        if informational and not advisory_notice_current():
+            raise ProviderConfigurationError('account_scope_mismatch')
         epoch = self._epoch
         borrower = (
             account.unique_id, account.identity_id,
@@ -80,6 +95,7 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account, *,
                 and len(self._accounts) == 1
                 and account is self._accounts[0]
                 and self.identity_broker is broker
+                and (not informational or advisory_notice_current())
                 and (account.unique_id, account.identity_id,
                      account.provider_id, account.credential_id,
                      account.is_primary) == borrower
@@ -119,6 +135,7 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account, *,
                 credential_id=borrower[3], borrower_id=borrower[0],
                 record_id=notice[1], source_collection=notice[6],
                 session_epoch=epoch, observed_at=int(time()),
+                source_account_id=source_account,
                 item_offer=('unavailable' if record.availability == 'unavailable'
                             else 'unknown'),
             )
@@ -142,6 +159,15 @@ def advisory_display_values(self, observation, item: SearchResult, account: Acco
                 or self._closed or not self.connected
                 or len(self._accounts) != 1 or account is not self._accounts[0]
                 or item.docbase != 'BNF_PRET' or item.medium != 'digital'
+                or type(observation.observed_at) is not int
+                or not 0 < observation.observed_at <= int(time())
+                or (item.source_account_id is not None and
+                    (type(item.source_account_id) is not str
+                     or item.source_account_id != account.unique_id))
+                or item.source_account_id != observation.source_account_id
+                or type(item.metadata) is not dict
+                or item.metadata.get("catalogue_access") == "shared_read_only"
+                or item.metadata.get("search_provenance") == "known_catalog_stale"
                 or (observation.identity_id, observation.provider_id,
                     observation.credential_id, observation.borrower_id)
                 != (account.identity_id, account.provider_id,

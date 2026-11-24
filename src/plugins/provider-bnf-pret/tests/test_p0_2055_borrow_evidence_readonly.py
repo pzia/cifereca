@@ -262,6 +262,50 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_advisory_foreign_account_and_documentary_notice_never_get(self):
+        session, account, item, calls = self.make()
+        try:
+            for candidate in (
+                replace(item, source_account_id="foreign"),
+                replace(item, metadata={"catalogue_access": "shared_read_only"}),
+                replace(item, metadata={"search_provenance": "known_catalog_stale"}),
+            ):
+                with self.assertRaisesRegex(ProviderConfigurationError, "account_scope_mismatch"):
+                    session.borrower_information_for(candidate, account)
+            self.assertEqual(calls, [])
+        finally:
+            session.close()
+
+    def test_advisory_notice_account_rebind_during_read_is_discarded(self):
+        changed = {}
+        def change():
+            changed["item"].source_account_id = "foreign"
+        session, account, item, calls = self.make(after_detail=change)
+        changed["item"] = item
+        try:
+            with self.assertRaisesRegex(ProviderConfigurationError, "account_scope_mismatch"):
+                session.borrower_information_for(item, account)
+            self.assertEqual(len(calls), 2)
+        finally:
+            session.close()
+
+    def test_advisory_projection_rejects_changed_binding_and_invalid_date(self):
+        session, account, item, calls = self.make()
+        try:
+            observation = session.borrower_information_for(item, account)
+            for candidate in (
+                replace(item, source_account_id="foreign"),
+                replace(item, source_account_id=account.unique_id),
+                replace(item, metadata={"search_provenance": "known_catalog_stale"}),
+            ):
+                self.assertIsNone(session.borrower_information_display(
+                    observation, candidate, account))
+            self.assertIsNone(session.borrower_information_display(
+                replace(observation, observed_at=True), item, account))
+            self.assertEqual(len(calls), 2)
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
