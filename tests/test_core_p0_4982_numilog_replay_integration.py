@@ -224,3 +224,35 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         tasks.close()
         session.close()
         db.close()
+
+
+def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.core.notice_c_raw_input_receipt import read_public_raw_input_receipt
+    from cifereca.core import notice_c_search_receipt
+    session, client, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "normal-receipt.sqlite")
+    try:
+        monkeypatch.setattr(notice_c_search_receipt, "time", lambda: 100)
+        response = session.search_with_response_facets("loup", "catalog")
+        assert response.notice_parse_input_token is not None
+        rows = search_orchestration._public_rows_from_response(response, session)
+        row, = rows
+        search_orchestration._ingest_public_search_c(
+            SimpleNamespace(storage=db), rows, identity_id="alice", now=100,
+            require_public_cover_witness=True,
+        )
+        receipt = read_public_raw_input_receipt(
+            db, row._core_notice_cover_document_ref, now=100,
+        )
+        assert receipt is not None
+        assert receipt.producer_token == response.notice_parse_input_token
+        assert receipt.input_digest == sha256(body).hexdigest()
+        assert read_public_raw_input_receipt(
+            db, row._core_notice_cover_document_ref, now=161,
+        ) is None
+        assert "_core_notice_retained_input" not in row.__dict__
+        assert len(calls) == 1
+    finally:
+        session.close()
+        db.close()
