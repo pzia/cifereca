@@ -144,6 +144,16 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
                 parser_implementation_digest=held.parser_implementation_digest,
                 producer_token=held.token, now=now[0], ttl_seconds=ttl,
             )
+        from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+        from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+        from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
+        publish_approved_parse_witness(
+            db, observation=observation, response_bytes=body,
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(ORIGINAL),
+            ),), expected_generation=0,
+        )
         reserve = session._reserve_exact_public_refresh
         def reserve_exact(*args, **kwargs):
             reserved = reserve(*args, **kwargs)
@@ -161,6 +171,9 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
         port = make_public_search_fetch_port(
             authority, session, source, receipt,
             reserve_exact=reserve_exact, clock=lambda: now[0],
+            # Fixture-owned exact response from the MockTransport, not a
+            # production provider declaration or a second read.
+            exact_parse_input=lambda _response, _observed_at: fresh,
         )
         # Explicit trusted action; production does not install this composition.
         ref = authority.request(
@@ -188,6 +201,14 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
         assert len(requests) == (1 if mode in ("revoked_start", "expired") else 2)
         if len(requests) == 2:
             assert requests[0] == requests[1]
+        diagnostic = read_parse_witness_diagnostic(
+            db, key=source.observation.key, parser_id=source.observation.parser_id,
+        )
+        if mode == "changed":
+            assert diagnostic["status"] == "source_changed"
+            assert diagnostic["capture_state"] == "not_recorded"
+        else:
+            assert diagnostic is None
         if mode == "changed":
             latest_source = read_notice_cover(db, source.document)
             assert latest_source.epoch == source.epoch + 1
