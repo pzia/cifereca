@@ -78,3 +78,41 @@ Aucune réactivation d'un plugin archivé ni collecte implicite.
 ## Surfaces multiples et provenance documentaire (#4030)
 
 La capacité v1 ne classe pas un fournisseur dans une catégorie métier exclusive et ne confère aucun accès distant ni consentement à l'outil de suggestion. Les familles et limites A/B/C sont spécifiées dans [CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md](CORE-P0-4030-ORIGIN-SURFACE-TAXONOMY.md). Les futurs résultats par surface exigent pagination, fraîcheur, preuve de compte et budget, sans créer de droit ou d'OriginLink.
+
+
+## Critères minimaux de qualification d'une future actualisation (proposition, non ABI)
+
+La recherche ponctuelle reste distincte de toute opération d'actualisation.
+Tant qu'un plugin ne fournit pas un contrat approuvé et testé, son état
+demeure `unsupported`. Les éléments suivants sont des exigences de
+réception, pas des capacités implémentées ni des noms d'API gelés.
+
+| Élément | Preuve attendue |
+| --- | --- |
+| Autorité | Identifiant canonique du plugin, version du contrat, périmètre exact du catalogue |
+| Déclenchement | Manuel, démarrage ou périodique explicitement déclaré ; consentement distinct et révocable avant toute requête |
+| Budget | Limites finies de pages, requêtes, durée et octets de cache ; arrêt à la première limite |
+| Accès | Conditions de service, licence de cache, respect de 401/403/429 ; aucun contournement |
+| Partition | Public partagé seulement si attesté public ; privé partitionné par compte réel et accès autorisé |
+| Résultat | success seulement pour le périmètre effectivement complet ; partial pour interruption, budget ou couverture inconnue ; unsupported sans appel ; error pour échec |
+| Fraîcheur | last_attempt distinct de last_success ; partial/error ne renouvellent pas la preuve de complétude |
+| Suppression | Tombstone seulement sur preuve positive qualifiée ; absence dans une page ou expiration de cache insuffisante |
+| Effets | Aucun prêt, achat, téléchargement, effacement de droit ou de fichier local |
+
+L'agrégation doit conserver les résultats individuels : un mélange de succès
+et de couverture partielle ne constitue pas un succès exhaustif. Une source
+non prise en charge n'est ni un échec réseau ni une preuve de catalogue vide.
+La recette de contrat peut être effectuée sur fixtures ; la recette réseau,
+les licences et le consentement réel restent des preuves distinctes à fournir
+par le propriétaire du plugin.
+
+### Réception incrémentale automatisée
+
+- #7923 : activation Baen par identité, reconnexion Numilog et absence
+  d'acquisition implicite ; fusion `8683ee42`, PR CI 45330242748 verte.
+- #7914 : états partiels, budget et erreurs Core distincts du zéro qualifié.
+- #7919 : chronologie globale avant pagination, rétention et redémarrage.
+- #7920 : provenance et fraîcheur des observations d'âge.
+
+Ces preuves ne qualifient aucune nouvelle capacité réseau et ne remplacent
+pas les arbitrages #4552 ni la recette terrain.
