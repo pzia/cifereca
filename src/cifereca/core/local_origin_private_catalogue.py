@@ -455,6 +455,12 @@ def compare_known_private_catalogue(service, request, *, account, kind,
                     stamp, first[3], page + 1, loan_witness,
                 )
             result = report("partial", first[1], first[2], following)
-        return result if live() and sqlite_source_stamp(request.database) == stamp else report("scope_changed")
+        # The legacy loan projection is not covered by SQLite's stamp.
+        # Recheck it after the second snapshot and the physical context
+        # manager's final verification, before publishing any page/cursor.
+        if (not live() or sqlite_source_stamp(request.database) != stamp
+                or (kind == "loan" and _loan_titles(service, scope) != loan_titles)):
+            return report("scope_changed")
+        return result
     except Exception:
         return report("unavailable")
