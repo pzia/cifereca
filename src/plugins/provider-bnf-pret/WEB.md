@@ -753,3 +753,26 @@ carte contradictoire, une donnée manquante ou un prêt non projetable impose
 permet pas la réconciliation négative des droits, ni une restitution, une
 acquisition automatique ou une suppression de fichier. Tests HTML synthétiques,
 sans requête de jeton ACSM.
+
+
+## #4063 — Qualification informative, 24/11/2026
+
+Les marqueurs Pass, quota restant, exemplaires et confirmation sont des
+indices structurels, pas des droits. Le libellé de quota restant observé
+ne mesure pas le nombre de prêts actifs. Les fixtures de #7352 et #7491
+qualifient la localisation et la segmentation DOM, pas les valeurs
+réelles ni leur rattachement à un compte. Aucune valeur numérique de
+quota, date de validité Pass ou permission positive n'est attestée ici.
+
+La lecture privée borrower_eligibility_for conserve account_state,
+quota_state et permission à unknown ; seule l'indisponibilité littérale
+dans la microdata de l'édition exacte peut être projetée négativement.
+Le préflight privé vérifie la stabilité compte/édition (#7954, #7956).
+Il ne constitue pas une admission. Aucun nouveau réseau en recherche,
+navigation ou rafraîchissement ordinaire. Aucun popup de vérification
+manuelle ni veto ajouté, conformément à l'arbitrage du 03/11.
+
+L'affichage de valeurs positives et datées reste non qualifié en
+l'absence de preuve terrain liée au compte et à l'édition. Ne pas
+inventer de valeur ni présenter les tests synthétiques comme une
+recette réelle. Aucune mutation ou relance POST pour cette qualification.
