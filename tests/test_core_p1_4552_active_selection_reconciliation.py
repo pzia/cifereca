@@ -1,4 +1,5 @@
 from hashlib import sha256
+import json
 
 import pytest
 
@@ -6,7 +7,7 @@ from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.storage import Storage
 from cifereca.core.notice_descriptive_active_config import reconcile_active_descriptive_selection
 from tests.test_core_p1_4552_consolidator_archive import payload
-from tests.test_core_p1_4552_consolidator_manifest import MEMBER, SOURCE
+from tests.test_core_p1_4552_consolidator_manifest import MEMBER, SOURCE, row
 
 
 def test_active_selection_reconciliation(tmp_path):
@@ -28,6 +29,32 @@ def test_active_selection_reconciliation(tmp_path):
         first = reconcile(0)
         assert first.generation == 1 and first.selection.plugin_id == "plugin.age.alpha"
         assert first.schema_sha256 is not None
+        assert reconcile(1) == first
+        # A separately digest-pinned archive for a different package must
+        # not tombstone this still-active selection, even if not installed.
+        unrelated = payload(manifest=json.dumps(dict(
+            manifest=1, package=dict(id="package.other", version="1.0.0"),
+            plugins=[dict(id="plugin.age.other", type="meta.bundle",
+                          version="1.0.0", capabilities=["metadata.consolidator"])],
+            notice_text_consolidators=[row(plugin_id="plugin.age.other")],
+        )))
+        with pytest.raises(ValueError, match="archive_selection_mismatch"):
+            reconcile_active_descriptive_selection(
+                storage, manager, unrelated, expected_generation=1,
+                **(args | {"expected_sha256": sha256(unrelated).hexdigest()}),
+            )
+        assert reconcile(1) == first
+        same_coordinate = payload(manifest=json.dumps(dict(
+            manifest=1, package=dict(id="package.other", version="1.0.0"),
+            plugins=[dict(id="plugin.age.alpha", type="meta.bundle",
+                          version="1.0.0", capabilities=["metadata.consolidator"])],
+            notice_text_consolidators=[row()],
+        )))
+        with pytest.raises(ValueError, match="archive_selection_owner_mismatch"):
+            reconcile_active_descriptive_selection(
+                storage, manager, same_coordinate, expected_generation=1,
+                **(args | {"expected_sha256": sha256(same_coordinate).hexdigest()}),
+            )
         assert reconcile(1) == first
         script = package.root / MEMBER
         script.write_bytes(SOURCE + b"# drift")
