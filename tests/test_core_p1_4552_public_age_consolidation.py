@@ -29,6 +29,7 @@ def test_public_age_job_supplies_exact_sql_capture_to_coordinator():
         )
     assert result == "published"
     assert captured["canonical_type"] == "age"
+    assert captured["require_configured_selection"] is True
     assert captured["target_edition_id"] == "edition:1"
     assert captured["capture_sources_txn"] is not None
     with patch(
