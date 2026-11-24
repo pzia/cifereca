@@ -244,7 +244,7 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     credential_fields=(CredentialField("api_token", "Token API Kobo-Vault", secret=True),),
     account_options=(
-        AccountOptionField("base_url", "URL API Kobo-Vault"),
+        AccountOptionField("base_url", "URL API Kobo-Vault", value_type="url", url_schemes=("http", "https")),
         # The session already consumes account.options["display_profile"].
         # The global Kobo setting is a read-only migration fallback; CoreUI
         # never needs a Kobo-specific widget or enables acquisition by saving.
