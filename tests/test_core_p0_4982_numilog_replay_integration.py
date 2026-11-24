@@ -20,7 +20,7 @@ from cifereca.core.notice_c_cover_index import (
     persist_exact_public_search_cover, read_consolidated_notice_cover,
 )
 from cifereca.core.notice_c_public_search_replay import (
-    make_public_search_replay_port, public_replay_same_call_observation,
+    make_retained_public_replay_port, public_replay_same_call_observation,
 )
 from cifereca.core.notice_c_raw_input_receipt import record_public_raw_input_receipt
 from cifereca.core.notice_c_reparse_execution import PublicReplayRegistry, ReplayInput
@@ -82,14 +82,13 @@ def normalize(raw):
 
 def make_port(session, family, implementation):
     def read(token):
-        raw, _ttl = session._read_retained_public_input(token)
-        return normalize(raw)
+        return session._read_retained_public_input(token)
 
     @contextmanager
     def hold(token):
         try:
             with session._hold_retained_public_input(token) as raw:
-                yield normalize(raw)
+                yield raw
         except ProviderError as exc:
             if str(exc) == "Numilog : public_catalog_replay_busy":
                 raise RetryableNoticeWork("notice_reparse_provider_busy") from None
@@ -97,11 +96,11 @@ def make_port(session, family, implementation):
 
     # Provider-specific wiring lives here in the trusted test composition,
     # not in Core, a public plugin ABI, or the production registry.
-    return make_public_search_replay_port(
+    return make_retained_public_replay_port(
         session, provider_id=session.provider_id,
         parser_family_digest=family, implementation_digest=implementation,
-        read_input=read, reparse_response=session._reparse_retained_public_response,
-        hold_input=hold,
+        read_retained=read, reparse_response=session._reparse_retained_public_response,
+        hold_retained=hold, normalize_input=normalize,
     )
 
 
