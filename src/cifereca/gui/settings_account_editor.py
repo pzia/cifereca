@@ -321,7 +321,7 @@ def build_provider_account_editor(
                 fallback = _saved_option_of_exact_account(
                     config, provider_id, account_id, data, field.key,
                 )
-                if (not fallback and _sole_owner_of_legacy_provider_setting(
+                if (fallback is None and _sole_owner_of_legacy_provider_setting(
                         config, provider_id, account_id, data)):
                     # A retired global value has no owner metadata. Keep
                     # it only for the unique historical connection; the
@@ -332,7 +332,7 @@ def build_provider_account_editor(
             default = field.default if type(field.default) is str else ""
             selected = next(
                 (value for value in (fallback, default)
-                 if type(value) is str and value),
+                 if type(value) is str),
                 "",
             )
         if choice_mode:
