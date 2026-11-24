@@ -243,7 +243,7 @@ class AggregateWorkBridge:
                         before = _canonical_revision(db, document)
                     outcome = prepared.publish(db)
                     rejected = (type(outcome) is WitnessRejectedPublication
-                                and job.spec.kind == "reparse_cached_input")
+                                and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
                     if rejected:
                         control.check_cancelled()
                         current = journal._held(db, lease, self._clock())
