@@ -250,3 +250,57 @@ def test_replay_capture_authorization_is_fail_closed():
     assert _authorized_capture_members(port, request, selected) == {
         "response.raw": b"exact input"}
     assert calls == [(request, selected)]
+
+
+@pytest.mark.parametrize("mode", ("authorized", "denied", "expired", "revoked", "wrong_scope"))
+def test_capture_recovery_reattests_original_receipt_after_restart(tmp_path, mode):
+    import json
+    import zipfile
+    from cifereca.core.notice_parse_witness import ParseWitnessReview
+    from cifereca.core.notice_regression_capture_intent import enqueue_capture_txn, resume_captures
+    from cifereca.core.notice_c_reparse_execution import resolve_replay_capture_members
+    from cifereca.core.notice_parse_witness import admitted_source_scope_sha256
+    from hashlib import sha256
+    path = tmp_path / "recover.sqlite"
+    db = Storage(path)
+    source, canonical, ref, adapter = make_job(db)
+    spec = journal.read_job(db, ref).spec
+    port, = adapter.registry()._ports
+    registry = PublicReplayRegistry((replace(
+        port, authorize_capture_input=lambda *_: mode != "denied",
+    ),))
+    scope = admitted_source_scope_sha256(source.observation.key,
+                                         parser_id=source.observation.parser_id)
+    with db._lock, db._connect() as sql:
+        sql.execute("BEGIN IMMEDIATE")
+        diagnostic = enqueue_capture_txn(
+            sql, scope="f"*64 if mode == "wrong_scope" else scope, generation=1,
+            review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+            input_digest=sha256(BODY).hexdigest(), replay_spec=spec,
+        )
+    from cifereca.core.notice_regression_capture_intent import _PREFIX
+    assert adapter.live.producer_token not in db.metadata_get(_PREFIX + diagnostic)
+    db.close(final=True)
+    db = Storage(path)
+    try:
+        if mode == "revoked":
+            adapter.live = None
+        now = 100000 if mode == "expired" else 100
+        outcomes = resume_captures(
+            db, lambda key: resolve_replay_capture_members(
+                db, registry, key, clock=lambda: now,
+            ), directory=tmp_path,
+        )
+        assert outcomes == ((diagnostic, "partial"),)
+        archive_path, = tmp_path.glob("*.zip")
+        with zipfile.ZipFile(archive_path) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            if mode == "authorized":
+                assert archive.read("response.raw") == BODY
+            else:
+                assert "response.raw" in manifest["omitted"]
+        assert "parse" not in adapter.calls and "read" not in adapter.calls
+        assert read_notice_cover(db, source.document) == source
+        assert read_consolidated_notice_cover(db, canonical.document) == canonical
+    finally:
+        db.close(final=True)
