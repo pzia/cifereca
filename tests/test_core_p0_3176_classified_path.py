@@ -82,19 +82,8 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
 
     root = tmp_path / "library"
     register(store, "A", "seller", "card-A")
-    old, pid = _put_epub(store, root, "Acquisitions/old.epub",
-                         metadata=TYPED, provider_id="local")
-    if dependency == "relative_path":
-        with store._lock, store._connect() as db:
-            db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
-                       (json.dumps({"relative_path": "Acquisitions/old.epub"}), pid))
-    elif dependency == "checkpoint":
-        store.acquisition_put({
-            "provider_id": "local", "credential_id": "fixture-account",
-            "identity_id": "A", "item_id": "fixture-checkpoint",
-            "status": "attention_required",
-            "metadata": {"phase": "index_pending", "path": str(old)},
-        })
+    old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
+                         metadata=TYPED)
     scope, page = _run(_service(store, root))
     plan = prepare_organizer_dry_run(scope, page, confirmed=True)
     accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
@@ -103,6 +92,25 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
     assert entry.placement_id == pid and entry.state == "relocation_held"
     target = root / "A" / entry.proposed
     assert target == root / "A/Livres/Autrice/Autrice - Roman commun.epub"
+    # Separate synthetic SQL qualification: bind the fixture explicitly.
+    # This invalidates the held plan; it is never a writer authorization.
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE placements SET provider_id=?,source_item_id=? WHERE placement_id=?",
+                   ("local", "fixture-item", pid))
+        db.execute("UPDATE catalog_entries SET provider_id=?,item_id=? WHERE placement_id=?",
+                   ("local", "fixture-item", pid))
+    assert confirm_organizer_dry_run(scope, page, plan, confirmed=True) is None
+    if dependency == "relative_path":
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
+                       (json.dumps({"relative_path": "Acquisitions/Autrice - Roman commun.epub"}), pid))
+    elif dependency == "checkpoint":
+        store.acquisition_put({
+            "provider_id": "local", "credential_id": "fixture-account",
+            "identity_id": "A", "item_id": "fixture-checkpoint",
+            "status": "attention_required",
+            "metadata": {"phase": "index_pending", "path": str(old)},
+        })
     baseline, data = store.placement_get(pid), old.read_bytes()
     before = rows(store)
     history = store.acquisitions()
