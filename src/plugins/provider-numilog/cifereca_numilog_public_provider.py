@@ -629,12 +629,27 @@ class NumilogPublicSession(ProviderSession):
         # its only supported upstream operation is an anonymous catalogue.
         requested = requested_public_formats(content_types)
         normalized_scope = "all" if scope == "catalog" else scope
-        rows, complete = self._search_public_page(query, normalized_scope, field=field)
+        body = implementation = None
+        if self._retain_public_search_inputs:
+            rows, token, complete = self._search_retained_page(
+                query, normalized_scope, field=field,
+            )
+            if token is not None:
+                # The token was returned alongside these exact parsed rows.
+                # No lookup by query, second GET or previous-response field.
+                with self._hold_retained_public_input(token) as raw:
+                    if raw is not None and raw.token == token:
+                        body = raw._body
+                        implementation = raw.parser_implementation_digest
+        else:
+            rows, complete = self._search_public_page(query, normalized_scope, field=field)
         rows, partial, complete = filter_public_formats(rows, requested, complete)
         return ProviderSearchResponse(
             results=list(rows), partial=partial,
             catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
+            notice_parse_input=body,
+            notice_parser_implementation=implementation,
         )
 
     def _assert_public_generation(self, expected):
@@ -758,6 +773,7 @@ class NumilogPublicPlugin(ProviderPlugin):
         return NumilogPublicSession(
             credential_id=credential_id, label=label,
             credentials=credentials, options=options,
+            _retain_public_search_inputs=(credential_id == "__public__" and not credentials),
         )
 
 
