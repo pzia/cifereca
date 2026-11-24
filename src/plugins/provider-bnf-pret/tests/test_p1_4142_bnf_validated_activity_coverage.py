@@ -154,6 +154,8 @@ def test_no_forged_typed_completeness_when_v1_reader_is_replaced():
     '<div hidden>{card}</div>',
     '<div aria-hidden="true">{card}</div>',
     '<template>{card}</template>',
+    '<div style="display: none">{card}</div>',
+    '<div style="visibility: hidden">{card}</div>',
 ])
 def test_hidden_cards_never_complete_visible_inventory(hidden_wrapper):
     result = parsed(page(card() + hidden_wrapper.format(
@@ -213,3 +215,12 @@ def test_css_hidden_empty_activity_widget_is_not_complete(style):
     assert result.loans == ()
     assert result.status == "partial"
     assert result.exhaustive is False
+
+
+@pytest.mark.parametrize("style", ["display: none", "visibility: hidden"])
+@pytest.mark.parametrize("body", ["", card()])
+def test_css_hidden_widget_ancestor_never_attests_loans_or_zero(style, body):
+    result = parsed(f'<div style="{style}">' + page(body) + '</div>')
+    assert result.loans == ()
+    assert result.status == "partial"
+    assert not result.exhaustive
