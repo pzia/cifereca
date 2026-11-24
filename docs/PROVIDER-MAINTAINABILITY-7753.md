@@ -70,3 +70,25 @@ Baseline is the base of #7943, `5552518195074d598efb9d609f96b53f3a2bff96`; compa
 | BnF session | 1639 / 1373 | 89486 / 74989 | 36 / 33 |
 
 The three entry modules total 5376 -> 3793 lines and 283181 -> 197284 bytes. Extracted modules remain part of the implementation; these figures measure entry-module concentration, not total code deletion. Full package inventory and integrated gates remain separate reception requirements.
+
+
+## R4 — explicit scenario mapping (verified definitions at de3b54787fa9a9bfe2750a77ca386ac83d378ed0)
+
+Paris references below are relative to src/plugins/provider-paris/tests;
+BnF references are relative to src/plugins/provider-bnf-pret/tests.
+
+| Scenario | Paris | BnF |
+|---|---|---|
+| Revoked admission before private read | test_p0_3723_downloadable_v2.py::test_guarded_v2_candidate_requires_live_core_lease_before_private_read | test_p0_3723_guarded_core_admission.py::test_guarded_candidate_rejects_revoked_lease_before_private_get |
+| Revocation during delivery | test_p0_3723_downloadable_v2.py::test_guarded_v2_candidate_forwards_live_lease_and_discards_revoked_staging | test_p0_3723_guarded_core_admission.py::test_revocation_during_fresh_activity_prevents_token_get |
+| Rebind | test_p0_3723_downloadable_v2.py::test_v2_rebind_during_candidate_does_not_return_or_keep_staging | test_p0_3633_selected_acsm_staging.py::test_rebound_session_instance_or_credential_never_stages_or_gets_stale_token |
+| Changed/retracted offer | test_p0_7231_acsm_offer_route.py::test_route_change_in_final_inventory_refuses_before_get | test_p0_3633_selected_acsm_staging.py::test_second_fresh_activity_does_not_get_when_offer_retracted |
+| Unsafe redirect | test_p0_3121_selected_no_mutating_redirect.py::test_selected_redirect_cannot_issue_second_get_to_mutating_path | test_p0_3867_signed_redirects.py::test_untrusted_delivery_redirect_never_follows_url |
+| Staging isolation | test_p0_3723_pnb_selected_staging.py::test_paris_selected_pnb_get_stage_swap_never_writes_outside | test_p0_3723_staging_inode.py::test_bnf_acsm_staging_swap_never_writes_or_keeps_file_outside |
+
+The shared adapter ABA test covers admission revocation even after scope restoration;
+it is not proof of every provider-specific ABA interleaving. The real-session
+empty BnF projection regression was integrated in #7953 (HEAD 82c28aeb5919,
+PR CI 45355408424 success). Paris inventory completeness remains unknown,
+not a BnF-style attestation. Missing explicit symmetric 0/1/N, invalid ACSM,
+consent and at-most-once mappings must not be marked complete from this table.
