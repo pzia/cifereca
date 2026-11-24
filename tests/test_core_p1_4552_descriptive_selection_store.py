@@ -123,3 +123,24 @@ def test_revocation_hides_previous_materialization_even_with_old_context(tmp_pat
             read_descriptive_materialization(db, **read)
     finally:
         db.close(final=True)
+
+
+@pytest.mark.parametrize("raw", (
+    '{"generation":1,"generation":2,"selection":null,"installed_source_sha256":null}',
+    '{"generation":true,"selection":null,"installed_source_sha256":null}',
+    '{"generation":1,"selection":null,"installed_source_sha256":"invalid"}',
+))
+def test_corrupt_selection_fails_closed(tmp_path, raw):
+    from cifereca.core.notice_descriptive_selection_store import _key
+    db = Storage(tmp_path / "corrupt.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                        (_key(**SCOPE), raw))
+        with pytest.raises(ValueError, match="corrupt_descriptive_selection_pin"):
+            coordinator.run_descriptive_core_job(db, **options(installed()))
+        with pytest.raises(ValueError, match="corrupt_descriptive_selection_pin"):
+            put(db, None, None, 0)
+    finally:
+        db.close(final=True)
