@@ -8,12 +8,15 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from unicodedata import category
+from threading import Lock
+from time import monotonic
 import re
 import httpx
 
 from ..plugin_api import AuthenticationRequired, Cancelled, TemporaryUnavailable
 
 from ..plugin_api import ProviderSearchResponse, PublicSearchNotice, ProviderSearchWithFacets
+from .library_sqlite_freshness import sqlite_source_stamp
 from .local_origin_suggestion_operator import LocalOriginSuggestionRequest
 from .local_origin_suggestion_preview import _PublicComparisonEvidence, _verified_candidate
 from .local_origin_epub_evidence import read_verified_epub_details, _isbn13
@@ -21,7 +24,7 @@ from .local_origin_documentary_suggestions import _fold
 from .public_search_projection import project_public_search_results
 from .search_orchestration import (
     _inert_search_source_state, _is_public_web_evidence, _public_catalog_url,
-    _session_search_capabilities,
+    _session_search_capabilities, _terminal_anonymous_empty,
 )
 
 _MAX_RESULTS = 50
@@ -73,6 +76,40 @@ class PublicCatalogueChoice:
     field: str
     scope: str
     evidence: _PublicComparisonEvidence
+
+
+class _TerminalEmptyReviewCache:
+    """One exact anonymous empty observation, never a negative rights proof.
+
+    Activation-local, bounded to one entry, expires by monotonic time.
+    A different scope, file, session, SQLite image or query is a miss.
+    No stored provider payload, no persistence, no provider capability.
+    """
+    TTL_SECONDS = 30
+
+    def __init__(self):
+        self._lock = Lock()
+        self._generation = 0
+        self._entry = None
+
+    def clear(self):
+        with self._lock:
+            self._generation += 1
+            self._entry = None
+
+    def probe(self, key, session):
+        with self._lock:
+            entry = self._entry
+            now = monotonic()
+            if entry is not None and not 0 <= now - entry[2] < self.TTL_SECONDS:
+                self._entry = entry = None
+            return (self._generation,
+                    entry is not None and entry[0] == key and entry[1] is session)
+
+    def remember(self, generation, key, session, observed):
+        with self._lock:
+            if generation == self._generation and 0 <= monotonic() - observed < self.TTL_SECONDS:
+                self._entry = (key, session, observed)
 
 
 def available_local_public_catalogues(service, request, *, evidence=None):
@@ -164,7 +201,7 @@ def _public_failure_status(exc):
 
 
 def search_local_public_catalogue(service, request, *, provider_id, confirmed=False,
-                                  choice=None, still_current=lambda: True):
+                                  choice=None, still_current=lambda: True, empty_cache=None):
     """One synchronous typed call; send title only, never path/bytes/ISBN.
 
     Each invocation requires explicit approval of the selected public source.
@@ -221,6 +258,18 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             if details is None or not live():
                 return report("excluded")
             title, authors, isbns, _, source_urls = details
+            cache_key = cache_generation = None
+            if type(empty_cache) is _TerminalEmptyReviewCache and choice is not None:
+                stamp = sqlite_source_stamp(request.database)
+                if stamp is not None:
+                    cache_key = (request.identity_id, request.placement_id, request.root,
+                                 request.source_epoch, request.navigation_epoch,
+                                 id(request.storage), id(request.owner), id(request.config),
+                                 provider_id, field, scope, title, local, signature, stamp)
+                    cache_generation, hit = empty_cache.probe(cache_key, session)
+                    if hit and live():
+                        return report("partial", window_status="cached_declared_complete")
+            observed = monotonic()
             called = True
             try:
                 response = session.search_with_response_facets(
@@ -354,6 +403,12 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             else:
                 window_status = "unverified"
             result = report("partial", candidates, window_status=window_status)
+        if not live():
+            return report("scope_changed")
+        if (cache_key is not None and _terminal_anonymous_empty(response, session)
+                and result["window_status"] == "declared_complete"
+                and sqlite_source_stamp(request.database) == cache_key[-1]):
+            empty_cache.remember(cache_generation, cache_key, session, observed)
         return result if live() else report("scope_changed")
     except Exception:
         # Never expose supplier exceptions, account details or private path.

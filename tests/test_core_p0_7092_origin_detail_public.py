@@ -259,3 +259,89 @@ def test_untrusted_known_c_collection_label_cannot_spoof_both_review_surfaces():
     assert "Collection C : PUBLIC" in repr(
         module.ranked_documentary_rows((("known-c", page),))
     )
+
+
+@pytest.mark.parametrize("outcome", ["terminal", "unmarked", "incomplete", "unknown", "failure"])
+def test_explicit_terminal_empty_cache_is_bounded_and_never_attests_absence(
+    rig, monkeypatch, outcome,
+):
+    from cifereca.core import local_origin_public_catalogue as catalogue
+    from cifereca.plugin_api import ProviderSearchResponse
+
+    service, session, request, calls, path = rig
+    now = [100.0]
+    monkeypatch.setattr(catalogue, "monotonic", lambda: now[0])
+
+    def search(*args, **kwargs):
+        calls.append((args, kwargs))
+        if outcome == "failure":
+            raise TimeoutError("synthetic")
+        return ProviderSearchResponse(
+            [], partial=outcome == "incomplete",
+            catalogue_complete=None if outcome == "unknown" else outcome != "incomplete",
+            terminal_empty=outcome == "terminal",
+        )
+
+    session.search_with_response_facets = search
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    before, contents = rows(service.storage), path.read_bytes()
+
+    def review():
+        choice, = preview(broker, request).public_choices
+        assert broker.search_public(token=choice.token) is None
+        report = broker.search_public(token=choice.token, confirmed=True)
+        assert broker.search_public(token=choice.token, confirmed=True) is None
+        assert report.matches == () and not report.coverage_complete
+        assert not report.fresh_network_verified and not report.association_authorized
+        return report
+
+    first = review()
+    assert first.provider_access_performed and len(calls) == 1
+    now[0] += 29
+    second = review()
+    if outcome == "terminal":
+        assert second.status == "partial"
+        assert second.window_status == "cached_declared_complete"
+        assert not second.provider_access_performed and len(calls) == 1
+    else:
+        assert second.provider_access_performed and len(calls) == 2
+    now[0] += 1
+    third = review()
+    assert third.provider_access_performed
+    assert len(calls) == (2 if outcome == "terminal" else 3)
+    assert rows(service.storage) == before and path.read_bytes() == contents
+
+
+@pytest.mark.parametrize("change", ["cancel", "session", "sqlite", "epoch"])
+def test_terminal_empty_cache_never_crosses_revoked_or_changed_review_scope(
+    rig, monkeypatch, change,
+):
+    from types import SimpleNamespace
+    from cifereca.core import local_origin_public_catalogue as catalogue
+    from cifereca.plugin_api import ProviderSearchResponse
+
+    service, session, request, calls, path = rig
+    monkeypatch.setattr(catalogue, "monotonic", lambda: 100.0)
+    def empty(*args, **kwargs):
+        calls.append((args, kwargs))
+        return ProviderSearchResponse([], catalogue_complete=True, terminal_empty=True)
+    session.search_with_response_facets = empty
+    broker = LocalOriginDetailReadFactory(service).for_activation("fixture", current=lambda: True)
+    page = preview(broker, request)
+    report = broker.search_public(token=page.public_choices[0].token, confirmed=True)
+    assert report.provider_access_performed and len(calls) == 1
+    if change == "cancel":
+        broker.cancel(token=page.token)
+    elif change == "session":
+        service._sessions["public"] = SimpleNamespace(**vars(session))
+    elif change == "sqlite":
+        service.storage.metadata_set("synthetic-cache-drift", "changed")
+    else:
+        service._account_context_epoch += 1
+    before, contents = rows(service.storage), path.read_bytes()
+    next_page = preview(broker, request)
+    result = broker.search_public(token=next_page.public_choices[0].token, confirmed=True)
+    assert result.provider_access_performed and len(calls) == 2
+    assert not result.coverage_complete and not result.fresh_network_verified
+    assert not result.association_authorized
+    assert rows(service.storage) == before and path.read_bytes() == contents

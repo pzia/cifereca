@@ -16,7 +16,7 @@ from ..plugin_api.local_origin_detail import (
 )
 from .activation_scoped_broker import ActivationScopedReadFactory
 from .local_origin_public_catalogue import (
-    PublicCatalogueCandidate, available_local_public_catalogues,
+    PublicCatalogueCandidate, available_local_public_catalogues, _TerminalEmptyReviewCache,
     search_local_public_catalogue,
 )
 from .local_origin_private_catalogue import (
@@ -42,6 +42,7 @@ class LocalOriginDetailReadBrokerImpl:
         self._service = service
         self._activation_current = activation_current
         self._public = {}
+        self._empty_public_cache = _TerminalEmptyReviewCache()
         self._private = {}
         self._remote_loans = {}
         self._declaration_choices = {}
@@ -211,7 +212,7 @@ class LocalOriginDetailReadBrokerImpl:
                 return None
             result = search_local_public_catalogue(
                 self._service, request, provider_id=choice.provider_id,
-                confirmed=True, choice=choice, still_current=live,
+                confirmed=True, choice=choice, still_current=live, empty_cache=self._empty_public_cache,
             )
             if (not live() or type(result) is not dict
                     or result.get("status") not in ("partial", "excluded", "scope_changed",
@@ -219,7 +220,8 @@ class LocalOriginDetailReadBrokerImpl:
                                                    "access_denied", "rate_limited", "timeout", "cancelled")
                     or type(result.get("provider_access_performed")) is not bool
                     or type(result.get("window_status")) is not str
-                    or result["window_status"] not in ("unverified", "incomplete", "declared_complete")
+                    or result["window_status"] not in ("unverified", "incomplete", "declared_complete",
+                                                        "cached_declared_complete")
                     or any(result.get(flag) is not False for flag in (
                         "coverage_complete", "fresh_network_verified",
                         "association_authorized", "may_write_origin_or_right"))
@@ -475,6 +477,7 @@ class LocalOriginDetailReadBrokerImpl:
         with self._lock:
             if self._active is not None and type(token) is str and token == self._active[0]:
                 self._active = None
+                self._empty_public_cache.clear()
                 self._public.clear()
                 self._private.clear()
                 self._remote_loans.clear()
@@ -486,6 +489,7 @@ class LocalOriginDetailReadBrokerImpl:
         """Private host-only retirement; no I/O or waiting for file hashing."""
         with self._lock:
             self._revoked = True
+            self._empty_public_cache.clear()
             self._active = None
             self._public.clear()
             self._private.clear()
