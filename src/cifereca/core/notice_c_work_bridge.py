@@ -35,8 +35,11 @@ class UnavailableNoticeWork(Exception):
     """Exact input or implementation is no longer available; no fallback GET."""
 
 
+@dataclass(frozen=True, slots=True, repr=False)
 class WitnessRejectedPublication:
     """Closed result: diagnostic persisted, no documentary write performed."""
+
+    after_commit: Callable[[], object] | None = None
 
 
 class RetryableNoticeWork(Exception):
@@ -294,6 +297,13 @@ class AggregateWorkBridge:
             # A broken guard must not silently suppress a failed transaction.
             return self._fail(lease, transient=False)
         if rejected:
+            # The provider guard and SQLite transaction are both released.
+            # A failed file export never changes the committed job outcome.
+            if outcome.after_commit is not None:
+                try:
+                    outcome.after_commit()
+                except Exception:
+                    pass  # durable capture intention remains for maintenance
             return "error"
         # Commit and Storage lock release have both succeeded. An observer
         # failure cannot roll back or retry an already successful job.
