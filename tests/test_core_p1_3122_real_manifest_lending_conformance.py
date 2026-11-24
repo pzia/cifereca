@@ -125,3 +125,40 @@ def test_real_manifest_retains_search_read_separation_without_unverified_actions
     assert "acquisition.download" not in bnf
     assert "lending.return" not in paris and "lending.renew" not in paris
     assert "lending.return" not in bnf and "lending.renew" not in bnf
+
+
+def test_provider_execution_does_not_import_diagnostic_only_modules():
+    import ast
+
+    diagnostic = {
+        "cifereca_bnf_pret_dom_probe", "cifereca_bnf_pret_cover_matrix",
+        "cifereca_bnf_pret_qualification", "cifereca_bnf_pret_observations",
+    }
+    for provider, directory in PLUGIN_DIRS.items():
+        for source in directory.glob("cifereca_*.py"):
+            if source.stem in diagnostic:
+                continue
+            for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    assert name not in diagnostic, (source.name, name)
+                    foreign = ("cifereca_bnf_pret" if provider == "paris"
+                               else "cifereca_paris")
+                    assert not name.startswith(foreign), (source.name, name)
+
+
+def test_real_provider_adapter_is_opt_in_and_history_stays_unpublished():
+    from cifereca.plugin_api import LegacyRightsResourceAdapter
+
+    assert not issubclass(ProviderSession, LegacyRightsResourceAdapter)
+    for session_type in (ParisProviderSession, BnfProviderSession):
+        assert issubclass(session_type, LegacyRightsResourceAdapter)
+        assert session_type.downloadable_resource_snapshot is (
+            LegacyRightsResourceAdapter.downloadable_resource_snapshot
+        )
+    assert BNF_DESCRIPTOR.capabilities.history is False
