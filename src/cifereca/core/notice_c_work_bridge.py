@@ -205,6 +205,7 @@ class AggregateWorkBridge:
         if purchase:
             self._purchase_transition()
         committed = False
+        rejected = False
         fetch = job.spec.kind == "fetch_source_notice"
         try:
             control.check_cancelled()
@@ -234,32 +235,33 @@ class AggregateWorkBridge:
                         )
                         before = _canonical_revision(db, document)
                     outcome = prepared.publish(db)
-                    if (type(outcome) is WitnessRejectedPublication
-                            and job.spec.kind == "reparse_cached_input"):
+                    rejected = (type(outcome) is WitnessRejectedPublication
+                                and job.spec.kind == "reparse_cached_input")
+                    if rejected:
                         control.check_cancelled()
                         current = journal._held(db, lease, self._clock())
                         journal._save(db, replace(current, state="error", lease_until=0,
                                                   reason="permanent"))
-                        return "error"
-                    if outcome is not True:
-                        raise RetryableNoticeWork("notice_work_input_changed")
-                    control.check_cancelled()
-                    journal._complete_job_txn(db, lease, now=self._clock())
-                    if aggregate and self._on_committed is not None:
-                        after = _canonical_revision(db, document)
-                        if after is None or (before is not None and after < before):
-                            raise ValueError("notice_work_invalid_publication")
-                        if before != after:
-                            event = (document, after)
+                    else:
+                        if outcome is not True:
+                            raise RetryableNoticeWork("notice_work_input_changed")
+                        control.check_cancelled()
+                        journal._complete_job_txn(db, lease, now=self._clock())
+                        if aggregate and self._on_committed is not None:
+                            after = _canonical_revision(db, document)
+                            if after is None or (before is not None and after < before):
+                                raise ValueError("notice_work_invalid_publication")
+                            if before != after:
+                                event = (document, after)
                 committed = True
         except Cancelled:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             self._fail(lease, transient=not fetch)
             raise
         except PurchaseEnrichmentDeferred as exc:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             if purchase and type(exc) is PurchaseEnrichmentDeferred:
                 # Reconstruct to validate even a mutated plugin exception.
                 try:
@@ -269,12 +271,12 @@ class AggregateWorkBridge:
                 return self._fail(lease, transient=True, retry_after_seconds=deferred.retry_after_seconds)
             return self._fail(lease, transient=False)
         except UnavailableNoticeWork:
-            return "current" if committed else self._fail(lease, transient=False)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
-            return "current" if committed else self._fail(lease, transient=not fetch)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=not fetch)
         except InitialGroupSuperseded:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             try:
                 if mark_initial_group_superseded(self._storage, lease, now=self._clock()):
                     return "stale"
@@ -284,13 +286,15 @@ class AggregateWorkBridge:
             return self._fail(lease, transient=True)
         except ValueError:
             # CAS/source validation refusal; no successful publication.
-            return "current" if committed else self._fail(lease, transient=not fetch)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=not fetch)
         except Exception:
             # Only a closed reason crosses the durable boundary.
-            return "current" if committed else self._fail(lease, transient=False)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=False)
         if not committed:
             # A broken guard must not silently suppress a failed transaction.
             return self._fail(lease, transient=False)
+        if rejected:
+            return "error"
         # Commit and Storage lock release have both succeeded. An observer
         # failure cannot roll back or retry an already successful job.
         if event is not None:
