@@ -87,6 +87,7 @@ def make_public_search_fetch_port(
                 raise UnavailableNoticeWork("notice_fetch_invalid_public_response")
             matches = tuple(_observations(
                 response, session, provider_id=provider_id, observed_at=observed_at,
+                allow_coverless=True,
             ))
             if (len(matches) != 1 or matches[0].key != original_key
                     or notice_cover_document_ref(matches[0].key) != source.document):
