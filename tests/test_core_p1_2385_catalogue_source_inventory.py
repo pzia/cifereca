@@ -69,7 +69,9 @@ def _rig():
         registry=registry,
         current_identity=NS(identity_id="alice"),
         identities=[NS(identity_id="alice"), NS(identity_id="bob")],
-        _sessions={str(i): x for i, x in enumerate(public_sessions + account_sessions)},
+        _session_key=LibraryService._session_key,
+        _sessions={LibraryService._session_key(x.provider_id, x.credential_id): x
+                   for x in public_sessions + account_sessions},
         _provider_enabled_for_identity=lambda name, identity: (
             attempts.append(("enabled", name, identity)) or
             name not in {"numilog-catalog", "disabled"} and
@@ -266,14 +268,14 @@ def test_baen_activation_and_reconnection_do_not_grant_refresh_or_acquisition():
     assert row("alice") is None
     assert row("bob").catalog_search_supported
     assert not row("bob").catalog_search_available
-    service._sessions["baen"] = NS(
+    service._sessions[service._session_key("baen", "__public__")] = NS(
         provider_id="baen", credential_id="__public__", connected=True,
     )
     assert row("alice") is None
     assert row("bob").catalog_search_available
     active["alice"] = True
     assert row("alice").catalog_search_available
-    service._sessions["baen"].connected = False
+    service._sessions[service._session_key("baen", "__public__")].connected = False
     for identity in ("alice", "bob"):
         value = row(identity)
         assert value.catalog_search_supported
@@ -281,7 +283,7 @@ def test_baen_activation_and_reconnection_do_not_grant_refresh_or_acquisition():
         assert value.catalog_refresh == "unsupported"
         assert not value.personal_inventory_available
         assert value.acquisition == "separate_explicit"
-    service._sessions["baen"].connected = True
+    service._sessions[service._session_key("baen", "__public__")].connected = True
     active["bob"] = False
     assert row("bob") is None
     assert row("alice").catalog_search_available
@@ -338,3 +340,28 @@ def test_invalid_private_credential_is_not_account_readiness(credential):
     assert not row.catalog_search_available
     assert not row.personal_inventory_available
     assert row.catalog_refresh == "unsupported"
+
+
+@pytest.mark.parametrize("provider,credential", [
+    ("gallica", "__public__"), ("numilog", "a-numilog"),
+])
+def test_connected_session_must_occupy_exact_registry_key(provider, credential):
+    service, _ = _rig()
+    key = service._session_key(provider, credential)
+    session = service._sessions.pop(key)
+    service._sessions["obsolete-registration"] = session
+
+    def row():
+        return next(r for r in catalogue_source_capabilities(service, identity_id="alice")
+                    if r.provider_id == provider)
+
+    assert row().catalog_search_supported
+    assert not row().catalog_search_available
+    assert not row().personal_inventory_available
+    # A different connected session cannot lend its registration key either.
+    service._sessions[key] = NS(provider_id=provider, credential_id="other", connected=True)
+    assert not row().catalog_search_available
+    service._sessions[key] = session
+    assert row().catalog_search_available
+    assert row().personal_inventory_available == (credential != "__public__")
+    assert row().catalog_refresh == "unsupported"

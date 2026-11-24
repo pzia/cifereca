@@ -34,7 +34,20 @@ def catalogue_source_capabilities(
         return ()
 
     registry = service.registry
-    sessions = tuple(getattr(service, "_sessions", {}).values())
+    sessions = dict(getattr(service, "_sessions", {}))
+    session_key = getattr(service, "_session_key", None)
+
+    def connected_exact(provider_id, credential_id):
+        # An object still in the mapping under an obsolete or unrelated key
+        # is not the registered session for this source coordinate.
+        if not callable(session_key):
+            return False
+        session = sessions.get(session_key(provider_id, credential_id))
+        actual = getattr(session, "credential_id", None)
+        return (getattr(session, "provider_id", None) == provider_id
+                and type(actual) is str and actual == credential_id
+                and getattr(session, "connected", None) is True)
+
     enabled = getattr(service, "_provider_enabled_for_identity", None)
     accounts_for_identity = getattr(service, "accounts_for_identity", None)
     # Metadata-only: accounts_for_identity is the existing in-memory
@@ -66,22 +79,12 @@ def catalogue_source_capabilities(
                 and type(credential := getattr(account, "credential_id", None)) is str
                 and credential and credential != "__public__"
             }
-            connected = any(
-                getattr(session, "provider_id", None) == provider_id
-                and type(credential := getattr(session, "credential_id", None)) is str
-                and credential in matching
-                and getattr(session, "connected", None) is True
-                for session in sessions
-            )
+            connected = any(connected_exact(provider_id, credential)
+                            for credential in matching)
         else:
             # A private session for the same plugin is not an anonymous
             # catalogue session and must not imply public availability.
-            connected = any(
-                getattr(session, "provider_id", None) == provider_id
-                and getattr(session, "credential_id", None) == "__public__"
-                and getattr(session, "connected", None) is True
-                for session in sessions
-            )
+            connected = connected_exact(provider_id, "__public__")
         result.append(CatalogueSourceCapability(
             provider_id=provider_id,
             identity_scope="authenticated" if authenticated else "public",
