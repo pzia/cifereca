@@ -181,7 +181,8 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
             report["activity_shape"] = "nonempty_candidate"
         else:
             report["activity_shape"] = "empty_candidate"
-        return report
+        # Keep the inventory shape independent of the account label hints.
+        # Both remain structural, not an authenticated account observation.
 
     visited = list(_walk(root))
     books = [node for node, _ in visited
@@ -189,7 +190,8 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
              and any(token in {
                  "https://schema.org/Book", "http://schema.org/Book",
              } for token in node.attrs.get("itemtype", "").split())]
-    report["book_scopes"] = _count(len(books))
+    if page != "activity":
+        report["book_scopes"] = _count(len(books))
 
     if page == "detail" and (len(books) != 1 or not books[0].closed):
         return _empty(page, "book_scope_unrecognized")
@@ -216,7 +218,7 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
                     report["resource_field_names"] + 1)
         patterns = (
             (("quota_label", _QUOTA), ("pass_label", _PASS))
-            if page == "profile" else
+            if page in ("profile", "activity") else
             (("copies_label", _COPIES),) if page == "detail" else
             (("confirmation_label", _CONFIRM),)
         )
