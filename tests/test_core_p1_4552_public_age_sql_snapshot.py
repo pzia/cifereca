@@ -116,3 +116,57 @@ def test_sql_snapshot_rejects_evicted_source_fence():
         })),
     )
     assert public_age_facts_txn(db, document) == ()
+
+
+def test_exact_age_retention_matches_live_and_refuses_superseded_revision(tmp_path):
+    from contextlib import closing
+    from cifereca.storage import Storage
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    from tests.test_core_p0_4530_public_age_c import original, project
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist
+
+    path = tmp_path / "age-retention.sqlite"
+    with closing(Storage(path)) as storage:
+        source = persist(storage, project(original()), at=100)
+        persist_exact_public_search_cover(storage, source)
+        args = dict(documents=(source.document,),
+                    target_edition_id=source.observation.key.edition_id)
+
+        def capture(db):
+            with db._lock, db._connect() as sql:
+                sql.execute("BEGIN")
+                return capture_public_age_sources_txn(sql, **args)
+
+        live = capture(storage)
+        assert len(live[0]) == 1 and live[1] == {}
+        assert evict_notice_cover(storage, source.document, expected_epoch=source.epoch)
+        assert capture(storage) == live
+    with closing(Storage(path)) as storage:
+        assert capture(storage) == live
+        changed = original()
+        changed.metadata["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = 14
+        newer = persist(storage, project(changed), at=101)
+        assert newer.document == source.document
+        assert capture(storage) != live
+        assert evict_notice_cover(storage, newer.document, expected_epoch=newer.epoch)
+        assert capture(storage) == ((), {})
+        assert storage.entitlements() == storage.acquisitions() == []
+
+
+def test_retained_age_needs_exact_qualified_eviction(tmp_path):
+    from contextlib import closing
+    from cifereca.storage import Storage
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    from tests.test_core_p0_4530_public_age_c import original, project
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist
+
+    with closing(Storage(tmp_path / "legacy.sqlite")) as storage:
+        source = persist(storage, project(original()))
+        persist_exact_public_search_cover(storage, source)
+        with storage._lock, storage._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(source.document),))
+            assert capture_public_age_sources_txn(
+                sql, documents=(source.document,),
+                target_edition_id=source.observation.key.edition_id,
+            ) == ((), {})
