@@ -296,6 +296,10 @@ def test_real_provider_candidate_wrapper_preserves_revocation(provider, tmp_path
 def test_bnf_synthetic_empty_inventory_is_not_negative_rights_evidence():
     """#4480: manual inventory completeness is not rights revocation."""
     s, a, client = bnf()
+    s.identity_broker = NS(accounts=lambda identity: [NS(
+        provider_id=a.provider_id, credential_id=a.credential_id,
+        account_id=a.unique_id, identity_id=identity, scope_version=2,
+    )] if identity == a.identity_id else [])
     try:
         first = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert len(first.loans) == 1
