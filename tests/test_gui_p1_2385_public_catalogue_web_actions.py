@@ -1,4 +1,5 @@
 """#2385: public C catalogue links must resolve only through source-fenced Core."""
+import sqlite3
 from types import SimpleNamespace as NS
 
 from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
@@ -82,3 +83,34 @@ def test_web_menu_reads_exact_c_and_revalidates_an_opaque_choice_on_click(monkey
     assert fn(*args) is False
     assert len(group.children[2].children) == 0
     assert len(opened) == 1
+
+    # A locked Core read must never be presented as an attested zero of web links.
+    active[0] = True
+
+    def locked(*args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(actions, "read_public_web_choices", locked)
+    group.children[0].handlers["clicked"](group.children[0])
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "lecture Core impossible" in group.children[1].label
+    assert len(group.children[2].children) == 0
+
+    # A response for a different canonical C cannot prove absence either.
+    other = canonical_cover_document_ref("edition:other")
+    monkeypatch.setattr(
+        actions, "read_public_web_choices", lambda *args: PublicWebChoices(other, 4, (choice,)),
+    )
+    group.children[0].handlers["clicked"](group.children[0])
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "réponse Core invalide" in group.children[1].label
+    assert len(group.children[2].children) == 0
+
+    monkeypatch.setattr(actions, "read_public_web_choices", lambda *args: None)
+    group.children[0].handlers["clicked"](group.children[0])
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "Notice C indisponible" in group.children[1].label
+    assert "Aucune fiche" not in group.children[1].label

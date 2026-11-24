@@ -5,12 +5,15 @@ again at click time in a worker, including the canonical C and source epochs.
 """
 from __future__ import annotations
 
+import sqlite3
 from threading import Thread
 
 from ..core.notice_c_cover_index import is_canonical_cover_document
 from ..core.notice_c_web_choices import (
     PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
 )
+
+_READ_ERROR = object()
 
 
 def _open_public_url(url):
@@ -48,7 +51,7 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
         try:
             if _open_public_url(url) is False:
                 status.set_text("Impossible d’ouvrir la fiche")
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
             status.set_text("Impossible d’ouvrir la fiche")
         return False
 
@@ -63,7 +66,7 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
                     window.service.storage, document,
                     expected_epoch=menu.epoch, choice_id=choice.choice_id,
                 )
-            except (OSError, RuntimeError, ValueError):
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
                 url = None
             GLib.idle_add(deliver_url, generation, url)
 
@@ -73,8 +76,16 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
         if not valid(generation):
             return False
         clear_choices()
-        if (type(menu) is not PublicWebChoices or menu.document != document
-                or not menu.choices):
+        if menu is _READ_ERROR:
+            status.set_text("Fiches web indisponibles · lecture Core impossible")
+            return False
+        if menu is None:
+            status.set_text("Notice C indisponible · actualisez le catalogue")
+            return False
+        if type(menu) is not PublicWebChoices or menu.document != document:
+            status.set_text("Fiches web indisponibles · réponse Core invalide")
+            return False
+        if not menu.choices:
             status.set_text("Aucune fiche web publique qualifiée dans les sources connues")
             return False
         status.set_text(f"{len(menu.choices)} fiche(s) publique(s) connue(s)")
@@ -97,8 +108,8 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
         def work():
             try:
                 menu = read_public_web_choices(window.service.storage, document)
-            except (OSError, RuntimeError, ValueError):
-                menu = None
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                menu = _READ_ERROR
             GLib.idle_add(deliver_choices, generation, menu)
 
         Thread(target=work, daemon=True, name="public-c-web-choices").start()

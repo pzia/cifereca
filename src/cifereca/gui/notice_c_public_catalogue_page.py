@@ -5,6 +5,7 @@ never queries SQLite on the GTK thread. Each request has a generation fence.
 """
 from __future__ import annotations
 
+import sqlite3
 from threading import Thread
 
 from ..core.notice_c_catalogue_query import search_public_catalogue_view
@@ -58,9 +59,20 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
             status.set_text("Catalogue indisponible · réessayez")
             return False
         count = view.known_documents if view.known_documents is not None else len(view.rows)
-        status.set_text(f"{count} notice(s) C · {view.known_matches} source(s) · {view.status}")
+        coverage = ("budget de lecture atteint" if view.status == "budget_exceeded"
+                    else "couverture non exhaustive" if view.status == "partial"
+                    else view.status)
+        status.set_text(f"{count} notice(s) C · {view.known_matches} source(s) · {coverage}")
         if not view.rows:
-            empty = Gtk.Label(label="Aucune notice publique correspondante dans l’index local")
+            empty = Gtk.Label(label=(
+                "Aucune notice publique correspondante parmi les sources consultées "
+                "· limite de lecture atteinte, autres résultats possibles"
+                if view.status == "budget_exceeded" else
+                "Aucune notice publique correspondante parmi les sources indexées "
+                "consultées · absence dans le catalogue non démontrée"
+                if view.status == "partial" else
+                "Aucune notice publique correspondante dans l’index local"
+            ))
             empty.set_xalign(0)
             content.append(empty)
         else:
@@ -115,7 +127,7 @@ def build_public_catalogue_page(window, *, Gtk, GLib):
                     window.service.storage, text, mode=mode, page=page,
                     field=field, scope=scope, age=age, age_kind=age_kind,
                 )
-            except (ValueError, OSError, RuntimeError):
+            except (ValueError, OSError, RuntimeError, sqlite3.Error):
                 view = None
             GLib.idle_add(deliver, generation, mode, page, epoch, view)
 
