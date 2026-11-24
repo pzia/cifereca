@@ -111,6 +111,7 @@ class AggregateWorkBridge:
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._lock = Lock()
         self._inflight = set()
+        self._network_inflight = set()
 
     def submit(self, ref):
         """Return existing broker handle, or None on duplicate/backpressure.
@@ -121,18 +122,24 @@ class AggregateWorkBridge:
         """
         return self.offer(ref).handle
 
-    def offer(self, ref):
+    def offer(self, ref, *, circuit=None):
         """Class rotation distinguishes an exact duplicate from saturation."""
         journal._check_ref(ref)
+        if circuit not in (None, "network", "local"):
+            raise ValueError("notice_work_invalid_circuit")
         with self._lock:
             if ref in self._inflight:
                 return RotationOffer("duplicate")
+            if circuit == "network" and self._network_inflight:
+                return RotationOffer("circuit_blocked")
             if len(self._inflight) >= _MAX_INFLIGHT:
                 return RotationOffer("blocked")
             self._inflight.add(ref)
+            if circuit == "network":
+                self._network_inflight.add(ref)
         try:
             handle = self._broker.submit(
-                lambda control: self._run(ref, control),
+                lambda control: self._run(ref, control, circuit=circuit),
                 priority=TaskPriority.METADATA,
                 label="notice-c-aggregate", kind="maintenance",
             )
@@ -153,6 +160,7 @@ class AggregateWorkBridge:
     def _forget(self, ref):
         with self._lock:
             self._inflight.discard(ref)
+            self._network_inflight.discard(ref)
 
     def _purchase_transition(self):
         # Invalidation is advisory, not part of durable success. No GUI
@@ -179,11 +187,14 @@ class AggregateWorkBridge:
             self._purchase_transition()
         return "transient_failure" if receipt.state == "pending" else "error"
 
-    def _run(self, ref, control):
+    def _run(self, ref, control, *, circuit=None):
         control.check_cancelled()
         try:
             job = journal.read_job(self._storage, ref)
             purchase = job.spec.implementation_digest == journal._PURCHASE_INTENT_DIGEST
+            actual = "network" if job.spec.kind == "fetch_source_notice" else "local"
+            if circuit is not None and circuit != actual:
+                return "unsupported"
             if purchase and self._claim_purchase is None:
                 return "unsupported"
             if (not purchase and job.spec.kind != "recompute_aggregate"

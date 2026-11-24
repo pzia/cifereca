@@ -27,7 +27,7 @@ class RotationPage:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RotationOffer:
-    outcome: str  # accepted | duplicate | blocked
+    outcome: str  # accepted | duplicate | blocked | circuit_blocked
     handle: object = None
 
 
@@ -87,9 +87,10 @@ class PublicDispatchRotation:
             raise ValueError("notice_rotation_invalid_page")
         return page
 
-    def tick(self, read_page, offer, *, check_cancelled=None):
+    def tick(self, read_page, offer, *, check_cancelled=None, offer_lane=None):
         if (not callable(read_page) or not callable(offer)
-                or (check_cancelled is not None and not callable(check_cancelled))):
+                or (check_cancelled is not None and not callable(check_cancelled))
+                or (offer_lane is not None and not callable(offer_lane))):
             raise ValueError("notice_rotation_invalid_port")
         check = check_cancelled if check_cancelled is not None else lambda: None
         count = len(self._kinds)
@@ -100,6 +101,7 @@ class PublicDispatchRotation:
         positions = {}
         examined = corrupt = duplicates = 0
         handles = []
+        blocked_lanes = set()
 
         # Every enabled class receives a scan slice, including a sparse
         # class. Empty pages advance even when another class is saturated.
@@ -122,7 +124,7 @@ class PublicDispatchRotation:
             for index in order:
                 page = pages[index]
                 position = positions[index]
-                if position == len(page.refs):
+                if index in blocked_lanes or position == len(page.refs):
                     continue
                 more = True
                 if len(handles) == _SUBMIT_BUDGET:
@@ -130,11 +132,16 @@ class PublicDispatchRotation:
                     return RotationTick(tuple(handles), examined, corrupt, duplicates, True)
                 check()
                 ref = page.refs[position]
-                outcome = offer(ref)
+                outcome = offer(ref) if offer_lane is None else offer_lane(self._kinds[index], ref)
                 if (type(outcome) is not RotationOffer
-                        or outcome.outcome not in ("accepted", "duplicate", "blocked")
+                        or outcome.outcome not in ("accepted", "duplicate", "blocked", "circuit_blocked")
                         or (outcome.outcome == "accepted") != (outcome.handle is not None)):
                     raise ValueError("notice_rotation_invalid_offer")
+                if outcome.outcome == "circuit_blocked":
+                    # Keep the first unsubmitted key for this lane, but let
+                    # a different circuit consume an available global slot.
+                    blocked_lanes.add(index)
+                    continue
                 if outcome.outcome == "blocked":
                     self._next = index
                     return RotationTick(tuple(handles), examined, corrupt, duplicates, True)
@@ -150,4 +157,6 @@ class PublicDispatchRotation:
             if not more:
                 if not handles:
                     self._next = (start+1) % count
-                return RotationTick(tuple(handles), examined, corrupt, duplicates, False)
+                if blocked_lanes:
+                    self._next = next(index for index in order if index in blocked_lanes)
+                return RotationTick(tuple(handles), examined, corrupt, duplicates, bool(blocked_lanes))
