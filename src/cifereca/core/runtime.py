@@ -87,7 +87,7 @@ class CiferecaCore:
             brokers["maintenance.page.host"] = object()
         notice_work = (None if notice_work_admission is None else
                        NoticeWorkRuntime(storage, brokers["tasks"],
-                                         replay_registry=notice_replay_registry))
+                                         replay_registry=notice_replay_registry, diagnostics=diagnostics))
         if notice_work is not None:
             # Private Core worker port, not a plugin broker.
             library._notice_work_recover_search = notice_work.recover_search_sources
