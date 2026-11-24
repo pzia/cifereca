@@ -302,14 +302,6 @@ class NoticeWorkRuntime:
             if self._closed:
                 return None
         outcome = self._pump.tick(control=control)
-        # Existing admitted maintenance worker, no extra pool or network.
-        # Durable snapshots suffice when original bytes cannot be exported.
-        control.check_cancelled()
-        for diagnostic, state in resume_captures(
-                self._storage, lambda diagnostic: resolve_replay_capture_members(
-                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
-                ), limit=2):
-            self._report_capture(diagnostic, state)
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
@@ -322,6 +314,14 @@ class NoticeWorkRuntime:
                     # for an already completed Future. No new work queue.
                     for worker in outcome.handles:
                         worker.add_done_callback(self._worker_finished)
+        # Existing admitted maintenance worker, no extra pool or network.
+        # Durable snapshots suffice when original bytes cannot be exported.
+        control.check_cancelled()
+        for diagnostic, state in resume_captures(
+                self._storage, lambda diagnostic: resolve_replay_capture_members(
+                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
+                ), limit=2):
+            self._report_capture(diagnostic, state)
         return outcome
 
     def _worker_finished(self, handle):
