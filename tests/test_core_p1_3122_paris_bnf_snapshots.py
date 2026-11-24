@@ -323,3 +323,27 @@ def test_bnf_synthetic_empty_inventory_is_not_negative_rights_evidence():
         assert set(client.calls) <= {"login", "activity"}
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_bnf_zero_remaining_quota_preserves_active_inventory(count):
+    """#4480/#4063: remaining borrow capacity is not active-loan count."""
+    cards = "".join(
+        '<div class="js-loan">'
+        f'<a href="/resources/book-{i}">Synthetic novel {i}</a>'
+        f'<a href="/loans/loan-{i}">Private token action</a>'
+        '</div>' for i in range(count)
+    )
+    html = ('<p>Vous avez encore droit à <strong>0</strong> prêt</p>'
+            '<section class="active-loans">' + cards + '</section>')
+    s, a, client = bnf(html)
+    try:
+        snapshot = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert snapshot.status == "success"
+        assert snapshot.branch_claims_complete("bnf_html", "digital")
+        assert len(snapshot.loans) == count
+        assert len({row.id for row in snapshot.loans}) == count
+        assert all(row.identity_id == a.identity_id for row in snapshot.loans)
+        assert set(client.calls) <= {"login", "activity"}
+    finally:
+        s.close()
