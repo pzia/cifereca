@@ -2,6 +2,7 @@
 from hashlib import sha256
 import sqlite3
 from time import monotonic, time
+from math import ceil
 
 from ..plugin_api import ProviderError
 from .notice_c_raw_input_receipt import record_public_raw_input_receipt
@@ -37,7 +38,7 @@ def record_search_receipt(storage, row, source, retained, *, now):
                     or sha256(held._body).hexdigest() != evidence[5]
                     or held.parser_implementation_digest != evidence[6]):
                 return None
-            remaining = int(ttl - (monotonic() - started))
+            remaining = ttl - ceil(monotonic() - started)
             if remaining < 1:
                 return None
             return record_public_raw_input_receipt(
