@@ -352,8 +352,21 @@ def parse_detail(html: str, *, page_url: str) -> CatalogPage:
             if isinstance(child, _Node):
                 yield from offer_nodes(child)
 
-    unavailable = any(n.has_class("lb_unavailable") and n.text()
-                      for n in offer_nodes(books[0]))
+    # A Book inside a CSS-hidden ancestor is not a visible offer either.
+    def visible_book(node):
+        style = "".join(node.attrs.get("style", "").lower().split())
+        if (node.tag in _HIDDEN or "hidden" in node.attrs
+                or node.attrs.get("aria-hidden", "").strip().lower() == "true"
+                or "display:none" in style or "visibility:hidden" in style):
+            return False
+        if node is books[0]:
+            return True
+        return any(visible_book(child) for child in node.children
+                   if isinstance(child, _Node))
+
+    unavailable = visible_book(root) and any(
+        n.has_class("lb_unavailable") and n.text()
+        for n in offer_nodes(books[0]))
     record = CatalogRecord(rid, props["name"][0], tuple(props.get("author", ())),
                            single("publisher"), single("isbn"), single("inLanguage"),
                            single("description"), "unavailable" if unavailable else "unknown",
