@@ -83,7 +83,7 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account):
             raise ProviderCapabilityError('borrow_existing_loan')
         try:
             from cifereca_bnf_pret import read_detail
-        record = read_detail(self.client, notice[1])
+            record = read_detail(self.client, notice[1])
         except (ReaderHTTPError, WebParseError) as exc:
             raise ProviderError(
                 self._report_failure('borrow_eligibility', exc)) from None
