@@ -107,6 +107,12 @@ class NoticeWorkRuntime:
                 capture_directory=self._capture_directory,
         )
 
+    def _workers_active_locked(self):
+        return self._progress["workers_submitted"] != sum(
+            self._progress[key] for key in ("workers_current", "workers_retry",
+                "workers_error", "workers_skipped", "workers_cancelled")
+        )
+
     def install_replay_registry(self, registry):
         """Install qualified replay ports at an idle dispatch boundary.
 
@@ -118,9 +124,7 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed or self._scan is not None or self._hint_pending:
                 return False
-            if self._progress["workers_submitted"] != sum(
-                    self._progress[key] for key in ("workers_current", "workers_retry",
-                    "workers_error", "workers_skipped", "workers_cancelled")):
+            if self._workers_active_locked():
                 return False
             if type(registry) is not PublicReplayRegistry:
                 raise ValueError("notice_reparse_invalid_registry")
@@ -451,6 +455,13 @@ class NoticeWorkRuntime:
             if self._closed:
                 return None
             if self._pending_replay_registry is not None:
+                # Do not reset the bridge's inflight dedup/limit while any
+                # old worker is still outstanding. Do not dispatch more
+                # obsolete work either. The last worker offers a fresh wake.
+                if self._workers_active_locked():
+                    self._progress["scans_completed"] += 1
+                    self._progress["deferred_scans"] += 1
+                    return DispatchTick((), 0, 0, True)
                 self._replay_registry = self._pending_replay_registry
                 self._pending_replay_registry = None
                 self._pump = PublicNoticeWorkPump(
@@ -507,6 +518,8 @@ class NoticeWorkRuntime:
         with self._lock:
             if not self._closed:
                 self._progress[counter] += 1
+                if self._pending_replay_registry is not None and not self._workers_active_locked():
+                    self.request_tick()
 
     def _scan_finished(self, handle):
         with self._lock:
