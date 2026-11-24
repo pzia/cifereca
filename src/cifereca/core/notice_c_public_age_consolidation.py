@@ -15,6 +15,10 @@ def run_public_age_descriptive_job(
     now, lease_seconds, expected_generation=0, expected_execution_key=None,
 ):
     """Run one exact-edition public age consolidation through durable Core."""
+    # Reject arbitrary iterators before consuming them or invoking callbacks.
+    # The SQL snapshot contract admits at most 128 exact source documents.
+    if type(source_documents) not in (tuple, list) or len(source_documents) > 128:
+        raise ValueError("invalid_public_age_snapshot_scope")
     documents = tuple(source_documents)
     if not documents:
         return None
