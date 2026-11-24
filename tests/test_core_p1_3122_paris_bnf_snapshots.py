@@ -379,7 +379,7 @@ def test_bnf_real_session_core_cache_nonempty_empty_reobserved(tmp_path):
 
 
 @pytest.mark.parametrize("count", [0, 1, 3])
-def test_paris_real_inventory_cardinality_never_attests_absence(count):
+def test_paris_real_inventory_cardinality_preserves_branch_coverage(count):
     a = account()
     s = paris([a])
     original = s.client.loans
@@ -398,8 +398,8 @@ def test_paris_real_inventory_cardinality_never_attests_absence(count):
         assert len(snap.loans) == 2 * count
         assert len({row.id for row in snap.loans}) == 2 * count
         assert all(row.identity_id == a.identity_id for row in snap.loans)
-        assert not snap.branch_claims_complete("dilicom", "digital")
-        assert not snap.branch_claims_complete("syracuse", "physical")
+        assert snap.branch_claims_complete("dilicom", "digital") is (count == 0)
+        assert snap.branch_claims_complete("syracuse", "physical") is (count == 0)
         assert s.client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
     finally:
         s.close()
