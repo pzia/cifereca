@@ -7,6 +7,7 @@ provider/plugin callback. No HTTP, GTK, rights or network inside the transaction
 from __future__ import annotations
 
 from hashlib import sha256
+from time import monotonic
 
 from . import notice_c_job_journal as journal
 from .notice_c_cover_index import canonical_cover_document_ref
@@ -91,6 +92,12 @@ def run_descriptive_core_job(
     )
     if lease is None:
         return None
+    # Preserve the caller's clock domain while accounting for worker elapsed time.
+    started = monotonic()
+
+    def completion_now():
+        return now + int(max(0, monotonic() - started))
+
     # This is deliberately outside every DB transaction.
     try:
         proposal = propose_registered_descriptive_materialization(
@@ -119,13 +126,13 @@ def run_descriptive_core_job(
             storage, proposal.materialization,
             expected_execution_key=expected_execution_key,
             capture_current_txn=recapture,
-            journal_lease=lease, journal_now=now,
+            journal_lease=lease, journal_now=completion_now(),
         )
     except Exception:
         # A refused or failed worker never marks a job current. Preserve
         # the original exception; failure receipt is best-effort and fenced.
         try:
-            journal.fail_job(storage, lease, now=now, transient=False)
+            journal.fail_job(storage, lease, now=completion_now(), transient=False)
         except (ValueError, OSError):
             pass
         raise
