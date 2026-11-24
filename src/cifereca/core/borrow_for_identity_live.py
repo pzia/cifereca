@@ -23,7 +23,7 @@ from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
     BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
-    _display_account_label, preview_borrow_for_identity,
+    _MAX_AGE, _display_account_label, preview_borrow_for_identity,
 )
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 from .primary_source_binding import configured_primary_source_current
@@ -129,7 +129,8 @@ def _noncontradictory_observations(
 
 
 def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
-             source_epoch: int) -> BorrowForIdentityWitness | BorrowOfferRejection:
+             source_epoch: int, now: int | None,
+             expected_edition_id: str) -> BorrowForIdentityWitness | BorrowOfferRejection:
     """Rebind every coordinate to in-memory Core and owned SQLite state.
 
     Never invoke session.accounts, source getters, provider operations, or
@@ -153,6 +154,12 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                     item.source_provider, item.source_credential, item.docbase,
                 )
             or item.medium != "digital"):
+        return "scope_unverified"
+
+    if now is None:
+        now = int(time())
+    if (type(now) is not int or not 0 <= now - row.observed_at <= _MAX_AGE
+            or row.edition_id != expected_edition_id):
         return "scope_unverified"
 
     try:
@@ -259,7 +266,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             capability, account=account, branch=item.docbase,
             evidence=evidence,
         )
-        if eligibility.state != "eligible_observed":
+        if eligibility.state not in ("eligible_observed", "temporarily_blocked"):
             return "permission_unverified"
         # #4662: borrower-wide readiness can be true while *this book*
         # is unavailable. Never qualify a different edition/collection,
@@ -268,9 +275,9 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             capability=capability, account=account, notice=item,
             evidence=row.edition_evidence,
         )
-        if exact_offer.status == "blocked":
-            return "borrower_blocked"
-        if exact_offer.status != "eligible":
+        blocked = (eligibility.state == "temporarily_blocked"
+                   or exact_offer.status == "blocked")
+        if not blocked and exact_offer.status != "eligible":
             return "permission_unverified"
         key = borrow_claim_key(account, item)
         if key is None:
@@ -313,6 +320,8 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                     evidence.provider_id, evidence.credential_id,
                 ) != evidence.identity_id):
             return "context_changed"
+        if blocked:
+            return "borrower_blocked"
         lender = service.identity_by_id(evidence.identity_id)
         name = _lender_label(getattr(lender, "label", None))
         return BorrowForIdentityWitness(
@@ -378,6 +387,7 @@ def preview_live_borrow_for_current_identity(
             break
         witness = _witness(
             service, row, context_epoch=context, source_epoch=source,
+            now=now, expected_edition_id=expected_edition_id,
         )
         if isinstance(witness, BorrowForIdentityWitness):
             witnesses.append(witness)
