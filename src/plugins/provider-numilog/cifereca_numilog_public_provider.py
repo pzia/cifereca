@@ -600,7 +600,9 @@ class NumilogPublicSession(ProviderSession):
             from contextlib import ExitStack
             with ExitStack() as stack:
                 try:
-                    self._assert_public_generation(epoch)
+                    # The underlying guard acquires navigation nonblocking.
+                    # Check the captured generation only AFTER acquisition;
+                    # a preliminary blocking generation check would hide busy.
                     raw = stack.enter_context(self._hold_retained_public_input(token))
                 except ProviderError as exc:
                     if str(exc) == "Numilog : public_catalog_replay_busy":
