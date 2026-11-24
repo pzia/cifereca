@@ -8,7 +8,7 @@ on the supplied transaction. It is trusted Core code, not a plugin callback.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Callable
 import sqlite3
@@ -33,6 +33,10 @@ _LEASE_SECONDS = 300
 
 class UnavailableNoticeWork(Exception):
     """Exact input or implementation is no longer available; no fallback GET."""
+
+
+class WitnessRejectedPublication:
+    """Closed result: diagnostic persisted, no documentary write performed."""
 
 
 class RetryableNoticeWork(Exception):
@@ -229,7 +233,15 @@ class AggregateWorkBridge:
                             source_key=job.spec.target,
                         )
                         before = _canonical_revision(db, document)
-                    if prepared.publish(db) is not True:
+                    outcome = prepared.publish(db)
+                    if (type(outcome) is WitnessRejectedPublication
+                            and job.spec.kind == "reparse_cached_input"):
+                        control.check_cancelled()
+                        current = journal._held(db, lease, self._clock())
+                        journal._save(db, replace(current, state="error", lease_until=0,
+                                                  reason="permanent"))
+                        return "error"
+                    if outcome is not True:
                         raise RetryableNoticeWork("notice_work_input_changed")
                     control.check_cancelled()
                     journal._complete_job_txn(db, lease, now=self._clock())
