@@ -1,7 +1,7 @@
 """Optional, per-call descriptive catalogue search facets."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from ..models import SearchResult
@@ -62,6 +62,11 @@ class ProviderSearchResponse:
     # same-call anonymous response may suppress Core's loose text variants.
     # Default preserves all existing providers' fallback behavior.
     terminal_empty: bool = False
+    # Optional exact anonymous parser input from THIS call, never a digest
+    # claim, credentialed response, or authorization to export raw bytes.
+    # Core bounds and hashes it; it is not a SearchResult/cache field.
+    notice_parse_input: bytes | None = field(default=None, repr=False, compare=False)
+    notice_parser_implementation: str | None = None
 
 
 @runtime_checkable
