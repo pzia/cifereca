@@ -57,3 +57,16 @@ Remaining before closure: initial-baseline complete module inventory, explicit p
 - `test_bnf_valid_acsm_still_staged_exactly_once`
 
 Shared actual-class coverage in `tests/test_core_p1_3122_paris_bnf_snapshots.py`: two-branch uncertainty, partial positive coverage, failed branches, linked reader separation, BnF scoped empty inventory, wrong credential/closed session, invalid DOM, mid-read reader replacement, adapter opt-in and wrapper revocation. Shared adapter tests in `tests/test_p1_7753_legacy_rights_adapter.py`: single delegation, explicit action, scope/admission cleanup, outside staging and symlink preservation, non-publication candidate and ABA admission revocation. These are verified test definitions, not an assertion that every R4 scenario is covered on both providers.
+
+
+## R5 — exact pre-extraction baseline
+
+Baseline is the base of #7943, `5552518195074d598efb9d609f96b53f3a2bff96`; comparison is `0e86b39364863f804cafb90895c5049bf08876f0`. Counts are newline characters, UTF-8 bytes and directly indented def declarations, not cyclomatic complexity or total inherited API size.
+
+| Entry module | Lines before / after | Bytes before / after | Direct defs before / after |
+|---|---:|---:|---:|
+| Paris session | 2270 / 2042 | 117352 / 104383 | 47 / 42 |
+| Paris client | 1467 / 378 | 76343 / 17912 | 45 / 16 |
+| BnF session | 1639 / 1373 | 89486 / 74989 | 36 / 33 |
+
+The three entry modules total 5376 -> 3793 lines and 283181 -> 197284 bytes. Extracted modules remain part of the implementation; these figures measure entry-module concentration, not total code deletion. Full package inventory and integrated gates remain separate reception requirements.
