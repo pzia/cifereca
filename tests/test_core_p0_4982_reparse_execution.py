@@ -179,7 +179,9 @@ def test_reparse_source_and_dirty_requests_roll_back_on_capacity_refusal(tmp_pat
         db.close()
 
 
-def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path):
+def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypatch):
+    monkeypatch.setattr('cifereca.core.notice_regression_capture.downloads_dir', lambda: tmp_path)
+    import zipfile
     from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
     from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
     db = Storage(tmp_path / "witness.sqlite")
@@ -210,6 +212,19 @@ def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path):
         alert = json.loads(db.metadata_get(_ALERT_PREFIX + scope))
         assert alert["status"] == "parser_drift_suspected"
         assert alert["generation"] == 1
+        from cifereca.core.notice_regression_capture_intent import _PREFIX, pending_capture_ids
+        diagnostic = alert["capture_id"]
+        capture = json.loads(db.metadata_get(_PREFIX + diagnostic))
+        assert capture["capture_state"] == "partial"
+        assert pending_capture_ids(db) == ()
+        archive_path, = tmp_path.glob("cifereca-regression-*.zip")
+        with zipfile.ZipFile(archive_path) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            assert manifest["diagnostic_id"] == diagnostic
+            assert manifest["omitted"] == ["response.raw"]
+            assert archive.read("last_healthy.json") == source.observation.raw_json.encode()
+            assert archive.read("current_parse.json") == adapter.next.raw_json.encode()
+            assert json.loads(archive.read("diff.json"))["status"] == "parser_drift_suspected"
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         tasks.close()
