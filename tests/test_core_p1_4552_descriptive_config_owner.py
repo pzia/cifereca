@@ -68,3 +68,41 @@ def test_source_change_without_version_bump_advances_generation(tmp_path):
             configure(storage, 1)
     finally:
         storage.close(final=True)
+
+
+def test_schema_change_without_version_bump_fences_existing_result(tmp_path):
+    from cifereca.core.notice_descriptive_core_coordinator import run_descriptive_core_job
+    from cifereca.core.notice_descriptive_materialization_store import read_descriptive_materialization
+    from cifereca.core.notice_consolidation_inputs import admit_descriptive_facts
+    from tests.test_core_p1_4552_descriptive_selection_store import options
+    from tests.test_core_p1_4981_consolidator_worker import TARGET, fact
+
+    storage = Storage(tmp_path / "schema.sqlite")
+    binding = installed()
+    try:
+        first = configure(storage, 0)
+        assert first.schema_sha256 is not None
+        published = run_descriptive_core_job(storage, **options(binding))
+        selected = first.selection
+        admitted = admit_descriptive_facts(
+            target_edition_id=TARGET, canonical_type="age",
+            consolidator_id=selected.plugin_id, consolidator_version=selected.version,
+            source_facts=(fact(),), attested_strong_links={},
+        )
+        read = dict(target_edition_id=TARGET, **SCOPE,
+                    capture_current_txn=lambda sql: (selected, admitted, binding.source_sha256))
+        assert read_descriptive_materialization(storage, **read, schema=SCHEMA) == published
+        with pytest.raises(ValueError, match="schema_changed"):
+            read_descriptive_materialization(storage, **read)
+        changed = replace(SCHEMA, allowed_values=("16+",))
+        second = configure(storage, 1, text_schemas=(changed,))
+        assert second.generation == 2 and second.selection == first.selection
+        assert second.schema_sha256 != first.schema_sha256
+        with pytest.raises(ValueError, match="schema_changed"):
+            run_descriptive_core_job(storage, **options(binding))
+        with pytest.raises(ValueError, match="schema_changed"):
+            read_descriptive_materialization(storage, **read, schema=SCHEMA)
+        with pytest.raises(ValueError, match="stale_descriptive_selection_generation"):
+            read_descriptive_materialization(storage, **read, schema=changed)
+    finally:
+        storage.close(final=True)
