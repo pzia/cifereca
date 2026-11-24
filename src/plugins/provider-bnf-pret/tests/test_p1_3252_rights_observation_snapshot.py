@@ -622,3 +622,65 @@ def test_4480_reconnect_after_inner_read_cannot_publish_stale_snapshot(layer, pa
         assert client.calls == ["login", "activity"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("entrypoint", [
+    "rights_observation_snapshot", "downloadable_resource_snapshot",
+])
+@pytest.mark.parametrize("failure", [
+    "missing_widget", "auth_html", "http_failure", "auth_failure", "not_executed",
+])
+def test_4480_failed_activity_never_publishes_empty_rights(entrypoint, failure):
+    from cifereca_bnf_pret_http import ReaderHTTPError
+
+    session, account, client = fixture(activity(("edition-1", "loan-1")))
+    try:
+        first = getattr(session, entrypoint)(account)
+        assert first.coverage == "complete"
+        assert session._observed_loans == {"loan-1": "edition-1"}
+        if failure == "missing_widget":
+            client.html = "<html><p>Unknown activity</p></html>"
+        elif failure == "auth_html":
+            client.html = '<input type="password" name="password">'
+        elif failure == "not_executed":
+            session.connected = False
+        else:
+            def refused():
+                client.calls.append("activity")
+                raise ReaderHTTPError("access_denied" if failure == "auth_failure"
+                                      else "http_unavailable")
+            client.activity = refused
+        with pytest.raises((ProviderConfigurationError, ProviderCapabilityError)):
+            getattr(session, entrypoint)(account)
+        assert client.calls.count("activity") == (1 if failure == "not_executed" else 2)
+        if failure != "not_executed":
+            assert session._observed_loans == {}
+            assert session._last_loan_inventory_evidence is None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("html", [
+    '<section class="active-loans" aria-busy="true"></section>',
+    '<section class="active-loans"><div class="js-loan"></div></section>',
+    '<section class="active-loans"><div class="load-more"></div></section>',
+    '<section class="active-loans"><div><span></section>',
+    '<div hidden><section class="active-loans"></section></div>',
+])
+def test_4480_incomplete_empty_activity_remains_partial_across_projections(html):
+    session, account, client = fixture(html)
+    try:
+        inventory = session.loan_inventory_snapshot(account)
+        rights = session.rights_observation_snapshot(account)
+        resources = session.downloadable_resource_snapshot(account)
+        assert inventory.status == rights.status == resources.status == "partial"
+        assert not inventory.loans and not rights.rights and not resources.resources
+        assert not inventory.branch_claims_complete("bnf_html", "digital")
+        assert rights.coverage == resources.coverage == "partial"
+        assert not rights.pagination_complete and not resources.pagination_complete
+        assert not rights.authorizes_negative_reconciliation
+        assert not resources.authorizes_negative_reconciliation
+        assert not resources.authorizes_acquisition
+        assert client.calls == ["login", "activity", "activity", "activity"]
+    finally:
+        session.close()
