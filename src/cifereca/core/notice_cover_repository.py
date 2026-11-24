@@ -638,6 +638,7 @@ def persist_notice_cover_many(
 
     def write_chunk(positions):
         accepted = {}
+        gated = []
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for position in positions:
@@ -646,6 +647,7 @@ def persist_notice_cover_many(
                 try:
                     if _before_persist is not None and _before_persist(
                             db, observation, attribute, position) is not True:
+                        gated.append(position)
                         continue
                     published = _persist_notice_cover_txn(
                         db, observation, attribute, key, field_path,
@@ -669,7 +671,7 @@ def persist_notice_cover_many(
                         raise ValueError("notice_c_chunk_invalid_refusal")
                     if rejected:
                         raise _ChunkSourcesRefused(
-                            tuple(p for p in accepted if p not in rejected),
+                            tuple(sorted(gated + [p for p in accepted if p not in rejected])),
                         )
         return accepted
 
