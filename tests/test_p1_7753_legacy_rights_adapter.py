@@ -32,3 +32,49 @@ def test_adapter_delegates_once_and_preserves_explicit_action():
             branch="synthetic", explicit_user_action=True,
         )
         project.assert_called_once_with(adapter.rights_selected_delivery_offer_snapshot.return_value)
+
+
+import pytest
+from cifereca.plugin_api import ProviderCapabilityError
+
+
+@pytest.mark.parametrize("change", ["owner", "invalid_owner", "revoked"])
+def test_staged_candidate_cleanup_after_scope_or_admission_change(tmp_path, change):
+    adapter = LegacyRightsResourceAdapter()
+    account = SimpleNamespace(identity_id="alice", provider_id="synthetic",
+                              credential_id="cred", unique_id="borrower")
+    staged = tmp_path / "candidate.acsm"
+    def transfer(*args, **kwargs):
+        staged.write_bytes(b"synthetic")
+        if change == "owner":
+            account.identity_id = "bob"
+        elif change == "invalid_owner":
+            account.identity_id = ""
+        return staged, "acsm"
+    adapter.rights_selected_delivery_candidate = Mock(side_effect=transfer)
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        adapter._stage_legacy_delivery_candidate(
+            account, edition_id="edition", resource_id="loan", kind="loan",
+            branch="synthetic", selected_offer_id="offer", target_dir=tmp_path,
+            admission_check=lambda guard: change != "revoked",
+        )
+    assert not staged.exists()
+    assert adapter.rights_selected_delivery_candidate.call_count == 1
+
+
+def test_revocation_never_removes_outside_staging(tmp_path):
+    adapter = LegacyRightsResourceAdapter()
+    account = SimpleNamespace(identity_id="alice", provider_id="synthetic",
+                              credential_id="cred", unique_id="borrower")
+    target = tmp_path / "stage"
+    target.mkdir()
+    outside = tmp_path / "outside.acsm"
+    outside.write_bytes(b"synthetic")
+    adapter.rights_selected_delivery_candidate = Mock(return_value=(outside, "acsm"))
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        adapter._stage_legacy_delivery_candidate(
+            account, edition_id="edition", resource_id="loan", kind="loan",
+            branch="synthetic", selected_offer_id="offer", target_dir=target,
+            admission_check=lambda guard: False,
+        )
+    assert outside.read_bytes() == b"synthetic"
