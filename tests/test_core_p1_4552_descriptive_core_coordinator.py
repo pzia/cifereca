@@ -58,3 +58,57 @@ def test_no_admitted_evidence_does_not_create_work(tmp_path):
         selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
         target_edition_id=TARGET, now=100, lease_seconds=60,
     ) is None
+
+
+def test_expired_worker_cannot_publish(tmp_path, monkeypatch):
+    from cifereca.core import notice_descriptive_core_coordinator as coordinator
+
+    storage = Storage(tmp_path / "expired.sqlite")
+    clock = [0]
+    monkeypatch.setattr(coordinator, "monotonic", lambda: clock[0])
+    original = coordinator.propose_registered_descriptive_materialization
+
+    def slow_worker(**kwargs):
+        result = original(**kwargs)
+        clock[0] = 60
+        return result
+
+    monkeypatch.setattr(coordinator, "propose_registered_descriptive_materialization", slow_worker)
+    with pytest.raises(ValueError, match="notice_work_lease_changed"):
+        run_descriptive_core_job(
+            storage, capture_sources_txn=lambda db: ((fact(),), {}),
+            declarations=(DECLARATION,), text_schemas=(SCHEMA,),
+            installed=installed(), canonical_type="age", scope="fr:editions",
+            selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
+            target_edition_id=TARGET, now=100, lease_seconds=60,
+        )
+
+
+def test_expiry_during_transaction_recapture_rolls_back(tmp_path, monkeypatch):
+    from cifereca.core import notice_descriptive_core_coordinator as coordinator
+
+    storage = Storage(tmp_path / "expired-recapture.sqlite")
+    clock = [0]
+    calls = [0]
+    monkeypatch.setattr(coordinator, "monotonic", lambda: clock[0])
+
+    def sources(db):
+        calls[0] += 1
+        if calls[0] == 2:
+            clock[0] = 60
+        return (fact(),), {}
+
+    with pytest.raises(ValueError, match="notice_work_lease_changed"):
+        run_descriptive_core_job(
+            storage, capture_sources_txn=sources,
+            declarations=(DECLARATION,), text_schemas=(SCHEMA,),
+            installed=installed(), canonical_type="age", scope="fr:editions",
+            selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
+            target_edition_id=TARGET, now=100, lease_seconds=60,
+        )
+    assert calls[0] == 2
+    assert read_descriptive_materialization(
+        storage, target_edition_id=TARGET, canonical_type="age",
+        scope="fr:editions", capture_current_txn=lambda db: pytest.fail(
+            "expired publication must not leave a materialization"),
+    ) is None

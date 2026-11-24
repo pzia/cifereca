@@ -83,7 +83,7 @@ def _decode(raw):
 def publish_descriptive_materialization(
     storage, row: DescriptiveMaterialization, *,
     expected_execution_key: str | None, capture_current_txn,
-    journal_lease=None, journal_now=None,
+    journal_lease=None, journal_now=None, journal_clock=None,
 ):
     """CAS publish with authoritative Core snapshot recaptured in same txn.
 
@@ -95,6 +95,8 @@ def publish_descriptive_materialization(
     the lease this is a staging-only port, not a scheduler publication.
     """
     key = _row_key(row)
+    if journal_clock is not None and (journal_lease is None or not callable(journal_clock)):
+        raise ValueError("descriptive_journal_binding_required")
     if (journal_lease is None) != (journal_now is None):
         raise ValueError("descriptive_journal_binding_required")
     if expected_execution_key is not None:
@@ -118,7 +120,8 @@ def publish_descriptive_materialization(
         if journal_lease is not None:
             from . import notice_c_job_journal as journal
             from .notice_c_cover_index import canonical_cover_document_ref
-            job = journal._held(db, journal_lease, journal_now)
+            job = journal._held(db, journal_lease,
+                                journal_clock() if journal_clock is not None else journal_now)
             if (job.spec.kind != "recompute_aggregate"
                     or job.spec.target != canonical_cover_document_ref(
                         row.target_edition_id).source_key
@@ -137,7 +140,10 @@ def publish_descriptive_materialization(
             (key, encoded),
         )
         if journal_lease is not None:
-            journal._complete_job_txn(db, journal_lease, now=journal_now)
+            journal._complete_job_txn(
+                db, journal_lease,
+                now=journal_clock() if journal_clock is not None else journal_now,
+            )
     return row
 
 
