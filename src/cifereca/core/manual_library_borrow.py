@@ -15,6 +15,7 @@ from ..plugin_api.lending_capabilities import assess_lending_operation
 from ..providers.base import ManualBorrowPolicy
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
+from .manual_borrow_eligibility import BLOCKER_REASONS, observed_borrow_eligibility
 
 _LOG = logging.getLogger(__name__)
 
@@ -193,8 +194,16 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
         if not callable(getattr_static(
                 type(session), "borrow_explicit_with_claim", None)):
             return reject("local_borrow_executor_unavailable")
+        eligibility, reason = observed_borrow_eligibility(
+            session, candidates[0], item, fact,
+        )
+        if eligibility == "blocked":
+            return reject(reason)
         if diagnostic is not None:
-            diagnostic["reason_code"] = "local_action_available_provider_unknown"
+            diagnostic["reason_code"] = (
+                "local_action_available_provider_observed" if eligibility == "observed"
+                else "local_action_available_provider_unknown"
+            )
         return True
     except Exception:
         return reject("local_admission_unavailable")
@@ -242,6 +251,8 @@ def manual_borrow_diagnostic(
             # The source must never inject arbitrary strings into diagnostics.
             if reason not in {
                 "local_action_available_provider_unknown",
+                "local_action_available_provider_observed",
+                *BLOCKER_REASONS,
                 "local_edition_scope_invalid",
                 "local_provider_or_identity_unavailable",
                 "local_session_unavailable",
@@ -261,8 +272,12 @@ def manual_borrow_diagnostic(
     return {
         "local_action_possible": possible,
         "reason_code": reason,
-        # Public Search availability is not account-specific proof.
-        "provider_eligibility": "unknown",
+        # An observed positive is descriptive, not permission or consent.
+        "provider_eligibility": (
+            "blocked" if reason in BLOCKER_REASONS else
+            "observed" if reason == "local_action_available_provider_observed" else
+            "unknown"
+        ),
     }
 
 
@@ -441,6 +456,9 @@ def manual_borrow(
             return _result("blocked", "borrow_cycle_not_ended")
     if not current():
         return _result("blocked", "borrow_scope_changed")
+    eligibility, reason = observed_borrow_eligibility(session, account, item, fact)
+    if eligibility == "blocked":
+        return _result("blocked", reason)
     operation_id = uuid4().hex
     try:
         if prior is None:
@@ -462,6 +480,13 @@ def manual_borrow(
             service.storage.loan_borrow_finish(
                 key, operation_id, status="blocked")
             return _result("blocked", "borrow_scope_changed")
+        # A newly published refusal between admission and reservation is
+        # still pre-dispatch: CAS-release only our proven unsent claim.
+        eligibility, reason = observed_borrow_eligibility(session, account, item, fact)
+        if eligibility == "blocked":
+            freed = service.storage.loan_borrow_release_unsent(key, operation_id)
+            return (_result("blocked", reason) if freed else
+                    _result("verification_unavailable", "borrow_checkpoint_unavailable"))
         loan = session.borrow_explicit_with_claim(
             item, account, admission=admission, claimed_receipt=receipt,
             confirmed=True, core_scope_current=lambda: current(),
