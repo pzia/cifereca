@@ -54,7 +54,7 @@ class PublicNoticeWorkPump:
     def __init__(self, storage, broker, *, clock=None, on_committed=None,
                  replay_registry=None, fetch_execution=None, purchase_execution=None,
                  on_purchase_committed=None, on_witness_rejected=None,
-                 capture_directory=None):
+                 capture_directory=None, prepare_public_age=None, public_age_digests=()):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         if replay_registry is None:
@@ -69,6 +69,14 @@ class PublicNoticeWorkPump:
                 type(purchase_execution) is not PurchaseIntentExecution
                 or purchase_execution._storage is not storage):
             raise ValueError("notice_purchase_invalid_registry")
+        if (type(public_age_digests) is not tuple or len(public_age_digests) > 128
+                or any(not journal._digest(value) for value in public_age_digests)
+                or len(set(public_age_digests)) != len(public_age_digests)
+                or (prepare_public_age is None) != (not public_age_digests)
+                or (prepare_public_age is not None and not callable(prepare_public_age))):
+            raise ValueError("notice_work_invalid_public_age_port")
+        self._prepare_public_age = prepare_public_age
+        self._public_age_digests = public_age_digests
         self._purchase_execution = purchase_execution
         self._fetch_execution = fetch_execution
         self._replay_registry = replay_registry
@@ -88,12 +96,22 @@ class PublicNoticeWorkPump:
             claim_purchase=None if purchase_execution is None else purchase_execution.claim,
             prepare_purchase=None if purchase_execution is None else purchase_execution.prepare,
             finish_purchase=None if purchase_execution is None else purchase_execution.finish,
+            prepare_descriptive=self._prepare_age if prepare_public_age is not None else None,
         )
         lanes = tuple(dict.fromkeys(kind for kind, _digest in self._supported))
         if purchase_execution is not None:
             lanes += (_PURCHASE_LANE,)
-        self._rotation = PublicDispatchRotation(lanes)
+        if prepare_public_age is not None:
+            lanes += ("consolidate_descriptive",)
+        self._rotation = PublicDispatchRotation(lanes, public_age=prepare_public_age is not None)
         self._tick_lock = Lock()
+
+    def _prepare_age(self, spec, control):
+        from .notice_c_work_bridge import UnavailableNoticeWork
+        if (spec.kind != "consolidate_descriptive" or spec.public_age_locator is None
+                or spec.implementation_digest not in self._public_age_digests):
+            raise UnavailableNoticeWork("notice_descriptive_unsupported_spec")
+        return self._prepare_public_age(spec, control)
 
     def _prepare_fetch(self, spec, lease, control):
         return self._fetch_execution.prepare(
@@ -150,6 +168,9 @@ class PublicNoticeWorkPump:
                     refs = self._purchase_execution.ready_page_refs(after=after, limit=limit)
                     supported = (("fetch_source_notice", journal._PURCHASE_INTENT_DIGEST),)
                     options = {"purchase_refs": refs}
+                elif kind == "consolidate_descriptive":
+                    supported = None
+                    options = {"public_age_digests": self._public_age_digests}
                 else:
                     supported = tuple(pair for pair in self._supported if pair[0] == kind)
                     options = {}

@@ -85,6 +85,8 @@ class NoticeWorkRuntime:
         self._fetch_authority = None
         self._fetch_execution = None
         self._purchase_execution = None
+        self._prepare_public_age = None
+        self._public_age_digests = ()
         self._dispatch_requested = False
         self._lock = RLock()
         self._closed = False
@@ -105,6 +107,8 @@ class NoticeWorkRuntime:
             on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
+                prepare_public_age=self._prepare_public_age,
+                public_age_digests=self._public_age_digests,
         )
 
     def _workers_active_locked(self):
@@ -136,6 +140,8 @@ class NoticeWorkRuntime:
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
+                prepare_public_age=self._prepare_public_age,
+                public_age_digests=self._public_age_digests,
             )
             self._replay_registry = registry
             self._pending_replay_registry = None
@@ -288,6 +294,8 @@ class NoticeWorkRuntime:
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
+                prepare_public_age=self._prepare_public_age,
+                public_age_digests=self._public_age_digests,
             )
             self._fetch_execution = execution
             self._fetch_authority = execution._authority
@@ -308,8 +316,35 @@ class NoticeWorkRuntime:
                 on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
+                prepare_public_age=self._prepare_public_age,
+                public_age_digests=self._public_age_digests,
             )
             self._purchase_execution = execution
+            return True
+
+    def install_public_age_execution(self, prepare, *, implementation_digests):
+        """Explicit trusted Core composition before the first heartbeat.
+
+        No job or new broker is created here. The caller owns archive
+        authority and must reattest it at preparation and publication.
+        """
+        with self._lock:
+            if self._closed or self._dispatch_requested or self._prepare_public_age is not None:
+                return False
+            if not callable(prepare) or not implementation_digests:
+                raise ValueError("notice_work_invalid_public_age_port")
+            pump = PublicNoticeWorkPump(
+                self._storage, self._broker, clock=self._clock,
+                on_committed=self._notify, replay_registry=self._replay_registry,
+                fetch_execution=self._fetch_execution, purchase_execution=self._purchase_execution,
+                on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
+                capture_directory=self._capture_directory,
+                prepare_public_age=prepare, public_age_digests=implementation_digests,
+            )
+            self._pump = pump
+            self._prepare_public_age = prepare
+            self._public_age_digests = implementation_digests
             return True
 
     def bind_committed_observer(self, observer):
@@ -472,6 +507,8 @@ class NoticeWorkRuntime:
                     on_purchase_committed=self._notify_purchase,
                     on_witness_rejected=self._notify_witness_rejected,
                     capture_directory=self._capture_directory,
+                    prepare_public_age=self._prepare_public_age,
+                    public_age_digests=self._public_age_digests,
                 )
             pump = self._pump
             registry = self._replay_registry

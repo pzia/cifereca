@@ -56,12 +56,15 @@ class PublicDispatchRotation:
     handle counts toward the two-submission budget. The worker still
     rechecks the exact durable generation, lease and authority.
     """
-    def __init__(self, kinds):
+    def __init__(self, kinds, *, public_age=False):
+        if type(public_age) is not bool:
+            raise ValueError("notice_rotation_invalid_kinds")
+        order = tuple(journal._KINDS) + (_PURCHASE_LANE,) if public_age else _ORDER
         if (type(kinds) is not tuple or not kinds
-                or any(type(kind) is not str or kind not in _ORDER for kind in kinds)
+                or any(type(kind) is not str or kind not in order for kind in kinds)
                 or len(set(kinds)) != len(kinds)):
             raise ValueError("notice_rotation_invalid_kinds")
-        self._kinds = tuple(kind for kind in _ORDER if kind in kinds)
+        self._kinds = tuple(kind for kind in order if kind in kinds)
         self._after = dict.fromkeys(self._kinds)
         self._next = 0
 
