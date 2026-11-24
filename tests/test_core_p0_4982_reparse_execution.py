@@ -229,3 +229,24 @@ def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypat
     finally:
         tasks.close()
         db.close()
+
+
+def test_replay_capture_authorization_is_fail_closed():
+    from types import SimpleNamespace
+    from cifereca.core.notice_c_reparse_execution import _authorized_capture_members
+    request = object()
+    selected = SimpleNamespace(body=b"exact input")
+    def unavailable(*args):
+        raise OSError("policy unavailable")
+    for policy in (None, lambda *_: False, lambda *_: 1,
+                   lambda *_: "yes", unavailable):
+        port = SimpleNamespace(authorize_capture_input=policy)
+        assert _authorized_capture_members(port, request, selected) == {}
+    calls = []
+    def allowed(req, inp):
+        calls.append((req, inp))
+        return True
+    port = SimpleNamespace(authorize_capture_input=allowed)
+    assert _authorized_capture_members(port, request, selected) == {
+        "response.raw": b"exact input"}
+    assert calls == [(request, selected)]
