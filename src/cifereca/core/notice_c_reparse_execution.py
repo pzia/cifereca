@@ -228,15 +228,8 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
                 db.execute("UPDATE metadata SET value=? WHERE key=?",
                            (json.dumps(alert, sort_keys=True, separators=(",", ":")), alert_key))
                 def export_after_commit():
-                    members = {}
-                    if port.authorize_capture_input is not None:
-                        try:
-                            if port.authorize_capture_input(request, selected) is True:
-                                members["response.raw"] = selected.body
-                        except Exception:
-                            # Fail closed; the sanitized diagnostic remains exportable.
-                            pass
-                    return export_capture(storage, diagnostic, members=members)
+                    return export_capture(storage, diagnostic, members=
+                                          _authorized_capture_members(port, request, selected))
 
                 return WitnessRejectedPublication(
                     None if diagnostic is None else export_after_commit,
@@ -266,3 +259,14 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         return True
 
     return PreparedSource(publish, guard)
+
+
+def _authorized_capture_members(port, request, selected):
+    """Fail closed; only an explicit trusted decision permits exact bytes."""
+    if port.authorize_capture_input is not None:
+        try:
+            if port.authorize_capture_input(request, selected) is True:
+                return {"response.raw": selected.body}
+        except Exception:
+            pass
+    return {}
