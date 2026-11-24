@@ -193,6 +193,24 @@ class EvidenceReadOnlyTests(unittest.TestCase):
                 finally:
                     session.close()
 
+    def test_unavailable_marker_requires_own_visible_text(self):
+        for child in (
+            '<span style="display:none">Unavailable</span>',
+            '<span style="visibility:hidden">Unavailable</span>',
+            '<span itemscope itemtype="https://schema.org/Organization">Unavailable</span>',
+            '<span>Unavailable',
+        ):
+            with self.subTest(child=child):
+                marker = '<div class="lb_unavailable">' + child + '</div>'
+                session, account, item, calls = self.make(
+                    detail=DETAIL.replace("</article>", marker + "</article>"))
+                try:
+                    facts = session.borrower_eligibility_for(item, account)
+                    self.assertEqual(facts.item_offer, "unknown")
+                    self.assertEqual(len(calls), 2)
+                finally:
+                    session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:

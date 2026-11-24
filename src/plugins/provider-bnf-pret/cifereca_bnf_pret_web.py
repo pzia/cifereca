@@ -364,8 +364,14 @@ def parse_detail(html: str, *, page_url: str) -> CatalogPage:
         return any(visible_book(child) for child in node.children
                    if isinstance(child, _Node))
 
+    def has_visible_offer_text(node):
+        # Direct text of visible, closed nodes only; _Node.text() does not
+        # exclude inline CSS-hidden or nested foreign microdata descendants.
+        return any(isinstance(child, str) and child.strip()
+                   for visible in offer_nodes(node) for child in visible.children)
+
     unavailable = visible_book(root) and any(
-        n.has_class("lb_unavailable") and n.text()
+        n.has_class("lb_unavailable") and has_visible_offer_text(n)
         for n in offer_nodes(books[0]))
     record = CatalogRecord(rid, props["name"][0], tuple(props.get("author", ())),
                            single("publisher"), single("isbn"), single("inLanguage"),
