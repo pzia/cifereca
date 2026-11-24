@@ -54,6 +54,7 @@ class JobSpec:
     implementation_digest: str
     dependencies: tuple[JobRef, ...] = ()
     source_ref: str | None = None
+    public_age_locator: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -110,21 +111,30 @@ def public_job_spec(kind, document, *, input_digest, implementation_digest,
     return spec
 
 
-def descriptive_job_spec(*, target_edition_id, canonical_type, scope,
-                         input_digest, implementation_digest):
-    """Opaque, independent descriptive work coordinate; not an access grant."""
+def _descriptive_target(target_edition_id, canonical_type, scope):
     from .notice_consolidator_selection import _identifier
-    from .notice_c_cover_index import canonical_cover_document_ref
     if not _identifier(canonical_type) or not _identifier(scope, max_len=160):
         raise ValueError("notice_work_invalid_descriptive_scope")
+    from .notice_c_cover_index import canonical_cover_document_ref
     edition = canonical_cover_document_ref(target_edition_id).source_key
     raw = json.dumps(
         ("notice.c.descriptive-job.v1", edition, canonical_type, scope),
         ensure_ascii=True, separators=(",", ":"),
     ).encode("ascii")
-    spec = JobSpec("consolidate_descriptive",
-                   "notice-c:descriptive:v1:" + sha256(raw).hexdigest(),
-                   input_digest, implementation_digest)
+    return "notice-c:descriptive:v1:" + sha256(raw).hexdigest()
+
+
+def descriptive_job_spec(*, target_edition_id, canonical_type, scope,
+                         input_digest, implementation_digest, public_age=False):
+    """Opaque work coordinate; an optional public-age locator is not authority."""
+    if type(public_age) is not bool or (public_age and canonical_type != "age"):
+        raise ValueError("notice_work_invalid_descriptive_spec")
+    spec = JobSpec(
+        "consolidate_descriptive",
+        _descriptive_target(target_edition_id, canonical_type, scope),
+        input_digest, implementation_digest,
+        public_age_locator=(target_edition_id, scope) if public_age else None,
+    )
     _check_spec(spec)
     return spec
 
@@ -137,6 +147,8 @@ def _check_spec(spec):
             or type(spec.dependencies) is not tuple
             or len(spec.dependencies) > _MAX_DEPS):
         raise ValueError("notice_work_invalid_spec")
+    if spec.public_age_locator is not None and spec.kind != "consolidate_descriptive":
+        raise ValueError("notice_work_invalid_descriptive_spec")
     if spec.implementation_digest == _PURCHASE_INTENT_DIGEST:
         if (spec.kind != "fetch_source_notice" or spec.dependencies
                 or spec.source_ref is not None
@@ -150,6 +162,10 @@ def _check_spec(spec):
                 or spec.dependencies or spec.source_ref is not None
                 or spec.implementation_digest in (
                     _INITIAL_PUBLIC_C_DIGEST, _INITIAL_GROUP_C_DIGEST)):
+            raise ValueError("notice_work_invalid_descriptive_spec")
+        locator = spec.public_age_locator
+        if locator is not None and (type(locator) is not tuple or len(locator) != 2
+                or spec.target != _descriptive_target(locator[0], "age", locator[1])):
             raise ValueError("notice_work_invalid_descriptive_spec")
         return
     prefix = ("notice-c:canonical-cover:v1:"
@@ -211,6 +227,11 @@ def _load(db, key):
         spec = value["spec"]
         if type(spec) is not dict or type(spec.get("dependencies")) is not list:
             raise ValueError
+        if "public_age_locator" in spec:
+            locator = spec["public_age_locator"]
+            if type(locator) is not list:
+                raise ValueError
+            spec["public_age_locator"] = tuple(locator)
         job = Job(
             ref=JobRef(**value["ref"]),
             spec=JobSpec(**{**spec, "dependencies": tuple(
@@ -257,6 +278,8 @@ def _save(db, job):
     # Preserve the wire shape of every pre-existing implementation.
     if job.spec.source_ref is None:
         payload["spec"].pop("source_ref")
+    if job.spec.public_age_locator is None:
+        payload["spec"].pop("public_age_locator")
     db.execute(
         "INSERT INTO metadata(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
