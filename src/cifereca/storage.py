@@ -2713,6 +2713,12 @@ class Storage:
                         raise ValueError("relocate_canonical_metadata_unavailable")
                     if extra_reference:
                         raise ValueError("relocate_canonical_metadata_requires_relink")
+                    # Share the existing conservative metadata dependency
+                    # check. The typed declaration namespace was validated
+                    # above; withdrawn statements are immutable history.
+                    from .core.duplicate_maintenance_guard import generic_metadata_mentions_path
+                    if generic_metadata_mentions_path(db, old_text, validated_declarations=True):
+                        raise ValueError("relocate_generic_metadata_requires_relink")
                     # A shared local_path belonging to another provider or
                     # identity must not remain dangling after this move.
                     if db.execute(
