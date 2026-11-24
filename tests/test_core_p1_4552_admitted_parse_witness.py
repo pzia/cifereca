@@ -99,7 +99,7 @@ def test_incomplete_edition_and_changed_source_are_not_confirmed():
         input_sha256="c" * 64,
     )
     assert partial.status == "unverified"
-    assert changed.status == "source_changed"
+    assert changed.status == "parser_drift_suspected"
 
 
 def test_parser_implementation_is_part_of_source_scope_but_version_is_not():
