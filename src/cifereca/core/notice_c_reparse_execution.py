@@ -18,6 +18,10 @@ from .notice_c_reparse_requests import (
 from .notice_cover_repository import _opaque_key, _persist_notice_cover_txn
 from .notice_cover_projection import project_notice_cover_attribute
 from .notice_source_observation import NoticeSourceObservation, _id
+from .notice_parse_witness import review_admitted_source_parse_witness
+from .notice_parse_witness_store import _PREFIX as _WITNESS_PREFIX, _decode as _decode_witness
+from .notice_parse_witness_alert import record_parse_witness_review_txn
+from .notice_c_work_bridge import WitnessRejectedPublication
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
 from .notice_c_work_requests import request_source_worker_dependents_txn
@@ -164,6 +168,23 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             parser_family_digest=selected.parser_family_digest,
             implementation_digest=port.implementation_digest, now=now,
         )
+        # Recheck the currently approved pin under the same publication lock.
+        # A late approval must protect the last healthy source too.
+        scope = raw.admitted_source_scope_sha256(result.key, parser_id=result.parser_id)
+        pin = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_WITNESS_PREFIX + scope,)).fetchone()
+        if pin is not None:
+            approved = _decode_witness(pin[0], scope)
+            review = review_admitted_source_parse_witness(
+                approved.baseline, observation=result,
+                input_sha256=request.receipt.input_digest,
+            )
+            record_parse_witness_review_txn(
+                db, key=result.key, parser_id=result.parser_id,
+                generation=approved.generation, review=review,
+            )
+            if review.status in ("parser_regression_confirmed", "parser_drift_suspected"):
+                return WitnessRejectedPublication()
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
             old.attribute.field_path, True, current.epoch,
