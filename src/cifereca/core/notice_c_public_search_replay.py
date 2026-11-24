@@ -75,7 +75,7 @@ def public_replay_same_call_observation(response, session, source):
 
 def make_public_search_replay_port(
     session, *, provider_id, parser_family_digest, implementation_digest,
-    read_input, reparse_response, hold_input,
+    read_input, reparse_response, hold_input, authorize_capture_input=None,
 ):
     """Build a registered Core adapter; all callbacks are cache-only.
 
@@ -85,7 +85,8 @@ def make_public_search_replay_port(
     producer lease during final publication. No named provider dispatch.
     """
     if (not _id(provider_id) or not _anonymous_session(session, provider_id)
-            or not all(callable(fn) for fn in (read_input, reparse_response, hold_input))):
+            or not all(callable(fn) for fn in (read_input, reparse_response, hold_input))
+            or (authorize_capture_input is not None and not callable(authorize_capture_input))):
         raise ValueError("notice_reparse_invalid_public_adapter")
 
     def parse(request, selected):
@@ -115,5 +116,5 @@ def make_public_search_replay_port(
 
     return PublicReplayPort(
         provider_id, parser_family_digest, implementation_digest,
-        read_input, parse, hold_input,
+        read_input, parse, hold_input, authorize_capture_input,
     )
