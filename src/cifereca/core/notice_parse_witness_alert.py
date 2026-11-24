@@ -75,3 +75,43 @@ def record_parse_witness_review_txn(db, *, key, parser_id, generation, review):
                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                (alert_key, raw))
     return True
+
+
+def read_parse_witness_diagnostic(storage, *, key, parser_id):
+    """Core projection for an exact source already authorized by the caller.
+
+    Read pin, alert and capture in one SQLite snapshot. No raw input,
+    documentary fields, filesystem paths or provider coordinates escape.
+    """
+    from .notice_regression_capture_intent import _PREFIX as capture_prefix, _SHA
+    scope = admitted_source_scope_sha256(key, parser_id=parser_id)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        pin = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_PREFIX + scope,)).fetchone()
+        row = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_ALERT_PREFIX + scope,)).fetchone()
+        if pin is None or row is None:
+            return None
+        approved = _decode(pin[0], scope)
+        alert = json.loads(row[0])
+        if alert.get("generation") != approved.generation:
+            return None
+        result = {name: alert[name] for name in ("generation", "status", "fields")}
+        diagnostic = alert.get("capture_id")
+        if type(diagnostic) is str and _SHA.fullmatch(diagnostic):
+            capture = db.execute("SELECT value FROM metadata WHERE key=?",
+                                 (capture_prefix + diagnostic,)).fetchone()
+            result["capture_id"] = diagnostic
+            result["capture_state"] = "metadata_unavailable"
+            if capture is not None:
+                record = json.loads(capture[0])
+                if (record.get("generation") == approved.generation
+                        and record.get("status") == alert["status"]
+                        and record.get("fields") == alert["fields"]):
+                    result["capture_state"] = record["capture_state"]
+        elif alert.get("capture_state") == "capacity_refused":
+            result["capture_state"] = "capacity_refused"
+        else:
+            result["capture_state"] = "not_recorded"
+        return result
