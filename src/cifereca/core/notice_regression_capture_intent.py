@@ -68,6 +68,8 @@ def export_capture(storage, diagnostic, *, members, directory=None):
         if type(members) is not dict:
             raise ValueError("invalid_capture_members")
         safe = {name: value.encode("utf-8") for name, value in record.get("snapshots", {}).items()}
+        if set(members).intersection(safe) or "diff.json" in members:
+            raise ValueError("capture_metadata_override")
         safe.update(members)
         safe["diff.json"] = json.dumps({k: record[k] for k in
             ("status", "fields", "input_sha256")}, sort_keys=True).encode()
@@ -78,6 +80,10 @@ def export_capture(storage, diagnostic, *, members, directory=None):
             members=safe, directory=directory)
     except (OSError, ValueError):
         state = "failed"
+    return _record_outcome(storage, key, row[0], record, state)
+
+
+def _record_outcome(storage, key, previous, record, state):
     updated = dict(record, capture_state=state)
     if state == "failed":
         attempts = min(record.get("attempts", 0) + 1, 16)
@@ -87,7 +93,7 @@ def export_capture(storage, diagnostic, *, members, directory=None):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
-                   (json.dumps(updated, sort_keys=True), key, row[0]))
+                   (json.dumps(updated, sort_keys=True), key, previous))
     return state
 
 
@@ -134,6 +140,33 @@ def resume_captures(storage, resolve_members, *, directory=None, limit=8):
             state = export_capture(storage, diagnostic, members=members,
                                    directory=directory)
         except (OSError, ValueError):
+            key = _PREFIX + diagnostic
+            with storage._lock, storage._connect() as db:
+                row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
             state = "failed"
+            if row is not None:
+                record = json.loads(row[0])
+                if record["capture_state"] in ("pending", "failed"):
+                    _record_outcome(storage, key, row[0], record, state)
+                else:
+                    state = record["capture_state"]
         outcomes.append((diagnostic, state))
     return tuple(outcomes)
+
+
+def capture_status(storage, diagnostic):
+    """Read-only technical projection for an already authorized diagnostic ID.
+
+    Caller must enforce the alert's scope before exposing this projection.
+    No snapshots, input digest, filesystem path or raw bytes are returned.
+    """
+    if type(diagnostic) is not str or not _SHA.fullmatch(diagnostic):
+        raise ValueError("invalid_capture_id")
+    with storage._lock, storage._connect() as db:
+        row = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_PREFIX + diagnostic,)).fetchone()
+    if row is None:
+        return None
+    record = json.loads(row[0])
+    return {key: record[key] for key in
+            ("capture_state", "attempts", "retry_after") if key in record}
