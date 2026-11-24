@@ -67,6 +67,8 @@ class ProviderSearchResponse:
     # Core bounds and hashes it; it is not a SearchResult/cache field.
     notice_parse_input: bytes | None = field(default=None, repr=False, compare=False)
     notice_parser_implementation: str | None = None
+    # Opaque cache-only coordinate; not a fetch grant or export permission.
+    notice_parse_input_token: str | None = field(default=None, repr=False, compare=False)
 
 
 @runtime_checkable
