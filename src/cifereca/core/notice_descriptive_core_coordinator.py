@@ -16,6 +16,7 @@ from .notice_consolidation_inputs import admit_descriptive_facts
 from .notice_consolidator_selection import select_consolidator
 from .notice_descriptive_selection_store import (
     read_descriptive_selection_txn, require_descriptive_selection,
+    descriptive_selection_input_digest,
 )
 from .notice_consolidator_runner import InstalledTextConsolidator
 from .notice_descriptive_runner_adapter import propose_registered_descriptive_materialization
@@ -86,7 +87,7 @@ def run_descriptive_core_job(
         return None
     spec = journal.public_job_spec(
         "recompute_aggregate", canonical_cover_document_ref(target_edition_id),
-        input_digest=sha256(execution_key.encode("ascii")).hexdigest(),
+        input_digest=descriptive_selection_input_digest(execution_key, pin),
         implementation_digest=installed.source_sha256,
     )
     ref = journal.request_job(
