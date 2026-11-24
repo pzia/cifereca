@@ -94,7 +94,7 @@ def test_typed_0_1_n_scoped_coverage_and_legacy_still_usable(html, count):
     try:
         typed = session.loan_inventory_snapshot(replace(account))
         assert len(typed.loans) == count
-        complete = count > 0
+        complete = True  # Authenticated closed zero-card widget is exhaustive.
         assert typed.status == ("success" if complete else "partial")
         assert typed.reason_code == (None if complete else "inventory_not_exhaustive")
         assert typed.branch_claims_complete("bnf_html", "digital") is complete

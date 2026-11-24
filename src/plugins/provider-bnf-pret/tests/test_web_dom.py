@@ -237,7 +237,7 @@ class WebDOMTests(unittest.TestCase):
         for html in ('<html>Erreur</html>', '<section class="active-loans">' + loan()):
             with self.assertRaises(web.WebParseError):
                 self.parse_loans(html)
-        self.assertEqual(self.parse_loans(loans('')).status, 'partial')
+        self.assertEqual(self.parse_loans(loans('')).status, 'observed')
 
     def test_malformed_card_marks_partial(self):
         result = self.parse_loans(loans(loan() + '<div class="js-loan">chargement</div>'))

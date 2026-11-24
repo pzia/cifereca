@@ -473,9 +473,10 @@ class BnfProviderSession(ProviderSession):
     def _loan_inventory_snapshot_locked(self, account):
         """Exact borrower-scoped active-loans coverage, never acquisition proof.
 
-        Calls one authenticated scoped activity GET. Only a validated,
-        nonempty, non-paginated loan widget can assert complete coverage;
-        empty/ambiguous HTML and a monkeypatched v1 reader remain partial.
+        Calls one authenticated scoped activity GET. A validated closed,
+        non-paginated active-loans widget may attest complete coverage even
+        when empty (owner decision #4082); absent/ambiguous HTML and a
+        monkeypatched v1 reader remain partial.
         No token GET, rights deletion, return, or ADEPT side effects.
         """
         if (not self.connected or self._closed or len(self._accounts) != 1

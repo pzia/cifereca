@@ -59,13 +59,10 @@ def completed_manual_borrow_cycle(
                 or seen_at.tzinfo is None
                 or not 0 <= (current-seen_at).total_seconds() <= max_age_seconds):
             return False
-        # The current BnF HTML producer can prove exhaustive coverage only
-        # for a nonempty active-loans widget. A forged complete/empty typed
-        # snapshot must not silently authorize a second mutating cycle.
-        # Remove this restriction only with an independently validated,
-        # provider-specific official zero-loans proof.
-        if branch == "bnf_html" and not snapshot.loans:
-            return False
+        # #4082: an authenticated HTTP 200 BnF activity page with one
+        # validated, closed, non-paginated empty active-loans widget is a
+        # complete inventory. The producer must attest completeness; an
+        # arbitrary HTTP 200 or absent widget is not sufficient.
         seen_ids = set()
         for loan in snapshot.loans:
             if (type(loan) is not Loan or loan.medium != "digital"

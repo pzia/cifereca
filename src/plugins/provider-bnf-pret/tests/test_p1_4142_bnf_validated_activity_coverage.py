@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from cifereca_bnf_pret import BnfProviderSession
-from cifereca_bnf_pret_web import ORIGIN, ProfileScope, parse_loans
+from cifereca_bnf_pret_web import ORIGIN, ProfileScope, parse_loans, WebParseError
 from cifereca.plugin_api import ProviderConfigurationError
 
 
@@ -47,7 +47,6 @@ def test_closed_scoped_nonempty_widget_attests_only_positive_inventory(cards):
 
 
 @pytest.mark.parametrize("html", [
-    page(""),
     page(card() + '<div class="js-loan">Unloaded</div>'),
     page(card() + '<button class="load-more">More</button>'),
     page(card() + '<a rel="next" href="?page=2">Next</a>'),
@@ -57,7 +56,7 @@ def test_closed_scoped_nonempty_widget_attests_only_positive_inventory(cards):
     page(card() + '<div data-next-page="2"></div>'),
     page(card() + card("loan-1", "another-book")),
 ])
-def test_empty_partial_lazy_or_contradictory_html_never_attests_exhaustive(html):
+def test_partial_lazy_or_contradictory_html_never_attests_exhaustive(html):
     result = parsed(html)
     assert result.exhaustive is False
 
@@ -108,8 +107,8 @@ def test_complete_partial_complete_never_reuses_prior_coverage_or_identity():
 
         client.html = page("")
         empty = session.loan_inventory_snapshot(replace(account))
-        assert empty.status == "partial" and empty.loans == ()
-        assert not empty.branch_claims_complete("bnf_html", "digital")
+        assert empty.status == "success" and empty.loans == ()
+        assert empty.branch_claims_complete("bnf_html", "digital")
 
         client.html = page(card() + '<button class="load-more">More</button>')
         paged = session.loan_inventory_snapshot(replace(account))
@@ -174,4 +173,43 @@ def test_hidden_loan_card_itself_never_completes_visible_inventory():
     )
     result = parsed(page(card() + hidden))
     assert len(result.loans) == 1
+    assert result.exhaustive is False
+
+
+@pytest.mark.parametrize("html", [
+    page(""),
+    page("<p>Aucun emprunt en cours</p>"),
+])
+def test_qualified_empty_active_widget_is_complete(html):
+    result = parsed(html)
+    assert result.status == "observed"
+    assert result.loans == ()
+    assert result.exhaustive is True
+
+
+@pytest.mark.parametrize("html", [
+    page('<button class="load-more">Suite</button>'),
+    page('<div aria-busy="true"></div>'),
+    page('<div data-has-more="true"></div>'),
+    page('<div class="js-loan">Incomplete</div>'),
+])
+def test_empty_but_incomplete_widget_does_not_claim_zero_loans(html):
+    result = parsed(html)
+    assert result.exhaustive is False
+    assert result.status == "partial"
+
+
+@pytest.mark.parametrize("attribute", ['hidden', 'aria-hidden="true"', 'aria-hidden="TRUE"', 'aria-hidden=" true "'])
+def test_hidden_empty_active_widget_never_attests_zero(attribute):
+    # DOM.walk() ignores hidden sections entirely: no recognized visible widget
+    # exists, so the correct fail-closed outcome is a parsing error.
+    with pytest.raises(WebParseError, match="unrecognized_loans"):
+        parsed(f'<section class="active-loans" {attribute}></section>')
+
+
+@pytest.mark.parametrize("style", ["display: none", "visibility: hidden", "DISPLAY : NONE"])
+def test_css_hidden_empty_activity_widget_is_not_complete(style):
+    result = parsed(f'<section class="active-loans" style="{style}"></section>')
+    assert result.loans == ()
+    assert result.status == "partial"
     assert result.exhaustive is False

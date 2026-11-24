@@ -97,7 +97,7 @@ def test_paris_vs_bnf_two_opening_readers_have_independent_get_budgets(digital):
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
         ]
-        assert bnf_loan_snapshot.status == ("success" if digital else "partial")
+        assert bnf_loan_snapshot.status == "success"
         assert len(bnf_loans) == len(bnf_resources.resources) == digital
         assert bnf_client.calls == ["login", "activity", "activity"]
         assert {row.identity_id for row in paris_loans} <= {"identity-A"}

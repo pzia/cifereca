@@ -552,7 +552,7 @@ def test_4480_zero_remaining_quota_is_not_zero_active_loans(pairs):
         rights = session.rights_observation_snapshot(account)
         assert [(loan.record_id, loan.id) for loan in inventory.loans] == list(pairs)
         assert [(right.edition_id, right.right_id) for right in rights.rights] == list(pairs)
-        assert inventory.status == ("success" if pairs else "partial")
+        assert inventory.status == "success"  # Closed zero-card widget is complete.
         assert rights.coverage == ("complete" if pairs else "partial")
         assert not rights.authorizes_mutation
         assert not rights.authorizes_negative_reconciliation

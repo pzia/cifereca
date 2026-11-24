@@ -178,15 +178,15 @@ def test_paris_scopes_two_linked_readers_without_merging_borrower_identity():
     (BNF_HTML, 1),
     ('<section class="active-loans"></section>', 0),
 ])
-def test_bnf_validated_nonempty_html_claims_scoped_coverage_only(html, expected_count):
+def test_bnf_validated_html_claims_scoped_coverage_including_empty(html, expected_count):
     s, a, client = bnf(html)
     try:
         before = client.calls.count("activity")
         snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert len(snap.loans) == expected_count
-        complete = expected_count > 0
-        assert snap.status == ("success" if complete else "partial")
-        assert snap.reason_code == (None if complete else "inventory_not_exhaustive")
+        complete = True
+        assert snap.status == "success"
+        assert snap.reason_code is None
         assert len(snap.branches) == 1
         assert snap.branches[0].upstream == "bnf_html"
         assert snap.branches[0].completeness == ("complete" if complete else "partial")
