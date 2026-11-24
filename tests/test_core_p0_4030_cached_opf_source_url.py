@@ -63,3 +63,33 @@ def test_known_c_corroborates_only_a_unique_current_source(store, tmp_path, case
     assert URL not in repr(report)
     assert rows(store) == before and file.read_bytes() == data
     assert connection.total_changes == changes
+
+
+@pytest.mark.parametrize("limit", ["unindexed", "budget"])
+def test_incomplete_known_c_scan_cannot_promote_optional_opf_claim(
+    store, tmp_path, monkeypatch, limit,
+):
+    from dataclasses import replace
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+
+    metadata = META + f'<dc:source xmlns:dc="http://purl.org/dc/elements/1.1/">{URL}</dc:source>'
+    root, file, placement = _local_epub(store, tmp_path, metadata)
+    publish(store, URL, record="exact")
+    original = documentary.search_public_notice_c
+
+    def limited(*args, **kwargs):
+        value = original(*args, **kwargs)
+        return replace(value, unindexed_sources=1) if limit == "unindexed" else replace(
+            value, status="budget_exceeded", has_more=True)
+
+    monkeypatch.setattr(documentary, "search_public_notice_c", limited)
+    before, data = rows(store), file.read_bytes()
+    report = suggest_local_placement_documents(
+        store, library_root=root, identity_id="A", placement_id=placement,
+        explicitly_requested=True,
+    )
+    match, = report["suggestions"].suggestions
+    assert match.comparison == "title_author_concordant"
+    assert not report["association_authorized"] and not report["provider_access_performed"]
+    assert URL not in repr(report)
+    assert rows(store) == before and file.read_bytes() == data
