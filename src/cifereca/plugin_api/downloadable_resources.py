@@ -348,7 +348,73 @@ def as_legacy_rights_snapshot(snapshot: ResourceSnapshot) -> ProviderRightsSnaps
     )
 
 
+
+class LegacyRightsResourceAdapter:
+    """Opt-in v2 projection for sessions implementing the v1 rights readers.
+
+    No capability is added to ProviderSession. The concrete provider retains
+    scope validation, locking, consent and all network policy.
+    """
+
+    def downloadable_resource_snapshot(self, account):
+        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_selected_offer_snapshot(
+        self, account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        return from_legacy_rights_snapshot(
+            self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=resource_id,
+                kind=kind, branch=branch,
+                explicit_user_action=explicit_user_action,
+            )
+        )
+
+    @staticmethod
+    def _downloadable_scope(account):
+        return ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+
+
+    def _stage_legacy_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, admission_check,
+        explicit_user_action=False, admission_current=None,
+    ):
+        """Project a staged provider result; admission policy stays with caller."""
+        scope = self._downloadable_scope(account)
+        path, hint = self.rights_selected_delivery_candidate(
+            account, edition_id=edition_id, right_id=resource_id,
+            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            **({"admission_current": admission_current}
+               if admission_current is not None else {}),
+        )
+        if ((account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id) != (
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id)
+                or not admission_check(admission_current)):
+            try:
+                staged = Path(path)
+                if (staged.parent == Path(target_dir) and staged.is_file()
+                        and not staged.is_symlink()):
+                    staged.unlink(missing_ok=True)
+            except (OSError, TypeError, ValueError):
+                pass
+            raise ProviderCapabilityError("selected_delivery_scope_changed")
+        return DeliveryCandidate(
+            source=SourceReference(scope, branch, edition_id, resource_id, kind),
+            selected_offer_id=selected_offer_id, path=Path(path),
+            provider_hint=hint,
+        )
+
+
 __all__ = [
+    "LegacyRightsResourceAdapter",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference",
     "DownloadCapability", "OptionalRightMetadata", "ResourceObservation",
     "ResourceSnapshot", "DeliveryCandidate", "from_legacy_rights_snapshot",

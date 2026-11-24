@@ -377,7 +377,10 @@ def _core_account_owners(refs, *, provider_id: str, account_id: str,
     return tuple(sorted(owners))
 
 
-class ParisProviderSession(ProviderSession):
+from cifereca.plugin_api import LegacyRightsResourceAdapter
+
+
+class ParisProviderSession(LegacyRightsResourceAdapter, ProviderSession):
     # Static, opt-in negative-loan evidence contract. Only one exhaustive
     # digital branch can authorize source-scoped realization in Core.
     loan_absence_digital_branch = "dilicom"
@@ -1495,11 +1498,6 @@ class ParisProviderSession(ProviderSession):
         ]
         return state
 
-    def downloadable_resource_snapshot(self, account):
-        """#3723 v2: exact source observations, not permission or delivery."""
-        from cifereca.plugin_api import from_legacy_rights_snapshot
-        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
-
     def downloadable_resource_snapshot_from_loan_inventory(
         self, account, *, loan_inventory,
     ):
@@ -1544,20 +1542,6 @@ class ParisProviderSession(ProviderSession):
                 )
             finally:
                 self._same_cycle_rights_inventory.reset(token)
-
-    def downloadable_selected_offer_snapshot(
-        self, account, *, edition_id, resource_id, kind, branch,
-        explicit_user_action=False,
-    ):
-        """#3723 v2: selected provider offer, rights state descriptive only."""
-        from cifereca.plugin_api import from_legacy_rights_snapshot
-        return from_legacy_rights_snapshot(
-            self.rights_selected_delivery_offer_snapshot(
-                account, edition_id=edition_id, right_id=resource_id,
-                kind=kind, branch=branch,
-                explicit_user_action=explicit_user_action,
-            )
-        )
 
     def _route_witness_scope(self, account):
         return (
@@ -1631,49 +1615,11 @@ class ParisProviderSession(ProviderSession):
         selected_offer_id, target_dir, explicit_user_action=False,
         admission_current=None,
     ):
-        """Stage the exact provider candidate, never a Core receipt or B."""
-        from cifereca.plugin_api import SourceReference, DeliveryCandidate
-        # Pin the caller scope *before* the underlying provider performs I/O.
-        # A rebind must not manufacture a candidate for the new owner.
-        scope = self._downloadable_scope(account)
-        path, hint = self.rights_selected_delivery_candidate(
-            account, edition_id=edition_id, right_id=resource_id,
-            kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
+        return self._stage_legacy_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
-            **({"admission_current": admission_current}
-               if admission_current is not None else {}),
-        )
-        # Compare the mutable caller against the frozen, previously valid
-        # scope. Reconstructing ProviderRightsScope *after* GET could itself
-        # raise on an empty/invalid account field, bypassing candidate cleanup.
-        if ((account.identity_id, account.provider_id,
-                account.credential_id, account.unique_id) != (
-                scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id)
-                or not _paris_core_admission_current(admission_current)):
-            try:
-                staged = Path(path)
-                if (staged.parent == Path(target_dir) and staged.is_file()
-                        and not staged.is_symlink()):
-                    staged.unlink(missing_ok=True)
-            except (OSError, TypeError, ValueError):
-                pass
-            raise ProviderCapabilityError("selected_delivery_scope_changed")
-        return DeliveryCandidate(
-            source=SourceReference(
-                scope, branch,
-                edition_id, resource_id, kind,
-            ),
-            selected_offer_id=selected_offer_id, path=Path(path),
-            provider_hint=hint,
-        )
-
-    @staticmethod
-    def _downloadable_scope(account):
-        from cifereca.plugin_api import ProviderRightsScope
-        return ProviderRightsScope(
-            account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
+            admission_current=admission_current, admission_check=_paris_core_admission_current,
         )
 
     def rights_selected_delivery_offer_snapshot(

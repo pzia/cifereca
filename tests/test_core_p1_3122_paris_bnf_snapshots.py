@@ -252,3 +252,42 @@ def test_paris_connected_reader_replaced_mid_read_cannot_publish_loan_snapshot()
         assert snap.reason_code == "read_failed"
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("session_class", [ParisProviderSession, BnfProviderSession])
+def test_shared_adapter_on_real_provider_classes(session_class):
+    from cifereca.plugin_api import LegacyRightsResourceAdapter, ProviderSession
+    assert issubclass(session_class, LegacyRightsResourceAdapter)
+    assert session_class.downloadable_resource_snapshot is LegacyRightsResourceAdapter.downloadable_resource_snapshot
+    assert session_class.downloadable_selected_offer_snapshot is LegacyRightsResourceAdapter.downloadable_selected_offer_snapshot
+    assert session_class._downloadable_scope is LegacyRightsResourceAdapter._downloadable_scope
+    assert not hasattr(ProviderSession, "downloadable_resource_snapshot")
+
+
+@pytest.mark.parametrize("provider", ["paris", "bnf"])
+def test_real_provider_candidate_wrapper_preserves_revocation(provider, tmp_path):
+    from unittest.mock import Mock
+    from cifereca.plugin_api import ProviderCapabilityError
+    if provider == "paris":
+        a = account()
+        s = paris([a])
+        branch = "dilicom"
+    else:
+        s, a, _ = bnf()
+        branch = "bnf_html"
+    staged = tmp_path / "candidate.acsm"
+    def transfer(*args, **kwargs):
+        staged.write_bytes(b"synthetic")
+        a.identity_id = ""
+        return staged, "acsm"
+    s.rights_selected_delivery_candidate = Mock(side_effect=transfer)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+            s._downloadable_selected_delivery_candidate(
+                a, edition_id="edition", resource_id="loan", kind="loan",
+                branch=branch, selected_offer_id="offer", target_dir=tmp_path,
+            )
+        assert not staged.exists()
+        s.rights_selected_delivery_candidate.assert_called_once()
+    finally:
+        s.close()
