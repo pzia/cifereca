@@ -325,7 +325,9 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed:
                 return None
-        outcome = self._pump.tick(control=control)
+            pump = self._pump
+            registry = self._replay_registry
+        outcome = pump.tick(control=control)
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
@@ -344,7 +346,7 @@ class NoticeWorkRuntime:
             return outcome
         for diagnostic, state in resume_captures(
                 self._storage, lambda diagnostic: resolve_replay_capture_members(
-                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
+                    self._storage, registry, diagnostic, clock=pump._clock,
                 ), limit=2):
             self._report_capture(diagnostic, state)
         return outcome
