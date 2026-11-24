@@ -118,3 +118,40 @@ def make_public_search_replay_port(
         provider_id, parser_family_digest, implementation_digest,
         read_input, parse, hold_input, authorize_capture_input,
     )
+
+
+def make_retained_public_replay_port(
+    session, *, provider_id, parser_family_digest, implementation_digest,
+    read_retained, hold_retained, reparse_response, normalize_input,
+    authorize_capture_input=None,
+):
+    """Compose explicitly supplied cache callbacks without provider discovery.
+
+    The composition owner supplies the normalization and error mapping;
+    this adapter never opens a session or starts a transport.
+    """
+    from contextlib import contextmanager
+
+    if not all(callable(fn) for fn in
+               (read_retained, hold_retained, normalize_input)):
+        raise ValueError("notice_reparse_invalid_public_adapter")
+
+    def read(token):
+        raw, ttl = read_retained(token)
+        if raw is None or type(ttl) is not int or ttl < 1:
+            return None
+        return normalize_input(raw)
+
+    @contextmanager
+    def hold(token):
+        with hold_retained(token) as raw:
+            yield None if raw is None else normalize_input(raw)
+
+    return make_public_search_replay_port(
+        session, provider_id=provider_id,
+        parser_family_digest=parser_family_digest,
+        implementation_digest=implementation_digest,
+        read_input=read, hold_input=hold,
+        reparse_response=reparse_response,
+        authorize_capture_input=authorize_capture_input,
+    )
