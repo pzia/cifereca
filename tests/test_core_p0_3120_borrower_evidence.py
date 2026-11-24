@@ -213,10 +213,11 @@ def test_borrower_wide_positive_never_omits_explicit_user_action(action_requirem
 @pytest.mark.parametrize("coordinate", [
     "identity_id", "provider_id", "credential_id", "account_id",
 ])
-@pytest.mark.parametrize("control", ["\\n", "\\r", "\\t", "\\u202e", "\\u2066"])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\u202e", "\u2066"])
 def test_nonprintable_borrower_proof_coordinates_never_promote(
     coordinate, control,
 ):
+    assert len(control) == 1 and not control.isprintable()
     reader = account()
     field = "unique_id" if coordinate == "account_id" else coordinate
     contaminated_reader = replace(reader, **{
