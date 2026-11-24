@@ -10,6 +10,9 @@ from .notice_c_raw_input_receipt import record_public_raw_input_receipt
 def record_search_receipt(storage, row, source, retained, *, now):
     """Optional cache-only receipt; failure cannot undo accepted Search."""
     session, token = retained
+    # Only a live anonymous session may attest retained bytes.
+    if getattr(session, "connected", None) is not True:
+        return None
     evidence = getattr(row, "_core_notice_parse_input", None)
     if (type(evidence) is not tuple or len(evidence) != 7
             or evidence[1:5] != (
@@ -26,7 +29,8 @@ def record_search_receipt(storage, row, source, retained, *, now):
         if raw is None or type(ttl) is not int or ttl < 1:
             return None
         with session._hold_retained_public_input(token) as held:
-            if (held is None or held != raw or held.token != token
+            if (getattr(session, "connected", None) is not True
+                    or held is None or held != raw or held.token != token
                     or type(held._body) is not bytes
                     or sha256(held._body).hexdigest() != evidence[5]
                     or held.parser_implementation_digest != evidence[6]):
