@@ -82,3 +82,37 @@ def decode_consolidator_manifest(rows, *, verified_members):
             ),
         ))
     return tuple(result)
+
+
+def bind_verified_package_consolidators(manifest, *, verified_members):
+    """Bind inert declarations to exact owner descriptors in one package.
+
+    V1 uses the existing entrypoint-free meta.bundle descriptor with an
+    explicit capability marker. It never activates or resolves a service.
+    The caller still owns package authenticity and effective enabled state.
+    """
+    from ..plugins.manifest import PluginPackageManifest
+    from ..plugin_api import PluginDescriptor
+
+    if type(manifest) is not PluginPackageManifest:
+        raise ValueError("invalid_consolidator_package")
+    rows = manifest.raw.get("notice_text_consolidators", [])
+    candidates = decode_consolidator_manifest(rows, verified_members=verified_members)
+    owners = {}
+    for descriptor in manifest.plugins:
+        if type(descriptor) is not PluginDescriptor:
+            raise ValueError("invalid_consolidator_package")
+        if descriptor.id in owners:
+            raise ValueError("ambiguous_consolidator_package")
+        owners[descriptor.id] = descriptor
+    for candidate in candidates:
+        declaration = candidate.declaration
+        owner = owners.get(declaration.plugin_id)
+        if (owner is None or owner.version != declaration.version
+                or owner.package_id != manifest.package.id
+                or owner.package_version != manifest.package.version
+                or owner.type != "meta.bundle" or owner.entrypoint is not None
+                or "metadata.consolidator" not in owner.capabilities
+                or owner.requires_brokers or owner.requires_services):
+            raise ValueError("consolidator_package_owner_mismatch")
+    return candidates
