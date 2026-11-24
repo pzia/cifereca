@@ -14,6 +14,10 @@ from .notice_descriptive_materialization import (
     DescriptiveMaterialization, require_current_descriptive_materialization,
 )
 
+from .notice_descriptive_selection_store import (
+    read_descriptive_selection_txn, require_descriptive_selection,
+)
+
 _PREFIX = "notice.c.descriptive.v1:"
 _MAX_ROW_BYTES = 8192
 
@@ -113,6 +117,10 @@ def publish_descriptive_materialization(
         if (existing.execution_key if existing else None) != expected_execution_key:
             raise ValueError("descriptive_materialization_cas_changed")
         selection, admitted, digest = capture_current_txn(db)
+        pin = read_descriptive_selection_txn(
+            db, canonical_type=row.canonical_type, scope=row.scope,
+        )
+        require_descriptive_selection(pin, selection, digest)
         require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
@@ -163,6 +171,10 @@ def read_descriptive_materialization(storage, *, target_edition_id, canonical_ty
         if _row_key(row) != key:
             raise ValueError("corrupt_descriptive_materialization")
         selection, admitted, digest = capture_current_txn(db)
+        pin = read_descriptive_selection_txn(
+            db, canonical_type=row.canonical_type, scope=row.scope,
+        )
+        require_descriptive_selection(pin, selection, digest)
         return require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
