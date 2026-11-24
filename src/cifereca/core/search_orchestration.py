@@ -663,8 +663,7 @@ def _public_rows_from_response(
                             )
                             token = response.notice_parse_input_token
                             if (type(token) is str and re.fullmatch(r"[0-9a-f]{32}", token)
-                                    and callable(getattr(session, "_read_retained_public_input", None))
-                                    and callable(getattr(session, "_hold_retained_public_input", None))):
+                                    and callable(getattr(session, "public_search_replay_capability", None))):
                                 projected._core_notice_retained_input = (session, token)
 
             admitted.append(projected)
