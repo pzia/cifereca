@@ -568,9 +568,13 @@ class NumilogPublicSession(ProviderSession):
         from cifereca.plugin_api import (
             PublicSearchReplayInput, PublicSearchReplayCapability, PublicSearchReplayBusy,
         )
-        from cifereca_numilog_public_client import (
-            _PARSER_FAMILY_DIGEST, _PARSER_IMPLEMENTATION_DIGEST,
-        )
+        import cifereca_numilog_public_client as client
+        family = client._PARSER_FAMILY_DIGEST
+        implementation = client._PARSER_IMPLEMENTATION_DIGEST
+
+        def implementation_current():
+            return (client._PARSER_FAMILY_DIGEST == family
+                    and client._PARSER_IMPLEMENTATION_DIGEST == implementation)
         if (not self._retain_public_search_inputs or not self.connected
                 or self.credential_id != "__public__" or self.credentials or self._accounts):
             return None
@@ -585,11 +589,13 @@ class NumilogPublicSession(ProviderSession):
             )
 
         def read(token):
+            if not implementation_current():
+                return None, 0
             try:
                 self._assert_public_generation(epoch)
                 raw, ttl = self._read_retained_public_input(token)
                 self._assert_public_generation(epoch)
-                return normalize(raw), ttl
+                return (normalize(raw), ttl) if implementation_current() else (None, 0)
             except ProviderError:
                 return None, 0
 
@@ -608,21 +614,23 @@ class NumilogPublicSession(ProviderSession):
                     if str(exc) == "Numilog : public_catalog_replay_busy":
                         raise PublicSearchReplayBusy("public_replay_busy") from None
                     raw = None
-                if self._navigation_epoch != epoch:
+                if self._navigation_epoch != epoch or not implementation_current():
                     raw = None
                 yield normalize(raw)
 
         def reparse(token, record_id):
+            if not implementation_current():
+                return None
             try:
                 self._assert_public_generation(epoch)
                 response = self._reparse_retained_public_response(token, record_id)
                 self._assert_public_generation(epoch)
-                return response
+                return response if implementation_current() else None
             except ProviderError:
                 return None
 
         return PublicSearchReplayCapability(
-            _PARSER_FAMILY_DIGEST, _PARSER_IMPLEMENTATION_DIGEST,
+            family, implementation,
             read, hold, reparse,
         )
 
