@@ -240,3 +240,40 @@ def test_exhausted_retry_returns_terminal_receipt_not_retryable(tmp_path):
     finally:
         broker.close()
         storage.close()
+
+
+def test_network_circuit_cannot_consume_both_documentary_slots(tmp_path):
+    storage = Storage(tmp_path / "circuits.sqlite")
+    budget = SharedTaskAdmission(max_inflight=5, reserve_user_slots=1)
+    broker = TaskBrokerImpl(object(), max_workers=1, shared_admission=budget)
+    entered, release = Event(), Event()
+
+    def blocker(_control):
+        entered.set()
+        assert release.wait(10)
+
+    bridge = AggregateWorkBridge(storage, broker, lambda *_: PreparedAggregate(publish),
+                                 clock=lambda: 1)
+    try:
+        foreground = broker.submit(blocker, priority=TaskPriority.USER_ACTION)
+        assert entered.wait(10)
+        first = enqueue(storage, spec("fetch_source_notice"))
+        second = enqueue(storage, spec("fetch_source_notice", value="B"), first.generation)
+        local = enqueue(storage, aggregate())
+        h1 = bridge.offer(first, circuit="network")
+        assert h1.outcome == "accepted"
+        assert bridge.offer(second, circuit="network").outcome == "circuit_blocked"
+        h2 = bridge.offer(local, circuit="local")
+        assert h2.outcome == "accepted"
+        assert journal.read_job(storage, second).attempts == 0
+        h1.handle.cancel()
+        h2.handle.cancel()
+        for handle in (h1.handle, h2.handle):
+            with pytest.raises(Cancelled):
+                handle.result(timeout=5)
+        release.set()
+        foreground.result(timeout=5)
+    finally:
+        release.set()
+        broker.close()
+        storage.close()
