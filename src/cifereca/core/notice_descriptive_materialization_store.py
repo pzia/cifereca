@@ -174,7 +174,13 @@ def publish_descriptive_materialization_txn(
             expected = journal.descriptive_job_spec(
                 target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
                 scope=row.scope, input_digest=input_digest, implementation_digest=digest,
+                public_age=job.spec.public_age_locator is not None,
             )
+            if job.spec.public_age_locator is not None:
+                from .notice_c_public_age_request import reattest_public_age_job_txn
+                current_pin, current_admitted = reattest_public_age_job_txn(db, job.spec)
+                if current_pin != pin or current_admitted != admitted:
+                    raise ValueError("descriptive_journal_snapshot_mismatch")
         if job.spec != expected:
             raise ValueError("descriptive_journal_snapshot_mismatch")
     encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
