@@ -113,3 +113,26 @@ def test_resolver_failure_backoff_and_status(tmp_path, monkeypatch):
         assert intent.capture_status(db, second) == {"capture_state": "partial"}
     finally:
         db.close(final=True)
+
+
+def test_capacity_preserves_unfinished_capture(tmp_path, monkeypatch):
+    from cifereca.core import notice_regression_capture_intent as intent
+    monkeypatch.setattr(intent, "_MAX_INTENTS", 2)
+    db = Storage(tmp_path / "capacity.sqlite")
+    def enqueue(scope):
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            return enqueue_capture_txn(sql, scope=scope*64, generation=1,
+                review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                input_digest=sha256(b"body").hexdigest())
+    try:
+        first, second = enqueue("a"), enqueue("b")
+        assert enqueue("c") is None
+        assert intent.export_capture(db, first, members={}, directory=tmp_path) == "partial"
+        third = enqueue("c")
+        assert third is not None
+        assert intent.capture_status(db, first) is None
+        assert set(intent.pending_capture_ids(db)) == {second, third}
+        assert len(list(tmp_path.glob("*.zip"))) == 1
+    finally:
+        db.close(final=True)
