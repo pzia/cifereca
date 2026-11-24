@@ -181,6 +181,7 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
                                       _authorized_capture_members(port, request, selected))
             return WitnessRejectedPublication(
                 None if diagnostic is None else export_after_commit,
+                diagnostic,
             )
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
