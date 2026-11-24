@@ -163,6 +163,24 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_hidden_or_nested_offer_marker_is_unknown(self):
+        for marker in (
+            '<div style="display: none"><span class="lb_unavailable">No</span></div>',
+            '<div style="visibility:hidden"><span class="lb_unavailable">No</span></div>',
+            '<div itemscope itemtype="https://schema.org/Organization">'
+            '<span class="lb_unavailable">No</span></div>',
+            '<span class="lb_unavailable">No',
+        ):
+            with self.subTest(marker=marker):
+                session, account, item, calls = self.make(
+                    detail=DETAIL.replace("</article>", marker + "</article>"))
+                try:
+                    facts = session.borrower_eligibility_for(item, account)
+                    self.assertEqual(facts.item_offer, "unknown")
+                    self.assertEqual(len(calls), 2)
+                finally:
+                    session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
