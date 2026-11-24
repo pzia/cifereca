@@ -14,8 +14,18 @@ from .notice_descriptive_materialization import (
     DescriptiveMaterialization, require_current_descriptive_materialization,
 )
 
+from .notice_descriptive_selection_store import (
+    read_descriptive_selection_txn, require_descriptive_selection,
+    descriptive_selection_input_digest,
+)
+
 _PREFIX = "notice.c.descriptive.v1:"
 _MAX_ROW_BYTES = 8192
+_PIN_PREFIX = "notice.c.descriptive-materialization-pin.v1:"
+
+
+def _pin_key(key):
+    return _PIN_PREFIX + key[len(_PREFIX):]
 
 
 def _row_key(row: DescriptiveMaterialization) -> str:
@@ -113,6 +123,10 @@ def publish_descriptive_materialization(
         if (existing.execution_key if existing else None) != expected_execution_key:
             raise ValueError("descriptive_materialization_cas_changed")
         selection, admitted, digest = capture_current_txn(db)
+        pin = read_descriptive_selection_txn(
+            db, canonical_type=row.canonical_type, scope=row.scope,
+        )
+        require_descriptive_selection(pin, selection, digest)
         require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
@@ -125,9 +139,9 @@ def publish_descriptive_materialization(
             if (job.spec.kind != "recompute_aggregate"
                     or job.spec.target != canonical_cover_document_ref(
                         row.target_edition_id).source_key
-                    or job.spec.input_digest != sha256(
-                        row.execution_key.encode("ascii")
-                    ).hexdigest()
+                    or job.spec.input_digest != descriptive_selection_input_digest(
+                        row.execution_key, pin
+                    )
                     or job.spec.implementation_digest != digest):
                 raise ValueError("descriptive_journal_snapshot_mismatch")
         encoded = json.dumps(asdict(row), ensure_ascii=True, sort_keys=True,
@@ -139,6 +153,14 @@ def publish_descriptive_materialization(
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, encoded),
         )
+        if pin is not None:
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (_pin_key(key), str(pin.generation)),
+            )
+        else:
+            db.execute("DELETE FROM metadata WHERE key=?", (_pin_key(key),))
         if journal_lease is not None:
             journal._complete_job_txn(
                 db, journal_lease,
@@ -163,6 +185,16 @@ def read_descriptive_materialization(storage, *, target_edition_id, canonical_ty
         if _row_key(row) != key:
             raise ValueError("corrupt_descriptive_materialization")
         selection, admitted, digest = capture_current_txn(db)
+        pin = read_descriptive_selection_txn(
+            db, canonical_type=row.canonical_type, scope=row.scope,
+        )
+        require_descriptive_selection(pin, selection, digest)
+        if pin is not None:
+            published_pin = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
+            ).fetchone()
+            if published_pin is None or published_pin[0] != str(pin.generation):
+                raise ValueError("stale_descriptive_selection_generation")
         return require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
