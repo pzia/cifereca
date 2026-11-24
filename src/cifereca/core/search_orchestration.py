@@ -559,12 +559,12 @@ def _public_rows_from_response(
     from hashlib import sha256
     body = response.notice_parse_input
     implementation = response.notice_parser_implementation
-    evidence = None
+    parse_evidence = None
     if (type(body) is bytes and 0 < len(body) <= 2 * 1024 * 1024
             and type(implementation) is str
             and re.fullmatch(r"[0-9a-f]{64}", implementation)
             and response.partial is False):
-        evidence = (sha256(body).hexdigest(), implementation)
+        parse_evidence = (sha256(body).hexdigest(), implementation)
     admitted: list[SearchResult] = []
     for row in response.results:
         projected = projections.get(id(row))
@@ -646,7 +646,7 @@ def _public_rows_from_response(
                             projected.friendly_url,
                             projected.metadata.get("public_url_evidence"),
                         )
-                    if evidence is not None:
+                    if parse_evidence is not None:
                         from .notice_search_cover_producer import admit_public_search_catalogue
                         try:
                             exact = admit_public_search_catalogue(
@@ -659,7 +659,7 @@ def _public_rows_from_response(
                             projected._core_notice_parse_input = (
                                 _CORE_PUBLIC_COVER_WITNESS, exact.key,
                                 exact.raw_json, exact.parser_id, exact.parser_version,
-                                *evidence,
+                                *parse_evidence,
                             )
             admitted.append(projected)
     return admitted
