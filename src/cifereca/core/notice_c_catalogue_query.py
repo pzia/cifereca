@@ -26,5 +26,6 @@ def search_public_catalogue_view(
         provider_ids=provider_ids, page=page, page_size=page_size,
         max_scan=max_scan, now=now, content_types=content_types,
         age=age, age_kind=age_kind, group_by_document=True,
+        sort_by_recency=(mode == "timeline"),
     )
     return project_public_catalogue_view(result, mode=mode)
