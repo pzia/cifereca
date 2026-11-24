@@ -128,13 +128,16 @@ def review_parse_witness(
     source_scope_sha256: str,
     input_sha256: str | None, parser_version: str,
     raw_fields: object, complete: bool,
+    publication_review: bool = False,
 ) -> ParseWitnessReview:
     """Classify one already parsed response without network or values in logs.
 
     A confirmed regression requires: approved baseline, exact same source
     scope and raw response bytes, a *different* parser version, complete
-    parsing, and a missing/invalid critical field. Changed input bytes can
-    only be 'source_changed', even when the new page is empty.
+    parsing, and a missing/invalid critical field. Legacy review treats
+    changed input as source_changed. Trusted publication review additionally
+    detects structural drift on changed input and admitted partial parses;
+    it never compares value digests across different input bytes.
     """
     if (not _valid_baseline(baseline)
             or type(source_scope_sha256) is not str
@@ -146,16 +149,18 @@ def review_parse_witness(
             or type(parser_version) is not str
             or _VERSION.fullmatch(parser_version) is None
             or type(complete) is not bool
+            or type(publication_review) is not bool
             or type(raw_fields) is not dict):
         raise ValueError("invalid_parser_witness_review")
     if (not baseline.approved
             or source_scope_sha256 != baseline.source_scope_sha256
-            or input_sha256 is None or not complete):
+            or input_sha256 is None or (not complete and not publication_review)):
         return ParseWitnessReview("unverified", ())
     # The response content changed: comparisons against the old baseline
     # would generate false parsing-regression diagnoses. Never call this
     # confirmation, even if all fields are missing.
-    if input_sha256 != baseline.approved_input_sha256:
+    changed_input = input_sha256 != baseline.approved_input_sha256
+    if changed_input and not publication_review:
         return ParseWitnessReview("source_changed", ())
     # Only structurally admissible native parser output may support a
     # regression diagnosis. In particular a colliding foreign dict key
@@ -181,16 +186,17 @@ def review_parse_witness(
         violation = (not present and field.required) or (
             present and (
                 _kind(current) != field.expected_type
-                or field.expected_sha256 is not None
+                or not changed_input and field.expected_sha256 is not None
                 and field_digest(current) != field.expected_sha256
             )
         )
         if violation:
             misses.append("critical_field_" + str(position))
     if not misses:
-        return ParseWitnessReview("unchanged", ())
+        return ParseWitnessReview("source_changed" if changed_input else
+                                  "unchanged" if complete else "unverified", ())
     status = ("parser_regression_confirmed"
-              if parser_version != baseline.parser_version
+              if not changed_input and parser_version != baseline.parser_version
               else "parser_drift_suspected")
     return ParseWitnessReview(status, tuple(misses))
 
@@ -219,6 +225,7 @@ def admitted_source_scope_sha256(
 def review_admitted_source_parse_witness(
     baseline: ParseWitness, *, observation: NoticeSourceObservation,
     input_sha256: str | None,
+    publication_review: bool = False,
 ) -> ParseWitnessReview:
     """Review one typed Core admission, not caller-provided loose coordinates.
 
@@ -258,6 +265,7 @@ def review_admitted_source_parse_witness(
         parser_version=observation.parser_version,
         raw_fields=fields,
         complete=observation.status == "complete",
+        publication_review=publication_review,
     )
 
 
