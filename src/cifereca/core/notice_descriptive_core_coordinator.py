@@ -127,6 +127,7 @@ def run_descriptive_core_job(
             expected_execution_key=expected_execution_key,
             capture_current_txn=recapture,
             journal_lease=lease, journal_now=completion_now(),
+            journal_clock=completion_now,
         )
     except Exception:
         # A refused or failed worker never marks a job current. Preserve
