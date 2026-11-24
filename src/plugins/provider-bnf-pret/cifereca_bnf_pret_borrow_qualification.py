@@ -134,6 +134,42 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account, *,
             ), permission='unknown',
         )
 
+def advisory_display_values(self, observation, item: SearchResult, account: Account):
+    """Project only display-safe values for the current exact session; no I/O."""
+    with self._lock:
+        if (type(observation) is not BorrowerInformationalObservation
+                or type(item) is not SearchResult or type(account) is not Account
+                or self._closed or not self.connected
+                or len(self._accounts) != 1 or account is not self._accounts[0]
+                or item.docbase != 'BNF_PRET' or item.medium != 'digital'
+                or (observation.identity_id, observation.provider_id,
+                    observation.credential_id, observation.borrower_id)
+                != (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id)
+                or (self.provider_id, self.credential_id)
+                != (account.provider_id, account.credential_id)
+                or (item.source_provider, item.source_credential)
+                != (account.provider_id, account.credential_id)
+                or (observation.record_id, observation.source_collection,
+                    observation.session_epoch)
+                != (item.record_id, item.source_collection, self._epoch)):
+            return None
+        broker = self.identity_broker
+        if broker is not None:
+            owner = self._core_owner_binding(account.unique_id, account.identity_id)
+            if owner is None or owner[1] != (account.identity_id,):
+                return None
+        return {
+            "observed_at": observation.observed_at,
+            "pass_state": "unknown",
+            "remaining_quota": None,
+            "available_copies": None,
+            "item_offer": ("unavailable" if observation.item_offer == "unavailable"
+                           else "unknown"),
+            "permission": "unknown",
+        }
+
+
 def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
     """Read-only inspection for #2055; never an authorization or POST.
 
