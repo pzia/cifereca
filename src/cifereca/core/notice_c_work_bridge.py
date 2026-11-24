@@ -183,7 +183,7 @@ class AggregateWorkBridge:
             if purchase and self._claim_purchase is None:
                 return "unsupported"
             if (not purchase and job.spec.kind != "recompute_aggregate"
-                    and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")
+                    and not (self._allow_reparse and not purchase and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
                     and not (self._allow_relink and job.spec.kind == "relink_notices")
                     and not (self._prepare_fetch is not None
                              and job.spec.kind == "fetch_source_notice")):
