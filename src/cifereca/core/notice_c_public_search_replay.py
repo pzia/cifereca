@@ -133,19 +133,26 @@ def make_retained_public_replay_port(
     from contextlib import contextmanager
 
     if not all(callable(fn) for fn in
-               (read_retained, hold_retained, normalize_input)):
+               (read_retained, hold_retained, normalize_input, reparse_response)):
         raise ValueError("notice_reparse_invalid_public_adapter")
 
     def read(token):
+        if not _anonymous_session(session, provider_id):
+            return None
         raw, ttl = read_retained(token)
-        if raw is None or type(ttl) is not int or ttl < 1:
+        if (raw is None or type(ttl) is not int or ttl < 1
+                or not _anonymous_session(session, provider_id)):
             return None
         return normalize_input(raw)
 
     @contextmanager
     def hold(token):
+        if not _anonymous_session(session, provider_id):
+            yield None
+            return
         with hold_retained(token) as raw:
-            yield None if raw is None else normalize_input(raw)
+            yield (normalize_input(raw) if raw is not None
+                   and _anonymous_session(session, provider_id) else None)
 
     return make_public_search_replay_port(
         session, provider_id=provider_id,
