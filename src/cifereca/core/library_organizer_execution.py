@@ -70,6 +70,18 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or not _lock_ok(shared_lock)
                 or not _execution_fence_current(scope, shared_lock)):
             return {"status": "blocked", "changed": 0}
+        # The reviewed placement identifies bytes, not merely a filename.
+        # Bound the final physical check by the same review budget.
+        from .derived_variant_publication import _verified_variant_file
+        from .library_organizer_review import _MAX_HASH_BYTES
+        artifact_id = row.get("artifact_id")
+        size = old.stat().st_size
+        if (type(artifact_id) is not str or not artifact_id.startswith("sha256:")
+                or not 0 < size <= _MAX_HASH_BYTES):
+            return {"status": "blocked", "changed": 0}
+        digest = artifact_id.removeprefix("sha256:")
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            return {"status": "blocked", "changed": 0}
         invoked = True
         result = broker.run(plan)
         current = scope.storage.placement_get(entry.placement_id)
@@ -83,6 +95,11 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or old.exists() or old.is_symlink()
                 or result.ok is not True or result.warnings or result.changed != 1):
             return {"status": "recovery_required", "changed": None}
+        # A successful writer return is not a substitute for the named
+        # physical proof. Reuse the no-follow Core verifier; never attempt
+        # an additional write or rollback on a failed postcheck.
+        with _verified_variant_file(new, digest, expected_size=size) as recheck:
+            recheck()
         return {"status": "renamed", "changed": 1}
     except Exception:
         return {"status": "recovery_required" if invoked else "blocked",
