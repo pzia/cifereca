@@ -40,6 +40,24 @@ def render_public_catalogue_view(view: PublicCatalogueView, *, Gtk):
             evidence.set_xalign(0)
             evidence.set_wrap(True)
             item.append(evidence)
+        if view.mode in ("detail", "sources") and row.age_observation is not None:
+            for bound in row.age_observation.ranges:
+                if bound.age_min is None:
+                    extent = f"Jusqu’à {bound.age_max} ans"
+                elif bound.age_max is None:
+                    extent = f"À partir de {bound.age_min} ans"
+                elif bound.age_min == bound.age_max:
+                    extent = f"{bound.age_min} ans"
+                else:
+                    extent = f"De {bound.age_min} à {bound.age_max} ans"
+                native_age = Gtk.Label(
+                    label=(f"Âge déclaré ({bound.age_kind}) : {extent} "
+                           f"· {bound.source_label} "
+                           f"· champ : {row.age_observation.source_field}"),
+                )
+                native_age.set_xalign(0)
+                native_age.set_wrap(True)
+                item.append(native_age)
         if view.mode == "detail" and row.description:
             description = Gtk.Label(label=row.description)
             description.set_xalign(0)
@@ -49,6 +67,12 @@ def render_public_catalogue_view(view: PublicCatalogueView, *, Gtk):
             stamp = Gtk.Label(label=f"Dernière observation : {row.last_seen_at}")
             stamp.set_xalign(0)
             item.append(stamp)
+        freshness = Gtk.Label(label=(
+            "Observation périmée · rafraîchissement non attesté"
+            if row.stale else "Observation disponible · fraîcheur non garantie"
+        ))
+        freshness.set_xalign(0)
+        item.append(freshness)
         root.append(item)
     if view.has_more or view.status != "complete":
         note = Gtk.Label(label="Résultats partiels · d'autres notices peuvent exister")
