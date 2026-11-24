@@ -57,6 +57,15 @@ class CiferecaCore:
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
+        capture_directory = None
+        if notice_work_admission is not None:
+            configured = config.get("diagnostics.regression_capture_directory", None)
+            if configured is not None:
+                if type(configured) is not str or not configured.strip():
+                    raise ValueError("notice_capture_invalid_directory")
+                capture_directory = Path(configured).expanduser()
+                if not capture_directory.is_absolute():
+                    raise ValueError("notice_capture_invalid_directory")
         diagnostics = Diagnostics(
             enabled=True if diagnostics_enabled is None else bool(diagnostics_enabled),
             level=str(config.get("diagnostics.level", "normal")) if diagnostics_level is None else diagnostics_level,
@@ -87,7 +96,8 @@ class CiferecaCore:
             brokers["maintenance.page.host"] = object()
         notice_work = (None if notice_work_admission is None else
                        NoticeWorkRuntime(storage, brokers["tasks"],
-                                         replay_registry=notice_replay_registry, diagnostics=diagnostics))
+                                         replay_registry=notice_replay_registry, diagnostics=diagnostics,
+                                         capture_directory=capture_directory))
         if notice_work is not None:
             # Private Core worker port, not a plugin broker.
             library._notice_work_recover_search = notice_work.recover_search_sources
