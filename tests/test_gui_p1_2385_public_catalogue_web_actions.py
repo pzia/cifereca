@@ -107,3 +107,10 @@ def test_web_menu_reads_exact_c_and_revalidates_an_opaque_choice_on_click(monkey
     assert fn(*args) is False
     assert "réponse Core invalide" in group.children[1].label
     assert len(group.children[2].children) == 0
+
+    monkeypatch.setattr(actions, "read_public_web_choices", lambda *args: None)
+    group.children[0].handlers["clicked"](group.children[0])
+    fn, args = pending.pop()
+    assert fn(*args) is False
+    assert "Notice C indisponible" in group.children[1].label
+    assert "Aucune fiche" not in group.children[1].label
