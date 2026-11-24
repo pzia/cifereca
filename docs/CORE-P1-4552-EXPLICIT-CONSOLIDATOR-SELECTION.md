@@ -12,3 +12,7 @@ Règles de sécurité :
 **Préconditions d'intégration** : le Core doit authentifier les plugins installés, leurs manifests et la portée, charger un unique exécuteur sous isolation, vérifier le schéma de sortie et journaliser un résultat versionné ; ce module ne remplace aucune de ces garanties. Le choix explicite devra être persisté par portée et invalidé au changement de version, de plugin ou de type. Il n'effectue ni SQLite, réseau, mutation de source ni consolidation.
 
 La tranche #4724 distingue déjà les faits exacts des hérités ; cette tranche complète le contrat d'admission sans brancher prématurément le worker asynchrone.
+
+## Propriétaire Core de configuration persistante
+
+Le port `configure_descriptive_selection` qualifie les déclarations, le schéma texte et les sources installées déjà authentifiées, puis persiste le choix exact via CAS. Une version configurée absente ou un retrait explicite produit un tombstone ; une ambiguïté ou un registre invalide refuse toute mutation. Un changement de digest du code à version identique avance la génération. Ce port ne découvre ni n'authentifie les packages et ne déclenche aucun travail. Le raccordement au gestionnaire de plugins et à la configuration utilisateur reste requis.
