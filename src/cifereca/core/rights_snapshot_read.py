@@ -34,7 +34,8 @@ _MAX_INVENTORY_PAGES = 128
 def read_account_rights_snapshot(service, account: Account, *,
                                  cancelled=lambda: False,
                                  purchase_candidates_sink=None,
-                                 purchase_omissions_sink=None) -> ProviderRightsSnapshot:
+                                 purchase_omissions_sink=None,
+                                 require_purchase_observation=False) -> ProviderRightsSnapshot:
     """Explicit opt-in account I/O, never invoked by a passive Core projection.
 
     The caller owns source enablement, task cancellation and exclusive sync
@@ -42,7 +43,9 @@ def read_account_rights_snapshot(service, account: Account, *,
     the currently registered, connected provider+credential for this account.
     A missing optional reader is not replaced by library(), loans() or GET.
     """
-    if (type(account) is not Account or not callable(cancelled)
+    if (type(require_purchase_observation) is not bool
+            or (require_purchase_observation and not callable(purchase_candidates_sink))
+            or type(account) is not Account or not callable(cancelled)
             or (purchase_candidates_sink is not None and not callable(purchase_candidates_sink))
             or (purchase_omissions_sink is not None and not callable(purchase_omissions_sink))):
         raise ValueError("invalid_rights_reader_request")
@@ -199,6 +202,10 @@ def read_account_rights_snapshot(service, account: Account, *,
             not share and (purchase_candidates_sink is not None or purchase_omissions_sink is not None)
             and callable(getattr_static(session, purchase_reader, None))
         )
+        # Explicit documentary review admits only the same-read purchase
+        # observation: never fall back to another inventory or shared Sync.
+        if require_purchase_observation and not capture_purchase:
+            return unavailable()
         reader_name = (
             shared_reader if share else
             purchase_reader if capture_purchase else
