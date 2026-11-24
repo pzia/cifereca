@@ -648,10 +648,13 @@ def _public_rows_from_response(
                         )
                     if evidence is not None:
                         from .notice_search_cover_producer import admit_public_search_catalogue
-                        exact = admit_public_search_catalogue(
-                            projected, identity_id="__public__", observed_at=1,
-                            public_cover_url=projected.thumbnail_url,
-                        )
+                        try:
+                            exact = admit_public_search_catalogue(
+                                projected, identity_id="__public__", observed_at=1,
+                                public_cover_url=projected.thumbnail_url,
+                            )
+                        except (ValueError, TypeError, UnicodeError):
+                            exact = None
                         if exact is not None:
                             projected._core_notice_parse_input = (
                                 _CORE_PUBLIC_COVER_WITNESS, exact.key,
@@ -2868,8 +2871,6 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             )
                     except (ValueError, OSError, sqlite3.Error):
                         pass
-                for row in producing_rows:
-                    row.__dict__.pop("_core_notice_parse_input", None)
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
                     if persisted is None:
