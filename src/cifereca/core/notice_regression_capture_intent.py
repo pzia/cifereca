@@ -13,7 +13,7 @@ _PREFIX = "notice.c.regression-capture.v1:"
 _SHA = re.compile(r"[0-9a-f]{64}")
 
 
-def enqueue_capture_txn(db, *, scope, generation, review, input_digest):
+def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshots=None):
     if (not db.in_transaction or type(scope) is not str
             or not _SHA.fullmatch(scope) or type(input_digest) is not str
             or not _SHA.fullmatch(input_digest) or type(generation) is not int
@@ -24,6 +24,13 @@ def enqueue_capture_txn(db, *, scope, generation, review, input_digest):
             or any(type(f) is not str or not re.fullmatch(r"critical_field_([1-9]|[12][0-9]|3[012])", f)
                    for f in review.affected_fields)):
         raise ValueError("invalid_capture_intent")
+    if snapshots is None:
+        snapshots = {}
+    if (type(snapshots) is not dict or any(
+            name not in ("baseline.json", "last_healthy.json", "current_parse.json", "environment.json")
+            or type(value) is not str for name, value in snapshots.items())
+            or sum(len(v.encode("utf-8")) for v in snapshots.values()) > 16384):
+        raise ValueError("invalid_capture_snapshots")
     payload = dict(generation=generation, status=review.status,
                    fields=sorted(review.affected_fields), input_sha256=input_digest)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -36,7 +43,7 @@ def enqueue_capture_txn(db, *, scope, generation, review, input_digest):
         if count >= 2048:
             return None
         db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
-                   (key, json.dumps(dict(payload, capture_state="pending"), sort_keys=True)))
+                   (key, json.dumps(dict(payload, snapshots=snapshots, capture_state="pending"), sort_keys=True)))
     return diagnostic
 
 
@@ -57,7 +64,10 @@ def export_capture(storage, diagnostic, *, members, directory=None):
     if record["capture_state"] in ("complete", "partial"):
         return record["capture_state"]
     try:
-        safe = dict(members)
+        if type(members) is not dict:
+            raise ValueError("invalid_capture_members")
+        safe = {name: value.encode("utf-8") for name, value in record.get("snapshots", {}).items()}
+        safe.update(members)
         safe["diff.json"] = json.dumps({k: record[k] for k in
             ("status", "fields", "input_sha256")}, sort_keys=True).encode()
         if "response.raw" in safe and hashlib.sha256(safe["response.raw"]).hexdigest() != record["input_sha256"]:
