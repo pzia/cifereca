@@ -284,3 +284,24 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
     finally:
         session.close()
         db.close()
+
+
+def test_retained_replay_adapter_refuses_revoked_session(tmp_path, monkeypatch):
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        response = session.search_with_response_facets("loup", "catalog")
+        token = response.notice_parse_input_token
+        raw, ttl = session._read_retained_public_input(token)
+        assert raw is not None and ttl > 0
+        port = make_port(session, raw.parser_family_digest,
+                         raw.parser_implementation_digest)
+        assert port.read_input(token) == normalize(raw)
+        with port.hold_input(token) as live:
+            assert live == normalize(raw)
+        session.close()
+        assert port.read_input(token) is None
+        with port.hold_input(token) as live:
+            assert live is None
+        assert len(calls) == 1
+    finally:
+        session.close()
