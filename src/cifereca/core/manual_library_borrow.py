@@ -459,6 +459,8 @@ def manual_borrow(
     eligibility, reason = observed_borrow_eligibility(session, account, item, fact)
     if eligibility == "blocked":
         return _result("blocked", reason)
+    if not current():
+        return _result("blocked", "borrow_scope_changed")
     operation_id = uuid4().hex
     try:
         if prior is None:
@@ -487,6 +489,9 @@ def manual_borrow(
             freed = service.storage.loan_borrow_release_unsent(key, operation_id)
             return (_result("blocked", reason) if freed else
                     _result("verification_unavailable", "borrow_checkpoint_unavailable"))
+        if not current():
+            service.storage.loan_borrow_finish(key, operation_id, status="blocked")
+            return _result("blocked", "borrow_scope_changed")
         loan = session.borrow_explicit_with_claim(
             item, account, admission=admission, claimed_receipt=receipt,
             confirmed=True, core_scope_current=lambda: current(),
