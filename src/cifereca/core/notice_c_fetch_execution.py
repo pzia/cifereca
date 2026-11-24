@@ -70,7 +70,7 @@ class PublicFetchExecution:
         return tuple(sorted({("fetch_source_notice", p.implementation_digest)
                              for p in self._ports}))
 
-    def prepare(self, storage, spec, lease, control, *, clock):
+    def prepare(self, storage, spec, lease, control, *, clock, capture_directory=None):
         """Reserve under explicit authority, execute once, prepare final CAS.
 
         No default transport or automatic retry on any failure. The port's
@@ -128,6 +128,7 @@ class PublicFetchExecution:
                     raise UnavailableNoticeWork("notice_fetch_transport_not_started")
             prepared = prepare_public_fetch_publication(
                 storage, authority, permit, result, clock=clock,
+                capture_directory=capture_directory,
             )
 
             @contextmanager
