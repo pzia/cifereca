@@ -8,11 +8,15 @@ uses the same source writer and dirty-C requests as the reparse worker.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
+from hashlib import sha256
 from threading import get_ident
 
 from . import notice_c_job_journal as journal
 from .notice_c_fetch_authority import PublicFetchAuthority, PublicFetchPermit
-from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork
+from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork, WitnessRejectedPublication
+from .notice_parse_witness_alert import review_publication_txn
+from .notice_regression_capture_intent import export_capture
 from .notice_source_observation import NoticeSourceObservation
 from .notice_cover_projection import project_notice_cover_attribute
 from .notice_cover_repository import _opaque_key, _checked_source_state, _persist_notice_cover_txn
@@ -20,6 +24,14 @@ from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
 from .notice_c_work_requests import request_source_worker_dependents_txn
 from .notice_c_initial_publication import request_initial_publication_txn
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class FreshPublicParse:
+    """Trusted same-call evidence, not a plugin declaration or authorization."""
+    observation: NoticeSourceObservation
+    body: bytes
+    export_allowed: bool = False
 
 
 def prepare_public_fetch_publication(storage, authority, permit, result, *, clock):
@@ -41,6 +53,13 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
             or not callable(clock)):
         raise ValueError("notice_fetch_invalid_publication_port")
 
+    evidence = result if type(result) is FreshPublicParse else None
+    if evidence is not None:
+        if (type(evidence.body) is not bytes or not 0 < len(evidence.body) <= 2 * 1024 * 1024
+                or type(evidence.export_allowed) is not bool):
+            authority.revoke(permit.lease.ref)
+            raise UnavailableNoticeWork("notice_fetch_invalid_parse_evidence")
+        result = evidence.observation
     old = permit.source
     now = clock()
     if (type(result) is not NoticeSourceObservation
@@ -99,6 +118,18 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
         now = clock()
         if not journal._integer(now, minimum=1) or result.observed_at > now:
             raise UnavailableNoticeWork("notice_fetch_invalid_clock")
+        if evidence is not None:
+            reject, diagnostic = review_publication_txn(
+                db, current=current.observation, candidate=result,
+                input_digest=sha256(evidence.body).hexdigest(),
+                implementation_digest=permit.implementation_digest,
+            )
+            if reject:
+                def after_commit():
+                    return export_capture(storage, diagnostic, members=(
+                        {"response.raw": evidence.body} if evidence.export_allowed else {}
+                    ))
+                return WitnessRejectedPublication(None if diagnostic is None else after_commit)
         key = _opaque_key(old.document)
         published = _persist_notice_cover_txn(
             db, result, attribute, key, old.attribute.field_path, True, current.epoch,
