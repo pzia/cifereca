@@ -224,3 +224,13 @@ def test_css_hidden_widget_ancestor_never_attests_loans_or_zero(style, body):
     assert result.loans == ()
     assert result.status == "partial"
     assert not result.exhaustive
+
+
+@pytest.mark.parametrize("style", ["display: none", "visibility: hidden"])
+@pytest.mark.parametrize("kind", ["loans", "resources"])
+def test_visible_card_with_hidden_identity_link_is_partial(style, kind):
+    html = card().replace(f'<a href="/{kind}/', f'<a style="{style}" href="/{kind}/')
+    result = parsed(page(html))
+    assert result.loans == ()
+    assert result.status == "partial"
+    assert not result.exhaustive
