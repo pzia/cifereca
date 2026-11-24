@@ -678,7 +678,22 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
     sections = [n for n in root.walk() if n.has_class("active-loans")]
     if len(sections) != 1 or not sections[0].closed:
         raise WebParseError("unrecognized_loans")
-    cards = [n for n in sections[0].walk() if n.has_class("js-loan")]
+    # Inline CSS-hidden cards are not positive observations. Keep the
+    # structural section so a hidden widget stays partial, not complete zero.
+    def visible_nodes(node):
+        style = "".join(node.attrs.get("style", "").lower().split())
+        if (node.tag in _HIDDEN or "hidden" in node.attrs
+                or node.attrs.get("aria-hidden", "").strip().lower() == "true"
+                or "display:none" in style or "visibility:hidden" in style):
+            return
+        yield node
+        for child in node.children:
+            if isinstance(child, _Node):
+                yield from visible_nodes(child)
+
+    widget_visible = any(n is sections[0] for n in visible_nodes(root))
+    cards = ([n for n in visible_nodes(sections[0]) if n.has_class("js-loan")]
+             if widget_visible else [])
     if len(cards) > MAX_ITEMS:
         raise WebParseError("item_limit")
     loans = {}
@@ -742,7 +757,7 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
     # The HTTP client already rejects non-200/login/redirect responses. A
     # missing widget, malformed card, hidden card or lazy loader fails closed.
     # This attests *absence* only, never lender acceptance or a loan quota.
-    exhaustive = not partial and not _active_loans_may_be_truncated(sections[0])
+    exhaustive = widget_visible and not partial and not _active_loans_may_be_truncated(sections[0])
     return LoanSnapshot(
         expected, tuple(loans.values()),
         "observed" if exhaustive else "partial",
