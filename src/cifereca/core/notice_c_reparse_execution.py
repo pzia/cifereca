@@ -7,7 +7,6 @@ by a returned parser object. No registration is installed by default.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -19,10 +18,8 @@ from .notice_c_reparse_requests import (
 from .notice_cover_repository import _opaque_key, _persist_notice_cover_txn
 from .notice_cover_projection import project_notice_cover_attribute
 from .notice_source_observation import NoticeSourceObservation, _id
-from .notice_parse_witness import admitted_source_scope_sha256, review_admitted_source_parse_witness
-from .notice_parse_witness_store import _PREFIX as _WITNESS_PREFIX, _decode as _decode_witness
-from .notice_parse_witness_alert import _ALERT_PREFIX, record_parse_witness_review_txn
-from .notice_regression_capture_intent import enqueue_capture_txn, export_capture
+from .notice_parse_witness_alert import review_publication_txn
+from .notice_regression_capture_intent import export_capture
 from .notice_c_work_bridge import WitnessRejectedPublication
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
@@ -173,67 +170,18 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             parser_family_digest=selected.parser_family_digest,
             implementation_digest=port.implementation_digest, now=now,
         )
-        # Recheck the currently approved pin under the same publication lock.
-        # A late approval must protect the last healthy source too.
-        scope = admitted_source_scope_sha256(result.key, parser_id=result.parser_id)
-        pin = db.execute("SELECT value FROM metadata WHERE key=?",
-                         (_WITNESS_PREFIX + scope,)).fetchone()
-        if pin is not None:
-            approved = _decode_witness(pin[0], scope)
-            review = review_admitted_source_parse_witness(
-                approved.baseline, observation=result,
-                input_sha256=request.receipt.input_digest,
+        reject, diagnostic = review_publication_txn(
+            db, current=current.observation, candidate=result,
+            input_digest=request.receipt.input_digest,
+            implementation_digest=port.implementation_digest,
+        )
+        if reject:
+            def export_after_commit():
+                return export_capture(storage, diagnostic, members=
+                                      _authorized_capture_members(port, request, selected))
+            return WitnessRejectedPublication(
+                None if diagnostic is None else export_after_commit,
             )
-            record_parse_witness_review_txn(
-                db, key=result.key, parser_id=result.parser_id,
-                generation=approved.generation, review=review,
-            )
-            if review.status in ("parser_regression_confirmed", "parser_drift_suspected"):
-                # Persist only admitted public observations, never transport
-                # bodies. A retained body is not proof of export permission.
-                snapshots = {
-                    "baseline.json": pin[0],
-                    "last_healthy.json": current.observation.raw_json,
-                    "current_parse.json": result.raw_json,
-                    "environment.json": json.dumps({
-                        "parser_id": result.parser_id,
-                        "parser_version": result.parser_version,
-                        "previous_parser_version": current.observation.parser_version,
-                        "implementation_sha256": port.implementation_digest,
-                        "input_sha256": request.receipt.input_digest,
-                        "raw_input_export": "subject_to_core_policy",
-                    }, sort_keys=True),
-                }
-                # Bound the retained diagnostic payload, explicitly omitting
-                # any oversized member rather than losing the regression alert.
-                bounded = {}
-                remaining = 16384
-                for name, value in snapshots.items():
-                    size = len(value.encode("utf-8"))
-                    if size <= remaining:
-                        bounded[name] = value
-                        remaining -= size
-                diagnostic = enqueue_capture_txn(
-                    db, scope=scope, generation=approved.generation,
-                    review=review, input_digest=request.receipt.input_digest,
-                    snapshots=bounded,
-                )
-                alert_key = _ALERT_PREFIX + scope
-                alert = json.loads(db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (alert_key,),
-                ).fetchone()[0])
-                alert["capture_id"] = diagnostic
-                if diagnostic is None:
-                    alert["capture_state"] = "capacity_refused"
-                db.execute("UPDATE metadata SET value=? WHERE key=?",
-                           (json.dumps(alert, sort_keys=True, separators=(",", ":")), alert_key))
-                def export_after_commit():
-                    return export_capture(storage, diagnostic, members=
-                                          _authorized_capture_members(port, request, selected))
-
-                return WitnessRejectedPublication(
-                    None if diagnostic is None else export_after_commit,
-                )
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
             old.attribute.field_path, True, current.epoch,
