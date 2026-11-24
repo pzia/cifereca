@@ -84,6 +84,9 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
             return {"status": "blocked", "changed": 0}
         invoked = True
         result = broker.run(plan)
+        post_stamp = sqlite_source_stamp(scope.database)
+        if post_stamp is None:
+            return {"status": "recovery_required", "changed": None}
         current = scope.storage.placement_get(entry.placement_id)
         if (not current or current.get("path") != str(new)
                 or current.get("artifact_id") != row.get("artifact_id")
@@ -100,6 +103,14 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
         # an additional write or rollback on a failed postcheck.
         with _verified_variant_file(new, digest, expected_size=size) as recheck:
             recheck()
+            if (sqlite_source_stamp(scope.database) != post_stamp
+                    or scope.storage.placement_get(entry.placement_id) != current
+                    or scope.storage.placement_for_path(old) is not None
+                    or old.exists() or old.is_symlink()):
+                return {"status": "recovery_required", "changed": None}
+            recheck()
+        if sqlite_source_stamp(scope.database) != post_stamp:
+            return {"status": "recovery_required", "changed": None}
         return {"status": "renamed", "changed": 1}
     except Exception:
         return {"status": "recovery_required" if invoked else "blocked",
