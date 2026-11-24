@@ -185,6 +185,34 @@ class NoticeWorkRuntime:
         self.request_tick()
         return True
 
+    def register_search_replay(self, source, receipt, port):
+        """Register exact live input and request replay only on version change.
+
+        Normal Search with the current parser does not schedule duplicate
+        parsing. An old retained input may be replayed by a newly qualified
+        implementation of its family, with the existing journal CAS.
+        """
+        from .notice_c_reparse_requests import _spec
+        from . import notice_c_job_journal as journal
+
+        if port.provider_id != source.observation.key.provider_id:
+            return None
+        if not self.stage_replay_port(port, receipt):
+            return None
+        if port.implementation_digest == receipt.parser_implementation_digest:
+            return None
+        spec = _spec(source, receipt, port.implementation_digest)
+        with self._storage._lock, self._storage._connect() as db:
+            db.execute("BEGIN")
+            previous = journal._load(db, journal._key(spec))
+            generation = 0 if previous is None else previous.ref.generation
+        # Any concurrent source, receipt, implementation or journal change
+        # is refused by the normal request/worker fences. No new GET.
+        return self.request_public_replay(
+            source, receipt, implementation_digest=port.implementation_digest,
+            expected_generation=generation,
+        )
+
     def request_public_replay(self, source, receipt, *, implementation_digest,
                               expected_generation):
         """Trusted worker entry point; no network, new queue or parser grant.
