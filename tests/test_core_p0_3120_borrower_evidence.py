@@ -209,3 +209,22 @@ def test_borrower_wide_positive_never_omits_explicit_user_action(action_requirem
     )
     assert (status.identity_id, status.provider_id,
             status.credential_id, status.account_id) == ("", "", "", "")
+
+@pytest.mark.parametrize("coordinate", [
+    "identity_id", "provider_id", "credential_id", "account_id",
+])
+@pytest.mark.parametrize("control", ["\\n", "\\r", "\\t", "\\u202e", "\\u2066"])
+def test_nonprintable_borrower_proof_coordinates_never_promote(
+    coordinate, control,
+):
+    reader = account()
+    contaminated = evidence(
+        reader, **{coordinate: getattr(
+            reader, "unique_id" if coordinate == "account_id" else coordinate,
+        ) + control},
+    )
+    decision = assess(reader, contaminated)
+    assert (decision.state, decision.reason_code) == (
+        "unverified", "borrower_scope_unverified",
+    )
+    assert decision.account_id == decision.credential_id == ""
