@@ -123,7 +123,8 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
     assert authority() == before
 
 
-@pytest.mark.parametrize("case", ["success", "production", "cancelled", "lock_busy", "late_revocation"])
+@pytest.mark.parametrize("case", ["success", "production", "cancelled", "lock_busy", "late_revocation",
+                                  "external_contender", "lock_replaced"])
 def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, case):
     from types import SimpleNamespace as NS
     from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
@@ -172,6 +173,30 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
             active[0] = False
             return result
         monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "plan", revoke)
+    if case in ("external_contender", "lock_replaced"):
+        import subprocess
+        import sys
+
+        original = LibraryMaintenanceBrokerImpl.plan
+        def independent_consumer(self, request):
+            result = original(self, request)
+            if case == "lock_replaced":
+                lock_path.rename(lock_path.with_suffix(".retired"))
+                lock_path.write_bytes(lock_bytes)
+                lock_path.chmod(0o600)
+            else:
+                # A separate process uses the same POSIX OS lease, without
+                # sharing the worker's Python thread-local registry.
+                program = ("import fcntl, sys; "
+                           "f = open(sys.argv[1], 'rb'); "
+                           "\ntry: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"
+                           "\nexcept BlockingIOError: sys.exit(42)"
+                           "\nsys.exit(0)")
+                child = subprocess.run([sys.executable, "-c", program, str(lock_path)],
+                                       capture_output=True, timeout=10)
+                assert child.returncode == 42, child.stderr
+            return result
+        monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "plan", independent_consumer)
     if case == "lock_busy":
         with InterProcessLock(lock_path, existing_nofollow=True):
             result = command()
@@ -180,7 +205,7 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
     assert command() == {"status": "blocked", "changed": 0}
     assert lock_path.read_bytes() == lock_bytes
     new = old.with_name("Autrice - Roman commun.epub")
-    if case == "success":
+    if case in ("success", "external_contender"):
         assert result == {"status": "renamed", "changed": 1}
         assert new.read_bytes() == data and not old.exists()
         assert store.placement_get(pid)["path"] == str(new)
