@@ -87,3 +87,29 @@ def test_failed_capture_backoff_survives_restart(tmp_path, monkeypatch):
                                       limit=1) == ((second, "partial"),)
     finally:
         db.close(final=True)
+
+
+def test_resolver_failure_backoff_and_status(tmp_path, monkeypatch):
+    from cifereca.core import notice_regression_capture_intent as intent
+    monkeypatch.setattr(intent.time, "time", lambda: 1000)
+    db = Storage(tmp_path / "resolver.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            for scope in ("a"*64, "b"*64):
+                enqueue_capture_txn(sql, scope=scope, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"body").hexdigest())
+        first, second = intent.pending_capture_ids(db)
+        def unavailable(_):
+            raise OSError("unavailable")
+        assert intent.resume_captures(db, unavailable, limit=1) == ((first, "failed"),)
+        assert intent.capture_status(db, first) == {
+            "capture_state": "failed", "attempts": 1, "retry_after": 1002}
+        assert intent.pending_capture_ids(db, limit=1) == (second,)
+        assert intent.capture_status(db, "0"*64) is None
+        assert intent.resume_captures(db, lambda _: {}, directory=tmp_path,
+                                      limit=1) == ((second, "partial"),)
+        assert intent.capture_status(db, second) == {"capture_state": "partial"}
+    finally:
+        db.close(final=True)
