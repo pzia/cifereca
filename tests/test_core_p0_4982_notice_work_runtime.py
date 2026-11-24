@@ -357,3 +357,34 @@ def test_dispatch_scan_failure_does_not_invent_worker_or_document_progress(tmp_p
                                     and p.scans_completed == 1)
         assert recovered.scans_failed == 1
         assert recovered.workers_submitted == recovered.documentary_revision == 0
+
+
+def test_configured_capture_destination_used_by_maintenance(tmp_path, monkeypatch):
+    import json
+    from hashlib import sha256
+    from cifereca.core.notice_parse_witness import ParseWitnessReview
+    from cifereca.core.notice_regression_capture_intent import enqueue_capture_txn, capture_status
+
+    destination = tmp_path / "chosen"
+    (tmp_path / "config.json").write_text(json.dumps({
+        "diagnostics": {"regression_capture_directory": str(destination)}
+    }), encoding="utf-8")
+    monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir",
+                        lambda: tmp_path)
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        assert runtime._pump._capture_directory == destination
+        with core.storage._lock, core.storage._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            diagnostic = enqueue_capture_txn(
+                db, scope="a"*64, generation=1,
+                review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                input_digest=sha256(b"body").hexdigest())
+        assert not destination.exists()
+        scan = runtime.request_tick()
+        assert scan is not None
+        scan.result(timeout=10)
+        assert capture_status(core.storage, diagnostic) == {"capture_state": "partial"}
+        assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
+        assert not list(tmp_path.glob("cifereca-regression-*.zip"))
