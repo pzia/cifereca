@@ -4,10 +4,12 @@
 Usage (no network, no file write):
   python3 scripts/bnf_borrow_dom_probe.py --page profile < PRIVATE_PROFILE.html
   python3 scripts/bnf_borrow_dom_probe.py --page detail < PRIVATE_BOOK.html
+  python3 scripts/bnf_borrow_dom_probe.py --page activity < PRIVATE_ACTIVITY.html
 
 stdout contains a fixed, limited JSON shape and tag names only, NEVER the
 source HTML, personal names, account/borrower IDs, counts, CSRF or URLs.
-Its candidate labels do NOT constitute borrower eligibility or permission.
+Its candidate labels and inventory shapes do NOT constitute borrower eligibility,
+authentication, a verified empty inventory or permission.
 """
 from __future__ import annotations
 
