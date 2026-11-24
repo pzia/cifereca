@@ -117,7 +117,7 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
         if (type(item) is not SearchResult or item.source_provider != self.provider_id
                 or item.source_credential != self.credential_id
                 or item.docbase != 'BNF_PRET' or item.medium != 'digital'
-                or type(notice[1]) is not str
+                or type(item.record_id) is not str
                 or not self.connected or self._closed
                 or len(self._accounts) != 1 or account is not self._accounts[0]):
             raise ProviderConfigurationError('account_scope_mismatch')
