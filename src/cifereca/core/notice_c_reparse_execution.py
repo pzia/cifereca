@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from typing import Callable
 
 from . import notice_c_job_journal as journal
@@ -231,10 +233,12 @@ def resolve_replay_capture_members(storage, registry, diagnostic, *, clock):
     locator = read_replay_capture_locator(storage, diagnostic)
     if locator is None or registry is None:
         return {}
-    spec, expected_digest = locator
+    spec, payload = locator
     try:
         request = read_public_reparse_request(storage, spec, now=clock())
-        if request.receipt.input_digest != expected_digest:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        expected_id = sha256((request.receipt.source_scope_digest + ":" + encoded).encode()).hexdigest()
+        if request.receipt.input_digest != payload["input_sha256"] or expected_id != diagnostic:
             return {}
         port = registry.select(request)
         if port.authorize_capture_input is None:
@@ -251,6 +255,6 @@ def resolve_replay_capture_members(storage, registry, diagnostic, *, clock):
                     parser_family_digest=live.parser_family_digest,
                     implementation_digest=port.implementation_digest, now=clock(),
                 )
-            return _authorized_capture_members(port, request, live)
+        return _authorized_capture_members(port, request, live)
     except (ValueError, UnavailableNoticeWork):
         return {}
