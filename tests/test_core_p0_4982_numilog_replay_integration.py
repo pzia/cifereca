@@ -264,7 +264,7 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
             from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
             port = qualify_public_search_replay(session, session.public_search_replay_capability())
             registry = PublicReplayRegistry((port,))
-            assert runtime.install_replay_registry(registry) is True
+            assert runtime.stage_replay_port(port, receipt) is True
             ref = runtime.request_public_replay(
                 source, receipt,
                 implementation_digest=receipt.parser_implementation_digest,
