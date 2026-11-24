@@ -129,7 +129,7 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
                     return export_capture(storage, diagnostic, members=(
                         {"response.raw": evidence.body} if evidence.export_allowed else {}
                     ))
-                return WitnessRejectedPublication(None if diagnostic is None else after_commit)
+                return WitnessRejectedPublication(None if diagnostic is None else after_commit, diagnostic)
         key = _opaque_key(old.document)
         published = _persist_notice_cover_txn(
             db, result, attribute, key, old.attribute.field_path, True, current.epoch,
