@@ -218,12 +218,12 @@ def test_nonprintable_borrower_proof_coordinates_never_promote(
     coordinate, control,
 ):
     reader = account()
-    contaminated = evidence(
-        reader, **{coordinate: getattr(
-            reader, "unique_id" if coordinate == "account_id" else coordinate,
-        ) + control},
-    )
-    decision = assess(reader, contaminated)
+    field = "unique_id" if coordinate == "account_id" else coordinate
+    contaminated_reader = replace(reader, **{
+        field: getattr(reader, field) + control,
+    })
+    # Scope matches exactly: a mismatch is not what makes this invalid.
+    decision = assess(contaminated_reader, evidence(contaminated_reader))
     assert (decision.state, decision.reason_code) == (
         "unverified", "borrower_scope_unverified",
     )
