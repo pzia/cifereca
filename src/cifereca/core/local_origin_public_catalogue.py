@@ -309,7 +309,15 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
                 else candidate for candidate in candidates)
             # Keep a shared URL ambiguous across editions. A URL alone also
             # cannot override contradictory bibliographic evidence.
-            if len(source_matches) == 1:
+            # A second returned row claiming the same literal URL is
+            # ambiguous even if its marker is missing or it was excluded
+            # from the display projection. Do not upgrade the surviving
+            # row by silently discarding contradictory response evidence.
+            literal_occurrences = sum(
+                1 for row in response.results
+                if type(row.friendly_url) is str and row.friendly_url in source_urls
+            )
+            if len(source_matches) == 1 and literal_occurrences == 1:
                 index = source_matches[0]
                 candidate = candidates[index]
                 if candidate.comparison in (

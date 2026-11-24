@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import zipfile
 import zlib
+from unicodedata import category
 from xml.etree import ElementTree
 
 from ..epub_metadata import MAX_XML, _bounded_directory, _read, _xml
@@ -181,7 +182,9 @@ def _read_epub_details(stream, *, include_source_claims=False):
                 return None
             title = (titles[0].text or "").strip()
             authors = tuple((node.text or "").strip() for node in creators)
-            if (not 2 <= len(title) <= 160
+            if (any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                    for value in (title, *authors) for ch in value)
+                    or not 2 <= len(title) <= 160
                     or not _public_bibliographic_text(title, required=True, limit=160)
                     or any(not _public_bibliographic_text(a, required=True, limit=512)
                            for a in authors)):

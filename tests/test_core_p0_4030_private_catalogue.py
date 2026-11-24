@@ -99,6 +99,43 @@ def test_privacy_and_rebinding_through_cached_reader(private_rig, monkeypatch):
     assert not result["candidates"] and not calls
 
 
+@pytest.mark.parametrize("change", ["title", "removed", "duplicate"])
+@pytest.mark.parametrize("continuing", [False, True])
+def test_private_loan_projection_drift_after_second_snapshot_is_discarded(
+    private_rig, monkeypatch, change, continuing,
+):
+    _populate_windows(private_rig)
+    service, request, account, session, calls, path, *_ = private_rig
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    cursor = _run(private_rig)["next_cursor"] if continuing else None
+    if continuing:
+        assert cursor is not None
+    before, contents = rows(service.storage), path.read_bytes()
+    original = private._snapshot
+    reads = []
+
+    def changed(*args):
+        result = original(*args)
+        reads.append(1)
+        if len(reads) == 2:
+            if change == "title":
+                service.last_loans[0] = replace(service.last_loans[0], title="Changed")
+            elif change == "removed":
+                service.last_loans.pop(0)
+            else:
+                service.last_loans.append(replace(service.last_loans[0]))
+        return result
+
+    monkeypatch.setattr(private, "_snapshot", changed)
+    result = _run(private_rig, continuation=cursor)
+    assert len(reads) == 2
+    assert result["status"] == "scope_changed"
+    assert not result["candidates"] and result["next_cursor"] is None
+    assert not result["provider_access_performed"]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert not calls and rows(service.storage) == before and path.read_bytes() == contents
+
+
 def test_purchases_reuse_exact_c_reader_without_fabricating_a_notice(private_rig, monkeypatch):
     service, request, account, session, calls, path, *_ = private_rig
     key, snap = new_source()
