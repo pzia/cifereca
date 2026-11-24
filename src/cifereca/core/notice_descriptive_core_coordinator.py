@@ -14,6 +14,9 @@ from .notice_c_cover_index import canonical_cover_document_ref
 from .notice_consolidation_lineage import descriptive_execution_key
 from .notice_consolidation_inputs import admit_descriptive_facts
 from .notice_consolidator_selection import select_consolidator
+from .notice_descriptive_selection_store import (
+    read_descriptive_selection_txn, require_descriptive_selection,
+)
 from .notice_consolidator_runner import InstalledTextConsolidator
 from .notice_descriptive_runner_adapter import propose_registered_descriptive_materialization
 from .notice_descriptive_materialization_store import publish_descriptive_materialization
@@ -62,6 +65,8 @@ def run_descriptive_core_job(
     # Source snapshot and work identity are derived under the same read lock.
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
+        pin = read_descriptive_selection_txn(db, canonical_type=canonical_type, scope=scope)
+        require_descriptive_selection(pin, selection, installed.source_sha256)
         facts, links = capture_sources_txn(db)
         if type(facts) not in (tuple, list) or type(links) is not dict:
             raise ValueError("invalid_descriptive_source_snapshot")
@@ -112,6 +117,12 @@ def run_descriptive_core_job(
             raise ValueError("descriptive_no_publishable_result")
 
         def recapture(db):
+            latest_pin = read_descriptive_selection_txn(
+                db, canonical_type=canonical_type, scope=scope,
+            )
+            if latest_pin != pin:
+                raise ValueError("descriptive_selection_changed")
+            require_descriptive_selection(latest_pin, selection, installed.source_sha256)
             latest_facts, latest_links = capture_sources_txn(db)
             latest = admit_descriptive_facts(
                 target_edition_id=target_edition_id,
