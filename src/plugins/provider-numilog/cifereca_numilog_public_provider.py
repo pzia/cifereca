@@ -637,11 +637,17 @@ class NumilogPublicSession(ProviderSession):
             if token is not None:
                 # The token was returned alongside these exact parsed rows.
                 # No lookup by query, second GET or previous-response field.
-                with self._hold_retained_public_input(token) as raw:
-                    if raw is not None and raw.token == token:
-                        body = raw._body
-                        implementation = raw.parser_implementation_digest
-                        retained_token = raw.token
+                try:
+                    with self._hold_retained_public_input(token) as raw:
+                        if raw is not None and raw.token == token:
+                            body = raw._body
+                            implementation = raw.parser_implementation_digest
+                            retained_token = raw.token
+                except ProviderError as exc:
+                    if str(exc) != "Numilog : public_catalog_replay_busy":
+                        raise
+                    # Optional evidence must not turn a valid Search into a failure.
+                    body = implementation = retained_token = None
         else:
             rows, complete = self._search_public_page(query, normalized_scope, field=field)
         rows, partial, complete = filter_public_formats(rows, requested, complete)
