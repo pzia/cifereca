@@ -17,7 +17,8 @@ def _snapshot(session, account, item, *, account_changes=None,
     branch = AccountEvidence(
         identity_id=account.identity_id, provider_id=account.provider_id,
         credential_id=account.credential_id, account_id=account.unique_id,
-        branch=item.docbase, subscription="valid", remaining_loans=1,
+        branch=item.docbase, operation="loan.borrow",
+        subscription="valid", remaining_loans=1,
         permission="allowed",
     )
     edition = BorrowerOperationEvidence(
