@@ -177,3 +177,31 @@ def test_reparse_source_and_dirty_requests_roll_back_on_capacity_refusal(tmp_pat
     finally:
         tasks.close()
         db.close()
+
+
+def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path):
+    from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+    from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+    db = Storage(tmp_path / "witness.sqlite")
+    tasks = broker()
+    try:
+        source, canonical, ref, adapter = make_job(db)
+        title = source.observation.fields_copy()["search_result"]["public_bibliography"]["title"]
+        publish_approved_parse_witness(
+            db, observation=source.observation, response_bytes=BODY,
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(title),
+            ),), expected_generation=0,
+        )
+        pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100,
+                                    replay_registry=adapter.registry())
+        handle, = pump.tick().handles
+        assert handle.result(timeout=5) == "error"
+        assert journal.read_job(db, ref).state == "error"
+        assert read_notice_cover(db, source.document) == source
+        assert read_consolidated_notice_cover(db, canonical.document) == canonical
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        tasks.close()
+        db.close()
