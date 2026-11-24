@@ -205,3 +205,11 @@ def test_hidden_empty_active_widget_never_attests_zero(attribute):
     assert result.loans == ()
     assert result.status == "partial"
     assert result.exhaustive is False
+
+
+@pytest.mark.parametrize("style", ["display: none", "visibility: hidden", "DISPLAY : NONE"])
+def test_css_hidden_empty_activity_widget_is_not_complete(style):
+    result = parsed(f'<section class="active-loans" style="{style}"></section>')
+    assert result.loans == ()
+    assert result.status == "partial"
+    assert result.exhaustive is False
