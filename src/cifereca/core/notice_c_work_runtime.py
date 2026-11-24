@@ -143,8 +143,21 @@ class NoticeWorkRuntime:
         from .notice_c_reparse_execution import PublicReplayRegistry, PublicReplayPort
         from .notice_c_work_bridge import RetryableNoticeWork, UnavailableNoticeWork
 
-        if type(port) is not PublicReplayPort:
+        from .notice_c_raw_input_receipt import _valid
+        from .notice_c_reparse_execution import _match_input
+        from .notice_c_reparse_requests import PublicReparseRequest
+
+        if type(port) is not PublicReplayPort or not _valid(receipt):
             raise ValueError("notice_reparse_invalid_registry")
+        if (port.parser_family_digest != receipt.parser_family_digest
+                or receipt.producer_token is None):
+            return False
+        # Registration alone must not accept a stale or unrelated token.
+        request = PublicReparseRequest(None, receipt, port.implementation_digest)
+        try:
+            _match_input(request, port.read_input(receipt.producer_token))
+        except (RetryableNoticeWork, UnavailableNoticeWork):
+            return False
         key = (port.provider_id, port.parser_family_digest, port.implementation_digest)
         with self._lock:
             if self._closed:
@@ -154,11 +167,13 @@ class NoticeWorkRuntime:
         for old in ports:
             if (old.provider_id, old.parser_family_digest, old.implementation_digest) == key:
                 try:
-                    selected = old.read_input(receipt.producer_token)
+                    _match_input(request, old.read_input(receipt.producer_token))
                 except (RetryableNoticeWork, UnavailableNoticeWork):
-                    selected = None
-                if selected is not None:
-                    return True
+                    continue
+                # A previous staging wake may have been refused by admission.
+                # Reuse the port but offer another nonblocking wake.
+                self.request_tick()
+                return True
         with self._lock:
             if self._closed:
                 return False
