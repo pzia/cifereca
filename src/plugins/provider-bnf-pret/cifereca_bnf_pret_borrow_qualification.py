@@ -117,7 +117,7 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
         if (type(item) is not SearchResult or item.source_provider != self.provider_id
                 or item.source_credential != self.credential_id
                 or item.docbase != 'BNF_PRET' or item.medium != 'digital'
-                or type(item.record_id) is not str
+                or type(notice[1]) is not str
                 or not self.connected or self._closed
                 or len(self._accounts) != 1 or account is not self._accounts[0]):
             raise ProviderConfigurationError('account_scope_mismatch')
@@ -126,6 +126,9 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
                  account.provider_id, account.credential_id)
         if scope[2:] != (self.provider_id, self.credential_id) or not scope[1]:
             raise ProviderConfigurationError('account_scope_mismatch')
+        notice = (item.id, item.record_id, item.docbase, item.medium,
+                  item.source_provider, item.source_credential,
+                  item.source_collection)
         broker = self.identity_broker
         owner = (self._core_owner_binding(scope[0], scope[1])
                  if broker is not None else None)
@@ -137,36 +140,41 @@ def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
                     and len(self._accounts) == 1 and account is self._accounts[0]
                     and (account.unique_id, account.identity_id,
                          account.provider_id, account.credential_id) == scope
+                    and (item.id, item.record_id, item.docbase, item.medium,
+                         item.source_provider, item.source_credential,
+                         item.source_collection) == notice
                     and self.identity_broker is broker
                     and (broker is None or
                          self._core_owner_binding(scope[0], scope[1]) == owner))
 
         # Fresh positive inventory is used only to reject a *known*
         # existing loan, never to infer a right to borrow from absence.
+        if not current():
+            raise ProviderConfigurationError('account_scope_mismatch')
         loans = self._read_live_loans_locked(account)
         if not current():
             raise ProviderConfigurationError('account_scope_mismatch')
-        if any(loan.record_id == item.record_id for loan in loans):
+        if any(loan.record_id == notice[1] for loan in loans):
             raise ProviderCapabilityError('borrow_existing_loan')
         try:
-            target = resource_url(item.record_id)
+            target = resource_url(notice[1])
             actual, html = self.client.request('GET', target)
             if not current():
                 raise ProviderConfigurationError('account_scope_mismatch')
             link = confirmation_link(
-                html, page_url=actual, resource_id=item.record_id)
+                html, page_url=actual, resource_id=notice[1])
             # The form GET is not assumed side-effect free. This
             # read-only preflight may inspect it but never visit it.
             if _is_media_confirmation(link):
                 return {'status': 'unverified',
                         'reason_code': 'borrow_confirmation_effect_unknown'}
             actual, confirmation = self.client.borrow_confirmation(
-                link, resource_id=item.record_id)
+                link, resource_id=notice[1])
             if not current():
                 raise ProviderConfigurationError('account_scope_mismatch')
             # Do not return or log the action URL, CSRF or hidden fields.
             activation_form(confirmation, page_url=actual,
-                            resource_id=item.record_id)
+                            resource_id=notice[1])
             if not current():
                 raise ProviderConfigurationError('account_scope_mismatch')
             return {'status': 'unverified',
