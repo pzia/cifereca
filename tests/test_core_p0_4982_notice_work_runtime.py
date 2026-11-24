@@ -408,3 +408,59 @@ def test_capture_destination_configuration_without_optional_pump(tmp_path, confi
             assert core.library._notice_regression_capture_directory == (
                 tmp_path / "chosen" if configured == "absolute" else None)
             assert not (tmp_path / "chosen").exists()
+
+
+def test_replay_handoff_does_not_replace_live_bridge(tmp_path, monkeypatch):
+    from cifereca.core.notice_c_reparse_execution import PublicReplayRegistry
+
+    budget = SharedTaskAdmission(max_inflight=5, reserve_user_slots=1)
+    entered, release = Event(), Event()
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        old_pump = runtime._pump
+        first = persist_exact_public_search_cover(
+            core.storage, source(core.storage, "Ancien", 10),
+        )
+        source(core.storage, "Nouveau", 11)
+        ref = request_exact_public_recompute(
+            core.storage, first.document, now=100, expected_generation=0,
+        )
+        prepare = old_pump._bridge._prepare
+
+        def hold(spec, control):
+            entered.set()
+            assert release.wait(10)
+            return prepare(spec, control)
+
+        monkeypatch.setattr(old_pump._bridge, "_prepare", hold)
+        try:
+            first_scan = runtime.request_tick()
+            assert first_scan is not None
+            worker, = first_scan.result(timeout=10).handles
+            assert entered.wait(10)
+            _await_progress(runtime, lambda p: not p.scan_active and p.workers_running_or_queued == 1)
+            staged = PublicReplayRegistry()
+            with runtime._lock:
+                runtime._pending_replay_registry = staged
+            scan = runtime.request_tick()
+            assert scan is not None
+            outcome = scan.result(timeout=10)
+            assert outcome.deferred and outcome.handles == ()
+            assert runtime._pump is old_pump
+            assert runtime._pending_replay_registry is staged
+            assert journal.read_job(core.storage, ref).attempts == 1
+        finally:
+            release.set()
+        assert worker.result(timeout=10) == "current"
+        _await_progress(runtime, lambda p: not p.scan_active and p.workers_running_or_queued == 0)
+        # If the completion wake hit admission pressure, an ordinary later
+        # lifecycle tick must still install the staged registry.
+        if runtime._pending_replay_registry is not None:
+            scan = runtime.request_tick()
+            if scan is not None:
+                scan.result(timeout=10)
+        _await_progress(runtime, lambda p: not p.scan_active)
+        assert runtime._pump is not old_pump
+        assert runtime._replay_registry is staged
+        assert runtime._pending_replay_registry is None
+        assert journal.read_job(core.storage, ref).attempts == 1
