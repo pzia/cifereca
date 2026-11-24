@@ -75,15 +75,22 @@ def _snapshot(db, *, target_edition_id, scope):
 
 
 def request_public_age_consolidation(storage, *, target_edition_id, scope, now,
-                                    expected_generation):
+                                    expected_generation, implementation_digests=None):
     """Durable CAS request from a qualified C and explicit pin; never claim."""
     if not journal._integer(now) or not journal._integer(expected_generation):
         raise ValueError("notice_work_invalid_clock_or_generation")
+    if implementation_digests is not None and (
+            type(implementation_digests) is not tuple
+            or not 1 <= len(implementation_digests) <= 128
+            or any(not journal._digest(value) for value in implementation_digests)
+            or len(set(implementation_digests)) != len(implementation_digests)):
+        raise ValueError("notice_work_invalid_public_age_filter")
     canonical_cover_document_ref(target_edition_id)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         snapshot = _snapshot(db, target_edition_id=target_edition_id, scope=scope)
-        if snapshot is None:
+        if snapshot is None or (implementation_digests is not None
+                and snapshot[0].implementation_digest not in implementation_digests):
             return None
         return journal._request_job_txn(db, snapshot[0], now=now,
                                         expected_generation=expected_generation)

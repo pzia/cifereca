@@ -347,6 +347,30 @@ class NoticeWorkRuntime:
             self._public_age_digests = implementation_digests
             return True
 
+    def request_public_age(self, *, target_edition_id, scope, expected_generation):
+        """Explicit trusted Core producer, on an existing worker, never GTK.
+
+        Scope applicability belongs to the caller. The exact public C and
+        durable pin are reattested in the request transaction; the installed
+        archive and SQL lineage are checked again by the admitted worker.
+        No queue or attempt is allocated for an unsupported implementation.
+        """
+        from .notice_c_public_age_request import request_public_age_consolidation
+
+        with self._lock:
+            if self._closed or self._prepare_public_age is None:
+                return None
+            digests = self._public_age_digests
+            clock = self._pump._clock
+        ref = request_public_age_consolidation(
+            self._storage, target_edition_id=target_edition_id, scope=scope,
+            now=clock(), expected_generation=expected_generation,
+            implementation_digests=digests,
+        )
+        if ref is not None:
+            self.request_tick()
+        return ref
+
     def bind_committed_observer(self, observer):
         """Install one thread-safe owner callback; None detaches it.
 
