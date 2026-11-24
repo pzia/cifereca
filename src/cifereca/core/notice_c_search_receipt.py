@@ -4,7 +4,10 @@ import sqlite3
 from time import monotonic, time
 from math import ceil
 
-from ..plugin_api import ProviderError
+from ..plugin_api import (
+    ProviderError, PublicSearchReplayBusy, PublicSearchReplayCapability,
+    PublicSearchReplayInput,
+)
 from .notice_c_raw_input_receipt import record_public_raw_input_receipt
 from .search_orchestration import _CORE_PUBLIC_COVER_WITNESS
 
@@ -30,26 +33,31 @@ def record_search_receipt(storage, row, source, retained, *, now):
         return None
     try:
         started = monotonic()
-        raw, ttl = session._read_retained_public_input(token)
-        if raw is None or type(ttl) is not int or ttl < 1:
+        capability = session.public_search_replay_capability()
+        if (type(capability) is not PublicSearchReplayCapability
+                or type(capability.schema_version) is not int
+                or capability.schema_version != 1):
             return None
-        with session._hold_retained_public_input(token) as held:
+        raw, ttl = capability.read(token)
+        if type(raw) is not PublicSearchReplayInput or type(ttl) is not int or ttl < 1:
+            return None
+        with capability.hold(token) as held:
             if (getattr(session, "connected", None) is not True
-                    or held is None or held != raw or held.token != token
-                    or type(held._body) is not bytes
-                    or sha256(held._body).hexdigest() != evidence[5]
+                    or type(held) is not PublicSearchReplayInput or held != raw or held.token != token
+                    or type(held.body) is not bytes
+                    or sha256(held.body).hexdigest() != evidence[5]
                     or held.parser_implementation_digest != evidence[6]):
                 return None
             remaining = ttl - ceil(monotonic() - started)
             if remaining < 1:
                 return None
             return record_public_raw_input_receipt(
-                storage, source, held._body,
+                storage, source, held.body,
                 transport_digest=held.transport_digest,
                 parser_family_digest=held.parser_family_digest,
                 parser_implementation_digest=held.parser_implementation_digest,
                 now=max(now, int(time())), ttl_seconds=remaining,
                 producer_token=token,
             )
-    except (ProviderError, ValueError, TypeError, AttributeError, OSError, sqlite3.Error):
+    except (ProviderError, PublicSearchReplayBusy, ValueError, TypeError, AttributeError, OSError, sqlite3.Error):
         return None
