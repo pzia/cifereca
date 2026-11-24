@@ -181,6 +181,18 @@ class EvidenceReadOnlyTests(unittest.TestCase):
                 finally:
                     session.close()
 
+    def test_css_hidden_book_ancestor_does_not_attest_unavailability(self):
+        for style in ("display: none", "visibility: hidden"):
+            with self.subTest(style=style):
+                session, account, item, calls = self.make(
+                    detail=f'<div style="{style}">' + UNAVAILABLE + '</div>')
+                try:
+                    facts = session.borrower_eligibility_for(item, account)
+                    self.assertEqual(facts.item_offer, "unknown")
+                    self.assertEqual(len(calls), 2)
+                finally:
+                    session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
