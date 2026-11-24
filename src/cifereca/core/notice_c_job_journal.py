@@ -534,7 +534,7 @@ class ReadyPage:
 
 
 def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
-                    supported=None, purchase_refs=None):
+                    supported=None, purchase_refs=None, public_age_digests=None):
     """Bounded, read-only keyset scan of the existing durable public journal.
 
     Keep next_after across ticks, restarting at None at the end of a sweep.
@@ -559,6 +559,12 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                        or not _digest(pair[1]) for pair in supported)
                 or len(set(supported)) != len(supported)):
             raise ValueError("notice_work_invalid_scan_filter")
+    if public_age_digests is not None:
+        if (supported is not None or purchase_refs is not None
+                or type(public_age_digests) is not tuple or not 1 <= len(public_age_digests) <= 128
+                or any(not _digest(value) for value in public_age_digests)
+                or len(set(public_age_digests)) != len(public_age_digests)):
+            raise ValueError("notice_work_invalid_public_age_filter")
     if purchase_refs is not None:
         if type(purchase_refs) is not tuple or len(purchase_refs) > 32:
             raise ValueError("notice_work_invalid_purchase_filter")
@@ -600,6 +606,11 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                     continue
                 if (supported is None and job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST):
                     # No generic discovery of private intent as public work.
+                    continue
+                if public_age_digests is not None and (
+                        job.spec.kind != "consolidate_descriptive"
+                        or job.spec.public_age_locator is None
+                        or job.spec.implementation_digest not in public_age_digests):
                     continue
                 if (supported is not None and
                         (job.spec.kind, job.spec.implementation_digest) not in supported):
