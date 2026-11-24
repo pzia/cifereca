@@ -121,6 +121,38 @@ def test_explicit_catalogue_compares_only_literal_corroborated_opf_url(rig, case
     assert rows(service.storage) == before and path.read_bytes() == data
 
 
+@pytest.mark.parametrize("rig", [_opf_claim("source", _OPF_URL)], indirect=True)
+@pytest.mark.parametrize("other_kind", ["unattested", "excluded", "unclaimed"])
+def test_opf_url_upgrade_refuses_other_returned_occurrence(rig, other_kind):
+    service, session, request, calls, path = rig
+    marker = "new-catalogue.public_search_product_card"
+    exact = _row("source", friendly_url=_OPF_URL,
+                 metadata={"public_url_evidence": marker})
+    other = _row("other", friendly_url=_OPF_URL, metadata={})
+    if other_kind == "excluded":
+        other = replace(other, owned=True, source_account_id="PRIVATE")
+    supplied = [exact, other]
+    claims = (PublicSearchNotice(exact),)
+    if other_kind != "unclaimed":
+        claims += (PublicSearchNotice(other),)
+
+    def search(query, scope, **kwargs):
+        calls.append((query, scope, kwargs))
+        return ProviderSearchResponse(supplied, public_notices=claims)
+
+    session.search_with_response_facets = search
+    before, contents = rows(service.storage), path.read_bytes()
+    result = _run(service, request)
+    assert result["status"] == "partial"
+    assert any(row.record_id == "source" for row in result["candidates"])
+    assert all(row.comparison != "opf_source_url_concordant"
+               for row in result["candidates"])
+    assert len(calls) == 1 and result["provider_access_performed"]
+    assert not result["association_authorized"] and not result["may_write_origin_or_right"]
+    assert _OPF_URL not in repr(result)
+    assert rows(service.storage) == before and path.read_bytes() == contents
+
+
 def test_explicit_public_lookup_keeps_isbn_ambiguity_without_persistence(rig):
     service, session, request, calls, path = rig
     before, data = rows(service.storage), path.read_bytes()
