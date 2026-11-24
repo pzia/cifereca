@@ -78,7 +78,7 @@ def test_exact_private_source_scope_and_version_change_classify_after_restart(tm
     changed = review_admitted_source_parse_witness(
         approved.baseline, observation=current, input_sha256=sha256(b"new").hexdigest(),
     )
-    assert changed.status == "source_changed"
+    assert changed.status == "parser_drift_suspected"
     db.close(final=True)
 
 
@@ -151,7 +151,7 @@ def test_cached_review_after_restart_hashes_actual_input_and_never_reapproves(tm
         assert report.affected_fields == ("critical_field_2",)
         assert review_cached_parse_witness(
             db, observation=current, response_bytes=b"changed",
-        ).status == "source_changed"
+        ).status == "parser_drift_suspected"
         other = replace(KEY, identity_id="bob")
         assert review_cached_parse_witness(
             db, observation=observation(key=other), response_bytes=RESPONSE,
