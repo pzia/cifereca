@@ -131,6 +131,47 @@ class NoticeWorkRuntime:
             self._replay_registry = registry
             return True
 
+    def request_public_replay(self, source, receipt, *, implementation_digest,
+                              expected_generation):
+        """Trusted worker entry point; no network, new queue or parser grant.
+
+        The caller selects an already admitted source and implementation.
+        Read/hold the exact registered producer input before durable CAS.
+        Dispatch independently rechecks the registry, receipt and lease.
+        A concurrent runtime shutdown may leave a recoverable durable job.
+        """
+        from .notice_c_reparse_execution import (
+            PublicReplayRegistry, _match_input,
+        )
+        from .notice_c_reparse_requests import (
+            PublicReparseRequest, request_public_reparse,
+        )
+        from .notice_c_work_bridge import UnavailableNoticeWork
+
+        with self._lock:
+            registry = self._replay_registry
+            pump = self._pump
+            if self._closed or type(registry) is not PublicReplayRegistry:
+                raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
+        request = PublicReparseRequest(source, receipt, implementation_digest)
+        port = registry.select(request)
+        selected = port.read_input(receipt.producer_token)
+        _match_input(request, selected)
+        with port.hold_input(receipt.producer_token) as live:
+            _match_input(request, live)
+            if live != selected:
+                raise UnavailableNoticeWork("notice_reparse_input_changed")
+            with self._lock:
+                if self._closed or self._replay_registry is not registry:
+                    raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
+            ref = request_public_reparse(
+                self._storage, source, receipt, selected.body,
+                implementation_digest=implementation_digest,
+                now=pump._clock(), expected_generation=expected_generation,
+            )
+        self.request_tick()
+        return ref
+
     def install_fetch_execution(self, execution):
         """Trusted Core composition only, once, before any heartbeat hint.
 
