@@ -52,6 +52,8 @@ class PublicReplayPort:
     # acquire only the provider's cache/session guard, NEVER Storage.
     # Exit must release the guard without raising or suppressing exceptions.
     hold_input: Callable
+    # Trusted Core policy, never supplied by the parser. Default denies export.
+    authorize_capture_input: Callable | None = None
 
 
 class PublicReplayRegistry:
@@ -67,7 +69,8 @@ class PublicReplayRegistry:
                     or not journal._digest(port.implementation_digest)
                     or not all(callable(fn) for fn in (
                         port.read_input, port.parse, port.hold_input,
-                    ))):
+                    )) or (port.authorize_capture_input is not None
+                           and not callable(port.authorize_capture_input))):
                 raise ValueError("notice_reparse_invalid_registry")
             key = (port.provider_id, port.parser_family_digest, port.implementation_digest)
             if key in keys:
@@ -224,9 +227,19 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
                     alert["capture_state"] = "capacity_refused"
                 db.execute("UPDATE metadata SET value=? WHERE key=?",
                            (json.dumps(alert, sort_keys=True, separators=(",", ":")), alert_key))
+                def export_after_commit():
+                    members = {}
+                    if port.authorize_capture_input is not None:
+                        try:
+                            if port.authorize_capture_input(request, selected) is True:
+                                members["response.raw"] = selected.body
+                        except Exception:
+                            # Fail closed; the sanitized diagnostic remains exportable.
+                            pass
+                    return export_capture(storage, diagnostic, members=members)
+
                 return WitnessRejectedPublication(
-                    None if diagnostic is None else
-                    lambda: export_capture(storage, diagnostic, members={}),
+                    None if diagnostic is None else export_after_commit,
                 )
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
