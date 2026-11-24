@@ -2871,7 +2871,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                 from .notice_regression_capture_intent import export_capture
                 for diagnostic in sorted(capture_ids):
                     try:
-                        state = export_capture(self.storage, diagnostic, members={})
+                        state = export_capture(
+                            self.storage, diagnostic, members={},
+                            directory=getattr(self, "_notice_regression_capture_directory", None),
+                        )
                         if state is not None:
                             logging.getLogger("cifereca").warning(
                                 "NOTICE parser_witness_rejected diagnostic_id=%s capture_state=%s",
