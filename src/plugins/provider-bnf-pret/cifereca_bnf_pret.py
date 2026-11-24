@@ -1161,6 +1161,11 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         from cifereca_bnf_pret_borrow_qualification import borrower_eligibility_for
         return borrower_eligibility_for(self, item, account, informational=True)
 
+    def borrower_information_display(self, observation, item: SearchResult, account: Account):
+        """Local-only advisory projection; never an admission or network call."""
+        from cifereca_bnf_pret_borrow_qualification import advisory_display_values
+        return advisory_display_values(self, observation, item, account)
+
     def borrow_preflight(self, item: SearchResult, account: Account) -> dict:
         """Read-only qualification, not admission or mutation."""
         from cifereca_bnf_pret_borrow_qualification import borrow_preflight

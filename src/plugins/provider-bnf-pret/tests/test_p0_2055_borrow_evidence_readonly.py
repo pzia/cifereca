@@ -239,6 +239,29 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_advisory_display_projection_is_local_and_session_scoped(self):
+        session, account, item, calls = self.make(detail=UNAVAILABLE)
+        try:
+            observation = session.borrower_information_for(item, account)
+            values = session.borrower_information_display(observation, item, account)
+            self.assertEqual(values, {
+                "observed_at": observation.observed_at,
+                "pass_state": "unknown", "remaining_quota": None,
+                "available_copies": None, "item_offer": "unavailable",
+                "permission": "unknown",
+            })
+            self.assertIsNone(session.borrower_information_display(
+                observation, replace(item, record_id="other"), account))
+            self.assertIsNone(session.borrower_information_display(
+                observation, item, replace(account)))
+            session._epoch = "changed"
+            self.assertIsNone(session.borrower_information_display(
+                observation, item, account))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(session._borrow_post_attempts, set())
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
