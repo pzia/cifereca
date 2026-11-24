@@ -915,6 +915,14 @@ def main() -> int:
         )
 
     def complete():
+        from borrower_information_native_contract import verify_native_advisory
+        stages.append("borrower_advisory_native")
+        report["last_stage"] = stages[-1]
+        save()
+        for changed in (False, True):
+            verify_native_advisory(changed)
+        report["checks"]["borrower_advisory_native_read_only"] = True
+        report["checks"]["borrower_advisory_native_stale_callback"] = True
         report["status"] = "PASS"
         result[0] = 0
         save()
