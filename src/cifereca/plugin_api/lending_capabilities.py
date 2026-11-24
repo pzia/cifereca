@@ -361,7 +361,11 @@ def assess_borrower_operation_eligibility(
             or capability.manifest_declared is not True
             or capability.descriptor_declared is not True
             or capability.method_implemented is not True
-            or capability.session_ready is not True):
+            or capability.session_ready is not True
+            # Same rule as edition-exact borrower eligibility: an advisory
+            # positive cannot come from a capability that omits the
+            # explicit human-action requirement.
+            or capability.explicit_action_required is not True):
         return outcome("unverified", "capability_unverified")
     if (type(account) is not Account
             or not requested_branch or len(requested_branch) > 64
