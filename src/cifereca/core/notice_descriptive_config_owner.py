@@ -7,7 +7,7 @@ schedule work or grant source access. No implicit selection or fallback.
 from hashlib import sha256
 
 from .notice_consolidator_selection import select_consolidator
-from .notice_canonical_text_schema import select_text_schema
+from .notice_canonical_text_schema import select_text_schema, canonical_text_schema_digest
 from .notice_consolidator_runner import InstalledTextConsolidator, MAX_SCRIPT_BYTES
 from .notice_descriptive_selection_store import set_descriptive_selection
 
@@ -67,4 +67,5 @@ def configure_descriptive_selection(
         selection=selection,
         installed_source_sha256=None if selection is None else binding.source_sha256,
         expected_generation=expected_generation,
+        schema_sha256=None if selection is None else canonical_text_schema_digest(schema),
     )

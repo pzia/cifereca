@@ -14,6 +14,7 @@ from .notice_c_cover_index import canonical_cover_document_ref
 from .notice_consolidation_lineage import descriptive_execution_key
 from .notice_consolidation_inputs import admit_descriptive_facts
 from .notice_consolidator_selection import select_consolidator
+from .notice_canonical_text_schema import select_text_schema
 from .notice_descriptive_selection_store import (
     read_descriptive_selection_txn, require_descriptive_selection,
     descriptive_selection_input_digest,
@@ -42,6 +43,9 @@ def run_descriptive_core_job(
     )
     if selection is None:
         raise ValueError("consolidator_not_selected")
+    schema = select_text_schema(text_schemas, selection=selection)
+    if schema is None:
+        raise ValueError("canonical_text_schema_not_installed")
     if type(installed) is not InstalledTextConsolidator:
         raise ValueError("installed_consolidator_mismatch")
     identity = (
@@ -67,7 +71,7 @@ def run_descriptive_core_job(
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         pin = read_descriptive_selection_txn(db, canonical_type=canonical_type, scope=scope)
-        require_descriptive_selection(pin, selection, installed.source_sha256)
+        require_descriptive_selection(pin, selection, installed.source_sha256, schema=schema)
         facts, links = capture_sources_txn(db)
         if type(facts) not in (tuple, list) or type(links) is not dict:
             raise ValueError("invalid_descriptive_source_snapshot")
@@ -139,7 +143,7 @@ def run_descriptive_core_job(
             )
             if latest_pin != pin:
                 raise ValueError("descriptive_selection_changed")
-            require_descriptive_selection(latest_pin, selection, installed.source_sha256)
+            require_descriptive_selection(latest_pin, selection, installed.source_sha256, schema=schema)
             latest_facts, latest_links = capture_sources_txn(db)
             latest = admit_descriptive_facts(
                 target_edition_id=target_edition_id,
@@ -155,7 +159,7 @@ def run_descriptive_core_job(
             expected_execution_key=expected_execution_key,
             capture_current_txn=recapture,
             journal_lease=lease, journal_now=completion_now(),
-            journal_clock=completion_now,
+            journal_clock=completion_now, schema=schema,
         )
     except Exception:
         # A refused or failed worker never marks a job current. Preserve

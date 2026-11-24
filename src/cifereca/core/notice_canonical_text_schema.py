@@ -150,3 +150,19 @@ def validate_text_schema_result(
 __all__ = [
     "CanonicalTextSchema", "select_text_schema", "validate_text_schema_result",
 ]
+
+
+def canonical_text_schema_digest(schema):
+    """Exact bounded contract digest; enum order is semantically immaterial."""
+    from hashlib import sha256
+    import json
+
+    if not _valid_schema(schema):
+        raise ValueError("invalid_canonical_text_schema")
+    raw = json.dumps(
+        ("notice.c.canonical-text-schema.v1", schema.canonical_type, schema.scope,
+         schema.plugin_id, schema.plugin_version, schema.schema_id,
+         schema.max_bytes, schema.inherited_allowed, sorted(schema.allowed_values)),
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("ascii")
+    return sha256(raw).hexdigest()

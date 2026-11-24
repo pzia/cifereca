@@ -93,7 +93,7 @@ def _decode(raw):
 def publish_descriptive_materialization(
     storage, row: DescriptiveMaterialization, *,
     expected_execution_key: str | None, capture_current_txn,
-    journal_lease=None, journal_now=None, journal_clock=None,
+    journal_lease=None, journal_now=None, journal_clock=None, schema=None,
 ):
     """CAS publish with authoritative Core snapshot recaptured in same txn.
 
@@ -127,7 +127,8 @@ def publish_descriptive_materialization(
         pin = read_descriptive_selection_txn(
             db, canonical_type=row.canonical_type, scope=row.scope,
         )
-        require_descriptive_selection(pin, selection, digest)
+        require_descriptive_selection(pin, selection, digest, schema=schema)
+        _validate_pinned_schema(pin, row, selection, schema)
         require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
@@ -178,7 +179,7 @@ def publish_descriptive_materialization(
 
 
 def read_descriptive_materialization(storage, *, target_edition_id, canonical_type,
-                                     scope, capture_current_txn):
+                                     scope, capture_current_txn, schema=None):
     """Fail closed on stale or tampered persisted entries, never serve as right."""
     coordinate = DescriptiveMaterialization(
         1, "", canonical_type, target_edition_id, scope, "", "", "", "", False, (),
@@ -196,14 +197,28 @@ def read_descriptive_materialization(storage, *, target_edition_id, canonical_ty
         pin = read_descriptive_selection_txn(
             db, canonical_type=row.canonical_type, scope=row.scope,
         )
-        require_descriptive_selection(pin, selection, digest)
+        require_descriptive_selection(pin, selection, digest, schema=schema)
         if pin is not None:
             published_pin = db.execute(
                 "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
             ).fetchone()
             if published_pin is None or published_pin[0] != str(pin.generation):
                 raise ValueError("stale_descriptive_selection_generation")
+        _validate_pinned_schema(pin, row, selection, schema)
         return require_current_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
         )
+
+
+def _validate_pinned_schema(pin, row, selection, schema):
+    if pin is None or pin.schema_sha256 is None:
+        return
+    from .notice_canonical_text_schema import validate_text_schema_result
+    from .notice_consolidation_result_validation import ValidatedDescriptiveResult
+    validate_text_schema_result(ValidatedDescriptiveResult(
+        canonical_type=row.canonical_type, target_edition_id=row.target_edition_id,
+        plugin_id=row.plugin_id, plugin_version=row.plugin_version,
+        schema_id=row.schema_id, value=row.value, inherited=row.inherited,
+        source_evidence_keys=row.source_evidence_keys,
+    ), schema=schema, selection=selection)
