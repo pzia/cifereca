@@ -146,7 +146,8 @@ def test_real_journal_rotation_offers_both_enabled_classes(tmp_path, monkeypatch
             )
             refs[kind] = enqueue(db, value)
         visited = []
-        def offer(ref):
+        def offer(ref, *, circuit):
+            assert circuit == "local"
             visited.append(ref)
             return RotationOffer("accepted", ref)
         monkeypatch.setattr(pump._bridge, "offer", offer)
