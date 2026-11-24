@@ -1,4 +1,36 @@
-# #2333 P1 — Contrat de recherche Baen Free Library
+# #2333 — Qualification du catalogue public Baen
+
+## Contrat actif
+
+Le plugin reste opt-in. My Books, achats et droits personnels sont hors périmètre (#539).
+
+| Surface | Implémentation | Qualification |
+|---|---|---|
+| Navigation sans texte | POST /allbooks/category/getBooks, categoryId=2012, page=page+1, pageSize=20, filter=release_date, dir=DESC, hideBundles=0, hideEarcs=0, showAvailable=false | Schéma navigateur attesté page 2 ; HTTPX live non vérifié |
+| Recherche libre non vide | GET /allbooks/category/index/id/2012 avec q et pagination historique | Sémantique serveur non attestée ; aucun résultat exact ou exhaustif revendiqué |
+| Champs author/title/isbn/subject | unsupported_field avant HTTP | Non pris en charge |
+| Scopes all/digital | Catalogue public uniquement | Autres scopes refusés |
+| Pages 0..100 | Traduction en pages 1..101 | Bornes client, non preuve de couverture serveur |
+| Réponse aboutie | partial_results | Même pour une page vide |
+| JSON invalide | catalogue_schema_unverified | Pas de faux zéro |
+| HTTP 401/403/429/5xx, panne | Erreurs typées, sans retry de contournement | Pas de faux succès |
+| Détail / acquisition | URL documentaire contrôlée ; aucune livraison anonyme attestée | Aucun droit déduit de isFree/isOwned |
+
+## Preuves et limites
+
+Deux captures privées du 11/11/2026 attestent le POST de navigation page 2, HTTP 200 JSON, totalBooks=82, numOfBooks=20 et 20 objets productData gratuits. Le total est propre à la catégorie observée. Le corps de la page 1 et des fiches ouvertes est omis. Le GET /download/index/owned/id/18339 redirige vers le login : aucun téléchargement accompli. Aucune archive privée publiée.
+
+Tentative HTTPX publique sans cookie du 22/11/2026 : résolution DNS EAI_AGAIN avant réponse HTTP. La reproductibilité HTTPX, la couverture page 1/2 et la recherche q restent **unverified** ; recherche exhaustive, champs spécialisés et livraison anonyme ne sont pas des capacités qualifiées. Aucun contournement ni nouvelle capture requis. La navigation JSON est une implémentation prudente du schéma observé, pas une garantie de disponibilité réelle.
+
+## Réception technique
+
+#7344, #7347 et #7489 intégrées avec PR CI SUCCESS sur leurs HEAD exacts. Les gardes historiques de #3050, #3347, #3349 et #3352 restent applicables. Tests hors réseau : validation des champs/scopes, pagination, erreurs HTTP, liens et absence de droits, JSON observé. Le chemin historique GET reste explicitement partiel. Les routes Magento alternatives ne sont pas des replis automatiques.
+
+Sortie proposée selon le critère alternatif du ticket : qualification explicite des capacités non prises en charge ou non attestées, sans prétendre à une recette HTTPX live. Aucune release ni activation par défaut.
+
+## Historique du contrat antérieur
+
+### #2333 P1 — Contrat de recherche Baen Free Library
 
 Qualification limitée au catalogue **public et opt-in** `provider.baen` :
 `enabled_by_default=false` dans `cifereca-plugin.json`.
@@ -52,3 +84,4 @@ zéro, avertissement partiel et droits absents). Le chemin d'authentification
 **Sortie P1 — version 0.1.12** : ces preuves attestent la déclaration et le comportement
 fail-closed du plugin ; elles ne constituent **pas** une recette HTTP live
 ou une autorisation d'automatisation de Baen.
+
