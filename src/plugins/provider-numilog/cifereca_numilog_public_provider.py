@@ -629,7 +629,7 @@ class NumilogPublicSession(ProviderSession):
         # its only supported upstream operation is an anonymous catalogue.
         requested = requested_public_formats(content_types)
         normalized_scope = "all" if scope == "catalog" else scope
-        body = implementation = None
+        body = implementation = retained_token = None
         if self._retain_public_search_inputs:
             rows, token, complete = self._search_retained_page(
                 query, normalized_scope, field=field,
@@ -641,6 +641,7 @@ class NumilogPublicSession(ProviderSession):
                     if raw is not None and raw.token == token:
                         body = raw._body
                         implementation = raw.parser_implementation_digest
+                        retained_token = raw.token
         else:
             rows, complete = self._search_public_page(query, normalized_scope, field=field)
         rows, partial, complete = filter_public_formats(rows, requested, complete)
@@ -650,6 +651,7 @@ class NumilogPublicSession(ProviderSession):
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
             notice_parse_input=body,
             notice_parser_implementation=implementation,
+            notice_parse_input_token=retained_token,
         )
 
     def _assert_public_generation(self, expected):
