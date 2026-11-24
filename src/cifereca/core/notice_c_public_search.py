@@ -402,6 +402,7 @@ def search_public_notice_c(
     max_scan: int = _MAX_SCAN, now: int | None = None,
     group_by_document: bool = False, content_types: tuple[str, ...] = (),
     age: int | None = None, age_kind: str | None = None,
+    sort_by_recency: bool = False,
 ) -> PublicNoticeCPage:
     """Search durable public C source rows without a supplier or account GET.
 
@@ -437,6 +438,7 @@ def search_public_notice_c(
             or (age_kind is not None and (type(age_kind) is not str or age_kind not in
                 ('interest', 'reading', 'publisher', 'recommended')))
             or type(group_by_document) is not bool
+            or type(sort_by_recency) is not bool
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= _MAX_MATCHES
             or type(max_scan) is not int or not 1 <= max_scan <= 30000
@@ -689,7 +691,14 @@ def search_public_notice_c(
             hit.document.source_key,
         )
 
-    matches.sort(key=source_order)
+    # Chronological ordering must happen across all known C before the
+    # page boundary. Sorting only the rows of a selected page can put a
+    # newer document on page 2 behind an older document on page 1.
+    def chronology_order(hit):
+        return (-hit.last_seen_at, hit.provider_id, hit.edition_id,
+                source_order(hit))
+
+    matches.sort(key=chronology_order if sort_by_recency else source_order)
     offset = page * page_size
     # Resolve the exact document before choosing a page. In grouped mode
     # a C is the unit of pagination, not its individual provider facts.
@@ -743,7 +752,17 @@ def search_public_notice_c(
         for hit in selected:
             groups.setdefault(hit.document, []).append(hit)
         known_documents = len(groups)
-        page_groups = list(groups.values())[offset:offset + page_size]
+        if sort_by_recency:
+            # A C's timeline age is the freshest admitted matching source,
+            # not the relevance representative's older timestamp. Preserve
+            # every source in matching_sources for the current page.
+            for group in groups.values():
+                group.sort(key=chronology_order)
+            ordered_groups = sorted(groups.values(),
+                                    key=lambda group: chronology_order(group[0]))
+        else:
+            ordered_groups = list(groups.values())
+        page_groups = ordered_groups[offset:offset + page_size]
         selected = [group[0] for group in page_groups]
         matching_sources = tuple(hit for group in page_groups for hit in group)
     return PublicNoticeCPage(
