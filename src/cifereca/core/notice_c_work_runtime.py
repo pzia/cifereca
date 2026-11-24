@@ -17,6 +17,7 @@ from ..task_runtime import TaskBrokerImpl
 from .notice_c_work_pump import DispatchTick, PublicNoticeWorkPump
 from .notice_c_fetch_execution import PublicFetchExecution
 from .notice_c_purchase_execution import PurchaseIntentExecution
+from .notice_regression_capture_intent import resume_captures
 
 
 def validate_notice_work_admission(admission):
@@ -275,6 +276,10 @@ class NoticeWorkRuntime:
             if self._closed:
                 return None
         outcome = self._pump.tick(control=control)
+        # Existing admitted maintenance worker, no extra pool or network.
+        # Durable snapshots suffice when original bytes cannot be exported.
+        control.check_cancelled()
+        resume_captures(self._storage, lambda _diagnostic: {}, limit=2)
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
