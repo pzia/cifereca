@@ -305,3 +305,36 @@ def test_private_reconnection_never_reuses_previous_identity_readiness():
     assert not row("bob").personal_inventory_available
     assert not row("bob").catalog_search_available
     assert row("alice").catalog_refresh == row("bob").catalog_refresh == "unsupported"
+
+
+def test_public_catalogue_availability_requires_anonymous_session():
+    service, _ = _rig()
+    session = next(s for s in service._sessions.values()
+                   if s.provider_id == "gallica")
+    def row():
+        return next(r for r in catalogue_source_capabilities(service, identity_id="alice")
+                    if r.provider_id == "gallica")
+    assert row().catalog_search_available
+    session.credential_id = "other-account"
+    assert row().catalog_search_supported
+    assert not row().catalog_search_available
+    session.credential_id = "__public__"
+    assert row().catalog_search_available
+
+
+@pytest.mark.parametrize("credential", [None, "", "__public__", []])
+def test_invalid_private_credential_is_not_account_readiness(credential):
+    service, _ = _rig()
+    service.accounts_for_identity = lambda identity: [
+        NS(provider_id="numilog", identity_id=identity, credential_id=credential),
+    ]
+    session = next(s for s in service._sessions.values()
+                   if s.provider_id == "numilog")
+    session.credential_id = credential
+    row = next(r for r in catalogue_source_capabilities(service, identity_id="alice")
+               if r.provider_id == "numilog")
+    assert row.catalog_search_supported
+    assert row.personal_inventory_supported
+    assert not row.catalog_search_available
+    assert not row.personal_inventory_available
+    assert row.catalog_refresh == "unsupported"
