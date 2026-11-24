@@ -190,3 +190,25 @@ def test_descriptive_journal_kind_not_admitted_to_public_rotation():
     assert "consolidate_descriptive" in journal._KINDS
     with pytest.raises(ValueError, match="invalid_kinds"):
         PublicDispatchRotation(("consolidate_descriptive",))
+
+
+def test_circuit_blocked_preserves_cursor_and_does_not_stop_local_lane():
+    network_kind, local_kind = KINDS[0], KINDS[3]
+    view = JournalView([row(network_kind, 1), row(network_kind, 2),
+                        row(local_kind, 3)])
+    policy = PublicDispatchRotation((network_kind, local_kind))
+    blocked = True
+
+    def offer_lane(kind, ref):
+        if kind == network_kind and blocked:
+            return RotationOffer("circuit_blocked")
+        del view.rows[ref.key]
+        return RotationOffer("accepted", ref)
+
+    tick = policy.tick(view.read, lambda _: pytest.fail("wrong offer port"),
+                       offer_lane=offer_lane)
+    assert tick.deferred and [int(ref.key, 16) for ref in tick.handles] == [3]
+    blocked = False
+    tick = policy.tick(view.read, lambda _: pytest.fail("wrong offer port"),
+                       offer_lane=offer_lane)
+    assert [int(ref.key, 16) for ref in tick.handles] == [1, 2]
