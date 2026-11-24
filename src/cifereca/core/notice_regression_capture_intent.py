@@ -15,7 +15,7 @@ _PREFIX = "notice.c.regression-capture.v1:"
 _SHA = re.compile(r"[0-9a-f]{64}")
 
 
-def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshots=None):
+def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshots=None, replay_spec=None):
     if (not db.in_transaction or type(scope) is not str
             or not _SHA.fullmatch(scope) or type(input_digest) is not str
             or not _SHA.fullmatch(input_digest) or type(generation) is not int
@@ -26,6 +26,14 @@ def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshot
             or any(type(f) is not str or not re.fullmatch(r"critical_field_([1-9]|[12][0-9]|3[012])", f)
                    for f in review.affected_fields)):
         raise ValueError("invalid_capture_intent")
+    locator = None
+    if replay_spec is not None:
+        from . import notice_c_job_journal as journal
+        journal._check_spec(replay_spec)
+        if replay_spec.kind != "reparse_cached_input" or replay_spec.dependencies:
+            raise ValueError("invalid_capture_replay_spec")
+        locator = {name: getattr(replay_spec, name) for name in
+                   ("target", "input_digest", "implementation_digest")}
     if snapshots is None:
         snapshots = {}
     if (type(snapshots) is not dict or any(
@@ -58,7 +66,8 @@ def enqueue_capture_txn(db, *, scope, generation, review, input_digest, snapshot
                 return None
             db.execute("DELETE FROM metadata WHERE key=?", (min(terminal)[1],))
         db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
-                   (key, json.dumps(dict(payload, snapshots=snapshots, capture_state="pending"), sort_keys=True)))
+                   (key, json.dumps(dict(payload, snapshots=snapshots, capture_state="pending",
+                                          replay_locator=locator), sort_keys=True)))
     return diagnostic
 
 
@@ -106,6 +115,7 @@ def _record_outcome(storage, key, previous, record, state):
         updated.pop("retry_after", None)
         updated["finished_at"] = time.time()
         updated.pop("snapshots", None)
+        updated.pop("replay_locator", None)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         changed = db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
@@ -166,7 +176,7 @@ def resume_captures(storage, resolve_members, *, directory=None, limit=8):
                 raise ValueError("invalid_capture_members")
             state = export_capture(storage, diagnostic, members=members,
                                    directory=directory)
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             key = _PREFIX + diagnostic
             with storage._lock, storage._connect() as db:
                 row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
@@ -197,3 +207,28 @@ def capture_status(storage, diagnostic):
     record = json.loads(row[0])
     return {key: record[key] for key in
             ("capture_state", "attempts", "retry_after") if key in record}
+
+
+def read_replay_capture_locator(storage, diagnostic):
+    """Internal opaque recovery coordinate; never a token or an access grant."""
+    from . import notice_c_job_journal as journal
+    if type(diagnostic) is not str or not _SHA.fullmatch(diagnostic):
+        raise ValueError("invalid_capture_id")
+    with storage._lock, storage._connect() as db:
+        row = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_PREFIX + diagnostic,)).fetchone()
+    if row is None:
+        return None
+    record = json.loads(row[0])
+    locator = record.get("replay_locator")
+    if record["capture_state"] not in ("pending", "failed") or locator is None:
+        return None
+    if type(locator) is not dict or set(locator) != {
+            "target", "input_digest", "implementation_digest"}:
+        raise ValueError("invalid_capture_replay_spec")
+    spec = journal.JobSpec("reparse_cached_input", **locator)
+    journal._check_spec(spec)
+    digest = record.get("input_sha256")
+    if type(digest) is not str or not _SHA.fullmatch(digest):
+        raise ValueError("invalid_capture_input_digest")
+    return spec, digest
