@@ -134,9 +134,9 @@ def review_parse_witness(
 
     A confirmed regression requires: approved baseline, exact same source
     scope and raw response bytes, a *different* parser version, complete
-    parsing, and a missing/invalid critical field. Legacy review treats
-    changed input as source_changed. Trusted publication review additionally
-    detects structural drift on changed input and admitted partial parses;
+    parsing, and a missing/invalid critical field. Changed input supports
+    structural suspicion, never confirmation. Trusted publication review also
+    admits partial parses;
     it never compares value digests across different input bytes.
     """
     if (not _valid_baseline(baseline)
@@ -160,8 +160,6 @@ def review_parse_witness(
     # would generate false parsing-regression diagnoses. Never call this
     # confirmation, even if all fields are missing.
     changed_input = input_sha256 != baseline.approved_input_sha256
-    if changed_input and not publication_review:
-        return ParseWitnessReview("source_changed", ())
     # Only structurally admissible native parser output may support a
     # regression diagnosis. In particular a colliding foreign dict key
     # must never execute equality during critical-field lookup.
