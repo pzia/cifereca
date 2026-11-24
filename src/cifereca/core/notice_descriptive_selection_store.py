@@ -51,7 +51,15 @@ def read_descriptive_selection_txn(db, *, canonical_type, scope):
         raw = found[0]
         if type(raw) is not str or len(raw) > 4096:
             raise ValueError
-        record = json.loads(raw)
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate_selection_field")
+                result[key] = value
+            return result
+
+        record = json.loads(raw, object_pairs_hook=unique)
         if (type(record) is not dict
                 or set(record) != {"generation", "selection", "installed_source_sha256"}
                 or type(record["generation"]) is not int
