@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import Callable, ClassVar, ContextManager, Literal, Protocol, runtime_checkable
 
 from ..models import SearchResult
 
@@ -85,3 +85,36 @@ class ProviderSearchWithFacets(Protocol):
         self, query: str, scope: str = "all", *, field: str = "all",
         content_types: tuple[str, ...] = (),
     ) -> ProviderSearchResponse: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicSearchReplayInput:
+    """Exact retained anonymous parser input, never a transport capability."""
+
+    token: str
+    transport_digest: str
+    parser_family_digest: str
+    parser_implementation_digest: str
+    body: bytes
+
+
+class PublicSearchReplayBusy(RuntimeError):
+    """The cache-only lease is temporarily unavailable; no GET fallback."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicSearchReplayCapability:
+    """Optional cache-only port, subject to explicit Core qualification.
+
+    No storage, network, job submission or export permission is conveyed.
+    read returns (input or None, conservative remaining TTL in seconds).
+    hold returns a context manager yielding the same input or None.
+    reparse returns the same-input, exact-record Search envelope or None.
+    """
+
+    parser_family_digest: str
+    parser_implementation_digest: str
+    read: Callable[[str], tuple[PublicSearchReplayInput | None, int]]
+    hold: Callable[[str], ContextManager[PublicSearchReplayInput | None]]
+    reparse: Callable[[str, str], ProviderSearchResponse | None]
+    schema_version: int = 1
