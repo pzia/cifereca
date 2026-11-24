@@ -38,9 +38,11 @@ class Widget:
     def add_suffix(self, item): self.suffixes.append(item)
     def add_css_class(self, _name): pass
     def connect(self, signal, callback):
-        assert signal == "notify::active"
-        self._active_callback = callback
-    def connect(self, _signal, _callback): return None
+        # Keep callbacks available so this headless fixture exercises the
+        # same lifecycle signal as a real Gtk.Switch.
+        if not hasattr(self, "_signals"):
+            self._signals = {}
+        self._signals[signal] = callback
 
 
 class Combo(Widget):
@@ -311,3 +313,23 @@ def test_missing_sync_option_keeps_off_default_without_activating_sso(tmp_path):
     )
     result = draft(config, form)
     assert result.data["providers"]["accounts"][0]["options"]["authenticated_sync"] == "off"
+
+def test_activation_lifecycle_signal_is_local_and_never_attests_login():
+    data = saved("cred-a", "alice")
+    editor, _ = render(data)
+    toggle = editor["enabled"]
+    status = editor["connection_lifecycle_status"]
+    assert "Activée dans les paramètres" in status.subtitle
+    assert "session non vérifiée" in status.subtitle
+    callback = toggle._signals["notify::active"]
+    toggle.set_active(False)
+    callback(toggle, None)
+    assert "Désactivée dans les paramètres" in status.subtitle
+    assert "modification non enregistrée" in status.subtitle
+    assert "session non vérifiée" in status.subtitle
+    toggle.set_active(True)
+    callback(toggle, None)
+    assert "Activée dans les paramètres" in status.subtitle
+    assert "modification non enregistrée" not in status.subtitle
+    assert "session non vérifiée" in status.subtitle
+    assert data["enabled"] is True  # No persistence side effect.
