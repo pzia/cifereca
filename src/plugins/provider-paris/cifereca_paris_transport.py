@@ -119,7 +119,9 @@ class ParisTransportOperations:
         return data
 
     def _timed(self, category: str, operation: str, fn):
-        from cifereca_paris_client import _TRACE_LOG, AuthenticationError
+        from cifereca_paris_client import (
+            _TRACE_LOG, AuthenticationError, ParisSummaryHTTPError, ParisLoanListError,
+        )
         start = time.perf_counter()
         try:
             result = fn()
