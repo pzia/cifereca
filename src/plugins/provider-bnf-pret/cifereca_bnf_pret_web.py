@@ -612,7 +612,9 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
         node, ancestor_hidden = pending.pop()
         attrs = node.attrs
         hidden = (ancestor_hidden or node.tag in _HIDDEN
-                  or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+                  or "hidden" in attrs or attrs.get("aria-hidden") == "true"
+                  or "display:none" in "".join(attrs.get("style", "").lower().split())
+                  or "visibility:hidden" in "".join(attrs.get("style", "").lower().split()))
         # The visible traversal cannot count hidden loan cards. If a
         # collapsed/template card exists, visible positives remain usable
         # but their count cannot attest exhaustive coverage.
