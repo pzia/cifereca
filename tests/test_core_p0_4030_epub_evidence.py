@@ -187,3 +187,26 @@ def test_opf_documentary_labels_refuse_invisible_controls(field, control):
     before = stream.getvalue()
     assert read_epub_description(stream) is None
     assert stream.tell() == 3 and stream.getvalue() == before
+
+
+@pytest.mark.parametrize("claims", [
+    ("https://example.invalid/a", "https://example.invalid/b"),
+    ("https://example.invalid/a\u202e",),
+    ("https://example.invalid/a\u2028",),
+])
+def test_ambiguous_opf_urls_do_not_hide_descriptive_comparison(store, tmp_path, claims):
+    from xml.sax.saxutils import escape
+    metadata = META + "".join(
+        '<dc:source xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        + escape(url) + '</dc:source>' for url in claims)
+    root, path, pid = _local_epub(store, tmp_path, metadata)
+    before = path.read_bytes()
+    result = preview.suggest_local_placement_documents(
+        store, library_root=root, identity_id="A", placement_id=pid,
+        explicitly_requested=True)
+    assert result["status"] == "partial"
+    hit, = result["suggestions"].suggestions
+    assert hit.comparison == "title_author_concordant"
+    assert result["public_comparison_evidence"] is not None
+    assert not result["provider_access_performed"] and not result["association_authorized"]
+    assert not result["may_write_origin_or_right"] and path.read_bytes() == before

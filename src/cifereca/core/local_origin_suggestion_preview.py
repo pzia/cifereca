@@ -409,7 +409,11 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             suggestions = suggest_known_public_documents(
                 storage, title=title, author=author,
                 page=page, page_size=page_size,
-                **({"source_urls": source_urls} if source_urls else {}),
+                # Ambiguous or non-displayable URL claims must not
+                # disable the independent title/author comparison.
+                **({"source_urls": source_urls} if len(source_urls) == 1
+                   and not any(category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                               for url in source_urls for ch in url) else {}),
             )
             following = (_SuggestionContinuation(
                 storage, library_root, identity_id, placement_id, local,
