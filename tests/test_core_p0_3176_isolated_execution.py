@@ -189,9 +189,9 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
                 # sharing the worker's Python thread-local registry.
                 program = ("import fcntl, sys; "
                            "f = open(sys.argv[1], 'rb'); "
-                           "\\ntry: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"
-                           "\\nexcept BlockingIOError: sys.exit(42)"
-                           "\\nsys.exit(0)")
+                           "\ntry: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"
+                           "\nexcept BlockingIOError: sys.exit(42)"
+                           "\nsys.exit(0)")
                 child = subprocess.run([sys.executable, "-c", program, str(lock_path)],
                                        capture_output=True, timeout=10)
                 assert child.returncode == 42, child.stderr
