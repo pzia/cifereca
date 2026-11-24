@@ -184,9 +184,11 @@ def compare_remote_loan_catalogue(service, choice, *, confirmed=False,
     """
     requested = False
 
-    def report(status, candidates=(), truncated=False, observed_at=None):
+    def report(status, candidates=(), truncated=False, observed_at=None,
+               *, window_status="unverified"):
         return {"status": status, "candidates": candidates,
                 "window_truncated": truncated, "observed_at": observed_at,
+                "window_status": window_status,
                 "provider_read_requested": requested,
                 "coverage_complete": False, "fresh_network_verified": False,
                 "association_authorized": False, "may_write_origin_or_right": False,
@@ -239,8 +241,23 @@ def compare_remote_loan_catalogue(service, choice, *, confirmed=False,
                         or snapshot.status not in ("success", "partial")):
                     return report("unavailable")
                 candidates, truncated = _matches(snapshot, choice, title, authors)
+                # Only describe the producer's declared digital branches.
+                # The contract does not enumerate all canonical branches
+                # or bind an individual loan to one. No negative proof.
+                digital = tuple(b for b in snapshot.branches if b.medium == "digital")
+                if (truncated or snapshot.status == "partial"
+                        or any(b.completeness == "partial" or b.pagination_complete is False
+                               for b in digital)):
+                    window = "incomplete"
+                elif (digital and all(b.completeness == "complete"
+                                     and b.pagination_complete is True for b in digital)
+                      and all(b.medium != "unknown" for b in snapshot.branches)):
+                    window = "declared_digital_branches_complete"
+                else:
+                    window = "unverified"
                 result = report("partial", candidates, truncated,
-                                _local_observation_label(snapshot.observed_at))
+                                _local_observation_label(snapshot.observed_at),
+                                window_status=window)
             return result if live() else report("scope_changed")
     except Exception:
         return report("unavailable" if requested else "excluded")
