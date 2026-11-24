@@ -254,7 +254,7 @@ DESCRIPTOR = ProviderDescriptor(
     account_options=(
         AccountOptionField("base_url", "URL du portail",
                            default="https://bibliotheques.paris.fr",
-                           legacy_config_key="base_url"),
+                           legacy_config_key="base_url", value_type="url", url_schemes=("http", "https")),
         # #4065: these values apply to the PRIMARY Paris borrower ONLY.
         # Never inherit either value on a linked reader account: that requires
         # an independently identified borrower-specific setting and UI.
