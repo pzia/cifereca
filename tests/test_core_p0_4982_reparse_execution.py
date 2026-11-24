@@ -179,8 +179,10 @@ def test_reparse_source_and_dirty_requests_roll_back_on_capacity_refusal(tmp_pat
         db.close()
 
 
-def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypatch):
+@pytest.mark.parametrize("configured", (False, True))
+def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypatch, configured):
     monkeypatch.setattr('cifereca.core.notice_regression_capture.downloads_dir', lambda: tmp_path)
+    destination = tmp_path / "captures" if configured else tmp_path
     import zipfile
     from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
     from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
@@ -197,7 +199,8 @@ def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypat
             ),), expected_generation=0,
         )
         pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100,
-                                    replay_registry=adapter.registry())
+                                    replay_registry=adapter.registry(),
+                                    capture_directory=destination if configured else None)
         handle, = pump.tick().handles
         assert handle.result(timeout=5) == "error"
         assert journal.read_job(db, ref).state == "error"
@@ -217,7 +220,9 @@ def test_reparse_witness_preserves_last_healthy_source_and_c(tmp_path, monkeypat
         capture = json.loads(db.metadata_get(_PREFIX + diagnostic))
         assert capture["capture_state"] == "partial"
         assert pending_capture_ids(db) == ()
-        archive_path, = tmp_path.glob("cifereca-regression-*.zip")
+        archive_path, = destination.glob("cifereca-regression-*.zip")
+        if configured:
+            assert not list(tmp_path.glob("cifereca-regression-*.zip"))
         with zipfile.ZipFile(archive_path) as archive:
             manifest = json.loads(archive.read("manifest.json"))
             assert manifest["diagnostic_id"] == diagnostic
