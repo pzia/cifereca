@@ -231,4 +231,6 @@ def read_replay_capture_locator(storage, diagnostic):
     digest = record.get("input_sha256")
     if type(digest) is not str or not _SHA.fullmatch(digest):
         raise ValueError("invalid_capture_input_digest")
-    return spec, digest
+    payload = {name: record[name] for name in
+               ("generation", "status", "fields", "input_sha256")}
+    return spec, payload
