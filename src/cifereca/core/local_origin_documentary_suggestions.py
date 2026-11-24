@@ -168,7 +168,9 @@ def suggest_known_public_documents(storage, *, title: str, author: str | None = 
                     ))))
     )
     if (type(source_urls) is frozenset and len(source_urls) == 1
-            and page == 0 and not found.has_more and len(matches) == found.known_matches):
+            and page == 0 and not found.has_more
+            and found.status == "partial" and found.unindexed_sources == 0
+            and len(matches) == found.known_matches):
         # The URL is an OPF claim. Compare it without exposing it or using
         # it as a request. Do not pick a winner across unseen title hits.
         index = _matching_source_url(storage, matches, next(iter(source_urls)))
