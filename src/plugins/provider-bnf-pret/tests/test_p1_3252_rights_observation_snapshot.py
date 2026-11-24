@@ -585,3 +585,31 @@ def test_4480_unqualified_empty_between_positive_observations_stays_partial():
         assert client.calls == ["login", "activity", "activity", "activity"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("layer", ["inventory", "rights"])
+@pytest.mark.parametrize("pairs", [(), (("edition-1", "loan-1"),)])
+def test_4480_reconnect_after_inner_read_cannot_publish_stale_snapshot(layer, pairs):
+    """Synthetic same-account epoch change after successful inner read."""
+    session, account, client = fixture(activity(*pairs))
+    try:
+        if layer == "inventory":
+            name = "_read_live_loans_locked"
+            read = session.loan_inventory_snapshot
+        else:
+            name = "_loan_inventory_snapshot_locked"
+            read = session.rights_observation_snapshot
+        original = getattr(session, name)
+
+        def reconnected(borrower):
+            result = original(borrower)
+            session._epoch = "synthetic-reconnected-epoch"
+            return result
+
+        setattr(session, name, reconnected)
+        with pytest.raises(ProviderConfigurationError,
+                           match="session_closed|account_scope_mismatch"):
+            read(account)
+        assert client.calls == ["login", "activity"]
+    finally:
+        session.close()

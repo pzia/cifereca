@@ -450,11 +450,12 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         # Typed v1 can read an exact defensive Account copy; the actual
         # authenticated GET must still use the *live* session Account. The
         # historical loans() method remains instance-restricted.
+        epoch = self._epoch
         scope = LoanInventoryScope.for_account(account)
         self._last_loan_inventory_evidence = None
         rows = self._read_live_loans_locked(bound)
         evidence = self._last_loan_inventory_evidence
-        if not self.connected or self._closed:
+        if not self.connected or self._closed or self._epoch != epoch:
             raise ProviderConfigurationError('session_closed')
         if (len(self._accounts) != 1 or self._accounts[0] is not bound
                 or (bound.unique_id, bound.identity_id,
@@ -551,10 +552,12 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                     if caller_scope is not None else None
                 )
 
+            epoch = self._epoch
             owner_binding = core_binding()
             if (caller_scope is None or caller_scope[2:] !=
                     (self.provider_id, self.credential_id)
                     or type(caller_scope[1]) is not str or not caller_scope[1]
+                    or self._epoch != epoch
                     or owner_binding is None
                     or owner_binding[1] != (caller_scope[1],)):
                 raise ProviderCapabilityError("bnf_rights_owner_unverified")
@@ -580,7 +583,8 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                     or LoanInventoryScope.for_account(bound) != scope
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != caller_scope
-                    or core_binding() != owner_binding):
+                    or core_binding() != owner_binding
+                    or self._epoch != epoch):
                 raise ProviderConfigurationError('account_scope_mismatch')
             observed = datetime.now(timezone.utc).isoformat()
             rights = []
@@ -628,7 +632,8 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                     or LoanInventoryScope.for_account(bound) != scope
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != caller_scope
-                    or core_binding() != owner_binding):
+                    or core_binding() != owner_binding
+                    or self._epoch != epoch):
                 raise ProviderConfigurationError('account_scope_mismatch')
             # A typed, complete active-loan branch is positive coverage of
             # *loans only*. Require a one-to-one projection of every borrower
