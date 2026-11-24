@@ -163,6 +163,7 @@ def main() -> int:
             reads.append("search") or parsed, ()
         ),
     )
+    real_read_detail = bnf.read_detail
     patch_detail = patch.object(
         bnf, "read_detail",
         side_effect=lambda _client, resource: (
@@ -923,9 +924,13 @@ def main() -> int:
         phase = "normal"
         advisory_checkpoint("setup")
         from borrower_information_native_contract import verify_native_advisory
-        for changed in (False, True):
-            phase = "stale" if changed else "normal"
-            verify_native_advisory(changed, checkpoint=advisory_checkpoint)
+        # The cover fixture patches the provider module's read_detail.
+        # The advisory fixture has its own isolated HTTPX MockTransport and
+        # must exercise the real detail reader, not that catalogue stub.
+        with patch.object(bnf, "read_detail", real_read_detail):
+            for changed in (False, True):
+                phase = "stale" if changed else "normal"
+                verify_native_advisory(changed, checkpoint=advisory_checkpoint)
         report["checks"]["borrower_advisory_native_read_only"] = True
         report["checks"]["borrower_advisory_native_stale_callback"] = True
         report["status"] = "PASS"
