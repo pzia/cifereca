@@ -327,6 +327,9 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         if caller_scope[2:] != (self.provider_id, self.credential_id):
             raise ProviderConfigurationError('account_scope_mismatch')
         self._last_loan_inventory_evidence = None
+        # Revoke only ephemeral token-selection observations before I/O.
+        # Cancellation or failed scope validation must not retain old offers.
+        self._observed_loans = {}
         broker = self.identity_broker
         owner = (
             self._core_owner_binding(caller_scope[0], caller_scope[1])
