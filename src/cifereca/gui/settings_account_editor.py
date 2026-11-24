@@ -489,7 +489,7 @@ def build_provider_account_editor(
     if probe_status is not None:
         def invalidate_probe(*_args):
             editor["_probe_draft_revision"] += 1
-            lifecycle.set_subtitle("Connexion non vérifiée · formulaire modifié")
+            update_lifecycle(enabled, None)
             probe_status.set_subtitle(
                 "Enregistrer les modifications avant de tester le compte.")
 
