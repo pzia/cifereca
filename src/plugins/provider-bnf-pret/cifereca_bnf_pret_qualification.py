@@ -190,7 +190,8 @@ def qualify_bnf_borrow_dom(html: str, *, page: str) -> dict[str, object]:
              and any(token in {
                  "https://schema.org/Book", "http://schema.org/Book",
              } for token in node.attrs.get("itemtype", "").split())]
-    report["book_scopes"] = _count(len(books))
+    if page != "activity":
+        report["book_scopes"] = _count(len(books))
 
     if page == "detail" and (len(books) != 1 or not books[0].closed):
         return _empty(page, "book_scope_unrecognized")
