@@ -6,6 +6,7 @@ from actual input bytes. No notice mutation, provider IO or rights.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 
 from .notice_parse_witness import ParseWitnessReview, admitted_source_scope_sha256
 from .notice_parse_witness_store import _PREFIX, _decode
@@ -106,7 +107,12 @@ def read_parse_witness_diagnostic(storage, *, key, parser_id):
             result["capture_state"] = "metadata_unavailable"
             if capture is not None:
                 record = json.loads(capture[0])
-                if (record.get("generation") == approved.generation
+                payload = {name: record.get(name) for name in
+                           ("generation", "status", "fields", "input_sha256")}
+                encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                bound_id = sha256((scope + ":" + encoded).encode()).hexdigest()
+                if (bound_id == diagnostic
+                        and record.get("generation") == approved.generation
                         and record.get("status") == alert["status"]
                         and record.get("fields") == alert["fields"]):
                     result["capture_state"] = record["capture_state"]
