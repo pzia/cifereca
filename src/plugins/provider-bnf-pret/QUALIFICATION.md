@@ -244,3 +244,12 @@ DOM inconnu ne deviennent pas un historique vide. Tests synthétiques
 sur erreurs, changement de compte et reconnexion ; le GET réel dans une
 session autorisée, le sens terminé des événements et l'exhaustivité
 restent non attestés. `history=False` inchangé.
+
+
+## #4283 — final capability qualification (2026-11-24)
+
+The authenticated browser observation of 2026-11-22 establishes a history event page, not a completed-loan contract. Resource identifiers and borrow dates are observed; stable individual loan identifiers, return dates, ended state and complete pagination are not established. Neither the legacy API nor a live HTTPX history read is qualified.
+
+The supported outcome of the conditional ticket is therefore **unsupported completed-loan history**, not an empty history. Keep history=False; the private qualification reader is not ProviderSession.history and is not called on navigation, startup or Sync. No HistoryItem projection, cache activation, inference from active loans or local ADEPT files. The conditional positive implementation and its cache/UX acceptance tests do not apply while this source contract is unqualified.
+
+Existing synthetic parser, HTTP scope and unsupported-capability tests were delivered in #7517 and #7519; history isolation was refactored in #7945. These establish bounded qualification behavior, not live completed-loan semantics. No new authenticated request or mutation was performed for this reception.
