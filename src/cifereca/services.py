@@ -1509,6 +1509,9 @@ class LibraryService:
             ) if key in reported},
         }
 
+    def configured_connection_observation(self, row) -> str:
+        return provider_sessions.configured_connection_observation(self, row)
+
     def provider_diagnostic_state(self) -> dict[str, Any]:
         return provider_sessions.provider_diagnostic_state(self)
 

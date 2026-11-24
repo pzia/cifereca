@@ -446,6 +446,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             # for linked borrowers while rendering Settings.
             observed_borrowers=getattr(self.service, "accounts", ()),
             observed_loans=getattr(self.service, "last_loans", ()),
+            connection_observation=getattr(self.service, "configured_connection_observation", lambda _row: "unknown")(data),
         )
         account_editors.append(editor)
 
