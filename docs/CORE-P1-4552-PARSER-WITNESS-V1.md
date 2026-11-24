@@ -79,3 +79,14 @@ l'écriture. Une erreur d'export conserve l'intention réessayable ; une
 archive partielle indique explicitement les membres omis. La présentation
 GTK et le changement dynamique de destination ne font pas partie de cette
 tranche.
+
+
+La destination effective doit appartenir à l'utilisateur courant et ne pas
+être modifiable par le groupe ou les autres utilisateurs. Les composants
+symboliques du chemin sont refusés lors de l'export et de la récupération.
+Un dossier partagé ou un alias symbolique doit être remplacé par un chemin
+réel vers un dossier approprié. Les écritures, la publication sans écrasement
+et la récupération s'appuient sur des descripteurs de répertoire ; une archive
+existante n'est réutilisée que si son propriétaire, son mode et son contenu
+sont conformes. Ces refus relèvent de l'erreur d'export réessayable et ne
+suppriment pas l'alerte de régression.
