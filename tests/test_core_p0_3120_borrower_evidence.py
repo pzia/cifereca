@@ -209,3 +209,23 @@ def test_borrower_wide_positive_never_omits_explicit_user_action(action_requirem
     )
     assert (status.identity_id, status.provider_id,
             status.credential_id, status.account_id) == ("", "", "", "")
+
+@pytest.mark.parametrize("coordinate", [
+    "identity_id", "provider_id", "credential_id", "account_id",
+])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\u202e", "\u2066"])
+def test_nonprintable_borrower_proof_coordinates_never_promote(
+    coordinate, control,
+):
+    assert len(control) == 1 and not control.isprintable()
+    reader = account()
+    field = "unique_id" if coordinate == "account_id" else coordinate
+    contaminated_reader = replace(reader, **{
+        field: getattr(reader, field) + control,
+    })
+    # Scope matches exactly: a mismatch is not what makes this invalid.
+    decision = assess(contaminated_reader, evidence(contaminated_reader))
+    assert (decision.state, decision.reason_code) == (
+        "unverified", "borrower_scope_unverified",
+    )
+    assert decision.account_id == decision.credential_id == ""

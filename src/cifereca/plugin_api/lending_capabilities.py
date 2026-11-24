@@ -381,7 +381,7 @@ def assess_borrower_operation_eligibility(
         evidence.identity_id, evidence.provider_id, evidence.credential_id,
         evidence.account_id, evidence.branch, evidence.operation,
     )
-    if (any(type(v) is not str or len(v) > 1024 or "\x00" in v for v in scopes + observed)
+    if (any(type(v) is not str or len(v) > 1024 or not v.isprintable() for v in scopes + observed)
             or not account.identity_id or not account.provider_id
             or not account.credential_id
             or type(account.is_primary) is not bool
