@@ -290,3 +290,48 @@ def test_configured_publication_cannot_bypass_journal_lease(tmp_path):
         ) == row
     finally:
         db.close(final=True)
+
+
+def test_lost_selection_pin_cannot_downgrade_configured_result_to_staging(tmp_path):
+    from cifereca.core.notice_descriptive_selection_store import _key
+    from cifereca.core.notice_descriptive_materialization_store import publish_descriptive_materialization
+
+    path = tmp_path / "lost-pin.sqlite"
+    db = Storage(path)
+    binding = installed()
+    selected = selection()
+    try:
+        pin = put(db, selected, binding.source_sha256, 0)
+        row = coordinator.run_descriptive_core_job(db, **options(binding))
+        admitted = admit_descriptive_facts(
+            target_edition_id=TARGET, canonical_type="age",
+            consolidator_id=selected.plugin_id, consolidator_version=selected.version,
+            source_facts=(fact(),), attested_strong_links={},
+        )
+        capture = lambda sql: (selected, admitted, binding.source_sha256)
+        assert read_descriptive_materialization(
+            db, target_edition_id=TARGET, **SCOPE, capture_current_txn=capture,
+        ) == row
+        # Simulate an incomplete restore of the configuration metadata only.
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_key(**SCOPE),))
+    finally:
+        db.close(final=True)
+    db = Storage(path)
+    try:
+        with pytest.raises(ValueError, match="descriptive_selection_pin_missing"):
+            read_descriptive_materialization(
+                db, target_edition_id=TARGET, **SCOPE, capture_current_txn=capture,
+            )
+        with pytest.raises(ValueError, match="descriptive_selection_pin_missing"):
+            publish_descriptive_materialization(
+                db, row, expected_execution_key=row.execution_key,
+                capture_current_txn=capture,
+            )
+        from cifereca.core.notice_descriptive_materialization_store import _pin_key, _row_key
+        with db._lock, db._connect() as sql:
+            assert sql.execute(
+                "SELECT value FROM metadata WHERE key=?", (_pin_key(_row_key(row)),),
+            ).fetchone()[0] == str(pin.generation)
+    finally:
+        db.close(final=True)

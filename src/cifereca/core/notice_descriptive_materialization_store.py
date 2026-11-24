@@ -127,6 +127,11 @@ def publish_descriptive_materialization(
         pin = read_descriptive_selection_txn(
             db, canonical_type=row.canonical_type, scope=row.scope,
         )
+        published_pin = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
+        ).fetchone()
+        if pin is None and published_pin is not None:
+            raise ValueError("descriptive_selection_pin_missing")
         require_descriptive_selection(pin, selection, digest, schema=schema)
         _validate_pinned_schema(pin, row, selection, schema)
         require_current_descriptive_materialization(
@@ -198,10 +203,12 @@ def read_descriptive_materialization(storage, *, target_edition_id, canonical_ty
             db, canonical_type=row.canonical_type, scope=row.scope,
         )
         require_descriptive_selection(pin, selection, digest, schema=schema)
+        published_pin = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
+        ).fetchone()
+        if pin is None and published_pin is not None:
+            raise ValueError("descriptive_selection_pin_missing")
         if pin is not None:
-            published_pin = db.execute(
-                "SELECT value FROM metadata WHERE key=?", (_pin_key(key),),
-            ).fetchone()
             if published_pin is None or published_pin[0] != str(pin.generation):
                 raise ValueError("stale_descriptive_selection_generation")
         _validate_pinned_schema(pin, row, selection, schema)
