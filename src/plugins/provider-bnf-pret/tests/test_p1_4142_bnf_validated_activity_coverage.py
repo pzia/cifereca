@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from cifereca_bnf_pret import BnfProviderSession
-from cifereca_bnf_pret_web import ORIGIN, ProfileScope, parse_loans
+from cifereca_bnf_pret_web import ORIGIN, ProfileScope, parse_loans, WebParseError
 from cifereca.plugin_api import ProviderConfigurationError
 
 
@@ -201,10 +201,10 @@ def test_empty_but_incomplete_widget_does_not_claim_zero_loans(html):
 
 @pytest.mark.parametrize("attribute", ['hidden', 'aria-hidden="true"'])
 def test_hidden_empty_active_widget_never_attests_zero(attribute):
-    result = parsed(f'<section class="active-loans" {attribute}></section>')
-    assert result.loans == ()
-    assert result.status == "partial"
-    assert result.exhaustive is False
+    # DOM.walk() ignores hidden sections entirely: no recognized visible widget
+    # exists, so the correct fail-closed outcome is a parsing error.
+    with pytest.raises(WebParseError, match="unrecognized_loans"):
+        parsed(f'<section class="active-loans" {attribute}></section>')
 
 
 @pytest.mark.parametrize("style", ["display: none", "visibility: hidden", "DISPLAY : NONE"])
