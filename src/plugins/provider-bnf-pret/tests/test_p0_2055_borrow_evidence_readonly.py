@@ -211,6 +211,34 @@ class EvidenceReadOnlyTests(unittest.TestCase):
                 finally:
                     session.close()
 
+    def test_informational_observation_is_separate_scoped_and_dated(self):
+        from time import time
+        from cifereca_bnf_pret_borrow_qualification import BorrowerInformationalObservation
+        session, account, item, calls = self.make(detail=UNAVAILABLE)
+        try:
+            before = int(time())
+            observation = session.borrower_information_for(item, account)
+            self.assertIs(type(observation), BorrowerInformationalObservation)
+            self.assertEqual(observation.item_offer, "unavailable")
+            self.assertEqual(observation.pass_state, "unknown")
+            self.assertIsNone(observation.remaining_quota)
+            self.assertIsNone(observation.available_copies)
+            self.assertEqual(observation.permission, "unknown")
+            self.assertEqual(observation.session_epoch, session._epoch)
+            self.assertEqual(observation.identity_id, account.identity_id)
+            self.assertEqual(observation.borrower_id, account.unique_id)
+            self.assertEqual(observation.credential_id, account.credential_id)
+            self.assertEqual(observation.provider_id, account.provider_id)
+            self.assertEqual(observation.record_id, RID)
+            self.assertLessEqual(before, observation.observed_at)
+            self.assertLessEqual(observation.observed_at, int(time()))
+            self.assertNotIn("borrower_eligibility_snapshot", vars(session))
+            self.assertNotIn(RID, repr(observation))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(session._borrow_post_attempts, set())
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:

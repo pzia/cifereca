@@ -1,11 +1,32 @@
 """Read-only borrower qualification; no borrow admission or mutation."""
 from __future__ import annotations
+from dataclasses import dataclass
+from time import time
 from cifereca.plugin_api import Account, SearchResult, ProviderConfigurationError, ProviderCapabilityError, ProviderError
 from cifereca_bnf_pret_http import ReaderHTTPError
 from cifereca_bnf_pret_web import WebParseError
 from cifereca_bnf_pret_catalog import resource_url
 
-def borrower_eligibility_for(self, item: SearchResult, account: Account):
+@dataclass(frozen=True, slots=True, repr=False)
+class BorrowerInformationalObservation:
+    """Ephemeral display candidate, not a Core admission evidence type."""
+    identity_id: str
+    provider_id: str
+    credential_id: str
+    borrower_id: str
+    record_id: str
+    source_collection: str | None
+    session_epoch: str
+    observed_at: int
+    pass_state: str = "unknown"
+    remaining_quota: int | None = None
+    available_copies: int | None = None
+    item_offer: str = "unknown"
+    permission: str = "unknown"
+
+
+def borrower_eligibility_for(self, item: SearchResult, account: Account, *,
+                             informational=False):
     """Fresh read-only *partial* borrower evidence for #2055.
 
     Real BnF pages currently do not attest the subscription state,
@@ -92,6 +113,15 @@ def borrower_eligibility_for(self, item: SearchResult, account: Account):
         # The sole qualified negative is the literal "unavailable"
         # marker *inside this exact book's microdata*. Missing marker
         # remains UNKNOWN, never an affirmative "available".
+        if informational:
+            return BorrowerInformationalObservation(
+                identity_id=borrower[1], provider_id=borrower[2],
+                credential_id=borrower[3], borrower_id=borrower[0],
+                record_id=notice[1], source_collection=notice[6],
+                session_epoch=epoch, observed_at=int(time()),
+                item_offer=('unavailable' if record.availability == 'unavailable'
+                            else 'unknown'),
+            )
         return BorrowerOperationEvidence(
             identity_id=borrower[1], provider_id=borrower[2],
             credential_id=borrower[3], borrower_id=borrower[0],
