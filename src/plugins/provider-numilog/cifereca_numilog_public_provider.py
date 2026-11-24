@@ -563,6 +563,67 @@ class NumilogPublicSession(ProviderSession):
             return None
         return self._public_rows(matches)[0]
 
+    def public_search_replay_capability(self):
+        """Offer the cache-only contract, not permission to execute work."""
+        from cifereca.plugin_api import (
+            PublicSearchReplayInput, PublicSearchReplayCapability, PublicSearchReplayBusy,
+        )
+        from cifereca_numilog_public_client import (
+            _PARSER_FAMILY_DIGEST, _PARSER_IMPLEMENTATION_DIGEST,
+        )
+        if (not self._retain_public_search_inputs or not self.connected
+                or self.credential_id != "__public__" or self.credentials or self._accounts):
+            return None
+        epoch = self._navigation_epoch_snapshot()
+
+        def normalize(raw):
+            if raw is None:
+                return None
+            return PublicSearchReplayInput(
+                raw.token, raw.transport_digest, raw.parser_family_digest,
+                raw.parser_implementation_digest, raw._body,
+            )
+
+        def read(token):
+            try:
+                self._assert_public_generation(epoch)
+                raw, ttl = self._read_retained_public_input(token)
+                self._assert_public_generation(epoch)
+                return normalize(raw), ttl
+            except ProviderError:
+                return None, 0
+
+        @contextmanager
+        def hold(token):
+            # Map only acquisition failures; never swallow an exception
+            # raised by Core inside the publication guard.
+            from contextlib import ExitStack
+            with ExitStack() as stack:
+                try:
+                    self._assert_public_generation(epoch)
+                    raw = stack.enter_context(self._hold_retained_public_input(token))
+                except ProviderError as exc:
+                    if str(exc) == "Numilog : public_catalog_replay_busy":
+                        raise PublicSearchReplayBusy("public_replay_busy") from None
+                    raw = None
+                if self._navigation_epoch != epoch:
+                    raw = None
+                yield normalize(raw)
+
+        def reparse(token, record_id):
+            try:
+                self._assert_public_generation(epoch)
+                response = self._reparse_retained_public_response(token, record_id)
+                self._assert_public_generation(epoch)
+                return response
+            except ProviderError:
+                return None
+
+        return PublicSearchReplayCapability(
+            _PARSER_FAMILY_DIGEST, _PARSER_IMPLEMENTATION_DIGEST,
+            read, hold, reparse,
+        )
+
     def _reparse_retained_public_response(self, token, record_id):
         """Explicit public parser output, still subject to Core admission."""
         from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
