@@ -36,6 +36,8 @@ simple sonde** : `--confirm` autorise la synchronisation et les mutations.
 Le ZIP `--report` n'est pas une trace HTTP. Les traces et journaux bruts
 peuvent contenir des credentials ; aucune publication automatique.
 
+Dans Paramètres → comptes fournisseurs, le test explicite de connexion porte sur le compte enregistré. Toute modification du formulaire invalide le diagnostic affiché, même si la valeur précédente est ensuite rétablie. Enregistrer les changements puis relancer le test ; un test réussi ne prouve ni la synchronisation des prêts, ni l'autorisation d'emprunter.
+
 Pour mesurer la **phase de démarrage de la GUI**, lancer
 `cifereca --perf` : le moniteur de performances existant démarre avant
 l'import GTK et l'ouverture du Core. Le panneau Paramètres → Diagnostics →
