@@ -21,6 +21,17 @@ def record_parse_witness_review(storage, *, key, parser_id, generation, review):
     A healthy review clears the active alert, allowing a later recurrence.
     One bounded record per pin; no private coordinates or raw values.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return record_parse_witness_review_txn(
+            db, key=key, parser_id=parser_id, generation=generation, review=review,
+        )
+
+
+def record_parse_witness_review_txn(db, *, key, parser_id, generation, review):
+    """Record within the caller's already fenced publication transaction."""
+    if not db.in_transaction:
+        raise ValueError("notice_work_transaction_required")
     if (type(generation) is not int or generation < 1
             or type(review) is not ParseWitnessReview
             or review.executable is not False
@@ -32,35 +43,33 @@ def record_parse_witness_review(storage, *, key, parser_id, generation, review):
     if review.status not in _STATUSES:
         raise ValueError("invalid_parse_witness_alert")
     scope = admitted_source_scope_sha256(key, parser_id=parser_id)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT value FROM metadata WHERE key=?",
-                         (_PREFIX + scope,)).fetchone()
-        if row is None:
-            return False
-        approved = _decode(row[0], scope)
-        if approved.generation != generation:
-            return False
-        allowed = {"critical_field_" + str(i) for i in
-                   range(1, len(approved.baseline.critical_fields) + 1)}
-        fields = review.affected_fields
-        if (len(fields) > len(allowed)
-                or any(type(field) is not str or field not in allowed for field in fields)
-                or len(set(fields)) != len(fields)
-                or bool(fields) != (review.status in {
-                    "parser_regression_confirmed", "parser_drift_suspected"})):
-            raise ValueError("invalid_parse_witness_alert")
-        alert_key = _ALERT_PREFIX + scope
-        if review.status == "unchanged":
-            db.execute("DELETE FROM metadata WHERE key=?", (alert_key,))
-            return False
-        raw = json.dumps({"generation": generation, "status": review.status,
-                          "fields": sorted(fields)}, sort_keys=True, separators=(",", ":"))
-        previous = db.execute("SELECT value FROM metadata WHERE key=?",
-                              (alert_key,)).fetchone()
-        if previous is not None and previous[0] == raw:
-            return False
-        db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
-                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                   (alert_key, raw))
-        return True
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_PREFIX + scope,)).fetchone()
+    if row is None:
+        return False
+    approved = _decode(row[0], scope)
+    if approved.generation != generation:
+        return False
+    allowed = {"critical_field_" + str(i) for i in
+               range(1, len(approved.baseline.critical_fields) + 1)}
+    fields = review.affected_fields
+    if (len(fields) > len(allowed)
+            or any(type(field) is not str or field not in allowed for field in fields)
+            or len(set(fields)) != len(fields)
+            or bool(fields) != (review.status in {
+                "parser_regression_confirmed", "parser_drift_suspected"})):
+        raise ValueError("invalid_parse_witness_alert")
+    alert_key = _ALERT_PREFIX + scope
+    if review.status == "unchanged":
+        db.execute("DELETE FROM metadata WHERE key=?", (alert_key,))
+        return False
+    raw = json.dumps({"generation": generation, "status": review.status,
+                      "fields": sorted(fields)}, sort_keys=True, separators=(",", ":"))
+    previous = db.execute("SELECT value FROM metadata WHERE key=?",
+                          (alert_key,)).fetchone()
+    if previous is not None and previous[0] == raw:
+        return False
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
+               "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+               (alert_key, raw))
+    return True
