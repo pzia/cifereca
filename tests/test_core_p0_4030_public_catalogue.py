@@ -390,3 +390,31 @@ def test_single_unique_public_source_preserves_corroborated_isbn_strength(rig):
     assert hit.record_id == "unique" and hit.comparison == "isbn_title_author_concordant"
     assert not report["association_authorized"]
     assert rows(service.storage) == before and path.read_bytes() == data
+
+
+@pytest.mark.parametrize("other_kind", ["unclaimed", "private", "spoofed"])
+def test_filtered_public_twin_cannot_make_surviving_isbn_claim_unique(rig, other_kind):
+    service, session, request, calls, path = rig
+    exact = _row("visible")
+    other = _row("filtered", format="PDF")
+    if other_kind == "private":
+        other = replace(other, owned=True, source_account_id="PRIVATE")
+    elif other_kind == "spoofed":
+        other = replace(other, title="Roman\u202eFORGED")
+    claims = (PublicSearchNotice(exact),)
+    if other_kind != "unclaimed":
+        claims += (PublicSearchNotice(other),)
+
+    def search(*args, **kwargs):
+        calls.append((args, kwargs))
+        return ProviderSearchResponse([exact, other], public_notices=claims)
+
+    session.search_with_response_facets = search
+    before, data = rows(service.storage), path.read_bytes()
+    report = _run(service, request)
+    hit, = report["candidates"]
+    assert hit.record_id == "visible" and hit.comparison == "isbn_claim_ambiguous"
+    assert len(calls) == 1 and report["window_status"] == "incomplete"
+    assert "PRIVATE" not in repr(report) and "FORGED" not in repr(report)
+    assert not report["association_authorized"] and not report["may_write_origin_or_right"]
+    assert rows(service.storage) == before and path.read_bytes() == data
