@@ -108,3 +108,55 @@ def test_revocation_preserves_symlink_and_its_target(tmp_path):
     admission_check.assert_called_once_with(guard)
     assert link.is_symlink()
     assert outside.read_bytes() == b"synthetic"
+
+
+@pytest.mark.parametrize("branch", ["dilicom", "bnf_html"])
+def test_successful_candidate_is_not_publication_authority(tmp_path, branch):
+    adapter = LegacyRightsResourceAdapter()
+    account = SimpleNamespace(identity_id="alice", provider_id="synthetic",
+                              credential_id="cred", unique_id="borrower")
+    staged = tmp_path / "candidate.acsm"
+    staged.write_bytes(b"synthetic")
+    adapter.rights_selected_delivery_candidate = Mock(return_value=(staged, "acsm"))
+    candidate = adapter._stage_legacy_delivery_candidate(
+        account, edition_id="edition", resource_id="loan", kind="loan",
+        branch=branch, selected_offer_id="offer", target_dir=tmp_path,
+        admission_check=lambda guard: True,
+    )
+    assert candidate.source.scope.identity_id == "alice"
+    assert candidate.source.branch == branch
+    assert candidate.source.resource_id == "loan"
+    assert candidate.selected_offer_id == "offer"
+    assert candidate.path == staged
+    assert candidate.provider_hint == "acsm"
+    assert candidate.authorizes_publication is False
+    assert staged.read_bytes() == b"synthetic"
+    adapter.rights_selected_delivery_candidate.assert_called_once()
+
+
+def test_aba_scope_restoration_does_not_override_revoked_admission(tmp_path):
+    adapter = LegacyRightsResourceAdapter()
+    account = SimpleNamespace(identity_id="alice", provider_id="synthetic",
+                              credential_id="cred", unique_id="borrower")
+    epoch = [0]
+    guard = lambda: epoch[0] == 0
+    staged = tmp_path / "candidate.acsm"
+
+    def transfer(*args, **kwargs):
+        account.identity_id = "bob"
+        epoch[0] += 1
+        account.identity_id = "alice"
+        epoch[0] += 1
+        staged.write_bytes(b"synthetic")
+        return staged, "acsm"
+
+    adapter.rights_selected_delivery_candidate = Mock(side_effect=transfer)
+    with pytest.raises(ProviderCapabilityError, match="selected_delivery_scope_changed"):
+        adapter._stage_legacy_delivery_candidate(
+            account, edition_id="edition", resource_id="loan", kind="loan",
+            branch="synthetic", selected_offer_id="offer", target_dir=tmp_path,
+            admission_check=lambda callback: callback(), admission_current=guard,
+        )
+    assert account.identity_id == "alice"
+    assert not staged.exists()
+    adapter.rights_selected_delivery_candidate.assert_called_once()
