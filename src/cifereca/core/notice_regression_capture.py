@@ -10,7 +10,9 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
+import secrets
+import stat
+from contextlib import contextmanager
 import zipfile
 
 from ..install_paths import downloads_dir
@@ -18,6 +20,34 @@ from ..install_paths import downloads_dir
 _MEMBERS = ("response.raw", "baseline.json", "last_healthy.json",
             "current_parse.json", "diff.json", "environment.json")
 _MAX_BYTES = 8 * 1024 * 1024
+
+
+@contextmanager
+def _capture_directory(folder, *, create):
+    """Anchor all operations to an open directory; never traverse symlinks."""
+    absolute = Path(os.path.abspath(folder))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            try:
+                child = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise ValueError("regression_capture_unsafe_directory")
+        yield fd
+    finally:
+        os.close(fd)
 
 
 def write_regression_capture(*, diagnostic_id, generation, members, directory=None):
@@ -43,42 +73,44 @@ def write_regression_capture(*, diagnostic_id, generation, members, directory=No
     }
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
     folder = downloads_dir() if directory is None else Path(directory)
-    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = folder / f"cifereca-regression-{diagnostic_id}-{generation}.zip"
-    fd, temporary = tempfile.mkstemp(prefix=".cifereca-regression-", dir=folder)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr("manifest.json", encoded)
-                for name in _MEMBERS:
-                    if name in members:
-                        archive.writestr(name, members[name])
-            stream.flush()
-            os.fsync(stream.fileno())
-        # Atomic no-clobber publication, including concurrent identical alerts.
+    with _capture_directory(folder, create=True) as directory_fd:
+        temporary = ".cifereca-regression-" + secrets.token_hex(16)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory_fd)
         try:
-            os.link(temporary, target)
-        except FileExistsError:
-            # Never follow a pre-existing symlink or accept unrelated content.
-            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            with os.fdopen(os.open(target, flags), "rb") as existing:
-                import stat
-                info = os.fstat(existing.fileno())
-                if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
-                        or info.st_size > _MAX_BYTES + 65536):
-                    raise ValueError("regression_capture_conflict")
-                with zipfile.ZipFile(existing) as archive:
-                    expected = {"manifest.json": encoded, **members}
-                    if (sorted(archive.namelist()) != sorted(expected)
-                            or any(archive.getinfo(name).file_size != len(data)
-                                   or archive.read(name) != data
-                                   for name, data in expected.items())):
+            with os.fdopen(fd, "wb") as stream:
+                with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    archive.writestr("manifest.json", encoded)
+                    for name in _MEMBERS:
+                        if name in members:
+                            archive.writestr(name, members[name])
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary, target.name, src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd, follow_symlinks=False)
+            except FileExistsError:
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                with os.fdopen(os.open(target.name, flags, dir_fd=directory_fd), "rb") as existing:
+                    info = os.fstat(existing.fileno())
+                    if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                            or info.st_uid != os.getuid()
+                            or info.st_size > _MAX_BYTES + 65536):
                         raise ValueError("regression_capture_conflict")
-        return target, manifest["status"]
-    except (zipfile.BadZipFile, RuntimeError, EOFError, UnicodeError, NotImplementedError) as exc:
-        raise ValueError("regression_capture_conflict") from exc
-    finally:
-        os.unlink(temporary)
+                    with zipfile.ZipFile(existing) as archive:
+                        expected = {"manifest.json": encoded, **members}
+                        if (sorted(archive.namelist()) != sorted(expected)
+                                or any(archive.getinfo(name).file_size != len(data)
+                                       or archive.read(name) != data
+                                       for name, data in expected.items())):
+                            raise ValueError("regression_capture_conflict")
+            os.fsync(directory_fd)
+            return target, manifest["status"]
+        except (zipfile.BadZipFile, RuntimeError, EOFError, UnicodeError, NotImplementedError) as exc:
+            raise ValueError("regression_capture_conflict") from exc
+        finally:
+            os.unlink(temporary, dir_fd=directory_fd)
 
 
 def recover_regression_capture(*, diagnostic_id, generation, expected_members,
@@ -89,7 +121,6 @@ def recover_regression_capture(*, diagnostic_id, generation, expected_members,
     Verify its digest without returning its bytes. Never extract, replace,
     follow a symlink, or accept arbitrary extra members.
     """
-    import stat
     if (type(diagnostic_id) is not str
             or re.fullmatch(r"[0-9a-f]{64}", diagnostic_id) is None
             or type(generation) is not int or not 1 <= generation < 2**63
@@ -102,7 +133,9 @@ def recover_regression_capture(*, diagnostic_id, generation, expected_members,
     folder = downloads_dir() if directory is None else Path(directory)
     target = folder / f"cifereca-regression-{diagnostic_id}-{generation}.zip"
     try:
-        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with _capture_directory(folder, create=False) as directory_fd:
+            fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=directory_fd)
     except FileNotFoundError:
         return None
     try:
