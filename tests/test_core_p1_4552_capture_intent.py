@@ -136,3 +136,24 @@ def test_capacity_preserves_unfinished_capture(tmp_path, monkeypatch):
         assert len(list(tmp_path.glob("*.zip"))) == 1
     finally:
         db.close(final=True)
+
+
+def test_concurrent_capture_outcomes(tmp_path):
+    import json
+    from cifereca.core import notice_regression_capture_intent as intent
+    db = Storage(tmp_path / "concurrent.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            diagnostic = enqueue_capture_txn(sql, scope="a"*64, generation=1,
+                review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                input_digest=sha256(b"body").hexdigest())
+            key = intent._PREFIX + diagnostic
+            previous = sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+        record = json.loads(previous)
+        assert intent._record_outcome(db, key, previous, record, "failed") == "failed"
+        assert intent.export_capture(db, diagnostic, members={}, directory=tmp_path) == "partial"
+        assert intent._record_outcome(db, key, previous, record, "failed") == "partial"
+        assert intent.capture_status(db, diagnostic)["capture_state"] == "partial"
+    finally:
+        db.close(final=True)
