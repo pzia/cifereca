@@ -63,3 +63,68 @@ def test_classified_path_only_for_unique_verified_acquisition(
     assert source.read_bytes() == original
     if state == "file":
         assert target.read_bytes() == b"foreign bytes"
+
+
+@pytest.mark.parametrize("dependency", ["none", "relative_path", "checkpoint"])
+def test_classified_target_existing_sqlite_relocation_boundary_isolated(
+    store, tmp_path, dependency,
+):
+    """Qualify only the existing SQL writer, not a classification command.
+
+    Test setup stages a hardlink on the same filesystem. Both names remain
+    throughout: no production executor, cleanup, or relocation authority.
+    """
+    import json
+    import os
+    from cifereca.core.library_organizer_plan import (
+        prepare_organizer_dry_run, confirm_organizer_dry_run,
+    )
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub",
+                         metadata=TYPED, provider_id="local")
+    if dependency == "relative_path":
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
+                       (json.dumps({"relative_path": "Acquisitions/old.epub"}), pid))
+    elif dependency == "checkpoint":
+        store.acquisition_put({
+            "provider_id": "local", "credential_id": "fixture-account",
+            "identity_id": "A", "item_id": "fixture-checkpoint",
+            "status": "attention_required",
+            "metadata": {"phase": "index_pending", "path": str(old)},
+        })
+    scope, page = _run(_service(store, root))
+    plan = prepare_organizer_dry_run(scope, page, confirmed=True)
+    accepted = confirm_organizer_dry_run(scope, page, plan, confirmed=True)
+    assert accepted.confirmed and not accepted.executable
+    entry, = (e for e in accepted.entries if e.operation == "classify")
+    assert entry.placement_id == pid and entry.state == "relocation_held"
+    target = root / "A" / entry.proposed
+    assert target == root / "A/Livres/Autrice/Autrice - Roman commun.epub"
+    baseline, data = store.placement_get(pid), old.read_bytes()
+    before = rows(store)
+    history = store.acquisitions()
+    # Fixture-only staging: the production organizer has no such command.
+    target.parent.mkdir(parents=True)
+    os.link(old, target)
+    if dependency == "none":
+        store.relocate_local_path(old, target, identity_id="A", provider_id="local")
+        current = store.placement_get(pid)
+        assert current["path"] == str(target)
+        for key in ("artifact_id", "identity_id", "provider_id", "source_item_id", "state"):
+            assert current[key] == baseline[key]
+        assert store.placement_for_path(old) is None
+        assert all(e["metadata"]["path"] == str(target)
+                   for e in store.catalog_entries(placement_id=pid))
+    else:
+        code = ("relocate_relative_path_requires_relink" if dependency == "relative_path"
+                else "relocate_acquisition_reference_requires_relink")
+        with pytest.raises(ValueError, match=code):
+            store.relocate_local_path(old, target, identity_id="A", provider_id="local")
+        assert store.placement_get(pid) == baseline
+        assert store.placement_for_path(target) is None
+    assert old.samefile(target) and old.read_bytes() == target.read_bytes() == data
+    assert rows(store) == before and store.acquisitions() == history
+    assert store.entitlements() == []
