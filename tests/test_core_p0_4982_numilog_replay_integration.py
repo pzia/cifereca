@@ -368,7 +368,8 @@ def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
 
 
 @pytest.mark.parametrize("configured", (False, True))
-def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured):
+@pytest.mark.parametrize("capacity_refused", (False, True))
+def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured, capacity_refused):
     from types import SimpleNamespace
     from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
     from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
@@ -400,6 +401,17 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
                 expected_sha256=field_digest(title),
             ),), expected_generation=0,
         )
+        if capacity_refused:
+            from cifereca.core import notice_regression_capture_intent as capture
+            from cifereca.core.notice_parse_witness import ParseWitnessReview
+            monkeypatch.setattr(capture, "_MAX_INTENTS", 1)
+            with db._lock, db._connect() as sql:
+                sql.execute("BEGIN IMMEDIATE")
+                capture.enqueue_capture_txn(
+                    sql, scope="f"*64, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"other response").hexdigest(),
+                )
         original_parse = client.parse_public_search
 
         def drift(text, url):
@@ -422,15 +434,16 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
             db, key=source.observation.key, parser_id=source.observation.parser_id,
         )
         assert diagnostic["status"] == "parser_drift_suspected"
-        assert diagnostic["capture_state"] == "partial"
+        expected_state = "capacity_refused" if capacity_refused else "partial"
+        assert diagnostic["capture_state"] == expected_state
         entries = [event for event in diagnostics.snapshot()
                    if event["category"] == "NOTICE"]
         event, = entries
         assert event["operation"] == "parser_witness_rejected"
         assert event["status"] == "warning"
-        assert event["detail"] == {"diagnostic_id": diagnostic["capture_id"],
-                                "capture_state": "partial"}
-        assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
+        assert event["detail"] == {"diagnostic_id": diagnostic.get("capture_id"),
+                                   "capture_state": expected_state}
+        assert len(list(destination.glob("cifereca-regression-*.zip"))) == (0 if capacity_refused else 1)
         if configured:
             assert not list(tmp_path.glob("cifereca-regression-*.zip"))
         assert len(calls) == 2
