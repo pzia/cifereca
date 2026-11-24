@@ -271,6 +271,9 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch, ver
                 # input, without claiming retention through process restart.
                 monkeypatch.setattr(client, "_PARSER_IMPLEMENTATION_DIGEST",
                                     sha256(b"numilog.public.search.test-upgrade").hexdigest())
+                assert port.read_input(receipt.producer_token) is None
+                with port.hold_input(receipt.producer_token) as old_live:
+                    assert old_live is None
                 upgraded = qualify_public_search_replay(
                     session, session.public_search_replay_capability(),
                 )
