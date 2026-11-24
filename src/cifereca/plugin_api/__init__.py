@@ -20,7 +20,8 @@ from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
 from .provider_search_facets import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse, PublicSearchNotice,
-    ProviderSearchWithFacets,
+    ProviderSearchWithFacets, PublicSearchReplayInput, PublicSearchReplayBusy,
+    PublicSearchReplayCapability,
 )
 from .capability_matrix import (
     CAPABILITY_MATRIX_CONTRACT, CapabilityEvidence, CapabilityMatrix,
@@ -139,6 +140,9 @@ __all__ = [
     "ProviderSearchEvent", "ProviderSearchStream",
     "CatalogSearchFacet", "CatalogSearchFacetValue", "ProviderSearchResponse",
     "PublicSearchNotice",
+    "PublicSearchReplayInput",
+    "PublicSearchReplayBusy",
+    "PublicSearchReplayCapability",
     "ProviderSearchWithFacets",
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities", "CAPABILITY_FAMILIES", "CapabilityFamilyCoverage", "exact_capability_families",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",

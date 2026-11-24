@@ -661,6 +661,11 @@ def _public_rows_from_response(
                                 exact.raw_json, exact.parser_id, exact.parser_version,
                                 *parse_evidence,
                             )
+                            token = response.notice_parse_input_token
+                            if (type(token) is str and re.fullmatch(r"[0-9a-f]{32}", token)
+                                    and callable(getattr(session, "public_search_replay_capability", None))):
+                                projected._core_notice_retained_input = (session, token)
+
             admitted.append(projected)
     return admitted
 
@@ -2734,8 +2739,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
         from .notice_cover_repository import persist_notice_cover_many
         from .notice_c_cover_index import persist_exact_public_search_cover
         producing_rows = []
+        retained_inputs = []
         observations = []
         for row in rows:
+            retained = row.__dict__.pop("_core_notice_retained_input", None)
             if ((require_public_cover_witness or _CORE_LIVE_PUBLIC_C_WRITER.get())
                     and not _verified_public_cover_witness(row)):
                 # Do not promote an arbitrary legacy/private SearchResult to C.
@@ -2756,6 +2763,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
             if observed is None:
                 continue
             producing_rows.append(row)
+            retained_inputs.append(retained)
             observations.append(observed)
 
         if observations:
@@ -2873,6 +2881,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                         pass
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
+                    retained = retained_inputs[position]
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
                             "TRACE notice c public search code=source_persist_failed"
@@ -2881,6 +2890,20 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     # Core stamps only a successfully accepted source and
                     # its durable epoch. A GTK widget never writes a second
                     # N2 source or infers an association from an N3 HIT.
+                    if retained is not None:
+                        from .notice_c_search_receipt import record_search_receipt
+                        receipt = record_search_receipt(
+                            self.storage, row, persisted, retained, now=now,
+                        )
+                        register = getattr(self, "_notice_work_register_search_replay", None)
+                        if receipt is not None and callable(register):
+                            try:
+                                register(retained[0], persisted, receipt, identity_id)
+                            except (ValueError, TypeError, AttributeError, OSError, RuntimeError):
+                                # Optional replay qualification must not undo Search.
+                                logging.getLogger("cifereca").warning(
+                                    "TRACE notice c public search code=replay_registration_unavailable"
+                                )
                     row._core_notice_cover_document_ref = persisted.document
                     row._core_notice_cover_document_epoch = persisted.epoch
                     # A public C source is exactly related to ITS OWN

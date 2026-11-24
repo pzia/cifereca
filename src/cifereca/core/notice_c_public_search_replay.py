@@ -107,7 +107,7 @@ def make_public_search_replay_port(
         matches = tuple(_observations(
             response, session, provider_id=provider_id,
             observed_at=source.observation.observed_at,
-            allow_coverless=source.observation.status == "partial",
+            allow_coverless=True,
         ))
         if (len(matches) != 1 or matches[0].key != source.observation.key
                 or notice_cover_document_ref(matches[0].key) != source.document):
@@ -117,4 +117,92 @@ def make_public_search_replay_port(
     return PublicReplayPort(
         provider_id, parser_family_digest, implementation_digest,
         read_input, parse, hold_input, authorize_capture_input,
+    )
+
+
+def make_retained_public_replay_port(
+    session, *, provider_id, parser_family_digest, implementation_digest,
+    read_retained, hold_retained, reparse_response, normalize_input,
+    authorize_capture_input=None,
+):
+    """Compose explicitly supplied cache callbacks without provider discovery.
+
+    The composition owner supplies the normalization and error mapping;
+    this adapter never opens a session or starts a transport.
+    """
+    from contextlib import contextmanager
+
+    if not all(callable(fn) for fn in
+               (read_retained, hold_retained, normalize_input, reparse_response)):
+        raise ValueError("notice_reparse_invalid_public_adapter")
+
+    def read(token):
+        if not _anonymous_session(session, provider_id):
+            return None
+        raw, ttl = read_retained(token)
+        if (raw is None or type(ttl) is not int or ttl < 1
+                or not _anonymous_session(session, provider_id)):
+            return None
+        return normalize_input(raw)
+
+    @contextmanager
+    def hold(token):
+        if not _anonymous_session(session, provider_id):
+            yield None
+            return
+        with hold_retained(token) as raw:
+            yield (normalize_input(raw) if raw is not None
+                   and _anonymous_session(session, provider_id) else None)
+
+    return make_public_search_replay_port(
+        session, provider_id=provider_id,
+        parser_family_digest=parser_family_digest,
+        implementation_digest=implementation_digest,
+        read_input=read, hold_input=hold,
+        reparse_response=reparse_response,
+        authorize_capture_input=authorize_capture_input,
+    )
+
+
+def qualify_public_search_replay(session, capability):
+    """Adapt an explicitly selected plugin capability, without discovery.
+
+    The composition owner must still establish the exact registered live
+    session. No capture authorization is accepted from the plugin.
+    """
+    from contextlib import contextmanager, ExitStack
+    from ..plugin_api import (
+        PublicSearchReplayCapability, PublicSearchReplayInput, PublicSearchReplayBusy,
+    )
+    from .notice_c_reparse_execution import ReplayInput
+    from .notice_c_work_bridge import RetryableNoticeWork
+
+    if (type(capability) is not PublicSearchReplayCapability
+            or type(capability.schema_version) is not int
+            or capability.schema_version != 1):
+        raise ValueError("notice_reparse_invalid_public_capability")
+
+    def normalize(raw):
+        if type(raw) is not PublicSearchReplayInput:
+            raise UnavailableNoticeWork("notice_reparse_input_unavailable")
+        return ReplayInput(raw.token, raw.transport_digest, raw.parser_family_digest,
+                           raw.parser_implementation_digest, raw.body)
+
+    @contextmanager
+    def hold(token):
+        with ExitStack() as stack:
+            try:
+                raw = stack.enter_context(capability.hold(token))
+            except PublicSearchReplayBusy:
+                raise RetryableNoticeWork("notice_reparse_provider_busy") from None
+            yield raw
+
+    if not all(callable(fn) for fn in (capability.read, capability.hold, capability.reparse)):
+        raise ValueError("notice_reparse_invalid_public_capability")
+    return make_retained_public_replay_port(
+        session, provider_id=session.provider_id,
+        parser_family_digest=capability.parser_family_digest,
+        implementation_digest=capability.parser_implementation_digest,
+        read_retained=capability.read, hold_retained=hold,
+        reparse_response=capability.reparse, normalize_input=normalize,
     )

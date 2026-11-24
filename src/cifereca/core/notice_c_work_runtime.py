@@ -79,6 +79,7 @@ class NoticeWorkRuntime:
         self._diagnostics = diagnostics
         self._clock = clock
         self._replay_registry = replay_registry
+        self._pending_replay_registry = None
         self._fetch_authority = None
         self._fetch_execution = None
         self._purchase_execution = None
@@ -102,6 +103,159 @@ class NoticeWorkRuntime:
             on_purchase_committed=self._notify_purchase,
                 on_witness_rejected=self._notify_witness_rejected,
         )
+
+    def install_replay_registry(self, registry):
+        """Install qualified replay ports at an idle dispatch boundary.
+
+        Session owners retain responsibility for revocation through the
+        read/hold callbacks. No transport or work request is initiated here.
+        """
+        from .notice_c_reparse_execution import PublicReplayRegistry
+
+        with self._lock:
+            if self._closed or self._scan is not None or self._hint_pending:
+                return False
+            if self._progress["workers_submitted"] != sum(
+                    self._progress[key] for key in ("workers_current", "workers_retry",
+                    "workers_error", "workers_skipped", "workers_cancelled")):
+                return False
+            if type(registry) is not PublicReplayRegistry:
+                raise ValueError("notice_reparse_invalid_registry")
+            self._pump = PublicNoticeWorkPump(
+                self._storage, self._broker, clock=self._clock,
+                on_committed=self._notify, replay_registry=registry,
+                fetch_execution=self._fetch_execution,
+                purchase_execution=self._purchase_execution,
+                on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
+            )
+            self._replay_registry = registry
+            self._pending_replay_registry = None
+            return True
+
+    def stage_replay_port(self, port, receipt):
+        """Stage a qualified port for the next existing scan, not a job.
+
+        A replacement never interrupts an admitted scan. In-flight workers
+        retain their old port and must pass its session/input lease checks.
+        Reuse a live port when it already covers this exact receipt.
+        """
+        from .notice_c_reparse_execution import PublicReplayRegistry, PublicReplayPort
+        from .notice_c_work_bridge import RetryableNoticeWork, UnavailableNoticeWork
+
+        from .notice_c_raw_input_receipt import _valid
+        from .notice_c_reparse_execution import _match_input
+        from .notice_c_reparse_requests import PublicReparseRequest
+
+        if type(port) is not PublicReplayPort or not _valid(receipt):
+            raise ValueError("notice_reparse_invalid_registry")
+        if (port.parser_family_digest != receipt.parser_family_digest
+                or receipt.producer_token is None):
+            return False
+        # Registration alone must not accept a stale or unrelated token.
+        request = PublicReparseRequest(None, receipt, port.implementation_digest)
+        try:
+            _match_input(request, port.read_input(receipt.producer_token))
+        except (RetryableNoticeWork, UnavailableNoticeWork):
+            return False
+        key = (port.provider_id, port.parser_family_digest, port.implementation_digest)
+        with self._lock:
+            if self._closed:
+                return False
+            registry = self._pending_replay_registry or self._replay_registry
+            ports = () if registry is None else registry._ports
+        for old in ports:
+            if (old.provider_id, old.parser_family_digest, old.implementation_digest) == key:
+                try:
+                    _match_input(request, old.read_input(receipt.producer_token))
+                except (RetryableNoticeWork, UnavailableNoticeWork):
+                    continue
+                # A previous staging wake may have been refused by admission.
+                # Reuse the port but offer another nonblocking wake.
+                self.request_tick()
+                return True
+        with self._lock:
+            if self._closed:
+                return False
+            registry = self._pending_replay_registry or self._replay_registry
+            ports = () if registry is None else registry._ports
+            # Only one active implementation per provider/family in this
+            # live registry. A previous implementation must not dispatch
+            # fresh work under an obsolete version after replacement.
+            ports = tuple(p for p in ports if
+                          (p.provider_id, p.parser_family_digest) != key[:2])
+            self._pending_replay_registry = PublicReplayRegistry(ports + (port,))
+        self.request_tick()
+        return True
+
+    def register_search_replay(self, source, receipt, port):
+        """Register exact live input and request replay only on version change.
+
+        Normal Search with the current parser does not schedule duplicate
+        parsing. An old retained input may be replayed by a newly qualified
+        implementation of its family, with the existing journal CAS.
+        """
+        from .notice_c_reparse_requests import _spec
+        from . import notice_c_job_journal as journal
+
+        if port.provider_id != source.observation.key.provider_id:
+            return None
+        if not self.stage_replay_port(port, receipt):
+            return None
+        if port.implementation_digest == receipt.parser_implementation_digest:
+            return None
+        spec = _spec(source, receipt, port.implementation_digest)
+        with self._storage._lock, self._storage._connect() as db:
+            db.execute("BEGIN")
+            previous = journal._load(db, journal._key(spec))
+            generation = 0 if previous is None else previous.ref.generation
+        # Any concurrent source, receipt, implementation or journal change
+        # is refused by the normal request/worker fences. No new GET.
+        return self.request_public_replay(
+            source, receipt, implementation_digest=port.implementation_digest,
+            expected_generation=generation,
+        )
+
+    def request_public_replay(self, source, receipt, *, implementation_digest,
+                              expected_generation):
+        """Trusted worker entry point; no network, new queue or parser grant.
+
+        The caller selects an already admitted source and implementation.
+        Read/hold the exact registered producer input before durable CAS.
+        Dispatch independently rechecks the registry, receipt and lease.
+        A concurrent runtime shutdown may leave a recoverable durable job.
+        """
+        from .notice_c_reparse_execution import (
+            PublicReplayRegistry, _match_input,
+        )
+        from .notice_c_reparse_requests import (
+            PublicReparseRequest, request_public_reparse,
+        )
+        from .notice_c_work_bridge import UnavailableNoticeWork
+
+        with self._lock:
+            registry = self._pending_replay_registry or self._replay_registry
+            pump = self._pump
+            if self._closed or type(registry) is not PublicReplayRegistry:
+                raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
+        request = PublicReparseRequest(source, receipt, implementation_digest)
+        port = registry.select(request)
+        selected = port.read_input(receipt.producer_token)
+        _match_input(request, selected)
+        with port.hold_input(receipt.producer_token) as live:
+            _match_input(request, live)
+            if live != selected:
+                raise UnavailableNoticeWork("notice_reparse_input_changed")
+            with self._lock:
+                if self._closed or (self._pending_replay_registry or self._replay_registry) is not registry:
+                    raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
+            ref = request_public_reparse(
+                self._storage, source, receipt, selected.body,
+                implementation_digest=implementation_digest,
+                now=pump._clock(), expected_generation=expected_generation,
+            )
+        self.request_tick()
+        return ref
 
     def install_fetch_execution(self, execution):
         """Trusted Core composition only, once, before any heartbeat hint.
@@ -301,7 +455,20 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed:
                 return None
-        outcome = self._pump.tick(control=control)
+            if self._pending_replay_registry is not None:
+                self._replay_registry = self._pending_replay_registry
+                self._pending_replay_registry = None
+                self._pump = PublicNoticeWorkPump(
+                    self._storage, self._broker, clock=self._clock,
+                    on_committed=self._notify, replay_registry=self._replay_registry,
+                    fetch_execution=self._fetch_execution,
+                    purchase_execution=self._purchase_execution,
+                    on_purchase_committed=self._notify_purchase,
+                    on_witness_rejected=self._notify_witness_rejected,
+                )
+            pump = self._pump
+            registry = self._replay_registry
+        outcome = pump.tick(control=control)
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
@@ -320,7 +487,7 @@ class NoticeWorkRuntime:
             return outcome
         for diagnostic, state in resume_captures(
                 self._storage, lambda diagnostic: resolve_replay_capture_members(
-                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
+                    self._storage, registry, diagnostic, clock=pump._clock,
                 ), limit=2):
             self._report_capture(diagnostic, state)
         return outcome
@@ -371,6 +538,7 @@ class NoticeWorkRuntime:
             self._scan = None
             self._hint_pending = False
             self._observer = None
+            self._pending_replay_registry = None
             authority = self._fetch_authority
             self._fetch_authority = None
             self._fetch_execution = None

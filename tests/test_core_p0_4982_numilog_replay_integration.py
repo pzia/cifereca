@@ -20,7 +20,7 @@ from cifereca.core.notice_c_cover_index import (
     persist_exact_public_search_cover, read_consolidated_notice_cover,
 )
 from cifereca.core.notice_c_public_search_replay import (
-    make_public_search_replay_port, public_replay_same_call_observation,
+    make_retained_public_replay_port, public_replay_same_call_observation,
 )
 from cifereca.core.notice_c_raw_input_receipt import record_public_raw_input_receipt
 from cifereca.core.notice_c_reparse_execution import PublicReplayRegistry, ReplayInput
@@ -82,14 +82,13 @@ def normalize(raw):
 
 def make_port(session, family, implementation):
     def read(token):
-        raw, _ttl = session._read_retained_public_input(token)
-        return normalize(raw)
+        return session._read_retained_public_input(token)
 
     @contextmanager
     def hold(token):
         try:
             with session._hold_retained_public_input(token) as raw:
-                yield normalize(raw)
+                yield raw
         except ProviderError as exc:
             if str(exc) == "Numilog : public_catalog_replay_busy":
                 raise RetryableNoticeWork("notice_reparse_provider_busy") from None
@@ -97,11 +96,11 @@ def make_port(session, family, implementation):
 
     # Provider-specific wiring lives here in the trusted test composition,
     # not in Core, a public plugin ABI, or the production registry.
-    return make_public_search_replay_port(
+    return make_retained_public_replay_port(
         session, provider_id=session.provider_id,
         parser_family_digest=family, implementation_digest=implementation,
-        read_input=read, reparse_response=session._reparse_retained_public_response,
-        hold_input=hold,
+        read_retained=read, reparse_response=session._reparse_retained_public_response,
+        hold_retained=hold, normalize_input=normalize,
     )
 
 
@@ -224,3 +223,145 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         tasks.close()
         session.close()
         db.close()
+
+
+@pytest.mark.parametrize("version_change", (False, True))
+def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch, version_change):
+    from types import SimpleNamespace
+    from cifereca.core.notice_c_raw_input_receipt import read_public_raw_input_receipt
+    from cifereca.core import notice_c_search_receipt
+    session, client, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "normal-receipt.sqlite")
+    try:
+        monkeypatch.setattr(notice_c_search_receipt, "time", lambda: 100)
+        response = session.search_with_response_facets("loup", "catalog")
+        assert response.notice_parse_input_token is not None
+        rows = search_orchestration._public_rows_from_response(response, session)
+        row, = rows
+        search_orchestration._ingest_public_search_c(
+            SimpleNamespace(storage=db), rows, identity_id="alice", now=100,
+            require_public_cover_witness=True,
+        )
+        receipt = read_public_raw_input_receipt(
+            db, row._core_notice_cover_document_ref, now=100,
+        )
+        assert receipt is not None
+        assert receipt.producer_token == response.notice_parse_input_token
+        assert receipt.input_digest == sha256(body).hexdigest()
+        assert read_public_raw_input_receipt(
+            db, row._core_notice_cover_document_ref, now=161,
+        ) is None
+        assert "_core_notice_retained_input" not in row.__dict__
+        assert len(calls) == 1
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        raw, ttl = session._read_retained_public_input(receipt.producer_token)
+        assert raw is not None and ttl > 0
+        from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
+
+        tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
+                               SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+        runtime = NoticeWorkRuntime(db, tasks, clock=lambda: 100)
+        try:
+            from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+            port = qualify_public_search_replay(session, session.public_search_replay_capability())
+            registry = PublicReplayRegistry((port,))
+            assert runtime.register_search_replay(source, receipt, port) is None
+            if version_change:
+                # Model a qualified new parser against the still-live old
+                # input, without claiming retention through process restart.
+                monkeypatch.setattr(client, "_PARSER_IMPLEMENTATION_DIGEST",
+                                    sha256(b"numilog.public.search.test-upgrade").hexdigest())
+                assert port.read_input(receipt.producer_token) is None
+                with port.hold_input(receipt.producer_token) as old_live:
+                    assert old_live is None
+                upgraded = qualify_public_search_replay(
+                    session, session.public_search_replay_capability(),
+                )
+                ref = runtime.register_search_replay(source, receipt, upgraded)
+                assert ref is not None
+                assert runtime.register_search_replay(source, receipt, upgraded) == ref
+            else:
+                ref = runtime.request_public_replay(
+                    source, receipt,
+                    implementation_digest=receipt.parser_implementation_digest,
+                    expected_generation=0,
+                )
+            deadline = monotonic() + 10
+            while monotonic() < deadline:
+                job = journal.read_job(db, ref)
+                if job.state in ("current", "error"):
+                    break
+                Event().wait(.01)
+            assert journal.read_job(db, ref).state == "current"
+            assert len(calls) == 1
+        finally:
+            runtime.close()
+            tasks.close()
+        assert runtime.install_replay_registry(registry) is False
+    finally:
+        session.close()
+        db.close()
+
+
+def test_retained_replay_adapter_refuses_revoked_session(tmp_path, monkeypatch):
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        response = session.search_with_response_facets("loup", "catalog")
+        token = response.notice_parse_input_token
+        raw, ttl = session._read_retained_public_input(token)
+        assert raw is not None and ttl > 0
+        port = make_port(session, raw.parser_family_digest,
+                         raw.parser_implementation_digest)
+        assert port.read_input(token) == normalize(raw)
+        with port.hold_input(token) as live:
+            assert live == normalize(raw)
+        session.close()
+        assert port.read_input(token) is None
+        with port.hold_input(token) as live:
+            assert live is None
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+def test_declared_replay_capability_does_not_survive_reconnect(monkeypatch):
+    from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        capability = session.public_search_replay_capability()
+        port = qualify_public_search_replay(session, capability)
+        token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert port.read_input(token) is not None
+        session.close()
+        assert session.public_search_replay_capability() is None
+        session.connect()
+        new_token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert new_token != token
+        assert port.read_input(new_token) is None
+        with port.hold_input(new_token) as live:
+            assert live is None
+        fresh = qualify_public_search_replay(session, session.public_search_replay_capability())
+        assert fresh.read_input(new_token) is not None
+        assert len(calls) == 2
+    finally:
+        session.close()
+
+
+def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
+    from cifereca.core.notice_c_public_search_replay import qualify_public_search_replay
+    session, _client, _clock, calls, _body = make_session(monkeypatch)
+    try:
+        port = qualify_public_search_replay(session, session.public_search_replay_capability())
+        token = session.search_with_response_facets("loup", "catalog").notice_parse_input_token
+        assert port.read_input(token) is not None
+        # A non-reentrant navigation guard on this thread reproduces busy
+        # deterministically; the adapter must not attempt a blocking acquire.
+        with session._navigation_lock:
+            with pytest.raises(RetryableNoticeWork, match="provider_busy"):
+                with port.hold_input(token):
+                    pytest.fail("busy lease admitted")
+        with port.hold_input(token) as live:
+            assert live is not None
+        assert len(calls) == 1
+    finally:
+        session.close()
