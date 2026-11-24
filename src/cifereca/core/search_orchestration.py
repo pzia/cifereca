@@ -2789,7 +2789,22 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     return tuple(position for position, source in public
                                  if source.document.source_key in refused_refs)
 
-                options = {"_after_persist": publish_or_request} if callable(recover) else {}
+                def require_witness_evidence(db, observation, attribute, position):
+                    from .notice_parse_witness import admitted_source_scope_sha256
+                    from .notice_parse_witness_store import _PREFIX
+                    scope = admitted_source_scope_sha256(
+                        observation.key, parser_id=observation.parser_id,
+                    )
+                    # Ordinary Search DTOs do not attest the actual raw
+                    # response. Never replace a pinned healthy observation
+                    # or advance its freshness from unverified bytes.
+                    return db.execute(
+                        "SELECT 1 FROM metadata WHERE key=?", (_PREFIX + scope,),
+                    ).fetchone() is None
+
+                options = {"_before_persist": require_witness_evidence}
+                if callable(recover):
+                    options["_after_persist"] = publish_or_request
                 if atomic_groups:
                     options["_before_chunk_commit"] = publish_groups
                 persisted_batch = persist_notice_cover_many(
