@@ -1112,6 +1112,11 @@ def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
         for value, accepted in (
             ("search_late_detail_rebind", True),
+            ("search_cover_other_selection", True),
+            ("search_exact_cover_after_return", True),
+            ("borrower_advisory_normal_click", True),
+            ("borrower_advisory_stale_delivery", True),
+            ("borrower_advisory_normal_PRIVATE", False),
             ("embedded_loan_list_over_remote", True),
             ("embedded_loan_detail_over_remote", True),
             ("embedded_loan_list_over_supplier", True),
