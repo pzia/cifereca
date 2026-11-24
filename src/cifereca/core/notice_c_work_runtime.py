@@ -17,6 +17,8 @@ from ..task_runtime import TaskBrokerImpl
 from .notice_c_work_pump import DispatchTick, PublicNoticeWorkPump
 from .notice_c_fetch_execution import PublicFetchExecution
 from .notice_c_purchase_execution import PurchaseIntentExecution
+from .notice_regression_capture_intent import resume_captures
+from .notice_c_reparse_execution import resolve_replay_capture_members
 
 
 def validate_notice_work_admission(admission):
@@ -68,12 +70,13 @@ class NoticeWorkProgress:
 class NoticeWorkRuntime:
     """Private lifecycle adapter; composition root owns the existing broker."""
 
-    def __init__(self, storage, broker, *, clock=None, replay_registry=None):
+    def __init__(self, storage, broker, *, clock=None, replay_registry=None, diagnostics=None):
         if type(broker) is not TaskBrokerImpl or broker.max_workers < 3:
             raise ValueError("notice_work_invalid_runtime_broker")
         validate_notice_work_admission(broker.shared_admission)
         self._broker = broker
         self._storage = storage
+        self._diagnostics = diagnostics
         self._clock = clock
         self._replay_registry = replay_registry
         self._fetch_authority = None
@@ -97,6 +100,7 @@ class NoticeWorkRuntime:
             storage, broker, clock=clock, on_committed=self._notify,
             replay_registry=replay_registry,
             on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
         )
 
     def install_fetch_execution(self, execution):
@@ -120,6 +124,7 @@ class NoticeWorkRuntime:
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=execution, purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
             )
             self._fetch_execution = execution
             self._fetch_authority = execution._authority
@@ -138,6 +143,7 @@ class NoticeWorkRuntime:
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=self._fetch_execution, purchase_execution=execution,
                 on_purchase_committed=self._notify_purchase,
+                on_witness_rejected=self._notify_witness_rejected,
             )
             self._purchase_execution = execution
             return True
@@ -173,6 +179,27 @@ class NoticeWorkRuntime:
                 documentary_revision=self._documentary_revision,
                 **self._progress,
             )
+
+    def _notify_witness_rejected(self, diagnostic_id, capture_state):
+        self._report_capture(diagnostic_id, capture_state, rejected=True)
+
+    def _report_capture(self, diagnostic_id, capture_state, *, rejected=False):
+        if self._diagnostics is None:
+            return
+        # Existing canonical Diagnostics journal; no new UI or log store.
+        # Only a closed Core outcome crosses this boundary.
+        if capture_state not in ("pending", "complete", "partial", "failed",
+                                 "capacity_refused", "metadata_unavailable"):
+            return
+        try:
+            self._diagnostics.add(
+                "NOTICE", "parser_witness_rejected" if rejected else "regression_capture_resumed",
+                "warning" if rejected else ("error" if capture_state == "failed"
+                                             else "partial" if capture_state == "partial" else "ok"),
+                detail={"diagnostic_id": diagnostic_id, "capture_state": capture_state},
+            )
+        except Exception:
+            pass
 
     def _notify_purchase(self):
         with self._lock:
@@ -287,6 +314,15 @@ class NoticeWorkRuntime:
                     # for an already completed Future. No new work queue.
                     for worker in outcome.handles:
                         worker.add_done_callback(self._worker_finished)
+        # Existing admitted maintenance worker, no extra pool or network.
+        # Durable snapshots suffice when original bytes cannot be exported.
+        if control.cancelled():
+            return outcome
+        for diagnostic, state in resume_captures(
+                self._storage, lambda diagnostic: resolve_replay_capture_members(
+                    self._storage, self._replay_registry, diagnostic, clock=self._pump._clock,
+                ), limit=2):
+            self._report_capture(diagnostic, state)
         return outcome
 
     def _worker_finished(self, handle):

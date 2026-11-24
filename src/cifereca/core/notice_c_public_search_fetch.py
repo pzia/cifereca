@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .notice_c_fetch_authority import PublicFetchAuthority
 from .notice_c_fetch_execution import PublicFetchPort, ReservedPublicFetch
+from .notice_c_fetch_publication import FreshPublicParse
 from .notice_c_public_search_replay import _anonymous_session, _observations
 from .notice_c_raw_input_receipt import (
     PublicRawInputReceipt, _valid, read_public_raw_input_receipt,
@@ -21,6 +22,7 @@ from ..plugin_api import ProviderSearchResponse
 
 def make_public_search_fetch_port(
     authority, session, source, receipt, *, reserve_exact, clock,
+    exact_parse_input=None, authorize_capture_input=None,
 ):
     """Bind one declared transport to a previously admitted source and receipt.
 
@@ -28,12 +30,18 @@ def make_public_search_fetch_port(
     durable job or a URL. A qualified adapter supplies reserve_exact with
     the established supplier budget, late-start and session guard contract.
     This factory is an internal composition helper, not a public grant API.
+    Optional exact_parse_input is a trusted same-call binding: it returns
+    the exact bytes or None, never a second request or a cached DTO. Raw
+    capture export requires an explicit trusted policy, denied by default.
     """
     if (type(authority) is not PublicFetchAuthority
             or type(source) is not PersistedNoticeCover
             or type(receipt) is not PublicRawInputReceipt or not _valid(receipt)
             or receipt.producer_token is None
-            or not callable(clock) or not callable(reserve_exact)):
+            or not callable(clock) or not callable(reserve_exact)
+            or (exact_parse_input is not None and not callable(exact_parse_input))
+            or (authorize_capture_input is not None and (
+                exact_parse_input is None or not callable(authorize_capture_input)))):
         raise ValueError("notice_fetch_invalid_public_adapter")
     provider_id = source.observation.key.provider_id
     if (not _anonymous_session(session, provider_id)
@@ -83,6 +91,16 @@ def make_public_search_fetch_port(
             if (len(matches) != 1 or matches[0].key != original_key
                     or notice_cover_document_ref(matches[0].key) != source.document):
                 raise UnavailableNoticeWork("notice_fetch_invalid_public_response")
+            if exact_parse_input is not None:
+                body = exact_parse_input(response, observed_at)
+                if body is not None:
+                    allowed = False
+                    if authorize_capture_input is not None:
+                        try:
+                            allowed = authorize_capture_input(permit, response, body) is True
+                        except Exception:
+                            pass
+                    return FreshPublicParse(matches[0], body, allowed)
             return matches[0]
 
         return ReservedPublicFetch(

@@ -556,6 +556,15 @@ def _public_rows_from_response(
         for claim in response.public_notices
         if type(claim) is PublicSearchNotice
     )
+    from hashlib import sha256
+    body = response.notice_parse_input
+    implementation = response.notice_parser_implementation
+    parse_evidence = None
+    if (type(body) is bytes and 0 < len(body) <= 2 * 1024 * 1024
+            and type(implementation) is str
+            and re.fullmatch(r"[0-9a-f]{64}", implementation)
+            and response.partial is False):
+        parse_evidence = (sha256(body).hexdigest(), implementation)
     admitted: list[SearchResult] = []
     for row in response.results:
         projected = projections.get(id(row))
@@ -637,6 +646,21 @@ def _public_rows_from_response(
                             projected.friendly_url,
                             projected.metadata.get("public_url_evidence"),
                         )
+                    if parse_evidence is not None:
+                        from .notice_search_cover_producer import admit_public_search_catalogue
+                        try:
+                            exact = admit_public_search_catalogue(
+                                projected, identity_id="__public__", observed_at=1,
+                                public_cover_url=projected.thumbnail_url,
+                            )
+                        except (ValueError, TypeError, UnicodeError):
+                            exact = None
+                        if exact is not None:
+                            projected._core_notice_parse_input = (
+                                _CORE_PUBLIC_COVER_WITNESS, exact.key,
+                                exact.raw_json, exact.parser_id, exact.parser_version,
+                                *parse_evidence,
+                            )
             admitted.append(projected)
     return admitted
 
@@ -2789,7 +2813,43 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     return tuple(position for position, source in public
                                  if source.document.source_key in refused_refs)
 
-                options = {"_after_persist": publish_or_request} if callable(recover) else {}
+                capture_ids = set()
+
+                def require_witness_evidence(db, observation, attribute, position):
+                    from .notice_parse_witness import admitted_source_scope_sha256
+                    from .notice_parse_witness_store import _PREFIX
+                    from .notice_cover_repository import _checked_source_state, _opaque_key
+                    from .notice_parse_witness_alert import review_publication_txn
+                    scope = admitted_source_scope_sha256(
+                        observation.key, parser_id=observation.parser_id,
+                    )
+                    if db.execute(
+                        "SELECT 1 FROM metadata WHERE key=?", (_PREFIX + scope,),
+                    ).fetchone() is None:
+                        return True
+                    evidence = getattr(producing_rows[position], "_core_notice_parse_input", None)
+                    if (type(evidence) is not tuple or len(evidence) != 7
+                            or evidence[:5] != (
+                                _CORE_PUBLIC_COVER_WITNESS, observation.key,
+                                observation.raw_json, observation.parser_id,
+                                observation.parser_version)):
+                        return False
+                    _, current, _ = _checked_source_state(
+                        db, attribute.document, _opaque_key(attribute.document),
+                    )
+                    if current is None or observation.observed_at < current.observation.observed_at:
+                        return False
+                    reject, diagnostic = review_publication_txn(
+                        db, current=current.observation, candidate=observation,
+                        input_digest=evidence[5], implementation_digest=evidence[6],
+                    )
+                    if reject and diagnostic is not None:
+                        capture_ids.add(diagnostic)
+                    return not reject
+
+                options = {"_before_persist": require_witness_evidence}
+                if callable(recover):
+                    options["_after_persist"] = publish_or_request
                 if atomic_groups:
                     options["_before_chunk_commit"] = publish_groups
                 persisted_batch = persist_notice_cover_many(
@@ -2798,6 +2858,19 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     cover_inventory_complete=True,
                     **options,
                 )
+                # Export only durable intents, after SQLite commit. Raw bytes
+                # are not export-authorized by a descriptive Search envelope.
+                from .notice_regression_capture_intent import export_capture
+                for diagnostic in sorted(capture_ids):
+                    try:
+                        state = export_capture(self.storage, diagnostic, members={})
+                        if state is not None:
+                            logging.getLogger("cifereca").warning(
+                                "NOTICE parser_witness_rejected diagnostic_id=%s capture_state=%s",
+                                diagnostic, state,
+                            )
+                    except (ValueError, OSError, sqlite3.Error):
+                        pass
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
                     if persisted is None:

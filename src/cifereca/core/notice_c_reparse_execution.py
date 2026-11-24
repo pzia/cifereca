@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from typing import Callable
 
 from . import notice_c_job_journal as journal
@@ -18,6 +20,9 @@ from .notice_c_reparse_requests import (
 from .notice_cover_repository import _opaque_key, _persist_notice_cover_txn
 from .notice_cover_projection import project_notice_cover_attribute
 from .notice_source_observation import NoticeSourceObservation, _id
+from .notice_parse_witness_alert import review_publication_txn
+from .notice_regression_capture_intent import export_capture, read_replay_capture_locator
+from .notice_c_work_bridge import WitnessRejectedPublication
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
 from .notice_c_work_requests import request_source_worker_dependents_txn
@@ -46,6 +51,8 @@ class PublicReplayPort:
     # acquire only the provider's cache/session guard, NEVER Storage.
     # Exit must release the guard without raising or suppressing exceptions.
     hold_input: Callable
+    # Trusted Core policy, never supplied by the parser. Default denies export.
+    authorize_capture_input: Callable | None = None
 
 
 class PublicReplayRegistry:
@@ -61,7 +68,8 @@ class PublicReplayRegistry:
                     or not journal._digest(port.implementation_digest)
                     or not all(callable(fn) for fn in (
                         port.read_input, port.parse, port.hold_input,
-                    ))):
+                    )) or (port.authorize_capture_input is not None
+                           and not callable(port.authorize_capture_input))):
                 raise ValueError("notice_reparse_invalid_registry")
             key = (port.provider_id, port.parser_family_digest, port.implementation_digest)
             if key in keys:
@@ -131,18 +139,13 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             or result.key != old.observation.key
             or result.parser_id != old.observation.parser_id
             or result.parser_version != old.observation.parser_version
-            or (result.status != "complete" and not (
-                coverless and raw._coverless_public_search_observation(result)))
             # Parsing an existing response NEVER advances source freshness.
             or result.observed_at != old.observation.observed_at):
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
     attribute = project_notice_cover_attribute(
         result, field_path=old.attribute.field_path, cover_inventory_complete=True,
     )
-    if (attribute.document != old.document
-            or (attribute.state != "available" and not (
-                coverless and raw._coverless_public_search_observation(result)
-                and attribute.state == "pending" and not attribute.candidates))):
+    if attribute.document != old.document:
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
 
     @contextmanager
@@ -164,6 +167,23 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             parser_family_digest=selected.parser_family_digest,
             implementation_digest=port.implementation_digest, now=now,
         )
+        reject, diagnostic = review_publication_txn(
+            db, current=current.observation, candidate=result,
+            input_digest=request.receipt.input_digest,
+            implementation_digest=port.implementation_digest, replay_spec=spec,
+        )
+        if reject:
+            def export_after_commit():
+                return export_capture(storage, diagnostic, members=
+                                      _authorized_capture_members(port, request, selected))
+            return WitnessRejectedPublication(
+                None if diagnostic is None else export_after_commit,
+                diagnostic,
+            )
+        if ((result.status != "complete" or attribute.state != "available")
+                and not (coverless and raw._coverless_public_search_observation(result)
+                         and attribute.state == "pending" and not attribute.candidates)):
+            raise UnavailableNoticeWork("notice_reparse_invalid_observation")
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
             old.attribute.field_path, True, current.epoch,
@@ -189,3 +209,51 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         return True
 
     return PreparedSource(publish, guard)
+
+
+def _authorized_capture_members(port, request, selected):
+    """Fail closed; only an explicit trusted decision permits exact bytes."""
+    if port.authorize_capture_input is not None:
+        try:
+            if port.authorize_capture_input(request, selected) is True:
+                return {"response.raw": selected.body}
+        except Exception:
+            pass
+    return {}
+
+
+def resolve_replay_capture_members(storage, registry, diagnostic, *, clock):
+    """Recover exact authorized bytes via existing TTL receipt, never GET.
+
+    Missing, replaced or expired inputs yield an explicitly partial capture.
+    The registry is trusted Core composition; it must reauthorize export.
+    No producer token, raw body or session is added to durable metadata.
+    """
+    locator = read_replay_capture_locator(storage, diagnostic)
+    if locator is None or registry is None:
+        return {}
+    spec, payload = locator
+    try:
+        request = read_public_reparse_request(storage, spec, now=clock())
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        expected_id = sha256((request.receipt.source_scope_digest + ":" + encoded).encode()).hexdigest()
+        if request.receipt.input_digest != payload["input_sha256"] or expected_id != diagnostic:
+            return {}
+        port = registry.select(request)
+        if port.authorize_capture_input is None:
+            return {}
+        with port.hold_input(request.receipt.producer_token) as live:
+            _match_input(request, live)
+            # Same lock ordering as normal replay: producer guard then SQLite.
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN")
+                check_public_reparse_inputs_txn(
+                    db, spec, request, live.body,
+                    producer_token=live.producer_token,
+                    transport_digest=live.transport_digest,
+                    parser_family_digest=live.parser_family_digest,
+                    implementation_digest=port.implementation_digest, now=clock(),
+                )
+            return _authorized_capture_members(port, request, live)
+    except (ValueError, UnavailableNoticeWork):
+        return {}

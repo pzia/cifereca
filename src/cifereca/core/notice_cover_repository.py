@@ -599,7 +599,7 @@ def persist_notice_cover_many(
     storage: Any, observations: list[NoticeSourceObservation], *,
     field_path: tuple[str, ...],
     cover_inventory_complete: bool,
-    _after_persist=None, _before_chunk_commit=None,
+    _after_persist=None, _before_chunk_commit=None, _before_persist=None,
 ) -> list[PersistedNoticeCover | None]:
     """Persist an already parsed Core batch, preserving each source's CAS.
 
@@ -607,6 +607,8 @@ def persist_notice_cover_many(
     row must not suppress another *independent* admitted source. Each entry
     has a SAVEPOINT so the old single-source rejection semantics survive,
     while only one BEGIN/commit and SQLite connection is used per 128 rows.
+    The private pre-write callback may refuse a row without rolling back
+    its diagnostic metadata. It runs inside the same row savepoint.
     The private chunk callback receives only accepted row snapshots, before
     commit. A closed list of refused accepted row positions permits one
     rollback and local replay of only the other accepted rows; generic
@@ -636,12 +638,17 @@ def persist_notice_cover_many(
 
     def write_chunk(positions):
         accepted = {}
+        gated = []
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for position in positions:
                 observation, attribute, key = prepared[position]
                 db.execute("SAVEPOINT notice_c_batch_row")
                 try:
+                    if _before_persist is not None and _before_persist(
+                            db, observation, attribute, position) is not True:
+                        gated.append(position)
+                        continue
                     published = _persist_notice_cover_txn(
                         db, observation, attribute, key, field_path,
                         cover_inventory_complete, None,
@@ -664,7 +671,7 @@ def persist_notice_cover_many(
                         raise ValueError("notice_c_chunk_invalid_refusal")
                     if rejected:
                         raise _ChunkSourcesRefused(
-                            tuple(p for p in accepted if p not in rejected),
+                            tuple(sorted(gated + [p for p in accepted if p not in rejected])),
                         )
         return accepted
 

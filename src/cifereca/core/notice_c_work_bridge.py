@@ -8,7 +8,7 @@ on the supplied transaction. It is trusted Core code, not a plugin callback.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Callable
 import sqlite3
@@ -33,6 +33,14 @@ _LEASE_SECONDS = 300
 
 class UnavailableNoticeWork(Exception):
     """Exact input or implementation is no longer available; no fallback GET."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class WitnessRejectedPublication:
+    """Closed result: diagnostic persisted, no documentary write performed."""
+
+    after_commit: Callable[[], object] | None = None
+    diagnostic_id: str | None = None
 
 
 class RetryableNoticeWork(Exception):
@@ -65,7 +73,7 @@ class AggregateWorkBridge:
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
                  allow_reparse=False, allow_relink=False, prepare_fetch=None,
                  claim_purchase=None, prepare_purchase=None, on_purchase_committed=None,
-                 finish_purchase=None):
+                 finish_purchase=None, on_witness_rejected=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -84,6 +92,9 @@ class AggregateWorkBridge:
             raise ValueError("notice_work_invalid_purchase_port")
         if on_purchase_committed is not None and not callable(on_purchase_committed):
             raise ValueError("notice_work_invalid_observer")
+        if on_witness_rejected is not None and not callable(on_witness_rejected):
+            raise ValueError("notice_work_invalid_observer")
+        self._on_witness_rejected = on_witness_rejected
         self._on_purchase_committed = on_purchase_committed
         if finish_purchase is not None and (claim_purchase is None or not callable(finish_purchase)):
             raise ValueError("notice_work_invalid_purchase_port")
@@ -176,7 +187,7 @@ class AggregateWorkBridge:
             if purchase and self._claim_purchase is None:
                 return "unsupported"
             if (not purchase and job.spec.kind != "recompute_aggregate"
-                    and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")
+                    and not (self._allow_reparse and not purchase and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
                     and not (self._allow_relink and job.spec.kind == "relink_notices")
                     and not (self._prepare_fetch is not None
                              and job.spec.kind == "fetch_source_notice")):
@@ -201,6 +212,7 @@ class AggregateWorkBridge:
         if purchase:
             self._purchase_transition()
         committed = False
+        rejected = False
         fetch = job.spec.kind == "fetch_source_notice"
         try:
             control.check_cancelled()
@@ -229,25 +241,34 @@ class AggregateWorkBridge:
                             source_key=job.spec.target,
                         )
                         before = _canonical_revision(db, document)
-                    if prepared.publish(db) is not True:
-                        raise RetryableNoticeWork("notice_work_input_changed")
-                    control.check_cancelled()
-                    journal._complete_job_txn(db, lease, now=self._clock())
-                    if aggregate and self._on_committed is not None:
-                        after = _canonical_revision(db, document)
-                        if after is None or (before is not None and after < before):
-                            raise ValueError("notice_work_invalid_publication")
-                        if before != after:
-                            event = (document, after)
+                    outcome = prepared.publish(db)
+                    rejected = (type(outcome) is WitnessRejectedPublication
+                                and job.spec.kind in ("reparse_cached_input", "fetch_source_notice"))
+                    if rejected:
+                        control.check_cancelled()
+                        current = journal._held(db, lease, self._clock())
+                        journal._save(db, replace(current, state="error", lease_until=0,
+                                                  reason="permanent"))
+                    else:
+                        if outcome is not True:
+                            raise RetryableNoticeWork("notice_work_input_changed")
+                        control.check_cancelled()
+                        journal._complete_job_txn(db, lease, now=self._clock())
+                        if aggregate and self._on_committed is not None:
+                            after = _canonical_revision(db, document)
+                            if after is None or (before is not None and after < before):
+                                raise ValueError("notice_work_invalid_publication")
+                            if before != after:
+                                event = (document, after)
                 committed = True
         except Cancelled:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             self._fail(lease, transient=not fetch)
             raise
         except PurchaseEnrichmentDeferred as exc:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             if purchase and type(exc) is PurchaseEnrichmentDeferred:
                 # Reconstruct to validate even a mutated plugin exception.
                 try:
@@ -257,12 +278,12 @@ class AggregateWorkBridge:
                 return self._fail(lease, transient=True, retry_after_seconds=deferred.retry_after_seconds)
             return self._fail(lease, transient=False)
         except UnavailableNoticeWork:
-            return "current" if committed else self._fail(lease, transient=False)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
-            return "current" if committed else self._fail(lease, transient=not fetch)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=not fetch)
         except InitialGroupSuperseded:
             if committed:
-                return "current"
+                return "error" if rejected else "current"
             try:
                 if mark_initial_group_superseded(self._storage, lease, now=self._clock()):
                     return "stale"
@@ -272,13 +293,28 @@ class AggregateWorkBridge:
             return self._fail(lease, transient=True)
         except ValueError:
             # CAS/source validation refusal; no successful publication.
-            return "current" if committed else self._fail(lease, transient=not fetch)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=not fetch)
         except Exception:
             # Only a closed reason crosses the durable boundary.
-            return "current" if committed else self._fail(lease, transient=False)
+            return ("error" if rejected else "current") if committed else self._fail(lease, transient=False)
         if not committed:
             # A broken guard must not silently suppress a failed transaction.
             return self._fail(lease, transient=False)
+        if rejected:
+            # The provider guard and SQLite transaction are both released.
+            # A failed file export never changes the committed job outcome.
+            capture_state = "capacity_refused" if outcome.diagnostic_id is None else "pending"
+            if outcome.after_commit is not None:
+                try:
+                    capture_state = outcome.after_commit() or "metadata_unavailable"
+                except Exception:
+                    pass  # durable capture intention remains for maintenance
+            if self._on_witness_rejected is not None:
+                try:
+                    self._on_witness_rejected(outcome.diagnostic_id, capture_state)
+                except Exception:
+                    pass  # diagnostic delivery cannot change the committed outcome
+            return "error"
         # Commit and Storage lock release have both succeeded. An observer
         # failure cannot roll back or retry an already successful job.
         if event is not None:

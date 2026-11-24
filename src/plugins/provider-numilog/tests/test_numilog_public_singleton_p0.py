@@ -72,7 +72,7 @@ def test_public_federated_results_keep_distinct_provider_and_no_entitlements(mon
     page = parse_public_search(HTML, GOLDEN["source_url"])
     calls = []
 
-    def fake_fetch(query, *, page, field):
+    def fake_fetch(query, *, page, field, _retain_input=False):
         calls.append((query, page, field))
         return page_result
 

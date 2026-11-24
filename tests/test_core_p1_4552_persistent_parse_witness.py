@@ -163,3 +163,27 @@ def test_cached_review_after_restart_hashes_actual_input_and_never_reapproves(tm
         assert db.acquisitions() == []
     finally:
         db.close(final=True)
+
+
+@pytest.mark.parametrize("status", ("complete", "partial"))
+@pytest.mark.parametrize("same_input,expected", [
+    (True, "parser_regression_confirmed"),
+    (False, "parser_drift_suspected"),
+])
+def test_publication_review_catches_missing_critical_field_on_admitted_parse(
+    tmp_path, status, same_input, expected,
+):
+    db = Storage(tmp_path / "structural.sqlite")
+    try:
+        pin = put(db)
+        report = review_admitted_source_parse_witness(
+            pin.baseline,
+            observation=observation(version="2.0.0", status=status,
+                                    fields={"Title": "Un titre"}),
+            input_sha256=sha256(RESPONSE if same_input else b"new").hexdigest(),
+            publication_review=True,
+        )
+        assert report.status == expected
+        assert report.affected_fields == ("critical_field_2",)
+    finally:
+        db.close(final=True)

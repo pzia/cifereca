@@ -128,13 +128,16 @@ def review_parse_witness(
     source_scope_sha256: str,
     input_sha256: str | None, parser_version: str,
     raw_fields: object, complete: bool,
+    publication_review: bool = False,
 ) -> ParseWitnessReview:
     """Classify one already parsed response without network or values in logs.
 
     A confirmed regression requires: approved baseline, exact same source
     scope and raw response bytes, a *different* parser version, complete
-    parsing, and a missing/invalid critical field. Changed input bytes can support structural suspicion, never confirmation.
-    Stable value digests are compared only on identical input.
+    parsing, and a missing/invalid critical field. Changed input supports
+    structural suspicion, never confirmation. Trusted publication review also
+    admits partial parses;
+    it never compares value digests across different input bytes.
     """
     if (not _valid_baseline(baseline)
             or type(source_scope_sha256) is not str
@@ -146,12 +149,16 @@ def review_parse_witness(
             or type(parser_version) is not str
             or _VERSION.fullmatch(parser_version) is None
             or type(complete) is not bool
+            or type(publication_review) is not bool
             or type(raw_fields) is not dict):
         raise ValueError("invalid_parser_witness_review")
     if (not baseline.approved
             or source_scope_sha256 != baseline.source_scope_sha256
-            or input_sha256 is None or not complete):
+            or input_sha256 is None or (not complete and not publication_review)):
         return ParseWitnessReview("unverified", ())
+    # The response content changed: comparisons against the old baseline
+    # would generate false parsing-regression diagnoses. Never call this
+    # confirmation, even if all fields are missing.
     changed_input = input_sha256 != baseline.approved_input_sha256
     # Only structurally admissible native parser output may support a
     # regression diagnosis. In particular a colliding foreign dict key
@@ -184,7 +191,8 @@ def review_parse_witness(
         if violation:
             misses.append("critical_field_" + str(position))
     if not misses:
-        return ParseWitnessReview("source_changed" if changed_input else "unchanged", ())
+        return ParseWitnessReview("source_changed" if changed_input else
+                                  "unchanged" if complete else "unverified", ())
     status = ("parser_regression_confirmed"
               if not changed_input and parser_version != baseline.parser_version
               else "parser_drift_suspected")
@@ -215,6 +223,7 @@ def admitted_source_scope_sha256(
 def review_admitted_source_parse_witness(
     baseline: ParseWitness, *, observation: NoticeSourceObservation,
     input_sha256: str | None,
+    publication_review: bool = False,
 ) -> ParseWitnessReview:
     """Review one typed Core admission, not caller-provided loose coordinates.
 
@@ -254,6 +263,7 @@ def review_admitted_source_parse_witness(
         parser_version=observation.parser_version,
         raw_fields=fields,
         complete=observation.status == "complete",
+        publication_review=publication_review,
     )
 
 
