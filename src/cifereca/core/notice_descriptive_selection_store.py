@@ -18,6 +18,7 @@ class DescriptiveSelectionPin:
     generation: int
     selection: ExplicitSelection | None
     installed_source_sha256: str | None
+    schema_sha256: str | None = None
 
 
 def _key(canonical_type, scope):
@@ -27,7 +28,10 @@ def _key(canonical_type, scope):
     return _PREFIX + sha256(raw).hexdigest()
 
 
-def _validate(canonical_type, scope, selection, digest):
+def _validate(canonical_type, scope, selection, digest, schema_digest=None):
+    if schema_digest is not None and (selection is None or type(schema_digest) is not str
+            or len(schema_digest) != 64 or any(c not in "0123456789abcdef" for c in schema_digest)):
+        raise ValueError("invalid_descriptive_selection_pin")
     if selection is None and digest is None:
         return
     if (type(selection) is not ExplicitSelection
@@ -61,21 +65,22 @@ def read_descriptive_selection_txn(db, *, canonical_type, scope):
 
         record = json.loads(raw, object_pairs_hook=unique)
         if (type(record) is not dict
-                or set(record) != {"generation", "selection", "installed_source_sha256"}
+                or (set(record) - {"schema_sha256"}) != {"generation", "selection", "installed_source_sha256"}
                 or type(record["generation"]) is not int
                 or not 1 <= record["generation"] < 2**63):
             raise ValueError
         payload = record["selection"]
         selection = None if payload is None else ExplicitSelection(**payload)
         digest = record["installed_source_sha256"]
-        _validate(canonical_type, scope, selection, digest)
-        return DescriptiveSelectionPin(record["generation"], selection, digest)
+        schema_digest = record.get("schema_sha256")
+        _validate(canonical_type, scope, selection, digest, schema_digest)
+        return DescriptiveSelectionPin(record["generation"], selection, digest, schema_digest)
     except (ValueError, TypeError, KeyError, RecursionError) as exc:
         raise ValueError("corrupt_descriptive_selection_pin") from exc
 
 
 def set_descriptive_selection(storage, *, canonical_type, scope, selection,
-                              installed_source_sha256, expected_generation):
+                              installed_source_sha256, expected_generation, schema_sha256=None):
     """CAS update by the trusted Core configuration owner, not a plugin.
 
     The caller must vet the installed registry and schema first. Revocation
@@ -83,7 +88,7 @@ def set_descriptive_selection(storage, *, canonical_type, scope, selection,
     its generation, including A -> B -> A and revocation/reselection.
     """
     key = _key(canonical_type, scope)
-    _validate(canonical_type, scope, selection, installed_source_sha256)
+    _validate(canonical_type, scope, selection, installed_source_sha256, schema_sha256)
     if type(expected_generation) is not int or not 0 <= expected_generation < 2**63:
         raise ValueError("invalid_descriptive_selection_generation")
     with storage._lock, storage._connect() as db:
@@ -92,12 +97,12 @@ def set_descriptive_selection(storage, *, canonical_type, scope, selection,
         generation = 0 if prior is None else prior.generation
         if generation != expected_generation:
             raise ValueError("descriptive_selection_generation_changed")
-        if prior is not None and (prior.selection, prior.installed_source_sha256) == (
-                selection, installed_source_sha256):
+        if prior is not None and (prior.selection, prior.installed_source_sha256, prior.schema_sha256) == (
+                selection, installed_source_sha256, schema_sha256):
             return prior
         if generation + 1 >= 2**63:
             raise ValueError("invalid_descriptive_selection_generation")
-        pin = DescriptiveSelectionPin(generation + 1, selection, installed_source_sha256)
+        pin = DescriptiveSelectionPin(generation + 1, selection, installed_source_sha256, schema_sha256)
         db.execute(
             "INSERT INTO metadata(key,value) VALUES(?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -106,11 +111,15 @@ def set_descriptive_selection(storage, *, canonical_type, scope, selection,
         return pin
 
 
-def require_descriptive_selection(pin, selection, digest):
+def require_descriptive_selection(pin, selection, digest, *, schema=None):
     """An existing pin must exactly authorize the captured execution."""
     if pin is not None and (pin.selection != selection
                             or pin.installed_source_sha256 != digest):
         raise ValueError("descriptive_selection_changed")
+    if pin is not None and pin.schema_sha256 is not None:
+        from .notice_canonical_text_schema import canonical_text_schema_digest
+        if schema is None or canonical_text_schema_digest(schema) != pin.schema_sha256:
+            raise ValueError("descriptive_selection_schema_changed")
 
 
 def descriptive_selection_input_digest(execution_key, pin):
