@@ -255,12 +255,6 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
         source = read_notice_cover(db, row._core_notice_cover_document_ref)
         raw, ttl = session._read_retained_public_input(receipt.producer_token)
         assert raw is not None and ttl > 0
-        with session._hold_retained_public_input(receipt.producer_token) as held:
-            ref = request_public_reparse(
-                db, source, receipt, held._body, now=100,
-                expected_generation=0,
-                implementation_digest=receipt.parser_implementation_digest,
-            )
         from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
 
         tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
@@ -271,10 +265,17 @@ def test_normal_search_records_exact_retained_receipt(tmp_path, monkeypatch):
                              receipt.parser_implementation_digest)
             registry = PublicReplayRegistry((port,))
             assert runtime.install_replay_registry(registry) is True
-            scan = runtime.request_tick()
-            assert scan is not None
-            handle, = scan.result(timeout=10).handles
-            assert handle.result(timeout=10) == "current"
+            ref = runtime.request_public_replay(
+                source, receipt,
+                implementation_digest=receipt.parser_implementation_digest,
+                expected_generation=0,
+            )
+            deadline = monotonic() + 10
+            while monotonic() < deadline:
+                job = journal.read_job(db, ref)
+                if job.state in ("current", "error"):
+                    break
+                Event().wait(.01)
             assert journal.read_job(db, ref).state == "current"
             assert len(calls) == 1
         finally:
