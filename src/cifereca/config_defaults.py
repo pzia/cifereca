@@ -40,7 +40,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "search_seconds": 21600,
         "holdings_seconds": 300,
     },
-    "diagnostics": {"enabled": True, "level": "normal"},
+    "diagnostics": {"enabled": True, "level": "normal",
+                    "regression_capture_directory": None},
     "security": {"python_dependency_quarantine_hours": 72},
     "ui": {"width": 1320, "height": 840},
     # LLM is never started and no book data can leave the device by default.
