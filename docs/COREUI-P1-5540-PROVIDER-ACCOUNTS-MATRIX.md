@@ -10,13 +10,13 @@ du plugin** et **preuve de comportement à l'exécution**.
 | Source | Type / accès | Champs credential | Comptes et emprunteurs déclarés | Options présentées par le contrat | Prêts / plafond personnel |
 | --- | --- | --- | --- | --- | --- |
 | **BnF — Catalogue général** (`bnf-catalogue`) | Catalogue public SRU, anonyme | Aucun | Aucune identité emprunteur déclarée ; `connect()` renvoie `[]` | Aucune | Aucun prêt ni plafond |
-| **Gallica** (`gallica`) | Catalogue public, anonyme | Aucun | `connect()` ne renvoie **aucun** `Account`, même pour une ancienne connexion explicite ; ses options enregistrées restent inchangées | `opds_url` (texte) | Pas de capacité de prêt |
+| **Gallica** (`gallica`) | Catalogue public, anonyme | Aucun | `connect()` ne renvoie **aucun** `Account`, même pour une ancienne connexion explicite ; ses options enregistrées restent inchangées | `opds_url` (URL HTTP/HTTPS) | Pas de capacité de prêt |
 | **Project Gutenberg** (`gutenberg`) | Catalogue public OPDS, anonyme | Aucun | `connect()` renvoie `[]` pour le singleton comme pour les connexions historiques ; aucune identité emprunteur | Contact du User-Agent (préférence locale) | Aucun prêt ni plafond |
 | **Ebooks libres et gratuits** (`ebooksgratuits`) | Catalogue public OPDS/HTML, anonyme | Aucun | `connect()` renvoie `[]` même après reconnexion d’une ancienne source enregistrée | Options catalogue locales | Aucun prêt ni plafond |
-| **Kobo** (`kobo`) | Bibliothèque privée par **Kobo-Vault**, token | `api_token` secret | `multiple_credentials=True` mais `max_accounts_per_identity=1` ; pas de lecteur lié déclaré | `base_url` (texte), `display_profile` (texte, défaut Android, migration en lecture seule) | Pas de plafond de prêt |
+| **Kobo** (`kobo`) | Bibliothèque privée par **Kobo-Vault**, token | `api_token` secret | `multiple_credentials=True` mais `max_accounts_per_identity=1` ; pas de lecteur lié déclaré | `base_url` (URL HTTP/HTTPS), `display_profile` (choix Android/Desktop, défaut Android) | Pas de plafond de prêt |
 | **Numilog** (`numilog`) | Mes achats / bibliothèque personnelle | `email`, `password` secret | Plusieurs credentials déclarés ; pas de lecteur lié | Aucune option de compte déclarée dans ce descriptor | Achat, pas de quota de prêt |
 | **BnF Prêt** (`bnf-pret`) | Compte lecteur / prêts numériques | `username`, `password` secret | Plusieurs credentials possibles ; un emprunteur par connexion | `manual_loan_limit` entier [0, 99], défaut 4 | Limite **personnelle indicative** ; inventaire décrit comme partiel |
-| **Bibliothèques de Paris** (`paris`) | Compte lecteur, catalogue et prêts | `username`, `password` secret | Plusieurs credentials, compte principal et lecteurs liés | `base_url` (texte) ; plafonds principaux `manual_loan_limit_primary_digital` et `manual_loan_limit_primary_physical` (entiers [0, 99], défaut 4) ; `manual_loan_limits_linked` par lecteur et branche `digital` / `physical` | Digital DILICOM **séparé** du physique SYRACUSE ; les deux plafonds sont indicatifs |
+| **Bibliothèques de Paris** (`paris`) | Compte lecteur, catalogue et prêts | `username`, `password` secret | Plusieurs credentials, compte principal et lecteurs liés | `base_url` (URL HTTP/HTTPS) ; plafonds principaux `manual_loan_limit_primary_digital` et `manual_loan_limit_primary_physical` (entiers [0, 99], défaut 4) ; `manual_loan_limits_linked` par lecteur et branche `digital` / `physical` | Digital DILICOM **séparé** du physique SYRACUSE ; les deux plafonds sont indicatifs |
 | **Médiathèques de La Rochelle / BiblioAccess** (`biblioaccess`) | Compte lecteur / SSO CAS | `username`, `password` secret | Plusieurs credentials déclarés ; pas d'option par lecteur lié | `authenticated_sync` choix `off/on`, défaut **off** ; `manual_loan_limit` entier [0, 99], défaut 4 | Préférence indicative, jamais quota fournisseur ; SSO ponctuel interactif distinct de l'opt-in automatique |
 
 **Sources canoniques :** `src/plugins/provider-*/cifereca_*.py`
@@ -95,3 +95,13 @@ n'atteste pas la validité d'un abonnement ou d'une session distante.
 modification des protocoles provider, de Sync, d'emprunt, d'achat ou du
 chantier USB. Les changements de types de champs et les migrations
 doivent être livrés en PR distinctes avec CI/GTK sur HEAD exact.
+
+## Réception incrémentale — 24 novembre 2026
+
+- #7936 : invalidation du diagnostic ponctuel après édition, y compris ABA.
+- #7939 : choix DisplayProfile Android/Desktop et correction explicite des anciennes valeurs hors domaine ; aucune conversion silencieuse.
+- #7940 : options URL Kobo, Paris et Gallica déclarées avec HTTP/HTTPS ; validation syntaxique, sans changement de transport ni réécriture automatique. Les valeurs historiques hors contrat nécessitent une correction explicite avant sauvegarde.
+- #7941 : observation locale du lifecycle en cours de réception ; ne pas confondre connexion observée, diagnostic ponctuel, Sync et autorisation métier.
+- La recette native multi-comptes existe dans `e2e/settings_account_lifecycle_acceptance.py` ; les verdicts effectifs et le HEAD exact restent à consigner avant clôture.
+
+Les écarts ci-dessus datés du 14 novembre constituent un historique, non une liste de travaux à refaire. Aucune qualification fournisseur réelle ni quota officiel nouveau n'est revendiqué.
