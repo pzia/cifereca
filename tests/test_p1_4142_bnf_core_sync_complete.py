@@ -94,3 +94,48 @@ def test_four_bnf_loans_source_complete_only_when_coverage_and_local_receipts(
         assert len(db.placements()) == present_count
     finally:
         db.close()
+
+
+def test_bnf_empty_partial_rights_preserve_existing_canonical_publication(tmp_path, monkeypatch):
+    """#4480: empty manual inventory is not negative canonical rights evidence."""
+    db = Storage(tmp_path / "db.sqlite")
+    account = Account(identity_id="A", provider_id="bnf-pret",
+                      credential_id="bnf-reader", unique_id="bnf-reader")
+    register(db, "A", "bnf-pret", "bnf-reader", account="bnf-reader")
+    root = tmp_path / "EBooks"
+    service = Service(db, root)
+    service.account = account
+    service.accounts = [account]
+    service.session.provider_id = "bnf-pret"
+    service.session.credential_id = "bnf-reader"
+    service.session.accounts = [account]
+    service._sessions = {service._session_key("bnf-pret", "bnf-reader"): service.session}
+    source, positive = new_source(
+        "A", provider="bnf-pret", credential="bnf-reader",
+        account="bnf-reader", branch="bnf_html",
+        edition="edition-0", right="loan-0", kind="loan",
+    )
+    service.source = source
+    for name in (
+        "cifereca.core.sync_coordination.acquisition_lock_file",
+        "cifereca.core.convergence_execution.acquisition_lock_file",
+        "cifereca.core.canonical_recovery.acquisition_lock_file",
+    ):
+        monkeypatch.setattr(name, lambda: tmp_path / "acquisition.lock")
+    try:
+        path = target(tmp_path, "A", "loan-0.pdf")
+        publish_completed_acquisition(
+            db, library_root=root, path=path, source=source,
+            snapshot=positive, final_sha256=SHA,
+            delivery_receipt_ref="synthetic-bnf-delivery-0",
+        )
+        before = (db.acquisitions(), db.placements(), path.read_bytes())
+        for observation in (positive, replace(
+            positive, rights=(), status="partial", coverage="partial",
+            pagination_complete=False,
+        ), positive):
+            service.snapshot = observation
+            synchronize_account_source(service, account)
+            assert (db.acquisitions(), db.placements(), path.read_bytes()) == before
+    finally:
+        db.close()
