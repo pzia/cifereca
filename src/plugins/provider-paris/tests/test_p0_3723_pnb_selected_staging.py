@@ -97,3 +97,31 @@ def test_paris_atomic_candidate_link_swap_removes_candidate_from_old_inode(
         assert list(old_stage.iterdir()) == []
     finally:
         os.close(stage_fd)
+
+
+@pytest.mark.parametrize("payload", [b"<html>login</html>", b"<!DOCTYPE forged><token/>"])
+def test_paris_invalid_selected_acsm_never_stages_or_retries(tmp_path, monkeypatch, payload):
+    import cifereca_paris
+    from cifereca.plugin_api import ProviderError
+
+    inspect = cifereca_paris.inspect_artifact_content
+    session, account, _, client, gets = prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(cifereca_paris, "inspect_artifact_content", inspect)
+    client.digital = [raw_loan()]
+    offer = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
+    real_get = client._get_pnb_response
+
+    def invalid(url):
+        response = real_get(url)
+        response.content = payload
+        response.headers = {"content-type": "application/vnd.adobe.adept+xml"}
+        return response
+
+    client._get_pnb_response = invalid
+    try:
+        with pytest.raises(ProviderError, match="ACSM invalide"):
+            _deliver(session, account, offer, tmp_path)
+        assert len(gets) == 1
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
