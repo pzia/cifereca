@@ -157,3 +157,39 @@ def test_concurrent_capture_outcomes(tmp_path):
         assert intent.capture_status(db, diagnostic)["capture_state"] == "partial"
     finally:
         db.close(final=True)
+
+
+@pytest.mark.parametrize("raw_present", (True, False))
+def test_recover_archive_linked_before_sqlite_outcome(tmp_path, monkeypatch, raw_present):
+    from cifereca.core import notice_regression_capture_intent as intent
+    db = Storage(tmp_path / "interrupted.sqlite")
+    try:
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            diagnostic = enqueue_capture_txn(
+                sql, scope="a"*64, generation=1,
+                review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                input_digest=sha256(b"body").hexdigest(),
+                snapshots={name: "{}" for name in (
+                    "baseline.json", "last_healthy.json", "current_parse.json", "environment.json"
+                )},
+            )
+        def interrupted(*args):
+            raise RuntimeError("process interrupted after archive link")
+        with monkeypatch.context() as patch:
+            patch.setattr(intent, "_record_outcome", interrupted)
+            with pytest.raises(RuntimeError):
+                intent.export_capture(db, diagnostic,
+                    members={"response.raw": b"body"} if raw_present else {},
+                    directory=tmp_path)
+        assert intent.capture_status(db, diagnostic)["capture_state"] == "pending"
+        archive, = tmp_path.glob("*.zip")
+        before = archive.read_bytes()
+        # The cache may have disappeared, or permission may have changed.
+        assert intent.export_capture(db, diagnostic, members={}, directory=tmp_path) == (
+            "complete" if raw_present else "partial")
+        assert archive.read_bytes() == before
+        assert len(list(tmp_path.glob("*.zip"))) == 1
+        assert intent.pending_capture_ids(db) == ()
+    finally:
+        db.close(final=True)
