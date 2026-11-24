@@ -146,16 +146,37 @@ les incidents publics, le consentement privé et le cycle réversible de
 déclaration. Les droits, SourceReference, OriginLink, Artifacts, Placements,
 catalogue, ledger et octets sont inchangés. La déclaration reste un énoncé
 utilisateur, jamais une acquisition attestée. Les fenêtres et le cache
-restent partiels et non qualifiés frais ; aucune preuve de TTL négatif
-réseau, recherche distante privée exhaustive, ou terrain n'est déduite.
+restent partiels et non qualifiés frais. #8025 ajoute une preuve ciblée
+de TTL négatif contextuel, décrite ci-dessous ; aucune recherche distante
+privée exhaustive ni preuve terrain n'en est déduite.
+
+### Cache négatif contextuel reçu — 24/11/2026
+
+#8025 est intégré à main (fusion `e3f67b4b2f4ab22cd35450e361ca23be02ce04e7`,
+HEAD `75d024b21462f548e2270d572d77594fcce34377`, PR CI 45483447676,
+installation 45483447772 et AST 45483447654 success).
+Une réponse anonyme vide, complète, non partielle et explicitement
+marquée `terminal_empty` peut être réutilisée au maximum 30 secondes
+(monotonic), pour une seule entrée dans le broker contextuel actif.
+La nouvelle comparaison exige toujours un consentement explicite et
+la revalidation exacte du fichier, des coordonnées et de l'image SQLite.
+L'annulation et la révocation effacent le cache ; changement de session,
+profil, epoch, requête ou état SQL interdit sa réutilisation. La réutilisation
+est affichée comme telle, sans nouvelle requête ni preuve de fraîcheur.
+Neuf cas synthétiques : expiration, absence de marqueur, résultat partiel,
+couverture inconnue, échec, annulation et dérives de scope.
+Ce mécanisme ne couvre pas l'ancienne action GUI indépendante, ne stocke
+aucun payload fournisseur et ne qualifie ni absence de droit ni absence
+exhaustive d'un document chez le fournisseur.
 
 **Critères de clôture encore à arbitrer en réception :** la somme des témoins
 ci-dessus doit être confrontée au parcours complet de l'utilisateur, dont les
 priorités public/achats/prêts sont **des priorités de présentation, pas un score
 juridique transversal**. Les résultats paginés et inaccessibles restent
-partiels. Aucune revendication de rafraîchissement privé exhaustif, de TTL
-négatif réseau ou de preuve terrain sans témoin explicite ; aucun nouveau
-moteur de recherche n'est autorisé par cette matrice.
+partiels. La réception #8025 porte sur le TTL local de réutilisation,
+non sur la fraîcheur réseau du fournisseur. Aucune revendication de
+rafraîchissement privé exhaustif ni de preuve terrain sans témoin
+explicite ; aucun nouveau moteur de recherche n'est autorisé par cette matrice.
 
 **Garde de production** : ni activation destructrice #6937/#3176, ni
 levée de marqueur ADEPT #7244, ni nouveau chemin de publication.
