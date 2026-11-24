@@ -424,11 +424,11 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
         assert diagnostic["status"] == "parser_drift_suspected"
         assert diagnostic["capture_state"] == "partial"
         entries = [event for event in diagnostics.snapshot()
-                   if event.category == "NOTICE"]
+                   if event["category"] == "NOTICE"]
         event, = entries
-        assert event.operation == "parser_witness_rejected"
-        assert event.status == "warning"
-        assert event.detail == {"diagnostic_id": diagnostic["capture_id"],
+        assert event["operation"] == "parser_witness_rejected"
+        assert event["status"] == "warning"
+        assert event["detail"] == {"diagnostic_id": diagnostic["capture_id"],
                                 "capture_state": "partial"}
         assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
         if configured:
