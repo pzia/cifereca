@@ -38,6 +38,7 @@ def run_public_age_descriptive_job(
         lease_seconds=lease_seconds,
         expected_generation=expected_generation,
         expected_execution_key=expected_execution_key,
+        require_configured_selection=True,
     )
 
 
@@ -62,4 +63,5 @@ def run_origin_linked_age_descriptive_job(
         target_edition_id=target_edition_id, now=now, lease_seconds=lease_seconds,
         expected_generation=expected_generation,
         expected_execution_key=expected_execution_key,
+        require_configured_selection=True,
     )

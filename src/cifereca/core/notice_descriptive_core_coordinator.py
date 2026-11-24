@@ -28,7 +28,7 @@ def run_descriptive_core_job(
     storage, *, capture_sources_txn, declarations, text_schemas, installed,
     canonical_type, scope, selected_plugin_id, selected_version,
     target_edition_id, now, lease_seconds, expected_generation=0,
-    expected_execution_key=None,
+    expected_execution_key=None, require_configured_selection=False,
 ):
     """Capture -> request/claim -> isolated runner -> fenced SQL publication.
 
@@ -37,6 +37,8 @@ def run_descriptive_core_job(
     from the same authoritative DB transaction and must not run plugins.
     The producer must prevalidate its installed registry and source authority.
     """
+    if type(require_configured_selection) is not bool:
+        raise ValueError("invalid_descriptive_selection_policy")
     selection = select_consolidator(
         declarations, canonical_type=canonical_type, scope=scope,
         selected_plugin_id=selected_plugin_id, selected_version=selected_version,
@@ -71,6 +73,10 @@ def run_descriptive_core_job(
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         pin = read_descriptive_selection_txn(db, canonical_type=canonical_type, scope=scope)
+        # Product entry points must not fall back to the historical staging
+        # journal or execute an unpinned schema. Check in the same snapshot.
+        if require_configured_selection and (pin is None or pin.schema_sha256 is None):
+            raise ValueError("descriptive_configured_selection_required")
         require_descriptive_selection(pin, selection, installed.source_sha256, schema=schema)
         facts, links = capture_sources_txn(db)
         if type(facts) not in (tuple, list) or type(links) is not dict:

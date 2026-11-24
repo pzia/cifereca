@@ -1,5 +1,7 @@
 """#4552: actual public source -> SQLite -> isolated worker -> journal -> restart."""
 from dataclasses import replace
+import pytest
+from cifereca.core.notice_descriptive_config_owner import configure_descriptive_selection
 from cifereca.storage import Storage
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import persist_notice_cover
@@ -33,6 +35,16 @@ def test_real_public_age_consolidation_survives_restart(tmp_path):
         selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
         target_edition_id=source.key.edition_id, now=100, lease_seconds=60,
     )
+    # The production entry point must refuse before allocating a staging job.
+    with pytest.raises(ValueError, match="descriptive_configured_selection_required"):
+        run_public_age_descriptive_job(storage, **options)
+    pin = configure_descriptive_selection(
+        storage, declarations=(DECLARATION,), text_schemas=(schema,),
+        installed_registry=(binding,), canonical_type="age", scope="fr:editions",
+        selected_plugin_id=DECLARATION.plugin_id, selected_version=DECLARATION.version,
+        expected_generation=0,
+    )
+    assert pin.schema_sha256 is not None
     published = run_public_age_descriptive_job(storage, **options)
     assert published is not None
     assert "age_min" in published.value
@@ -56,6 +68,6 @@ def test_real_public_age_consolidation_survives_restart(tmp_path):
     assert read_descriptive_materialization(
         reopened, target_edition_id=source.key.edition_id,
         canonical_type="age", scope="fr:editions",
-        capture_current_txn=capture,
+        capture_current_txn=capture, schema=schema,
     ) == published
     assert run_public_age_descriptive_job(reopened, **options) is None
