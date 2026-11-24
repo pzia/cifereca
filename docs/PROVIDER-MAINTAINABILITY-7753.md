@@ -92,3 +92,19 @@ empty BnF projection regression was integrated in #7953 (HEAD 82c28aeb5919,
 PR CI 45355408424 success). Paris inventory completeness remains unknown,
 not a BnF-style attestation. Missing explicit symmetric 0/1/N, invalid ACSM,
 consent and at-most-once mappings must not be marked complete from this table.
+
+
+### R4 — additional selected transfer evidence
+
+At efd568f1efa313d7fb709a492b026fe663cdf511, the BnF real HTTPX fixture
+test_p0_3633_selected_acsm_staging.py::test_real_httpx_selected_bnf_acsm_to_exact_core_staging
+asserts exactly one signed GET, two fresh activity reads and no EPUB/part
+publication. Its test_foreign_right_edition_offer_or_policy_refused_before_any_get
+includes explicit_user_action=False and asserts zero requests and empty staging.
+Paris selected delivery references:
+test_p1_3252_paris_selected_right_freshness.py::test_selected_fresh_loan_gets_only_current_url
+and ::test_paris_invalid_selection_never_gets_content.
+The BnF quota-zero 1/N actual-session test #7958 was integrated at
+df5b8d37e46c (HEAD c43ec5aeac0d, CI 45356480698 success).
+These are synthetic tests, not live provider qualification or proof of
+every Core A/B/C transition.
