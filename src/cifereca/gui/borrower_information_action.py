@@ -77,11 +77,19 @@ def add_borrower_information_action(panel, item):
     row.add_suffix(button)
     group.add(row)
 
+    source_account = item.source_account_id
+    pending = False
+
     def visible():
-        return current() and row.get_root() is not None
+        return (current() and row.get_root() is not None
+                and item.source_account_id == source_account
+                and type(item.metadata) is dict
+                and item.metadata.get("catalogue_access") != "shared_read_only"
+                and item.metadata.get("search_provenance") != "known_catalog_stale")
 
     def invoke(_button):
-        if not visible():
+        nonlocal pending
+        if pending or not visible():
             return
         row.set_subtitle("Informations non vérifiées.")
         read = prepare_borrower_information(
@@ -89,18 +97,25 @@ def add_borrower_information_action(panel, item):
         if not callable(read):
             return
 
+        pending = True
+
         def done(values):
+            nonlocal pending
+            pending = False
             if visible():
                 row.set_subtitle(advisory_text(values))
 
         def failed(_error):
             done(None)
 
-        window.runner.submit(
-            "Consultation informative…", read, done, failed,
-            control=button, priority=TaskPriority.USER_ACTION,
-            kind="borrow-information", origin="user",
-        )
+        try:
+            window.runner.submit(
+                "Consultation informative…", read, done, failed,
+                control=button, priority=TaskPriority.USER_ACTION,
+                kind="borrow-information", origin="user",
+            )
+        except Exception:
+            failed(None)
 
     button.connect("clicked", invoke)
     panel._append_content(group)
