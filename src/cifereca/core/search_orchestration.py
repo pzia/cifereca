@@ -661,6 +661,12 @@ def _public_rows_from_response(
                                 exact.raw_json, exact.parser_id, exact.parser_version,
                                 *parse_evidence,
                             )
+                            token = response.notice_parse_input_token
+                            if (type(token) is str and re.fullmatch(r"[0-9a-f]{32}", token)
+                                    and callable(getattr(session, "_read_retained_public_input", None))
+                                    and callable(getattr(session, "_hold_retained_public_input", None))):
+                                projected._core_notice_retained_input = (session, token)
+
             admitted.append(projected)
     return admitted
 
@@ -2881,6 +2887,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     # Core stamps only a successfully accepted source and
                     # its durable epoch. A GTK widget never writes a second
                     # N2 source or infers an association from an N3 HIT.
+                    retained = row.__dict__.pop("_core_notice_retained_input", None)
+                    if retained is not None:
+                        from .notice_c_search_receipt import record_search_receipt
+                        record_search_receipt(self.storage, row, persisted, retained, now=now)
                     row._core_notice_cover_document_ref = persisted.document
                     row._core_notice_cover_document_epoch = persisted.epoch
                     # A public C source is exactly related to ITS OWN
