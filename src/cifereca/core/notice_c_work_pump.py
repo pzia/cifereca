@@ -159,8 +159,12 @@ class PublicNoticeWorkPump:
                 )
                 return RotationPage(page.refs, page.next_after, page.examined, page.corrupt)
 
+            def offer_lane(kind, ref):
+                circuit = "network" if kind in ("fetch_source_notice", _PURCHASE_LANE) else "local"
+                return self._bridge.offer(ref, circuit=circuit)
+
             tick = self._rotation.tick(
-                read, self._bridge.offer,
+                read, self._bridge.offer, offer_lane=offer_lane,
                 check_cancelled=control.check_cancelled if control is not None else None,
             )
             return DispatchTick(tick.handles, tick.examined, tick.corrupt, tick.deferred)
