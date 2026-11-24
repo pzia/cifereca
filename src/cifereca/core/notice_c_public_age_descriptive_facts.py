@@ -73,31 +73,10 @@ def public_age_descriptive_facts(observation: NoticeSourceObservation) -> tuple[
             age.medium, age.source_revision,
         ):
             return ()
-        # Hash bounded, vetted source coordinates; do not expose a URL or title
-        # as an identity and never merge editions by bibliographic similarity.
-        source_digest = sha256(json.dumps(
-            (key.provider_id, key.branch_id, key.record_id),
-            ensure_ascii=True, separators=(",", ":"),
-        ).encode("ascii")).hexdigest()
-        revision = observation.source_revision
-        if type(revision) is not str or not revision:
-            return ()
-        result = []
-        for index, item in enumerate(age.ranges):
-            value = json.dumps({
-                "age_min": item.age_min, "age_max": item.age_max,
-                "age_kind": item.age_kind, "source_label": item.source_label,
-                "source_field": age.source_field,
-            }, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-            result.append({
-                "source_id": "source:" + source_digest,
-                "canonical_type": "age",
-                "edition_id": key.edition_id,
-                "evidence_id": "age:" + str(index),
-                "value": value,
-                "source_revision": revision,
-            })
-        return tuple(result)
+        return _encode_age_facts(
+            age, provider_id=key.provider_id, record_id=key.record_id,
+            edition_id=key.edition_id, revision=observation.source_revision,
+        )
     except (KeyError, TypeError, ValueError, UnicodeError, AttributeError):
         return ()
 
@@ -115,3 +94,27 @@ def admit_public_age_descriptive_facts(
         source_facts=public_age_descriptive_facts(observation),
         attested_strong_links=attested_strong_links,
     )
+
+
+def _encode_age_facts(age, *, provider_id, record_id, edition_id, revision):
+    """Identical fact coordinates for live and retained exact public evidence."""
+    source_digest = sha256(json.dumps(
+        (provider_id, "search.public.catalogue", record_id),
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("ascii")).hexdigest()
+    if type(revision) is not str or not revision:
+        return ()
+    result = []
+    for index, item in enumerate(age.ranges):
+        value = json.dumps({
+            "age_min": item.age_min, "age_max": item.age_max,
+            "age_kind": item.age_kind, "source_label": item.source_label,
+            "source_field": age.source_field,
+        }, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        result.append({
+            "source_id": "source:" + source_digest,
+            "canonical_type": "age", "edition_id": edition_id,
+            "evidence_id": "age:" + str(index), "value": value,
+            "source_revision": revision,
+        })
+    return tuple(result)
