@@ -90,16 +90,16 @@ class HTTPProviderTests(unittest.TestCase):
             self.assertTrue(positive.branch_claims_complete('bnf_html', 'digital'))
             self.assertNotIn('last_loan_errors', vars(s))
 
-            # An empty observed page is NOT proof that an earlier right
-            # ended. One typed read is the only authoritative envelope.
+            # Owner-approved: authenticated HTTP 200 with a complete empty
+            # active-loans widget attests absence, not borrowing entitlement.
             state['activity'] = '<section class="active-loans"></section>'
             prior = len(calls)
             empty = s.loan_inventory_snapshot(account)
             self.assertEqual(len(calls), prior + 1)
             self.assertEqual(empty.loans, ())
-            self.assertEqual(empty.status, 'partial')
-            self.assertEqual(empty.reason_code, 'inventory_not_exhaustive')
-            self.assertEqual(empty.branches[0].completeness, 'partial')
+            self.assertEqual(empty.status, 'success')
+            self.assertIsNone(empty.reason_code)
+            self.assertEqual(empty.branches[0].completeness, 'complete')
             self.assertNotIn('last_loan_errors', vars(s))
             self.assertFalse(any('/loans/' in p for _, _, p in calls))
         finally:
