@@ -190,3 +190,112 @@ def test_three_surface_choices_are_revoked_together_on_profile_epoch_change(
     assert result is None
     assert not calls and not calls_remote
     assert rows(service.storage) == before and path.read_bytes() == contents
+
+
+@pytest.mark.parametrize("failure", [401, 403, 429, "timeout"])
+def test_public_failure_then_paged_private_declaration_and_revocation(
+    private_rig, tmp_path, monkeypatch, failure,
+):
+    """One operator flow: refusal is not absence, declaration is not origin."""
+    from cifereca.core import library_declared_links as engine
+    from cifereca.core import local_origin_declaration_bridge as bridge
+    from cifereca.core import local_origin_private_catalogue as private
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.local_origin_detail_broker import take_native_local_origin_declaration
+    from tests.test_core_p0_4030_private_catalogue import _populate_windows
+    from tests.test_library_declared_links import records, rows as table_rows
+
+    service, request, account, session, calls, path, key, _ = private_rig
+    service.identities = [service.current_identity]
+    service.registry = object()
+    service.config.data = {}
+    service._provider_enabled_for_identity = lambda p, i: i == "A" and p in (
+        "new-catalogue", "seller")
+    monkeypatch.setattr(engine, "acquisition_lock_file", lambda: tmp_path / "declare.lock")
+    _populate_windows(private_rig)
+    monkeypatch.setattr(private, "_MAX_REFERENCES", 2)
+    service.storage.entitlement_put(dict(
+        entitlement_id="known-loan", identity_id="A", provider_id="seller",
+        credential_id="card-A", account_id="buyer-A", item_id=key.edition_id,
+        entitlement_type="loan", state="active", loan_id=key.right_id,
+    ))
+
+    def denied(title, scope, **kwargs):
+        calls.append((title, scope, kwargs))
+        req = httpx.Request("GET", "https://example.invalid/catalogue")
+        if failure == "timeout":
+            raise httpx.ReadTimeout("PRIVATE fixture timeout", request=req)
+        raise httpx.HTTPStatusError(
+            "PRIVATE fixture refusal", request=req,
+            response=httpx.Response(failure, request=req),
+        )
+
+    service._sessions["public"].search_with_response_facets = denied
+    names = ("entitlements", "source_references", "origin_links", "artifacts",
+             "placements", "catalog_entries", "acquisition_ledger")
+    before = {name: table_rows(service, name) for name in names}
+    contents = path.read_bytes()
+    port = "library.origin.detail.read"
+    factory = LocalOriginDetailReadFactory(service)
+    resolver = ActivationBrokerResolver(lambda _: None, lambda _: factory, "fixture", (port,))
+    broker = resolver(port)
+    plugin = object()
+    resolved = NS(plugin_id="fixture", service=plugin, registry_generation=3)
+    manager = NS(_registry_generation=3, service=lambda _: plugin,
+                 _records={"fixture": NS(service=plugin, activation_brokers=resolver)})
+    page = broker.preview(identity_id="A", placement_id=request.placement_id,
+                          still_current=lambda: True, confirmed=True)
+    public, = page.public_choices
+    loan, = page.private_choices
+    assert not calls and not records(service)
+    failed = broker.search_public(token=public.token, confirmed=True)
+    assert failed.status == {401: "auth_required", 403: "access_denied",
+                             429: "rate_limited", "timeout": "timeout"}[failure]
+    assert failed.matches == () and not failed.coverage_complete
+    assert not failed.fresh_network_verified and not failed.association_authorized
+    assert broker.search_public(token=public.token, confirmed=True) is None
+
+    first = broker.compare_private(token=loan.token, confirmed=True)
+    assert first.status == "partial" and first.page == 1 and first.window_truncated
+    assert [m.resource_id for m in first.matches] == ["loan-1", "loan-2"]
+    assert not first.fresh_network_verified and not first.coverage_complete
+    assert not first.provider_access_performed and not first.association_authorized
+    cursor = first.next_token
+    assert cursor and not records(service)
+    hit = first.matches[0]
+    advice = broker.preview_loan_declaration(token=hit.declaration_choice, confirmed=True)
+    assert advice is not None and advice.trust == "user_declaration"
+    assert not advice.association_authorized and not records(service)
+    pending = take_native_local_origin_declaration(
+        manager, resolved, advice, service=service, identity_id="A",
+        placement_id=request.placement_id,
+    )
+    assert pending is not None
+    preview, current = pending
+    assert bridge.admit_private_loan_declaration(service, preview) is None
+    command = bridge.admit_private_loan_declaration(
+        service, preview, user_confirmed=True, still_current=current,
+    )
+    assert callable(command)
+    result = command()
+    assert result.status == "declared" and result.changed == 1
+    assert command() is None
+    record, = records(service)
+    assert record["origin"] == "user_declaration"
+    # The previous page's SQLite witness cannot survive this durable write.
+    stale = broker.compare_private(token=cursor, confirmed=True)
+    assert stale is None or (stale.status != "partial" and not stale.matches)
+    undo = engine.withdraw_declared_link(
+        service, identity_id="A", relation_id=result.relation_id,
+    )
+    assert undo.status == "revoke_preview"
+    assert engine.withdraw_declared_link(
+        service, identity_id="A", relation_id=result.relation_id,
+        confirmation=undo.plan_token,
+    ).status == "revoked"
+    assert records(service)[0]["state"] == "revoked"
+    assert len(calls) == 1 and calls[0] == (
+        "Roman commun", "digital", {"field": "title", "content_types": ()},
+    )
+    assert {name: table_rows(service, name) for name in names} == before
+    assert path.read_bytes() == contents
