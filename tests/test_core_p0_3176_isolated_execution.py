@@ -273,3 +273,56 @@ def test_isolated_rename_preflight_guard_exceptions_are_blocked_without_writer(
     assert result == {"status": "blocked", "changed": 0}
     assert old.read_bytes() == original_bytes and not proposed.exists()
     assert store.placement_get(placement_id) == original_placement
+
+
+@pytest.mark.parametrize("drift", ["same_size_bytes", "symlink"])
+def test_postcommit_physical_drift_requires_recovery_not_success(
+    store, tmp_path, monkeypatch, drift,
+):
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data = old.read_bytes()
+    baseline = store.placement_get(pid)
+    scope, page = _run(_service(store, root))
+    draft = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    accepted = confirm_organizer_dry_run(scope, page, draft, confirmed=True)
+    entry, = accepted.entries
+    new = root / scope.directory / entry.proposed
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr(execute, "_execution_fence_current",
+                        lambda s, lock: s is scope and s.root == root and s.storage is store)
+    original = LibraryMaintenanceBrokerImpl.run
+    calls = []
+    other = tmp_path / "unrelated.epub"
+    other.write_bytes(data)
+
+    def writer_with_external_drift(self, plan):
+        result = original(self, plan)
+        assert result.ok and result.changed == 1
+        calls.append(plan)
+        if drift == "same_size_bytes":
+            new.write_bytes(b"X" * len(data))
+        else:
+            new.unlink()
+            new.symlink_to(other)
+        return result
+
+    monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", writer_with_external_drift)
+    with InterProcessLock(lock_path) as lock:
+        outcome = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock, confirmed=True)
+    assert outcome == {"status": "recovery_required", "changed": None}
+    assert len(calls) == 1 and not old.exists()
+    current = store.placement_get(pid)
+    assert current["path"] == str(new)
+    assert current["artifact_id"] == baseline["artifact_id"]
+    assert other.read_bytes() == data
+    if drift == "same_size_bytes":
+        assert new.read_bytes() == b"X" * len(data)
+    else:
+        assert new.is_symlink()
+    # No speculative rollback or second writer on postcommit failure.
