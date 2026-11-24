@@ -201,7 +201,7 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
                         "previous_parser_version": current.observation.parser_version,
                         "implementation_sha256": port.implementation_digest,
                         "input_sha256": request.receipt.input_digest,
-                        "raw_input_export": "not_authorized",
+                        "raw_input_export": "subject_to_core_policy",
                     }, sort_keys=True),
                 }
                 # Bound the retained diagnostic payload, explicitly omitting
