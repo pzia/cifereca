@@ -425,6 +425,7 @@ def test_bnf_cancelled_activity_never_returns_inventory(entrypoint):
             getattr(s, entrypoint)(a)
         assert client.calls.count("activity") == before + 1
         assert s._last_loan_inventory_evidence is None
+        assert s._observed_loans == {}
         client.activity = original
         again = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert again.status == "success"
