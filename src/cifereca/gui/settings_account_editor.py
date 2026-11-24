@@ -287,6 +287,7 @@ def build_provider_account_editor(
         group.add(entry); fields[field.key] = entry
     options = dict(raw_options) if type(raw_options) is dict else {}
     option_fields: dict[str, Any] = {}
+    repairable_choices = []
     for field in getattr(descriptor, "account_options", ()):
         option_type = getattr(field, "value_type", "text")
         choice_mode = option_type == "choice"
@@ -338,10 +339,12 @@ def build_provider_account_editor(
         if choice_mode:
             declared = validated_account_option_choices(field)
             values = tuple(value for value, _label in declared or ())
-            if declared is None or selected not in values:
-                # A stale option or a changed/invalid descriptor cannot be
-                # silently rebound to the first available item.
+            if declared is None:
                 invalid_saved_snapshot = True
+            elif selected not in values:
+                # A legacy string outside a valid domain needs an explicit
+                # selection; an invalid schema or corrupt type is not repairable.
+                repairable_choices.append(field.key)
             entry.set_model(Gtk.StringList.new([
                 label for _value, label in declared or ()
             ]))
@@ -476,13 +479,24 @@ def build_provider_account_editor(
         "scoped_option_fields": scoped_option_fields,
         "original_options": options, "original_credentials": credentials,
         "original_account": dict(data),
-        "invalid_saved_snapshot": invalid_saved_snapshot,
+        "invalid_saved_snapshot": invalid_saved_snapshot or bool(repairable_choices),
         "probe_rendered_baseline": probe_rendered_baseline,
         "deleted": False,
         "explicit_probe_button": probe_button,
         "explicit_probe_status": probe_status,
         "connection_lifecycle_status": lifecycle,
     }
+    if repairable_choices:
+        def update_choice_repair(*_args):
+            editor["invalid_saved_snapshot"] = (
+                invalid_saved_snapshot or any(
+                    not option_fields[key].get_text() for key in repairable_choices
+                )
+            )
+        for key in repairable_choices:
+            connect = getattr(option_fields[key].row, "connect", None)
+            if callable(connect):
+                connect("notify::selected", update_choice_repair)
     # A completed diagnostic belongs to the exact draft at the click.
     # Even an edit followed by a revert invalidates that observation.
     editor["_probe_draft_revision"] = 0

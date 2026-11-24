@@ -18,6 +18,8 @@ def test_kobo_profile_is_a_declarative_account_option_with_legacy_fallback():
     assert option.legacy_config_key == "kobo_backup.display_profile"
     assert option.required is False
     assert option.secret is False
+    assert option.value_type == "choice"
+    assert option.choices == (("Android", "Android"), ("Desktop", "Desktop"))
 
 
 def _session(options, config):
@@ -52,3 +54,15 @@ def test_invalid_profile_is_not_promoted_into_a_new_mode():
     session = _session({"display_profile": "unknown"},
                        {"kobo_backup.display_profile": "Desktop"})
     assert session.display_profile == "Android"
+
+
+def test_declared_profile_choices_match_runtime_modes():
+    option = next(f for f in DESCRIPTOR.account_options if f.key == "display_profile")
+    for value, _label in option.choices:
+        assert _session({"display_profile": value}, {}).display_profile == value
+
+
+def test_legacy_whitespace_profile_runtime_unchanged():
+    old = {"kobo_backup.display_profile": " Desktop "}
+    assert _session({}, old).display_profile == "Desktop"
+    assert old == {"kobo_backup.display_profile": " Desktop "}

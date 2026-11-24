@@ -251,6 +251,8 @@ DESCRIPTOR = ProviderDescriptor(
         AccountOptionField(
             "display_profile", "DisplayProfile Kobo-Vault (Android/Desktop)",
             default="Android", legacy_config_key="kobo_backup.display_profile",
+            value_type="choice", choices=(("Android", "Android"), ("Desktop", "Desktop")),
+            help_text="Préférence locale, sans effet sur les droits ou le consentement.",
         ),
     ),
     max_accounts_per_identity=1,
