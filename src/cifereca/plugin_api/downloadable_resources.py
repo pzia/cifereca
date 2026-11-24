@@ -348,7 +348,39 @@ def as_legacy_rights_snapshot(snapshot: ResourceSnapshot) -> ProviderRightsSnaps
     )
 
 
+
+class LegacyRightsResourceAdapter:
+    """Opt-in v2 projection for sessions implementing the v1 rights readers.
+
+    No capability is added to ProviderSession. The concrete provider retains
+    scope validation, locking, consent and all network policy.
+    """
+
+    def downloadable_resource_snapshot(self, account):
+        return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_selected_offer_snapshot(
+        self, account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        return from_legacy_rights_snapshot(
+            self.rights_selected_delivery_offer_snapshot(
+                account, edition_id=edition_id, right_id=resource_id,
+                kind=kind, branch=branch,
+                explicit_user_action=explicit_user_action,
+            )
+        )
+
+    @staticmethod
+    def _downloadable_scope(account):
+        return ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+
+
 __all__ = [
+    "LegacyRightsResourceAdapter",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference",
     "DownloadCapability", "OptionalRightMetadata", "ResourceObservation",
     "ResourceSnapshot", "DeliveryCandidate", "from_legacy_rights_snapshot",
