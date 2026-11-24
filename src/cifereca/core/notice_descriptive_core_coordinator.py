@@ -90,9 +90,17 @@ def run_descriptive_core_job(
         input_digest=descriptive_selection_input_digest(execution_key, pin),
         implementation_digest=installed.source_sha256,
     )
-    ref = journal.request_job(
-        storage, spec, now=now, expected_generation=expected_generation,
-    )
+    # Recheck authority before allocating a durable job. A concurrent
+    # revocation must not allow an obsolete producer to supersede newer work.
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if read_descriptive_selection_txn(
+            db, canonical_type=canonical_type, scope=scope,
+        ) != pin:
+            raise ValueError("descriptive_selection_changed")
+        ref = journal._request_job_txn(
+            db, spec, now=now, expected_generation=expected_generation,
+        )
     lease = journal.claim_job(
         storage, ref, now=now, lease_seconds=lease_seconds,
     )
