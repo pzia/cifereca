@@ -1586,7 +1586,7 @@ class DetailPanel(Gtk.Box):
             )
             action.add(row)
             self._append_content(action)
-        from .borrower_information_action import add_borrower_information_action
+        from cifereca.gui.borrower_information_action import add_borrower_information_action
         add_borrower_information_action(self, item)
         self._decorate(item)
         if direct_download and not detail.holdings:
