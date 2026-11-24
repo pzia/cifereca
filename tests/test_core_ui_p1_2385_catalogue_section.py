@@ -152,3 +152,19 @@ def test_catalogue_descriptor_exception_is_not_displayed_to_users():
     assert _disclosure(window).child.children[0].title == "plugin.unknown"
     assert "PRIVATE_ACCOUNT_TOKEN" not in repr(_disclosure(window).child.children)
     assert window.runner.tasks == []
+
+
+def test_catalogue_descriptor_callback_cannot_attach_previous_identity_snapshot():
+    window, broker, calls, _build, _page = _fixture(sources=[])
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        _cap("plugin.unknown", scope="authenticated"),
+    )
+
+    def change_identity(_provider):
+        window.service.current_identity.identity_id = "bob"
+        return "Previous catalogue"
+
+    window.service.provider_display_name = change_identity
+    window._refresh_sync_page()
+    assert _disclosure(window) is None
+    assert window.runner.tasks == []
