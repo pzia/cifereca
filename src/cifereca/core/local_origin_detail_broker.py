@@ -450,6 +450,9 @@ class LocalOriginDetailReadBrokerImpl:
                     or result.get("status") not in ("partial", "excluded", "scope_changed", "unavailable")
                     or type(result.get("window_truncated")) is not bool
                     or type(result.get("provider_read_requested")) is not bool
+                    or type(result.get("window_status")) is not str
+                    or result["window_status"] not in ("unverified", "incomplete",
+                                                        "declared_digital_branches_complete")
                     or any(result.get(flag) is not False for flag in (
                         "coverage_complete", "fresh_network_verified",
                         "association_authorized", "may_write_origin_or_right",
@@ -468,6 +471,7 @@ class LocalOriginDetailReadBrokerImpl:
                     row.edition_id, row.loan_id, row.title, row.author, row.comparison,
                 ) for row in result["candidates"]), result["window_truncated"],
                 result["observed_at"], result["provider_read_requested"],
+                window_status=result["window_status"],
             )
             return report if live() else None
         except Exception:
