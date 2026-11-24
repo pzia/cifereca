@@ -13,6 +13,8 @@ from ..core.notice_c_web_choices import (
     PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
 )
 
+_READ_ERROR = object()
+
 
 def _open_public_url(url):
     from gi.repository import Gio
@@ -74,8 +76,11 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
         if not valid(generation):
             return False
         clear_choices()
-        if menu is None:
+        if menu is _READ_ERROR:
             status.set_text("Fiches web indisponibles · lecture Core impossible")
+            return False
+        if menu is None:
+            status.set_text("Notice C indisponible · actualisez le catalogue")
             return False
         if type(menu) is not PublicWebChoices or menu.document != document:
             status.set_text("Fiches web indisponibles · réponse Core invalide")
@@ -104,7 +109,7 @@ def _web_controls(window, document, title, *, Gtk, GLib, current):
             try:
                 menu = read_public_web_choices(window.service.storage, document)
             except (OSError, RuntimeError, ValueError, sqlite3.Error):
-                menu = None
+                menu = _READ_ERROR
             GLib.idle_add(deliver_choices, generation, menu)
 
         Thread(target=work, daemon=True, name="public-c-web-choices").start()
