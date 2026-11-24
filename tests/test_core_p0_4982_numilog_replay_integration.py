@@ -222,7 +222,7 @@ def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monk
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         tasks.close()
-        session.close()
+        session.disconnect()
         db.close()
 
 
