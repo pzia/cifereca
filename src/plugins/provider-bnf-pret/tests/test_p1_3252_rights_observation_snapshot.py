@@ -550,13 +550,22 @@ def test_4480_zero_remaining_quota_is_not_zero_active_loans(pairs):
     try:
         inventory = session.loan_inventory_snapshot(account)
         rights = session.rights_observation_snapshot(account)
+        resources = session.downloadable_resource_snapshot(account)
         assert [(loan.record_id, loan.id) for loan in inventory.loans] == list(pairs)
         assert [(right.edition_id, right.right_id) for right in rights.rights] == list(pairs)
         assert inventory.status == "success"  # Closed zero-card widget is complete.
         assert rights.coverage == ("complete" if pairs else "partial")
         assert not rights.authorizes_mutation
         assert not rights.authorizes_negative_reconciliation
-        assert client.calls == ["login", "activity", "activity"]
+        assert resources.scope == rights.scope
+        assert resources.branch == rights.branch == "bnf_html"
+        assert len(resources.resources) == len(pairs)
+        assert resources.coverage == rights.coverage
+        assert not resources.authorizes_acquisition
+        assert not resources.authorizes_negative_reconciliation
+        assert all(right.delivery == "unknown" and not right.delivery_offer_id
+                   for right in rights.rights)
+        assert client.calls == ["login", "activity", "activity", "activity"]
     finally:
         session.close()
 
