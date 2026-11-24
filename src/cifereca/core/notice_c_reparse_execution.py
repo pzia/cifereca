@@ -104,7 +104,7 @@ def _match_input(request, selected):
         raise UnavailableNoticeWork("notice_reparse_input_unavailable")
 
 
-def prepare_public_reparse(storage, registry, spec, control, *, clock):
+def prepare_public_reparse(storage, registry, spec, control, *, clock, capture_directory=None):
     """Parse outside SQLite, hold exact producer lease across final commit.
 
     The selected parser must return a Core-admitted public observation via
@@ -175,7 +175,8 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         if reject:
             def export_after_commit():
                 return export_capture(storage, diagnostic, members=
-                                      _authorized_capture_members(port, request, selected))
+                                      _authorized_capture_members(port, request, selected),
+                                      directory=capture_directory)
             return WitnessRejectedPublication(
                 None if diagnostic is None else export_after_commit,
                 diagnostic,

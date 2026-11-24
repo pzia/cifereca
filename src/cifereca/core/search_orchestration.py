@@ -2822,6 +2822,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                                  if source.document.source_key in refused_refs)
 
                 capture_ids = set()
+                capacity_refused_positions = set()
 
                 def require_witness_evidence(db, observation, attribute, position):
                     from .notice_parse_witness import admitted_source_scope_sha256
@@ -2851,8 +2852,11 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                         db, current=current.observation, candidate=observation,
                         input_digest=evidence[5], implementation_digest=evidence[6],
                     )
-                    if reject and diagnostic is not None:
-                        capture_ids.add(diagnostic)
+                    if reject:
+                        if diagnostic is None:
+                            capacity_refused_positions.add(position)
+                        else:
+                            capture_ids.add(diagnostic)
                     return not reject
 
                 options = {"_before_persist": require_witness_evidence}
@@ -2869,16 +2873,35 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                 # Export only durable intents, after SQLite commit. Raw bytes
                 # are not export-authorized by a descriptive Search envelope.
                 from .notice_regression_capture_intent import export_capture
+                from .notice_parse_witness_alert import (
+                    read_parse_witness_diagnostic, report_capture_diagnostic,
+                )
                 for diagnostic in sorted(capture_ids):
                     try:
-                        state = export_capture(self.storage, diagnostic, members={})
-                        if state is not None:
-                            logging.getLogger("cifereca").warning(
-                                "NOTICE parser_witness_rejected diagnostic_id=%s capture_state=%s",
-                                diagnostic, state,
-                            )
+                        state = export_capture(
+                            self.storage, diagnostic, members={},
+                            directory=getattr(self, "_notice_regression_capture_directory", None),
+                        )
                     except (ValueError, OSError, sqlite3.Error):
-                        pass
+                        state = "metadata_unavailable"
+                    if state is not None:
+                        report_capture_diagnostic(
+                            getattr(self, "diagnostics", None), diagnostic, state, rejected=True,
+                        )
+                # A refused capacity has no capture ID. Re-read the durable
+                # alert after commit rather than announcing a rolled-back gate.
+                for position in sorted(capacity_refused_positions):
+                    observation = observations[position]
+                    try:
+                        alert = read_parse_witness_diagnostic(
+                            self.storage, key=observation.key, parser_id=observation.parser_id,
+                        )
+                    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+                        continue
+                    if alert is not None and alert["capture_state"] == "capacity_refused":
+                        report_capture_diagnostic(
+                            getattr(self, "diagnostics", None), None, "capacity_refused", rejected=True,
+                        )
                 failed_c = []
                 for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
                     retained = retained_inputs[position]

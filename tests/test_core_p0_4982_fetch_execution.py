@@ -191,13 +191,15 @@ def test_dirty_request_refusal_rolls_back_fresh_source_and_does_not_retry(tmp_pa
 
 
 @pytest.mark.parametrize("mode", ("witness_denied", "witness_allowed", "witness_changed_input"))
-def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("configured", (False, True))
+def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode, configured):
     import json
     import zipfile
     from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
     from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
     from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
     monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir", lambda: tmp_path)
+    destination = tmp_path / "captures" if configured else tmp_path
     db = Storage(tmp_path / "witness-fetch.sqlite")
     tasks = broker()
     try:
@@ -212,7 +214,8 @@ def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
         )
         events = []
         pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, fetch_execution=execution,
-                                    on_witness_rejected=lambda *event: events.append(event))
+                                    on_witness_rejected=lambda *event: events.append(event),
+                                    capture_directory=destination if configured else None)
         handle, = pump.tick().handles
         changed = mode == "witness_changed_input"
         assert handle.result(timeout=10) == ("current" if changed else "error")
@@ -225,7 +228,7 @@ def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
             assert projection["status"] == "source_changed"
             assert projection["capture_state"] == "not_recorded"
             assert read_notice_cover(db, source.document).epoch == source.epoch + 1
-            assert not list(tmp_path.glob("*.zip"))
+            assert not list(destination.glob("*.zip"))
             assert events == []
         else:
             assert projection["status"] == "parser_drift_suspected"
@@ -233,7 +236,9 @@ def test_fresh_parse_witness_gate_and_diagnostics(tmp_path, monkeypatch, mode):
             assert events == [(projection["capture_id"], projection["capture_state"])]
             assert read_notice_cover(db, source.document) == source
             assert read_consolidated_notice_cover(db, canonical.document) == canonical
-            archive_path, = tmp_path.glob("*.zip")
+            archive_path, = destination.glob("*.zip")
+            if configured:
+                assert not list(tmp_path.glob("*.zip"))
             with zipfile.ZipFile(archive_path) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
                 assert manifest["diagnostic_id"] == projection["capture_id"]

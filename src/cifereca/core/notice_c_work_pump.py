@@ -53,7 +53,8 @@ class PublicNoticeWorkPump:
 
     def __init__(self, storage, broker, *, clock=None, on_committed=None,
                  replay_registry=None, fetch_execution=None, purchase_execution=None,
-                 on_purchase_committed=None, on_witness_rejected=None):
+                 on_purchase_committed=None, on_witness_rejected=None,
+                 capture_directory=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         if replay_registry is None:
@@ -73,6 +74,7 @@ class PublicNoticeWorkPump:
         self._replay_registry = replay_registry
         self._supported = (_SUPPORTED + replay_registry.supported()
                            + (() if fetch_execution is None else fetch_execution.supported()))
+        self._capture_directory = capture_directory
         self._storage = storage
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._bridge = AggregateWorkBridge(
@@ -96,6 +98,7 @@ class PublicNoticeWorkPump:
     def _prepare_fetch(self, spec, lease, control):
         return self._fetch_execution.prepare(
             self._storage, spec, lease, control, clock=self._clock,
+            capture_directory=self._capture_directory,
         )
 
     def _prepare(self, spec, control):
@@ -103,6 +106,7 @@ class PublicNoticeWorkPump:
         if spec.kind == "reparse_cached_input":
             return prepare_public_reparse(
                 self._storage, self._replay_registry, spec, control, clock=self._clock,
+                capture_directory=self._capture_directory,
             )
         if spec.kind == "relink_notices":
             if spec.implementation_digest == initial_group.IMPLEMENTATION_DIGEST:

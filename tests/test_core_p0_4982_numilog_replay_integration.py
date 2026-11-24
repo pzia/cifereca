@@ -365,3 +365,88 @@ def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
         assert len(calls) == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("configured", (False, True))
+@pytest.mark.parametrize("capacity_refused", (False, True))
+def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured, capacity_refused):
+    from types import SimpleNamespace
+    from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
+    from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
+    from cifereca.core.notice_parse_witness_alert import read_parse_witness_diagnostic
+
+    session, client, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "search-witness.sqlite")
+    destination = tmp_path / "captures" if configured else tmp_path
+    monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir",
+                        lambda: tmp_path)
+    from cifereca.diagnostics import Diagnostics
+    diagnostics = Diagnostics()
+    service = SimpleNamespace(storage=db, diagnostics=diagnostics, _notice_regression_capture_directory=
+                              destination if configured else None)
+    try:
+        response = session.search_with_response_facets("loup", "catalog")
+        rows = search_orchestration._public_rows_from_response(response, session)
+        row, = rows
+        search_orchestration._ingest_public_search_c(
+            service, rows, identity_id="alice", now=100,
+            require_public_cover_witness=True,
+        )
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        title = source.observation.fields_copy()["search_result"]["public_bibliography"]["title"]
+        publish_approved_parse_witness(
+            db, observation=source.observation, response_bytes=body,
+            critical_fields=(CriticalParseField(
+                ("search_result", "public_bibliography", "title"), "string",
+                expected_sha256=field_digest(title),
+            ),), expected_generation=0,
+        )
+        if capacity_refused:
+            from cifereca.core import notice_regression_capture_intent as capture
+            from cifereca.core.notice_parse_witness import ParseWitnessReview
+            monkeypatch.setattr(capture, "_MAX_INTENTS", 1)
+            with db._lock, db._connect() as sql:
+                sql.execute("BEGIN IMMEDIATE")
+                capture.enqueue_capture_txn(
+                    sql, scope="f"*64, generation=1,
+                    review=ParseWitnessReview("parser_drift_suspected", ("critical_field_1",)),
+                    input_digest=sha256(b"other response").hexdigest(),
+                )
+        original_parse = client.parse_public_search
+
+        def drift(text, url):
+            page = original_parse(text, url)
+            return replace(page, items=tuple(replace(item, title=CORRECTED)
+                                             for item in page.items))
+
+        monkeypatch.setattr(client, "parse_public_search", drift)
+        # Expire the normal cache so the next ordinary Search parses the
+        # same recorded transport bytes, not an old cached parsed DTO.
+        cache_clock[0] += 61.
+        changed = session.search_with_response_facets("loup", "catalog")
+        changed_rows = search_orchestration._public_rows_from_response(changed, session)
+        search_orchestration._ingest_public_search_c(
+            service, changed_rows, identity_id="alice", now=161,
+            require_public_cover_witness=True,
+        )
+        assert read_notice_cover(db, source.document) == source
+        diagnostic = read_parse_witness_diagnostic(
+            db, key=source.observation.key, parser_id=source.observation.parser_id,
+        )
+        assert diagnostic["status"] == "parser_drift_suspected"
+        expected_state = "capacity_refused" if capacity_refused else "partial"
+        assert diagnostic["capture_state"] == expected_state
+        entries = [event for event in diagnostics.snapshot()
+                   if event["category"] == "NOTICE"]
+        event, = entries
+        assert event["operation"] == "parser_witness_rejected"
+        assert event["status"] == "warning"
+        assert event["detail"] == {"diagnostic_id": diagnostic.get("capture_id"),
+                                   "capture_state": expected_state}
+        assert len(list(destination.glob("cifereca-regression-*.zip"))) == (0 if capacity_refused else 1)
+        if configured:
+            assert not list(tmp_path.glob("cifereca-regression-*.zip"))
+        assert len(calls) == 2
+    finally:
+        session.close()
+        db.close()

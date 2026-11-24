@@ -91,3 +91,28 @@ def test_diagnostic_projection_rejects_foreign_capture_reference(tmp_path):
         assert read_parse_witness_diagnostic(db, **key)["capture_state"] == "pending"
     finally:
         db.close(final=True)
+
+
+def test_capture_diagnostics_rejects_unbounded_or_foreign_payloads():
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.core.notice_parse_witness_alert import report_capture_diagnostic
+
+    diagnostics = Diagnostics()
+    for diagnostic, state in (("private-coordinate", "partial"), ("a"*64, "unknown"),
+                              (None, "partial"), ("a"*64, "capacity_refused")):
+        report_capture_diagnostic(diagnostics, diagnostic, state, rejected=True)
+    assert diagnostics.snapshot() == []
+    report_capture_diagnostic(diagnostics, None, "capacity_refused", rejected=True)
+    report_capture_diagnostic(diagnostics, "a"*64, "failed")
+    first, second = diagnostics.snapshot()
+    assert first["status"] == "warning"
+    assert first["detail"] == {"diagnostic_id": None, "capture_state": "capacity_refused"}
+    assert second["operation"] == "regression_capture_resumed"
+    assert second["status"] == "error"
+    assert second["detail"] == {"diagnostic_id": "a"*64, "capture_state": "failed"}
+
+    class BrokenJournal:
+        def add(self, *args, **kwargs):
+            raise OSError("journal unavailable")
+
+    report_capture_diagnostic(BrokenJournal(), "a"*64, "partial", rejected=True)
