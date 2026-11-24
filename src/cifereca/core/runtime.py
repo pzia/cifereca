@@ -115,7 +115,7 @@ class CiferecaCore:
                 from .notice_c_public_search_replay import qualify_public_search_replay
                 from .notice_c_public_search_replay import _anonymous_session
 
-                def register_search_replay(session, receipt, identity_id):
+                def register_search_replay(session, source, receipt, identity_id):
                     # The admitted Search producer must still be the exact
                     # registered public singleton, enabled for this profile.
                     provider_id = getattr(session, "provider_id", None)
@@ -129,7 +129,7 @@ class CiferecaCore:
                             return False
                         capability = session.public_search_replay_capability()
                         port = qualify_public_search_replay(session, capability)
-                        return notice_work.stage_replay_port(port, receipt)
+                        return notice_work.register_search_replay(source, receipt, port)
 
                 library._notice_work_register_search_replay = register_search_replay
             library._notice_work_request_public_replay = notice_work.request_public_replay
