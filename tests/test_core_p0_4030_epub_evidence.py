@@ -177,3 +177,13 @@ def test_refined_isbn_evidence_survives_exact_local_review_without_right(store, 
     assert not result["isbn_catalogue_comparison_performed"]
     assert not result["provider_access_performed"] and not result["association_authorized"]
     assert not result["may_write_origin_or_right"] and path.read_bytes() == before
+
+@pytest.mark.parametrize("field", ["title", "creator"])
+@pytest.mark.parametrize("control", ["\u202e", "\u2066", "\u200d", "\u2028", "\x85"])
+def test_opf_documentary_labels_refuse_invisible_controls(field, control):
+    metadata = META.replace("Roman commun" if field == "title" else "Autrice",
+                            "Label" + control + "Other")
+    stream = _book(metadata)
+    before = stream.getvalue()
+    assert read_epub_description(stream) is None
+    assert stream.tell() == 3 and stream.getvalue() == before
