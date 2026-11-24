@@ -96,6 +96,10 @@ La classe `ProviderDescriptor` du Core expose notamment `credential_fields: tupl
 
 Chaque façade d'établissement fixe son propre `ProviderDescriptor.id`, son `tenant_id` vérifié et ses champs de credentials. Pour un login interactif/SSO, `interactive_authentication=True` signale une connexion qui **ne doit pas être lancée automatiquement** par le balayage de démarrage. Les quotas et échéances effectifs restent des observations vivantes du compte, jamais un simple paramètre qui autorise `borrow()`.
 
+### Diagnostic explicite de connexion (#5540)
+
+Le diagnostic de compte est une action volontaire sur une configuration enregistrée : il ne valide ni les champs d'un formulaire modifié depuis le lancement, ni une synchronisation, ni un droit d'emprunt. Le CoreUI invalide le résultat affiché et ignore les callbacks devenus périmés lors d'une modification de credential, propriétaire, activation ou option, y compris si la valeur initiale est ensuite rétablie. Enregistrer les modifications avant de relancer le test. Le provider ne doit pas transformer cette action de diagnostic en achat, emprunt, retour ou acquisition.
+
 ## 3. Catalogue C, inventaire A, fichier B : ne jamais fusionner
 
 | Surface | Peut attester | Ne peut pas attester |
