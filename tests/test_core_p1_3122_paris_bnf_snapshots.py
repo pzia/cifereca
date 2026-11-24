@@ -291,3 +291,35 @@ def test_real_provider_candidate_wrapper_preserves_revocation(provider, tmp_path
         s.rights_selected_delivery_candidate.assert_called_once()
     finally:
         s.close()
+
+
+def test_bnf_synthetic_empty_inventory_is_not_negative_rights_evidence():
+    """#4480: manual inventory completeness is not rights revocation."""
+    s, a, client = bnf()
+    s.identity_broker = NS(accounts=lambda identity: [NS(
+        provider_id=a.provider_id, credential_id=a.credential_id,
+        account_id=a.unique_id, identity_id=identity, scope_version=2,
+    )] if identity == a.identity_id else [])
+    try:
+        first = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert len(first.loans) == 1
+        client.html = '<section class="active-loans"></section>'
+        empty = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert empty.status == "success" and not empty.loans
+        assert empty.branch_claims_complete("bnf_html", "digital")
+        rights = s.rights_observation_snapshot(a)
+        resources = s.downloadable_resource_snapshot(a)
+        assert not rights.rights and rights.coverage == "partial"
+        assert not resources.resources and resources.coverage == "partial"
+        assert resources.scope == rights.scope
+        assert resources.branch == rights.branch == "bnf_html"
+        assert not resources.authorizes_negative_reconciliation
+        assert not resources.authorizes_acquisition
+        client.html = BNF_HTML
+        again = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert again.status == "success" and len(again.loans) == 1
+        assert again.scope == first.scope == empty.scope
+        assert again.loans[0].id == first.loans[0].id
+        assert set(client.calls) <= {"login", "activity"}
+    finally:
+        s.close()
