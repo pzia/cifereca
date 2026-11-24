@@ -626,6 +626,10 @@ def _active_loans_may_be_truncated(section: _Node) -> bool:
     while pending:
         node, ancestor_hidden = pending.pop()
         attrs = node.attrs
+        # A closed outer widget may contain implicitly abandoned children.
+        # Such malformed HTML cannot attest a complete empty inventory.
+        if not node.closed:
+            return True
         hidden = (ancestor_hidden or node.tag in _HIDDEN
                   or "hidden" in attrs or attrs.get("aria-hidden", "").strip().lower() == "true"
                   or "display:none" in "".join(attrs.get("style", "").lower().split())

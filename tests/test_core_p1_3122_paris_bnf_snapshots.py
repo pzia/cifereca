@@ -431,3 +431,19 @@ def test_bnf_cancelled_activity_never_returns_inventory(entrypoint):
         assert [row.id for row in again.loans] == [row.id for row in first.loans]
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("body", ["<div>", "<div><span>Loading", "<div hidden><span>"])
+def test_bnf_unclosed_widget_descendant_cannot_attest_zero(body):
+    """#4480: closing the outer section cannot repair truncated descendants."""
+    s, a, client = bnf()
+    try:
+        first = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert first.status == "success" and len(first.loans) == 1
+        client.html = '<section class="active-loans">' + body + '</section>'
+        snapshot = read_loan_inventory(s, a, descriptor=s.descriptor)
+        assert not snapshot.branch_claims_complete("bnf_html", "digital")
+        assert not snapshot.loans
+        assert client.calls.count("activity") == 2
+    finally:
+        s.close()
