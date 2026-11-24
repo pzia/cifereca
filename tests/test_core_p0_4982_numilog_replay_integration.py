@@ -379,7 +379,9 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
     destination = tmp_path / "captures" if configured else tmp_path
     monkeypatch.setattr("cifereca.core.notice_regression_capture.downloads_dir",
                         lambda: tmp_path)
-    service = SimpleNamespace(storage=db, _notice_regression_capture_directory=
+    from cifereca.diagnostics import Diagnostics
+    diagnostics = Diagnostics()
+    service = SimpleNamespace(storage=db, diagnostics=diagnostics, _notice_regression_capture_directory=
                               destination if configured else None)
     try:
         response = session.search_with_response_facets("loup", "catalog")
@@ -421,6 +423,13 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
         )
         assert diagnostic["status"] == "parser_drift_suspected"
         assert diagnostic["capture_state"] == "partial"
+        entries = [event for event in diagnostics.snapshot()
+                   if event.category == "NOTICE"]
+        event, = entries
+        assert event.operation == "parser_witness_rejected"
+        assert event.status == "warning"
+        assert event.detail == {"diagnostic_id": diagnostic["capture_id"],
+                                "capture_state": "partial"}
         assert len(list(destination.glob("cifereca-regression-*.zip"))) == 1
         if configured:
             assert not list(tmp_path.glob("cifereca-regression-*.zip"))
