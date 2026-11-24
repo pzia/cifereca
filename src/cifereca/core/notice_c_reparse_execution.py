@@ -139,18 +139,13 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
             or result.key != old.observation.key
             or result.parser_id != old.observation.parser_id
             or result.parser_version != old.observation.parser_version
-            or (result.status != "complete" and not (
-                coverless and raw._coverless_public_search_observation(result)))
             # Parsing an existing response NEVER advances source freshness.
             or result.observed_at != old.observation.observed_at):
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
     attribute = project_notice_cover_attribute(
         result, field_path=old.attribute.field_path, cover_inventory_complete=True,
     )
-    if (attribute.document != old.document
-            or (attribute.state != "available" and not (
-                coverless and raw._coverless_public_search_observation(result)
-                and attribute.state == "pending" and not attribute.candidates))):
+    if attribute.document != old.document:
         raise UnavailableNoticeWork("notice_reparse_invalid_observation")
 
     @contextmanager
@@ -185,6 +180,10 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
                 None if diagnostic is None else export_after_commit,
                 diagnostic,
             )
+        if ((result.status != "complete" or attribute.state != "available")
+                and not (coverless and raw._coverless_public_search_observation(result)
+                         and attribute.state == "pending" and not attribute.candidates)):
+            raise UnavailableNoticeWork("notice_reparse_invalid_observation")
         persisted = _persist_notice_cover_txn(
             db, result, attribute, _opaque_key(current.document),
             old.attribute.field_path, True, current.epoch,
@@ -255,6 +254,6 @@ def resolve_replay_capture_members(storage, registry, diagnostic, *, clock):
                     parser_family_digest=live.parser_family_digest,
                     implementation_digest=port.implementation_digest, now=clock(),
                 )
-        return _authorized_capture_members(port, request, live)
+            return _authorized_capture_members(port, request, live)
     except (ValueError, UnavailableNoticeWork):
         return {}
