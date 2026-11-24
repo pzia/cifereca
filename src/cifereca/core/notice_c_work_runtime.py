@@ -79,6 +79,7 @@ class NoticeWorkRuntime:
         self._diagnostics = diagnostics
         self._clock = clock
         self._replay_registry = replay_registry
+        self._pending_replay_registry = None
         self._fetch_authority = None
         self._fetch_execution = None
         self._purchase_execution = None
@@ -129,7 +130,45 @@ class NoticeWorkRuntime:
                 on_witness_rejected=self._notify_witness_rejected,
             )
             self._replay_registry = registry
+            self._pending_replay_registry = None
             return True
+
+    def stage_replay_port(self, port, receipt):
+        """Stage a qualified port for the next existing scan, not a job.
+
+        A replacement never interrupts an admitted scan. In-flight workers
+        retain their old port and must pass its session/input lease checks.
+        Reuse a live port when it already covers this exact receipt.
+        """
+        from .notice_c_reparse_execution import PublicReplayRegistry, PublicReplayPort
+        from .notice_c_work_bridge import RetryableNoticeWork, UnavailableNoticeWork
+
+        if type(port) is not PublicReplayPort:
+            raise ValueError("notice_reparse_invalid_registry")
+        key = (port.provider_id, port.parser_family_digest, port.implementation_digest)
+        with self._lock:
+            if self._closed:
+                return False
+            registry = self._pending_replay_registry or self._replay_registry
+            ports = () if registry is None else registry._ports
+        for old in ports:
+            if (old.provider_id, old.parser_family_digest, old.implementation_digest) == key:
+                try:
+                    selected = old.read_input(receipt.producer_token)
+                except (RetryableNoticeWork, UnavailableNoticeWork):
+                    selected = None
+                if selected is not None:
+                    return True
+        with self._lock:
+            if self._closed:
+                return False
+            registry = self._pending_replay_registry or self._replay_registry
+            ports = () if registry is None else registry._ports
+            ports = tuple(p for p in ports if
+                          (p.provider_id, p.parser_family_digest, p.implementation_digest) != key)
+            self._pending_replay_registry = PublicReplayRegistry(ports + (port,))
+        self.request_tick()
+        return True
 
     def request_public_replay(self, source, receipt, *, implementation_digest,
                               expected_generation):
@@ -149,7 +188,7 @@ class NoticeWorkRuntime:
         from .notice_c_work_bridge import UnavailableNoticeWork
 
         with self._lock:
-            registry = self._replay_registry
+            registry = self._pending_replay_registry or self._replay_registry
             pump = self._pump
             if self._closed or type(registry) is not PublicReplayRegistry:
                 raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
@@ -162,7 +201,7 @@ class NoticeWorkRuntime:
             if live != selected:
                 raise UnavailableNoticeWork("notice_reparse_input_changed")
             with self._lock:
-                if self._closed or self._replay_registry is not registry:
+                if self._closed or (self._pending_replay_registry or self._replay_registry) is not registry:
                     raise UnavailableNoticeWork("notice_reparse_parser_unavailable")
             ref = request_public_reparse(
                 self._storage, source, receipt, selected.body,
@@ -370,6 +409,17 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed:
                 return None
+            if self._pending_replay_registry is not None:
+                self._replay_registry = self._pending_replay_registry
+                self._pending_replay_registry = None
+                self._pump = PublicNoticeWorkPump(
+                    self._storage, self._broker, clock=self._clock,
+                    on_committed=self._notify, replay_registry=self._replay_registry,
+                    fetch_execution=self._fetch_execution,
+                    purchase_execution=self._purchase_execution,
+                    on_purchase_committed=self._notify_purchase,
+                    on_witness_rejected=self._notify_witness_rejected,
+                )
             pump = self._pump
             registry = self._replay_registry
         outcome = pump.tick(control=control)
@@ -442,6 +492,7 @@ class NoticeWorkRuntime:
             self._scan = None
             self._hint_pending = False
             self._observer = None
+            self._pending_replay_registry = None
             authority = self._fetch_authority
             self._fetch_authority = None
             self._fetch_execution = None
