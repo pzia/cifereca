@@ -186,6 +186,7 @@ def build_provider_account_editor(
     descriptor: Any, configured_identities: list[dict[str, Any]],
     accounts_container: Any, config: Any, Gtk: Any, Adw: Any,
     observed_borrowers: Any = (), observed_loans: Any = (),
+    connection_observation: str = "unknown",
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(_public_connection_title(descriptor, data)); accounts_container.append(group)
@@ -215,6 +216,12 @@ def build_provider_account_editor(
         if saved_enabled is not True else
         "Activée dans les paramètres · session non vérifiée"
     )
+    if saved_enabled is True and connection_observation in ("connected", "expired", "disconnected"):
+        lifecycle.set_subtitle("Activée dans les paramètres · " + {
+            "connected": "session observée connectée à l’ouverture",
+            "expired": "session observée expirée à l’ouverture",
+            "disconnected": "session observée déconnectée à l’ouverture",
+        }[connection_observation])
     group.add(lifecycle)
     # Reflect unsaved activation changes immediately; this remains a local
     # configuration draft and never claims an authenticated provider session.
@@ -500,12 +507,13 @@ def build_provider_account_editor(
     # A completed diagnostic belongs to the exact draft at the click.
     # Even an edit followed by a revert invalidates that observation.
     editor["_probe_draft_revision"] = 0
-    if probe_status is not None:
+    if probe_status is not None or connection_observation != "unknown":
         def invalidate_probe(*_args):
             editor["_probe_draft_revision"] += 1
             update_lifecycle(enabled, None)
-            probe_status.set_subtitle(
-                "Enregistrer les modifications avant de tester le compte.")
+            if probe_status is not None:
+                probe_status.set_subtitle(
+                    "Enregistrer les modifications avant de tester le compte.")
 
         def watch(widget, signal):
             connect = getattr(widget, "connect", None)
