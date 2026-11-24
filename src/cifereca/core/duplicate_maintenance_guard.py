@@ -64,6 +64,41 @@ def canonical_metadata_mentions_path(
     return False
 
 
+def generic_metadata_mentions_path(db: sqlite3.Connection, path: str, *,
+                                   validated_declarations=False) -> bool:
+    """Conservative veto for schema-free operational metadata.
+
+    Only relocation may exclude the strict declaration namespace, after its
+    own active-declaration check in the same transaction. Revoked statements
+    remain immutable history and must not become an active dependency.
+    """
+    if type(path) is not str or not path or type(validated_declarations) is not bool:
+        return True
+    if validated_declarations:
+        from .library_declared_links import _PREFIX
+        query = db.execute(
+            "SELECT value FROM metadata WHERE key NOT GLOB ? LIMIT 100001",
+            (_PREFIX + "*",),
+        )
+    else:
+        query = db.execute("SELECT value FROM metadata LIMIT 100001")
+    for index, (raw,) in enumerate(query):
+        if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
+            return True
+        if path in raw:
+            return True
+        if "\\u" in raw or "\\/" in raw:
+            try:
+                decoded = json.loads(raw)
+            except (ValueError, TypeError, RecursionError):
+                # Unknown escaped data may be a path we cannot interpret.
+                return True
+            if (_mentions_exact_path(decoded, path)
+                    or path in json.dumps(decoded, ensure_ascii=False)):
+                return True
+    return False
+
+
 def candidate_has_active_dependencies(
     storage, *, placement_id: str, path: str,
     removable_variant: dict | None = None,
@@ -188,22 +223,8 @@ def candidate_has_active_dependencies_in_db(
     # A schema-free record cannot be safely migrated by a duplicate delete:
     # refuse a literal path, including one embedded in a JSON envelope.
     # Escaped Unicode/JSON slashes require decoding before deciding absence.
-    for index, (raw,) in enumerate(db.execute(
-        "SELECT value FROM metadata LIMIT 100001"
-    )):
-        if index >= 100_000 or type(raw) is not str or len(raw) > 1024 * 1024:
-            return True
-        if path in raw:
-            return True
-        if "\\u" in raw or "\\/" in raw:
-            try:
-                decoded = json.loads(raw)
-            except (ValueError, TypeError, RecursionError):
-                # Unknown escaped data may be a path we cannot interpret.
-                return True
-            if (_mentions_exact_path(decoded, path)
-                    or path in json.dumps(decoded, ensure_ascii=False)):
-                return True
+    if generic_metadata_mentions_path(db, path):
+        return True
     # User declarations have their own strict private schema/budget,
     # and the source-bound file path is not a receipt we can replace.
     # An invalid declaration namespace cannot prove non-dependency.
