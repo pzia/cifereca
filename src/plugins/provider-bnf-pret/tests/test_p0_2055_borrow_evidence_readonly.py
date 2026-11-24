@@ -239,6 +239,30 @@ class EvidenceReadOnlyTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_advisory_display_projection_is_local_and_session_scoped(self):
+        from cifereca_bnf_pret_borrow_qualification import advisory_display_values
+        session, account, item, calls = self.make(detail=UNAVAILABLE)
+        try:
+            observation = session.borrower_information_for(item, account)
+            values = advisory_display_values(session, observation, item, account)
+            self.assertEqual(values, {
+                "observed_at": observation.observed_at,
+                "pass_state": "unknown", "remaining_quota": None,
+                "available_copies": None, "item_offer": "unavailable",
+                "permission": "unknown",
+            })
+            self.assertIsNone(advisory_display_values(
+                session, observation, replace(item, record_id="other"), account))
+            self.assertIsNone(advisory_display_values(
+                session, observation, item, replace(account)))
+            session._epoch = "changed"
+            self.assertIsNone(advisory_display_values(
+                session, observation, item, account))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(session._borrow_post_attempts, set())
+        finally:
+            session.close()
+
     def test_already_observed_loan_refuses_without_detail_get(self):
         session, account, item, calls = self.make(activity=EXISTING)
         try:
