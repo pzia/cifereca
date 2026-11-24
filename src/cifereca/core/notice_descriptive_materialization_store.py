@@ -102,7 +102,8 @@ def publish_descriptive_materialization(
     plugin callback and must not perform I/O outside this SQLite connection.
     With journal_lease supplied, validates the exact journal generation,
     fence, target and execution digests and completes it atomically. Without
-    the lease this is a staging-only port, not a scheduler publication.
+    the lease this is a staging-only port for unconfigured scopes. A durable
+    selection always requires an exact held job.
     """
     key = _row_key(row)
     if journal_clock is not None and (journal_lease is None or not callable(journal_clock)):
@@ -131,6 +132,8 @@ def publish_descriptive_materialization(
             row, selection=selection, admitted=admitted,
             installed_source_sha256=digest,
         )
+        if pin is not None and journal_lease is None:
+            raise ValueError("descriptive_journal_binding_required")
         if journal_lease is not None:
             from . import notice_c_job_journal as journal
             from .notice_c_cover_index import canonical_cover_document_ref
