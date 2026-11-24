@@ -338,7 +338,22 @@ def parse_detail(html: str, *, page_url: str) -> CatalogPage:
     def single(key):
         values = props.get(key, ())
         return values[0] if len(values) == 1 else None
-    unavailable = any(n.has_class("lb_unavailable") and n.text() for n in books[0].walk())
+    # Only a closed, visible marker in this Book's own scope is evidence.
+    # A nested recommendation/organization or hidden template is not.
+    def offer_nodes(node):
+        style = "".join(node.attrs.get("style", "").lower().split())
+        if (not node.closed or node.tag in _HIDDEN or "hidden" in node.attrs
+                or node.attrs.get("aria-hidden", "").strip().lower() == "true"
+                or "display:none" in style or "visibility:hidden" in style
+                or (node is not books[0] and "itemscope" in node.attrs)):
+            return
+        yield node
+        for child in node.children:
+            if isinstance(child, _Node):
+                yield from offer_nodes(child)
+
+    unavailable = any(n.has_class("lb_unavailable") and n.text()
+                      for n in offer_nodes(books[0]))
     record = CatalogRecord(rid, props["name"][0], tuple(props.get("author", ())),
                            single("publisher"), single("isbn"), single("inLanguage"),
                            single("description"), "unavailable" if unavailable else "unknown",
