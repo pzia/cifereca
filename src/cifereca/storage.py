@@ -75,6 +75,12 @@ class Storage:
             _TRACE_LOG.info("TRACE storage base-schema begin")
             db.executescript(BASE_SCHEMA)
             _TRACE_LOG.info("TRACE storage base-schema end dt=%.3fs", time.monotonic()-started)
+            # Several processes can open the same existing v17 database at
+            # once. Even an up-to-date schema runs idempotent sidecar DDL
+            # and INSERTs below. Acquire the SQLite writer reservation before
+            # reading migration state to avoid competing read-to-write
+            # upgrades (which can fail BUSY despite busy_timeout).
+            db.execute("BEGIN IMMEDIATE")
             self._migrate(db)
             _TRACE_LOG.info("TRACE storage migrate end schema=%s dt=%.3fs", self._read_schema_version(db), time.monotonic()-started)
 
