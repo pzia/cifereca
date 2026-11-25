@@ -98,8 +98,8 @@ class NativeOrganizerConfirmation:
                  and value.dry_run_state == "confirmed"
                  and type(entries) is tuple and len(entries) == 1
                  and type(entries[0]) is OrganizerDryRunAdvice
-                 and entries[0].operation == "rename"
-                 and entries[0].state == "review_only"
+                 and (entries[0].operation, entries[0].state) in (
+                     ("rename", "review_only"), ("classify", "relocation_held"))
                  and self._displayable_path(entries[0].current)
                  and self._displayable_path(entries[0].proposed)
                  and callable(getattr(execution, "admit_native_reviewed_rename", None))
@@ -122,6 +122,10 @@ class NativeOrganizerConfirmation:
                 old_dialog.close()
             except Exception:
                 pass
+        if valid and entries[0].operation == "classify":
+            self.button.set_label("Confirmer le rangement…")
+        elif valid:
+            self.button.set_label("Confirmer le renommage…")
         self.button.set_visible(valid)
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
 
@@ -155,14 +159,16 @@ class NativeOrganizerConfirmation:
             return False
         entry, = page.dry_run_entries
         shown_witness = self._review_witness
+        classification = entry.operation == "classify"
+        action_label = "rangement" if classification else "renommage"
         dialog = None
         try:
             dialog = Adw.MessageDialog.new(
-                self.window, "Confirmer le renommage ?",
+                self.window, "Confirmer le " + action_label + " ?",
                 "Profil : " + self._identity_id + "\n"
                 "Chemin actuel : " + entry.current + "\n"
-                "Nom proposé : " + entry.proposed + "\n\n"
-                "Un seul renommage, sans suppression de doublon ni changement de droit. "
+                "Chemin proposé : " + entry.proposed + "\n\n"
+                "Un seul " + action_label + ", sans suppression de doublon ni changement de droit. "
                 "La confirmation ne lève pas les gardes Core ; si elles ne sont pas "
                 "qualifiées, aucune modification ne sera exécutée.")
             dialog.set_body_use_markup(False)
@@ -236,12 +242,13 @@ class NativeOrganizerConfirmation:
                 status = result.get("status") if type(result) is dict else None
                 self.window.toast({
                     "renamed": "Renommage confirmé. Relancez la revue locale.",
+                    "classified": "Rangement confirmé. Relancez la revue locale.",
                     "recovery_required": "Reprise nécessaire. Relancez la vérification ; ne supprimez aucun fichier.",
-                }.get(status, "Renommage indisponible ou refusé. Relancez la revue."))
+                }.get(status, action_label.capitalize() + " indisponible ou refusé. Relancez la revue."))
 
             try:
                 self.window.runner.submit(
-                    "Confirmation de renommage local", work, completed,
+                    "Confirmation de " + action_label + " local", work, completed,
                     lambda _error: completed(None), priority=TaskPriority.MAINTENANCE,
                     kind="maintenance-plan", origin="user")
             except Exception:
