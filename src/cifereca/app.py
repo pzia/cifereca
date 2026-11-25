@@ -65,10 +65,17 @@ def _bind_desktop_notice_work(core, window):
                 page = getattr(window, name, None)
                 if page is None or not page.get_mapped():
                     continue
-                row = page.selection.get_selected_item()
-                document = getattr(row, "_cover_document_ref", None)
-                if is_canonical_cover_document(document):
-                    documents.append((document, "interactive_visible"))
+                visible = getattr(page, "visible_notice_priority_documents", None)
+                if callable(visible):
+                    for document in visible():
+                        if (is_canonical_cover_document(document)
+                                and len(documents) < 96):
+                            documents.append((document, "interactive_visible"))
+                else:
+                    row = page.selection.get_selected_item()
+                    document = getattr(row, "_cover_document_ref", None)
+                    if is_canonical_cover_document(document):
+                        documents.append((document, "interactive_visible"))
             recent = getattr(window, "recent_page", None)
             generation = getattr(window, "_identity_context_generation", None)
             if (recent is not None and generation is not None
@@ -77,7 +84,9 @@ def _bind_desktop_notice_work(core, window):
                 for index in range(min(32, recent.store.get_n_items())):
                     row = recent.store.get_item(index)
                     link = getattr(row, "_cover_public_c_link", None)
-                    document = getattr(row, "_cover_document_ref", None)
+                    qualify = getattr(recent, "priority_public_document", None)
+                    document = (qualify(row) if callable(qualify)
+                                else getattr(row, "_cover_document_ref", None))
                     if (is_canonical_cover_document(document)
                             and getattr(link, "document", None) == document):
                         documents.append((document, "recent_acquisition"))
