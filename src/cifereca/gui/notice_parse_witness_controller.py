@@ -1,14 +1,18 @@
-"""Explicit approval of an exact public parser-witness proposal in Search."""
+"""Explicit approval of an exact scoped parser-witness proposal in Search."""
 from ..core.notice_parse_witness_approval import (PublicWitnessProposal, public_search_witness,
-                                                  public_search_witness_diagnostic)
+                                                  public_search_witness_diagnostic,
+                                                  private_search_witness, private_search_witness_diagnostic)
 from ..core.search_orchestration import capture_search_read_scope
 from ..core.notice_parse_witness_store import ApprovedParseWitness
 from ..task_queue import TaskPriority
 
 
 def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None):
-    if getattr(row, "_core_notice_parse_input", None) is None or context is None:
+    private = getattr(row, "_core_private_notice_parse_input", None) is not None
+    if (not private and getattr(row, "_core_notice_parse_input", None) is None) or context is None:
         return False
+    witness = private_search_witness if private else public_search_witness
+    inspect_witness = private_search_witness_diagnostic if private else public_search_witness_diagnostic
     service = host.service
     page = host.search_page
     panel = page.detail
@@ -60,7 +64,7 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
                 ("Archive", captures.get(diagnostic["capture_state"], "indisponible")),
             ])
             inspect = Gtk.Button(label="Inspecter le témoin de parsing")
-            inspect._cifereca_action_id = "inspect-public-parse-witness"
+            inspect._cifereca_action_id = ("inspect-private-parse-witness" if private else "inspect-public-parse-witness")
             def inspect_click(_button):
                 if not current() or getattr(inspect, "_cifereca_action_context_revoked", False):
                     return
@@ -82,7 +86,7 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
                         ("Archive", captures.get(value["capture_state"], "indisponible")),
                     ])
                 host.runner.submit("Inspection du témoin…",
-                    lambda: public_search_witness_diagnostic(service, row, scope=scope)
+                    lambda: inspect_witness(service, row, scope=scope)
                     if worker_current() else None, inspected, lambda _exc: inspected(None),
                     priority=TaskPriority.METADATA, kind="detail-cache", origin="user")
             inspect.connect("clicked", inspect_click)
@@ -91,7 +95,7 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
             return
         label = ", ".join(names[f.path[-1]] for f in proposal.fields)
         button = Gtk.Button(label=("Valider le témoin de parsing : " + label))
-        button._cifereca_action_id = "approve-public-parse-witness"
+        button._cifereca_action_id = ("approve-private-parse-witness" if private else "approve-public-parse-witness")
         button._cifereca_action_priority = 60
 
         submitted = False
@@ -112,7 +116,7 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
                 done(None)
             host.runner.submit(
                 "Validation du témoin de parsing…",
-                lambda: public_search_witness(service, row, scope=scope, approved=proposal)
+                lambda: witness(service, row, scope=scope, approved=proposal)
                 if worker_current() else None,
                 done, failed, priority=TaskPriority.METADATA, kind="detail-cache", origin="user",
             )
@@ -123,9 +127,9 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
     def read():
         if not worker_current():
             return None
-        diagnostic = public_search_witness_diagnostic(service, row, scope=scope)
+        diagnostic = inspect_witness(service, row, scope=scope)
         # A degraded parse is never implicitly offered for approval.
-        proposal = public_search_witness(service, row, scope=scope) if diagnostic is None else None
+        proposal = witness(service, row, scope=scope) if diagnostic is None else None
         return proposal, diagnostic
 
     host.runner.submit(
