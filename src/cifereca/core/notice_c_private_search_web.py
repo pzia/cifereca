@@ -29,6 +29,9 @@ from .source_context import source_context_mutation
 _WITNESS = object()
 _MARKER = "_core_private_web_search_receipt"
 _COORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}\Z")
+_PARSE_SHA = re.compile(r"[0-9a-f]{64}\Z")
+_PARSE_FIELDS = ("title", "author", "publisher")
+_PARSE_MARKER = "_core_private_notice_parse_input"
 
 
 def _coordinate(value):
@@ -76,6 +79,7 @@ class _Receipt:
     call: _Call
     key: NoticeSourceKey
     proof: tuple
+    parse_input: tuple | None = None
 
     def __deepcopy__(self, memo):
         # Copying a DTO cannot copy Core/service locks or give the new row
@@ -161,6 +165,44 @@ def _evidence(row, key, homepage):
     return row.friendly_url, raw["evidence"], raw["source_field"]
 
 
+def _parse_values(row):
+    values = tuple(getattr(row, name, None) for name in _PARSE_FIELDS)
+    if any(value is not None and (type(value) is not str or len(value) > 4096)
+           for value in values):
+        return None
+    return values
+
+
+def _valid_parse_input(packet, row):
+    if (type(packet) is not tuple or len(packet) != 4
+            or any(type(value) is not str or _PARSE_SHA.fullmatch(value) is None
+                   for value in packet[:2])
+            or type(packet[2]) is not tuple or not 1 <= len(packet[2]) <= len(_PARSE_FIELDS)
+            or any(type(name) is not str or name not in _PARSE_FIELDS for name in packet[2])
+            or len(set(packet[2])) != len(packet[2])
+            or type(packet[3]) is not tuple or len(packet[3]) != len(_PARSE_FIELDS)
+            or any(value is not None and (type(value) is not str or len(value) > 4096)
+                   for value in packet[3])):
+        return False
+    values = _parse_values(row)
+    return (values is not None and values == packet[3]
+            and all(type(values[_PARSE_FIELDS.index(name)]) is str
+                    and values[_PARSE_FIELDS.index(name)] for name in packet[2]))
+
+
+def _same_call_parse_input(call, row):
+    """The already bound producer may attest its exact native response, not a DTO hash."""
+    try:
+        read = getattr(call.binding.session, "private_search_parse_evidence", None)
+        declaration = read(row) if callable(read) else None
+        if type(declaration) is not tuple or len(declaration) != 3:
+            return None
+        packet = (*declaration, _parse_values(row))
+        return packet if _valid_parse_input(packet, row) else None
+    except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
+        return None
+
+
 def stamp_authenticated_search_rows(service, call, rows):
     """Only the exact returned objects get the transient Core observation receipt."""
     if type(rows) not in (list, tuple):
@@ -172,6 +214,7 @@ def stamp_authenticated_search_rows(service, call, rows):
     for row in rows:
         if type(row) is SearchResult:
             row.__dict__.pop(_MARKER, None)
+            row.__dict__.pop(_PARSE_MARKER, None)
     if type(rows) is not list or len(rows) > 10000:
         return
     calls = (call,) if type(call) is _Call else call.calls if type(call) is _BatchCall else ()
@@ -200,7 +243,10 @@ def stamp_authenticated_search_rows(service, call, rows):
             continue
         proof = _evidence(row, key, captured.binding.descriptor.homepage)
         if proof is not None:
-            row.__dict__[_MARKER] = _Receipt(_WITNESS, id(row), captured, key, proof)
+            row.__dict__[_MARKER] = _Receipt(
+                _WITNESS, id(row), captured, key, proof,
+                _same_call_parse_input(captured, row),
+            )
 
 
 def _prepare(service, row, identity):
@@ -242,10 +288,15 @@ def _prepare(service, row, identity):
             != (original.identity_id, original.provider_id, original.credential_id, original.account_id)
             or not call.binding.current(service, call.scope)):
         return None
+    packet = receipt.parse_input
+    if packet is not None and not _valid_parse_input(packet, row):
+        return None
+    bibliography = ({"private_bibliography": dict(zip(_PARSE_FIELDS, packet[3]))}
+                    if packet is not None else {})
     observation = admit_source_notice(
         key=key, parser_id="core.search.authenticated-web", parser_version="1",
         observed_at=call.observed_at,
-        raw_fields={"cover": None, "source_field": proof[2],
+        raw_fields={**bibliography, "cover": None, "source_field": proof[2],
                     "source_record": {"id": row.record_id, "docbase": row.docbase,
                                       "medium": row.medium, "scenario": row.scenario,
                                       "revision": row.revision_id}, FIELD: {
@@ -298,21 +349,68 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                     obs, field_path=("cover",), cover_inventory_complete=False,
                 )
                 storage = service.storage
+                packet = row.__dict__[_MARKER].parse_input
+                diagnostic = None
+                rejected = False
                 with storage._lock, storage._connect() as db:
                     db.execute("BEGIN IMMEDIATE")
                     if not _sql_binding_current(db, doc, call.binding.connection_epoch):
                         continue
-                    source = _persist_notice_cover_txn(
-                        db, obs, attribute, _opaque_key(doc), ("cover",), False, None,
-                    )
-                    if source is None or source.observation.source_revision != obs.source_revision:
+                    from .notice_cover_repository import _checked_source_state
+                    from .notice_parse_witness import admitted_source_scope_sha256
+                    from .notice_parse_witness_store import _PREFIX
+                    from .notice_parse_witness_alert import review_publication_txn
+                    _, previous, fence = _checked_source_state(db, doc, _opaque_key(doc))
+                    if (previous is not None and obs.observed_at < previous.observation.observed_at
+                            or fence is not None and obs.observed_at < fence["last_seen_at"]):
                         continue
-                    # Only exact private self identity: no link to public C or
-                    # to another credential is fabricated by the URL or title.
-                    _persist_consolidated_cover_source_txn(
-                        db, canonical_edition_id=obs.key.edition_id, source=source,
-                        relation_proof_id="private-self:" + _coordinate_digest(doc.source_key),
-                    )
+                    witness_scope = admitted_source_scope_sha256(obs.key, parser_id=obs.parser_id)
+                    pinned = db.execute("SELECT 1 FROM metadata WHERE key=?",
+                                        (_PREFIX + witness_scope,)).fetchone()
+                    if pinned is not None:
+                        if packet is None:
+                            # Never overwrite a pinned source from a weaker,
+                            # unattested private parser path.
+                            continue
+                        rejected, diagnostic = review_publication_txn(
+                            db, current=previous.observation if previous is not None else None,
+                            candidate=obs, input_digest=packet[0], implementation_digest=packet[1],
+                        )
+                    if rejected:
+                        source = previous
+                    else:
+                        source = _persist_notice_cover_txn(
+                            db, obs, attribute, _opaque_key(doc), ("cover",), False, None,
+                        )
+                        if source is None or source.observation.source_revision != obs.source_revision:
+                            continue
+                        # Only exact private self identity: no link to public C or
+                        # another credential is fabricated by the URL or title.
+                        _persist_consolidated_cover_source_txn(
+                            db, canonical_edition_id=obs.key.edition_id, source=source,
+                            relation_proof_id="private-self:" + _coordinate_digest(doc.source_key),
+                        )
+            if packet is not None and source is not None:
+                row.__dict__[_PARSE_MARKER] = (
+                    _WITNESS, source.epoch, obs.source_revision, packet[0], packet[1],
+                )
+            if rejected:
+                # Capture is deliberately partial for private inputs. Only
+                # sanitized technical metadata is queued by the shared gate.
+                if diagnostic is not None:
+                    from .notice_regression_capture_intent import export_capture
+                    from .notice_parse_witness_alert import report_capture_diagnostic
+                    try:
+                        state = export_capture(
+                            storage, diagnostic, members={},
+                            directory=getattr(service, "_notice_regression_capture_directory", None),
+                        )
+                    except (ValueError, OSError, SQLiteError):
+                        state = "metadata_unavailable"
+                    if state is not None:
+                        report_capture_diagnostic(getattr(service, "diagnostics", None),
+                                                  diagnostic, state, rejected=True)
+                continue
             # Account only after both the SQLite transaction and Core's
             # mutation context completed. A failed commit must never be
             # reported as one durable private C publication.
