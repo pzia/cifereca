@@ -599,3 +599,78 @@ def test_witness_selected_click_rechecks_detail_generation_before_write(tmp_path
     finally:
         session.close()
         db.close()
+
+
+def test_selected_regression_exposes_exact_healthy_proof_without_get(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from threading import RLock
+    from cifereca.gui.notice_parse_witness_controller import request_selected_parse_witness
+    from cifereca.core.notice_parse_witness_approval import public_search_witness_diagnostic, public_search_witness
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    from cifereca.core import notice_c_search_receipt
+
+    session, client, clock, calls, _body = make_session(monkeypatch)
+    db = Storage(tmp_path / "diagnostic.sqlite")
+    try:
+        monkeypatch.setattr(notice_c_search_receipt, "time", lambda: 100)
+        identity = NS(identity_id="alice")
+        service = NS(storage=db, current_identity=identity, identity_by_id=lambda k: identity,
+                     _source_context_epoch=0, _source_context_lock=RLock(),
+                     _provider_enabled_for_identity=lambda *args: True,
+                     _session_key=lambda p, c: (p, c),
+                     _sessions={(session.provider_id, "__public__"): session},
+                     _notice_regression_capture_directory=tmp_path / "captures")
+        def search(now):
+            row, = search_orchestration._public_rows_from_response(
+                session.search_with_response_facets("loup", "catalog"), session)
+            search_orchestration._ingest_public_search_c(
+                service, [row], identity_id="alice", now=now, require_public_cover_witness=True)
+            return row
+        row = search(100)
+        scope = capture_search_read_scope(service, "alice")
+        proposal = public_search_witness(service, row, scope=scope, now=100)
+        assert public_search_witness(service, row, scope=scope, approved=proposal, now=100)
+        original = client.parse_public_search
+        def drift(text, url):
+            page = original(text, url)
+            return replace(page, items=tuple(replace(item, title=CORRECTED) for item in page.items))
+        monkeypatch.setattr(client, "parse_public_search", drift)
+        monkeypatch.setattr(client, "_PARSER_IMPLEMENTATION_DIGEST", "1"*64)
+        clock[0] += 61
+        rejected = search(161)
+        report = public_search_witness_diagnostic(service, rejected, scope=scope)
+        assert report["status"] == "parser_regression_confirmed"
+        assert report["fields"] == ("title",)
+        assert report["capture_state"] == "partial"
+        assert report["last_healthy_at"] == 100
+        class Button:
+            def __init__(self, label): self.label = label
+            def connect(self, signal, callback): self.callback = callback
+            def set_sensitive(self, value): pass
+        groups, actions, pending = [], [], []
+        cell = NS(key="selected")
+        panel = NS(add_actions=actions.extend, add_group=lambda title, rows: groups.append((title, rows)),
+                   get_mapped=lambda: True)
+        host = NS(service=service, _route_display_token=object(),
+                  search_page=NS(detail=panel, selection=NS(get_selected_item=lambda: cell)),
+                  search_objects={cell.key: rejected}, toast=lambda *args: None,
+                  _search_detail_context_current=lambda *args: True,
+                  runner=NS(submit=lambda label, work, done, failed, **kw: pending.append((work, done))))
+        def receive():
+            work, done = pending.pop(0)
+            done(work())
+        assert request_selected_parse_witness(host, rejected, selected_id=rejected.id,
+                                             context=(1,1,1,"alice"), Gtk=NS(Button=Button))
+        receive()
+        assert groups[0][0] == "Parsing : régression possible"
+        inspect, = actions
+        inspect.callback(inspect)
+        receive()
+        assert groups[1][0] == "Preuve du témoin"
+        assert ("Champs atteints", "titre") in groups[1][1]
+        assert len(calls) == 2
+        service._source_context_epoch += 1
+        assert public_search_witness_diagnostic(service, rejected, scope=scope) is None
+    finally:
+        session.close()
+        db.close()

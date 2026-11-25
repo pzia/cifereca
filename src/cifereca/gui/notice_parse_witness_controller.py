@@ -1,5 +1,6 @@
 """Explicit approval of an exact public parser-witness proposal in Search."""
-from ..core.notice_parse_witness_approval import PublicWitnessProposal, public_search_witness
+from ..core.notice_parse_witness_approval import (PublicWitnessProposal, public_search_witness,
+                                                  public_search_witness_diagnostic)
 from ..core.search_orchestration import capture_search_read_scope
 from ..core.notice_parse_witness_store import ApprovedParseWitness
 from ..task_queue import TaskPriority
@@ -38,15 +39,56 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
                 and page.selection.get_selected_item() is cell
                 and (not callable(getattr(panel, "get_mapped", None)) or panel.get_mapped()))
 
-    def loaded(proposal):
+    def loaded(result):
         nonlocal Gtk
-        if type(proposal) is not PublicWitnessProposal or not current():
+        if not current() or result is None:
             return
+        proposal, diagnostic = result
         if Gtk is None:
             from gi.repository import Gtk
         names = {"title": "titre", "record_id": "identifiant", "author": "auteur",
                  "format": "format", "publisher": "éditeur", "docbase": "base",
                  "medium": "support"}
+        if diagnostic is not None:
+            stages = {"parser_regression_confirmed": "confirmée",
+                      "parser_drift_suspected": "suspectée",
+                      "source_changed": "source modifiée"}
+            captures = {"complete": "créée", "partial": "partielle", "failed": "échec",
+                        "pending": "en attente", "capacity_refused": "capacité atteinte"}
+            panel.add_group("Parsing : régression possible", [
+                ("Stade", stages.get(diagnostic["status"], "indéterminé")),
+                ("Archive", captures.get(diagnostic["capture_state"], "indisponible")),
+            ])
+            inspect = Gtk.Button(label="Inspecter le témoin de parsing")
+            inspect._cifereca_action_id = "inspect-public-parse-witness"
+            def inspect_click(_button):
+                if not current() or getattr(inspect, "_cifereca_action_context_revoked", False):
+                    return
+                inspect.set_sensitive(False)
+                def inspected(value):
+                    if not current():
+                        return
+                    if value is None:
+                        host.toast("Témoin modifié ou indisponible.")
+                        return
+                    from datetime import datetime, timezone
+                    stamp = datetime.fromtimestamp(value["last_healthy_at"], timezone.utc).isoformat()
+                    panel.add_group("Preuve du témoin", [
+                        ("Source", value["provider"]),
+                        ("Champs atteints", ", ".join(names[n] for n in value["fields"]) or "aucun"),
+                        ("Témoins atteints (cette source sélectionnée)", "1"),
+                        ("Dernière observation saine", stamp),
+                        ("Génération", str(value["generation"])),
+                        ("Archive", captures.get(value["capture_state"], "indisponible")),
+                    ])
+                host.runner.submit("Inspection du témoin…",
+                    lambda: public_search_witness_diagnostic(service, row, scope=scope)
+                    if worker_current() else None, inspected, lambda _exc: inspected(None),
+                    priority=TaskPriority.METADATA, kind="detail-cache", origin="user")
+            inspect.connect("clicked", inspect_click)
+            panel.add_actions([inspect])
+        if type(proposal) is not PublicWitnessProposal:
+            return
         label = ", ".join(names[f.path[-1]] for f in proposal.fields)
         button = Gtk.Button(label=("Valider le témoin de parsing : " + label))
         button._cifereca_action_id = "approve-public-parse-witness"
@@ -78,9 +120,17 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
         button.connect("clicked", click)
         panel.add_actions([button])
 
+    def read():
+        if not worker_current():
+            return None
+        diagnostic = public_search_witness_diagnostic(service, row, scope=scope)
+        # A degraded parse is never implicitly offered for approval.
+        proposal = public_search_witness(service, row, scope=scope) if diagnostic is None else None
+        return proposal, diagnostic
+
     host.runner.submit(
         "Lecture de la proposition de témoin…",
-        lambda: public_search_witness(service, row, scope=scope) if worker_current() else None,
+        read,
         loaded, lambda _error: None, priority=TaskPriority.METADATA,
         kind="detail-cache", origin="automatic",
     )
