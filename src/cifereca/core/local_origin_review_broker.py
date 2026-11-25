@@ -20,6 +20,7 @@ class LocalOriginBatchReadBrokerImpl:
         self._generation = 0
         self._active = None
         self._revoked = False
+        self._inflight = None
 
     def _run(self, scope, cursor, stamp, generation, cancelled):
         def stop():
@@ -53,6 +54,7 @@ class LocalOriginBatchReadBrokerImpl:
             with self._lock:
                 if self._revoked or generation != self._generation:
                     return None
+                self._inflight = None
                 self._active = (scope, following, stamp, page.token)
                 return page
         except Exception:
@@ -69,6 +71,7 @@ class LocalOriginBatchReadBrokerImpl:
             self._generation += 1
             generation = self._generation
             self._active = None
+            self._inflight = None
         try:
             scope = admit_origin_batch(self._service, confirmed=True,
                                        include_declared=include_declared)
@@ -94,12 +97,19 @@ class LocalOriginBatchReadBrokerImpl:
             self._active = None
             self._generation += 1
             generation = self._generation
-        return self._run(scope, cursor, stamp, generation, cancelled)
+            self._inflight = token
+        try:
+            return self._run(scope, cursor, stamp, generation, cancelled)
+        finally:
+            with self._lock:
+                if self._generation == generation:
+                    self._inflight = None
 
     def cancel(self, *, token):
         with self._lock:
-            if (type(token) is str and self._active is not None
-                    and self._active[3] == token):
+            if (type(token) is str and (self._inflight == token
+                    or (self._active is not None and self._active[3] == token))):
+                self._inflight = None
                 self._active = None
                 self._generation += 1
 
@@ -107,5 +117,6 @@ class LocalOriginBatchReadBrokerImpl:
         """Permanent revocation of this instance; reactivate with a fresh one."""
         with self._lock:
             self._revoked = True
+            self._inflight = None
             self._active = None
             self._generation += 1
