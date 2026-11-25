@@ -349,6 +349,7 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                     obs, field_path=("cover",), cover_inventory_complete=False,
                 )
                 storage = service.storage
+                row.__dict__.pop(_PARSE_MARKER, None)
                 packet = row.__dict__[_MARKER].parse_input
                 diagnostic = None
                 rejected = False
