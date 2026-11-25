@@ -171,3 +171,17 @@ def confirm_organizer_dry_run(scope, report, plan, *, confirmed=False):
     return OrganizerDryRunPlan(scope, fresh.anchor, fresh.entries, confirmed=True,
                                group_index=fresh.group_index, rename_only=fresh.rename_only,
                                excluded_count=fresh.excluded_count)
+
+
+def native_relocation_entries(entries):
+    """Only independent relocations from one bounded review page; never keeper."""
+    if (type(entries) is not tuple or not 1 <= len(entries) <= 4
+            or any(type(e) is not OrganizerDryRunEntry or
+                   (e.operation, e.state) not in (
+                       ("rename", "review_only"), ("classify", "relocation_held"))
+                   for e in entries)):
+        return False
+    return (len({e.placement_id for e in entries}) == len(entries)
+            and len({e.current for e in entries}) == len(entries)
+            and len({e.proposed for e in entries}) == len(entries)
+            and not ({e.current for e in entries} & {e.proposed for e in entries}))
