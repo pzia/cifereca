@@ -5,7 +5,7 @@ from heapq import nsmallest
 
 from cifereca.plugin_api.local_origin_detail import (
     LocalOriginDetailPage, LocalOriginPublicReport, LocalOriginPrivateReport,
-    LocalOriginRemoteLoanReport, LocalOriginDeclarationAdvice,
+    LocalOriginRemoteLoanReport, LocalOriginRemotePurchaseReport, LocalOriginDeclarationAdvice,
     LocalOriginPurchaseDeclarationAdvice,
 )
 
@@ -41,7 +41,7 @@ _DOCUMENTARY_STRENGTH = {
     "purchase_description_conflicting": 7,
 }
 _SURFACE_PRIORITY = {
-    "known-c": 0, "public": 0, "purchase": 1, "loan": 2, "remote-loan": 2,
+    "known-c": 0, "public": 0, "purchase": 1, "loan": 2, "remote-loan": 2, "remote-purchase": 1,
 }
 _SURFACE_LABEL = {
     "known-c": "Notice C déjà connue",
@@ -49,6 +49,7 @@ _SURFACE_LABEL = {
     "purchase": "Achat en cache",
     "loan": "Prêt en cache",
     "remote-loan": "Inventaire de prêts relu",
+    "remote-purchase": "Inventaire d’achats relu",
 }
 
 
@@ -89,7 +90,7 @@ def ranked_documentary_rows(compared):
                             else report.provider_id)
                 record = (match.record_id if family == "public" else
                           match.edition_id if family in ("known-c", "purchase", "loan",
-                                                         "remote-loan") else "")
+                                                         "remote-loan", "remote-purchase") else "")
                 yield (
                     strength, _SURFACE_PRIORITY[family],
                     match.title,
@@ -246,6 +247,27 @@ def remote_loan_rows(report):
     return tuple(lines)
 
 
+def remote_purchase_rows(report):
+    lines = [
+        ("Portée", "Compte sélectionné : " + report.provider_id + " · "
+         + report.credential_id + " · " + (report.account_id or "principal")),
+        ("Surface", "Inventaire d’achats explicitement relu ; titre et fichier locaux non transmis."),
+        ("Couverture", "Partielle ; fraîcheur réseau non vérifiée. Aucune origine ni droit attestés."),
+        ("Date de l’inventaire", report.observed_at or "Non renseignée"),
+    ]
+    for hit in report.matches:
+        lines.append((hit.title, " · ".join((
+            "Branche déclarée : " + hit.branch, "Édition : " + hit.edition_id,
+            "Occurrence : " + hit.purchase_id, hit.observed_at or "Date non renseignée",
+            _LABELS.get(hit.comparison, "Comparaison descriptive"),
+        ))))
+    if report.window_truncated:
+        lines.append(("Limite", "Fenêtre limitée ; aucun curseur distant suivi automatiquement."))
+    if not report.matches:
+        lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))
+    return tuple(lines)
+
+
 class DetailController:
     def __init__(self, broker, host, active):
         self.broker, self.host, self.active = broker, host, active
@@ -360,12 +382,27 @@ class DetailController:
                         "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates,
                         lambda selected=choice, original=value: self.compare_remote_loan(selected, original),
                     )
-                if value.private_choices or value.remote_loan_choices:
+                purchase_choices = value.remote_purchase_choices[:remaining - len(private_choices) - len(remote_choices)]
+                for index, choice in enumerate(purchase_choices):
+                    if not self.current():
+                        return
+                    label = f"Relire les achats — compte {index + 1}"
+                    coordinates = ("Fournisseur : " + choice.provider_id
+                                   + " · Connexion : " + choice.credential_id
+                                   + " · Compte : " + (choice.account_id or "principal"))
+                    accounts.append((label, coordinates))
+                    self.host.add_action(
+                        "remote-purchase-" + str(index), label,
+                        "Lecture du compte ; aucun titre local transmis ni livraison. " + coordinates,
+                        lambda selected=choice, original=value: self.compare_remote_purchase(selected, original),
+                    )
+                if value.private_choices or value.remote_loan_choices or value.remote_purchase_choices:
                     accounts.append(("Couverture",
                         "Choix partiels ; d’autres comptes ou surfaces peuvent exister."))
                 hidden = (len(value.public_choices) - len(public_choices)
                           + len(value.private_choices) - len(private_choices)
-                          + len(value.remote_loan_choices) - len(remote_choices))
+                          + len(value.remote_loan_choices) - len(remote_choices)
+                          + len(value.remote_purchase_choices) - len(purchase_choices))
                 if hidden:
                     accounts.append(("Limite de la fiche",
                         f"{hidden} choix supplémentaires connus ne sont pas affichés "
@@ -389,7 +426,8 @@ class DetailController:
         self.declaration_view = None
         choices = (tuple(("public", x) for x in original.public_choices)
                    + tuple(("private", x) for x in original.private_choices)
-                   + tuple(("remote-loan", x) for x in original.remote_loan_choices))
+                   + tuple(("remote-loan", x) for x in original.remote_loan_choices)
+                   + tuple(("remote-purchase", x) for x in original.remote_purchase_choices))
         # Ten choices + an optional continuation + the permanent preview.
         count = 10 if len(choices) - offset > 11 else 11
         window = choices[offset:offset + count]
@@ -402,7 +440,10 @@ class DetailController:
             key = ("public-" + str(index - 1) if kind == "public"
                    else "private-" + str(index - 1 - len(original.public_choices))
                    if kind == "private" else "remote-loan-" + str(
-                       index - 1 - len(original.public_choices) - len(original.private_choices)))
+                       index - 1 - len(original.public_choices) - len(original.private_choices))
+                   if kind == "remote-loan" else "remote-purchase-" + str(
+                       index - 1 - len(original.public_choices) - len(original.private_choices)
+                       - len(original.remote_loan_choices)))
             if kind == "public":
                 title = _public_action_title(choice.provider_id, index)
                 tooltip = "Recherche publique explicite : seul le titre OPF est transmis. Ni compte privé, ni téléchargement."
@@ -418,13 +459,15 @@ class DetailController:
                 action = lambda selected=choice: self.compare_private(selected, original)
             else:
                 ordinal = index - len(original.public_choices) - len(original.private_choices)
-                title = f"Relire les prêts — compte {ordinal}"
+                if kind == "remote-purchase":
+                    ordinal -= len(original.remote_loan_choices)
+                title = f"Relire les {'achats' if kind == 'remote-purchase' else 'prêts'} — compte {ordinal}"
                 coordinates = ("Fournisseur : " + choice.provider_id
                                + " · Connexion : " + choice.credential_id
                                + " · Compte : " + (choice.account_id or "principal"))
                 tooltip = "Lecture du compte auprès du fournisseur ; aucun titre local transmis. " + coordinates
                 accounts.append((title, coordinates))
-                action = lambda selected=choice: self.compare_remote_loan(selected, original)
+                action = (lambda selected=choice: self.compare_remote_purchase(selected, original)) if kind == "remote-purchase" else (lambda selected=choice: self.compare_remote_loan(selected, original))
             self.host.add_action(key, title, tooltip, action)
             keys.append(key)
         following = offset + len(window)
@@ -682,6 +725,32 @@ class DetailController:
 
         return self._submit(
             lambda: self.broker.compare_remote_loan(token=choice.token, confirmed=True), display)
+
+    def compare_remote_purchase(self, choice, original):
+        if (self.busy or not self.current() or self.page is not original
+                or not any(item is choice for item in original.remote_purchase_choices)
+                or (callable(getattr(self.host, "retire_action", None))
+                    and not any(item is choice for item in self.choice_window))
+                or choice.token in self.used
+                or not callable(getattr(self.broker, "compare_remote_purchase", None))):
+            return False
+        self.used.add(choice.token)
+
+        def display(value):
+            if (type(value) is not LocalOriginRemotePurchaseReport or value.status != "partial"
+                    or (value.provider_id, value.credential_id, value.account_id)
+                    != (choice.provider_id, choice.credential_id, choice.account_id)
+                    or value.provider_read_requested is not True
+                    or any(flag is not False for flag in (
+                        value.coverage_complete, value.fresh_network_verified,
+                        value.association_authorized, value.local_description_transmitted))):
+                self.host.toast("Inventaire privé indisponible ; aucune absence attestée.")
+                return
+            self.host.add_group("Inventaire privé d’achats — lecture seule", remote_purchase_rows(value))
+            self._record_comparison("remote-purchase", value, original)
+
+        return self._submit(
+            lambda: self.broker.compare_remote_purchase(token=choice.token, confirmed=True), display)
 
     def search(self, choice, original):
         if (self.busy or not self.current() or self.page is not original
