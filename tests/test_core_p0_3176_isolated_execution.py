@@ -445,3 +445,42 @@ def test_rename_writer_refuses_revocation_after_destination_fsync(
     assert result == {"status": "recovery_required", "changed": None}
     assert old.read_bytes() == data and not new.exists()
     assert store.placement_get(pid) == baseline
+
+
+@pytest.mark.parametrize("revocation", ["view", "fence"])
+def test_postcommit_revocation_cannot_deliver_success_receipt(
+    store, tmp_path, monkeypatch, revocation,
+):
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data = old.read_bytes()
+    scope, page = _run(_service(store, root))
+    draft = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    accepted = confirm_organizer_dry_run(scope, page, draft, confirmed=True)
+    new = root / scope.directory / accepted.entries[0].proposed
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    active, fence, calls = [True], [True], []
+    monkeypatch.setattr(execute, "_execution_fence_current", lambda s, lock: fence[0])
+    original = LibraryMaintenanceBrokerImpl.run
+
+    def writer(self, plan, control=None):
+        result = original(self, plan, control)
+        assert result.ok and result.changed == 1
+        calls.append(plan)
+        if revocation == "view":
+            active[0] = False
+        else:
+            fence[0] = False
+        return result
+
+    monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", writer)
+    with InterProcessLock(lock_path) as lock:
+        result = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock, confirmed=True,
+            still_current=lambda: active[0])
+    assert result == {"status": "recovery_required", "changed": None}
+    assert len(calls) == 1 and not old.exists()
+    assert new.read_bytes() == data and store.placement_get(pid)["path"] == str(new)
