@@ -381,7 +381,7 @@ def _relocated_completed_checkpoint(db, record_id, row, *, identity_id, artifact
         if (row[:5] != (provider, credential, account, edition, owner)
                 or owner != identity_id
                 or any(type(v) is not str or len(v) > 1024
-                       or any(c in v for c in "\\x00\\r\\n")
+                       or any(c in v for c in "\x00\r\n")
                        for v in (offer, receipt, adept))
                 or not offer or not receipt
                 or _stage_id(source, offer) != record_id
@@ -393,7 +393,7 @@ def _relocated_completed_checkpoint(db, record_id, row, *, identity_id, artifact
             raise ValueError("invalid_checkpoint")
         data["path"] = new_path
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    except (ValueError, TypeError, KeyError, RecursionError) as exc:
+    except (ValueError, TypeError, KeyError, RecursionError):
         raise ValueError("relocate_acquisition_reference_requires_relink") from None
 
 
