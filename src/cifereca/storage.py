@@ -4970,7 +4970,8 @@ class Storage:
             row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(self._artifact_row_with_kind(row))
         return out
 
-    def artifact_put(self, artifact: Any, *, catalog_epub_name_only: bool = False) -> str:
+    def artifact_put(self, artifact: Any, *, catalog_epub_name_only: bool = False,
+                     _catalog_epub_guard=None) -> str | None:
         """Persist an artifact; a catalog filename must not rewrite an existing EPUB family format."""
         if isinstance(artifact, dict):
             row = dict(artifact)
@@ -4987,6 +4988,10 @@ class Storage:
         metadata["artifact_kind"] = kind if kind in {"file", "bundle"} else "file"
         now = int(time.time())
         with self._lock, self._connect() as db:
+            if _catalog_epub_guard is not None:
+                db.execute("BEGIN IMMEDIATE")
+                if _catalog_epub_guard(db) is not True:
+                    return None
             db.execute(
                 "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=excluded.size,"
