@@ -167,3 +167,48 @@ def test_proven_group_retains_source_alternatives_without_union(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("field", ("awards", "prizes", "literary_prizes"))
+def test_exact_public_award_remains_searchable_after_eviction_restart(tmp_path, field):
+    """A same-source literary award is not a subject or a right."""
+    from cifereca.core.search import local_match_explanation
+
+    path = tmp_path / "awards.sqlite"
+    label = "Prix du Quai des Orfèvres"
+    with_award = {field: [label]}
+    db = Storage(path)
+    try:
+        source, canonical = _publish(db, with_award, provider="kobo")
+        other_source, other = _publish(
+            db, {"subjects": ["Cuisine"]}, record="edition-b", provider="kobo",
+        )
+        assert canonical.document != other.document
+        assert canonical.sources[0].public_bibliography.classification.wire() == with_award
+        for phase in ("live", "retained"):
+            page = search_public_notice_c(db, "prix quai", now=100, page_size=1)
+            assert page.status == "partial" and not page.has_more
+            hit, = page.hits
+            assert hit.document == canonical.document and page.known_matches == 1
+            row, = _known(db, "prix du quai")
+            assert row["_cover_document_ref"] == canonical.document
+            assert row["metadata"][field] == [label]
+            assert local_match_explanation(row, "prix quai") == "Correspondance : Prix littéraire"
+            assert not search_public_notice_c(db, "prix quai", field="subject", now=100).hits
+            assert not search_public_notice_c(db, "prix quai", field="title", now=100).hits
+            assert db.entitlements() == [] and db.acquisitions() == []
+            if phase == "live":
+                for saved in (source, other_source):
+                    assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+                db.close()
+                db = Storage(path)
+    finally:
+        db.close()
+
+
+def test_public_award_retention_uses_existing_label_bounds():
+    assert declared_public_classification({"awards": ["x" * 241]}) is None
+    assert declared_public_classification({"prizes": ["https://private.invalid/?token=secret"]}) is None
+    assert decode_public_classification({"literary_prizes": [{"name": "Prix"}]}) is None
+    proof = declared_public_classification({"awards": ["Prix attesté"], "owned": True})
+    assert proof.wire() == {"awards": ["Prix attesté"]}
