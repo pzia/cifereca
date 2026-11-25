@@ -460,3 +460,56 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
     finally:
         session.close()
         db.close()
+
+
+def test_explicit_plugin_witness_proposal_and_approval_on_normal_search(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from threading import RLock
+    from cifereca.core.notice_parse_witness_approval import public_search_witness
+    from cifereca.core.notice_parse_witness_store import read_approved_parse_witness
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    from cifereca.core import notice_c_search_receipt
+
+    session, _, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "approval.sqlite")
+    try:
+        monkeypatch.setattr(notice_c_search_receipt, "time", lambda: 100)
+        identity = NS(identity_id="alice")
+        service = NS(storage=db, current_identity=identity,
+                     identity_by_id=lambda key: identity if key == "alice" else None,
+                     _source_context_epoch=0, _source_context_lock=RLock(),
+                     _provider_enabled_for_identity=lambda *args: True,
+                     _session_key=lambda provider, credential: (provider, credential),
+                     _sessions={(session.provider_id, "__public__"): session})
+        response = session.search_with_response_facets("loup", "catalog")
+        row, = search_orchestration._public_rows_from_response(response, session)
+        search_orchestration._ingest_public_search_c(
+            service, [row], identity_id="alice", now=100, require_public_cover_witness=True,
+        )
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        def baseline():
+            return read_approved_parse_witness(
+                db, key=source.observation.key, parser_id=source.observation.parser_id,
+            )
+        scope = capture_search_read_scope(service, "alice")
+        proposal = public_search_witness(service, row, scope=scope, now=100)
+        assert proposal is not None and proposal.generation == 0
+        assert [field.path[-1] for field in proposal.fields] == ["title", "record_id"]
+        assert baseline() is None
+        service._source_context_epoch += 1
+        assert public_search_witness(service, row, scope=scope, approved=proposal, now=100) is None
+        assert baseline() is None
+        scope = capture_search_read_scope(service, "alice")
+        proposal = public_search_witness(service, row, scope=scope, now=100)
+        approved = public_search_witness(service, row, scope=scope, approved=proposal, now=100)
+        assert approved == baseline() and approved.generation == 1
+        assert approved.baseline.approved_input_sha256 == sha256(body).hexdigest()
+        assert approved.baseline.parser_implementation_sha256 == response.notice_parser_implementation
+        assert public_search_witness(service, row, scope=scope, approved=proposal, now=100) is None
+        cache_clock[0] += 61.
+        assert public_search_witness(service, row, scope=scope, now=161) is None
+        assert len(calls) == 1
+        assert db.entitlements() == db.acquisitions() == []
+    finally:
+        session.close()
+        db.close()

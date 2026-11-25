@@ -121,6 +121,21 @@ def publish_approved_parse_witness(
     A missing row requires expected_generation=0; subsequent replacements
     must name the exact stored generation. Same input is idempotent.
     """
+    scope, baseline = _prepare_approved_parse_witness(
+        observation=observation, response_bytes=response_bytes,
+        critical_fields=critical_fields, expected_generation=expected_generation,
+        parser_implementation_sha256=parser_implementation_sha256,
+    )
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _publish_approved_parse_witness_txn(
+            db, scope, baseline, expected_generation=expected_generation,
+        )
+
+
+def _prepare_approved_parse_witness(*, observation, response_bytes,
+                                    critical_fields, expected_generation,
+                                    parser_implementation_sha256=None):
     if (type(observation) is not NoticeSourceObservation
             or type(response_bytes) is not bytes
             or not 0 < len(response_bytes) <= _MAX_RESPONSE_BYTES
@@ -169,33 +184,37 @@ def publish_approved_parse_witness(
             UnicodeError, RecursionError) as exc:
         raise ValueError("invalid_parse_witness_publication") from exc
 
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        row = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (_PREFIX + scope,),
-        ).fetchone()
-        current = _decode(row[0], scope) if row is not None else None
-        generation = current.generation if current is not None else 0
-        if expected_generation != generation:
-            raise ValueError("parse_witness_generation_changed")
-        if current is not None and current.baseline == baseline:
-            return current
-        if generation == _MAX_GENERATION:
-            raise ValueError("parse_witness_generation_overflow")
-        next_generation = generation + 1
-        raw = json.dumps(
-            {"schema": 1, "generation": next_generation,
-             "baseline": asdict(baseline)},
-            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-        )
-        if len(raw.encode("ascii")) > _MAX_RECORD_BYTES:
-            raise ValueError("invalid_parse_witness_publication")
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (_PREFIX + scope, raw),
-        )
-        return ApprovedParseWitness(next_generation, baseline)
+    return scope, baseline
+
+
+def _publish_approved_parse_witness_txn(db, scope, baseline, *, expected_generation):
+    if not db.in_transaction:
+        raise ValueError("parse_witness_transaction_required")
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (_PREFIX + scope,),
+    ).fetchone()
+    current = _decode(row[0], scope) if row is not None else None
+    generation = current.generation if current is not None else 0
+    if expected_generation != generation:
+        raise ValueError("parse_witness_generation_changed")
+    if current is not None and current.baseline == baseline:
+        return current
+    if generation == _MAX_GENERATION:
+        raise ValueError("parse_witness_generation_overflow")
+    next_generation = generation + 1
+    raw = json.dumps(
+        {"schema": 1, "generation": next_generation,
+         "baseline": asdict(baseline)},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    )
+    if len(raw.encode("ascii")) > _MAX_RECORD_BYTES:
+        raise ValueError("invalid_parse_witness_publication")
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_PREFIX + scope, raw),
+    )
+    return ApprovedParseWitness(next_generation, baseline)
 
 
 

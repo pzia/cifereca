@@ -118,3 +118,6 @@ class PublicSearchReplayCapability:
     hold: Callable[[str], ContextManager[PublicSearchReplayInput | None]]
     reparse: Callable[[str, str], ProviderSearchResponse | None]
     schema_version: int = 1
+    # Optional proposal of critical public bibliography string fields.
+    # Core verifies the current exact retained input and user approval.
+    witness_fields: tuple[str, ...] = ()

@@ -632,6 +632,7 @@ class NumilogPublicSession(ProviderSession):
         return PublicSearchReplayCapability(
             family, implementation,
             read, hold, reparse,
+            witness_fields=("title", "record_id"),
         )
 
     def _reparse_retained_public_response(self, token, record_id):
