@@ -15,6 +15,7 @@ from .library_organizer_review import (
     admit_organizer_review, run_organizer_review, select_organizer_keeper_advice,
 )
 from .library_sqlite_freshness import sqlite_source_stamp
+from .library_organizer_plan import native_relocation_entries
 from .library_organizer_plan import prepare_organizer_dry_run, confirm_organizer_dry_run
 from .canonical_keeper_review import review_canonical_keeper
 
@@ -193,9 +194,14 @@ class LibraryOrganizerReadBrokerImpl:
                     or page.dry_run_state != "confirmed"
                     or page.mutation_authorized is not False
                     or plan is None or plan.confirmed is not True
-                    or plan.executable is not False or len(plan.entries) != 1
-                    or (plan.entries[0].operation, plan.entries[0].state) not in (
-                        ("rename", "review_only"), ("classify", "relocation_held"))
+                    or plan.executable is not False
+                    or not native_relocation_entries(plan.entries)
+                    or page.dry_run_group != plan.group_index
+                    or page.dry_run_rename_only is not plan.rename_only
+                    or page.dry_run_excluded != plan.excluded_count
+                    or type(page.dry_run_entries) is not tuple
+                    or page.dry_run_entries != tuple(OrganizerDryRunAdvice(
+                        e.operation, e.current, e.proposed, e.state) for e in plan.entries)
                     or self._current(page.token) is None):
                 return None
             # Consume only the private handoff; the visible simulation stays

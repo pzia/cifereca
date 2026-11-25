@@ -908,11 +908,12 @@ def main():
             content = f"%PDF-1.7\\nSynthetic maintenance page {index}\\n".encode("ascii")
             fmt, title, author = "pdf", f"Témoin de pagination {index}", "Auteur témoin"
             scope = {}
-            if args.guided_only == "organizer" and index == 4:
-                # One exact rename candidate among four non-qualified PDFs.
-                # Actual registered EPUB, no synthetic broker return.
-                book = corpus / "rename-opaque.epub"
-                fmt, title, author = "epub", "Roman témoin", "Autrice témoin"
+            if args.guided_only == "organizer" and index >= 2:
+                # Three independent EPUBs across five groups guarantee at
+                # least two safe rename candidates on the first four-group page.
+                # Actual registered EPUBs, no synthetic broker return.
+                book = corpus / f"rename-opaque-{index}.epub"
+                fmt, title, author = "epub", f"Roman témoin {index}", "Autrice témoin"
                 from zipfile import ZIP_STORED, ZipFile
                 with ZipFile(book, "w") as archive:
                     archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
@@ -922,12 +923,12 @@ def main():
                     archive.writestr("OPS/content.opf",
                         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
                         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-                        '<dc:title>Roman témoin</dc:title><dc:creator>Autrice témoin</dc:creator>'
+                        f'<dc:title>{title}</dc:title><dc:creator>Autrice témoin</dc:creator>'
                         '</metadata><manifest><item id="p" href="page.xhtml" media-type="application/xhtml+xml"/>'
                         '</manifest><spine><itemref idref="p"/></spine></package>')
                     archive.writestr("OPS/page.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><body>Fixture</body></html>')
                 content = book.read_bytes()
-                scope = {"provider_id": "local", "source_item_id": "native-rename-fixture"}
+                scope = {"provider_id": "local", "source_item_id": f"native-rename-fixture-{index}"}
             else:
                 book.write_bytes(content)
             digest = hashlib.sha256(content).hexdigest()
@@ -1200,12 +1201,8 @@ def main():
                             assert not native.get_visible()
 
                             def find_candidate():
-                                if not prepare.get_sensitive():
-                                    assert following.get_sensitive()
-                                    following.emit("clicked")
-                                    until(lambda: button.get_sensitive() and page_visible(2), prepare_candidate)
-                                else:
-                                    prepare_candidate()
+                                assert page_visible(1) and prepare.get_sensitive()
+                                prepare_candidate()
 
                             def prepare_candidate():
                                 assert prepare.get_sensitive()
@@ -1227,11 +1224,15 @@ def main():
 
                             def cancel_dialog():
                                 dialog = modal()
-                                assert dialog.get_heading() == "Confirmer le renommage ?"
+                                assert dialog.get_heading() == "Confirmer le lot de rangements et renommages ?"
                                 assert dialog.get_default_response() == "cancel"
-                                assert "rename-opaque.epub" in dialog.get_body()
-                                assert service.preview_library_filename(title="Roman témoin",
-                                    author="Autrice témoin", extension="epub") in dialog.get_body()
+                                body = dialog.get_body()
+                                selected = [i for i in range(2, 5)
+                                            if f"rename-opaque-{i}.epub" in body]
+                                assert 2 <= len(selected) <= 3
+                                for i in selected:
+                                    assert service.preview_library_filename(title=f"Roman témoin {i}",
+                                        author="Autrice témoin", extension="epub") in body
                                 assert fixture_evidence() == evidence
                                 # Drive the real GTK response button. Emitting
                                 # MessageDialog.response directly would signal
@@ -1246,7 +1247,7 @@ def main():
 
                             def apply_dialog():
                                 dialog = modal()
-                                assert dialog.get_heading() == "Confirmer le renommage ?"
+                                assert dialog.get_heading() == "Confirmer le lot de rangements et renommages ?"
                                 # Capture the actual worker result in GTK. This
                                 # only observes presentation, not admission.
                                 notices = []
@@ -1258,10 +1259,12 @@ def main():
                                 host_window.toast = toast
                                 def refused():
                                     host_window.toast = original_toast
-                                    assert any("Renommage indisponible ou refusé" in x for x in notices)
+                                    assert any("Lot de rangements et renommages indisponible ou refusé" in x
+                                               for x in notices)
                                     assert not native.get_sensitive()
                                     assert fixture_evidence() == evidence and durable_counts() == before
                                     report["checks"]["P0_3176_real_native_rename_production_hold"] = True
+                                    report["checks"]["P0_7407_real_native_batch_production_hold"] = True
                                     step(index + 1)
                                 # Verify the installed native confirmation through
                                 # the actual button and GTK response lifecycle.

@@ -69,13 +69,14 @@ class NativeOrganizerConfirmation:
                 or type(page.dry_run_rename_only) is not bool
                 or type(page.dry_run_excluded) is not int
                 or type(page.dry_run_entries) is not tuple
-                or len(page.dry_run_entries) != 1
-                or type(page.dry_run_entries[0]) is not OrganizerDryRunAdvice):
+                or not 1 <= len(page.dry_run_entries) <= 4
+                or any(type(entry) is not OrganizerDryRunAdvice
+                       for entry in page.dry_run_entries)):
             return None
-        entry = page.dry_run_entries[0]
         return (page.token, page.mutation_authorized, page.dry_run_state,
                 page.dry_run_group, page.dry_run_rename_only, page.dry_run_excluded,
-                entry.operation, entry.state, entry.current, entry.proposed)
+                tuple((entry.operation, entry.state, entry.current, entry.proposed)
+                      for entry in page.dry_run_entries))
 
     def _current(self, page):
         return (self._page is page and self._review_witness is not None
@@ -96,12 +97,16 @@ class NativeOrganizerConfirmation:
         valid = (type(value) is OrganizerPageAdvice
                  and value.mutation_authorized is False
                  and value.dry_run_state == "confirmed"
-                 and type(entries) is tuple and len(entries) == 1
-                 and type(entries[0]) is OrganizerDryRunAdvice
-                 and (entries[0].operation, entries[0].state) in (
-                     ("rename", "review_only"), ("classify", "relocation_held"))
-                 and self._displayable_path(entries[0].current)
-                 and self._displayable_path(entries[0].proposed)
+                 and type(entries) is tuple and 1 <= len(entries) <= 4
+                 and all(type(entry) is OrganizerDryRunAdvice
+                         and (entry.operation, entry.state) in (
+                             ("rename", "review_only"), ("classify", "relocation_held"))
+                         and self._displayable_path(entry.current)
+                         and self._displayable_path(entry.proposed) for entry in entries)
+                 and len({entry.current for entry in entries}) == len(entries)
+                 and len({entry.proposed for entry in entries}) == len(entries)
+                 and not ({entry.current for entry in entries} &
+                          {entry.proposed for entry in entries})
                  and callable(getattr(execution, "admit_native_reviewed_rename", None))
                  and self._lease_current())
         # A newly displayed or revoked DTO supersedes the exact consent
@@ -153,18 +158,25 @@ class NativeOrganizerConfirmation:
         if (page is None or page is self._used or self._dialog is not None
                 or not self._current(page)):
             return False
-        entry, = page.dry_run_entries
+        entries = page.dry_run_entries
+        entry = entries[0]
         shown_witness = self._review_witness
         classification = entry.operation == "classify"
-        action_label = "rangement" if classification else "renommage"
+        action_label = ("lot de rangements et renommages" if len(entries) > 1
+                        else "rangement" if classification else "renommage")
+        detail = ("Chemin actuel : " + entry.current + "\n"
+                  "Chemin proposé : " + entry.proposed) if len(entries) == 1 else "\n\n".join(
+                      str(i) + ". " + item.current + "\n→ " + item.proposed
+                      for i, item in enumerate(entries, 1))
+        effects = ("Un seul " + action_label if len(entries) == 1
+                   else str(len(entries)) + " opérations indépendantes, arrêt au premier refus")
         dialog = None
         try:
             dialog = Adw.MessageDialog.new(
                 self.window, "Confirmer le " + action_label + " ?",
                 "Profil : " + self._identity_id + "\n"
-                "Chemin actuel : " + entry.current + "\n"
-                "Chemin proposé : " + entry.proposed + "\n\n"
-                "Un seul " + action_label + ", sans suppression de doublon ni changement de droit. "
+                + detail + "\n\n"
+                + effects + ", sans suppression de doublon ni changement de droit. "
                 "La confirmation ne lève pas les gardes Core ; si elles ne sont pas "
                 "qualifiées, aucune modification ne sera exécutée.")
             dialog.set_body_use_markup(False)
@@ -239,6 +251,8 @@ class NativeOrganizerConfirmation:
                 self.window.toast({
                     "renamed": "Renommage confirmé. Relancez la revue locale.",
                     "classified": "Rangement confirmé. Relancez la revue locale.",
+                    "batch_completed": "Lot terminé. Relancez la revue locale.",
+                    "partial": "Lot partiel : les opérations restantes sont suspendues. Relancez la revue locale.",
                     "recovery_required": "Reprise nécessaire. Relancez la vérification ; ne supprimez aucun fichier.",
                 }.get(status, action_label.capitalize() + " indisponible ou refusé. Relancez la revue."))
 
