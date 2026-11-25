@@ -250,8 +250,13 @@ def _render_search_results(self) -> int:
                     if (item.get("metadata") or {}).get("notice_c_stale")
                     else "Notice C publique · index partiel"
                 )
-                from cifereca.core.notice_c_loaded_filter import matching_source_label
-                summary = status + matching_source_label(item)
+                from cifereca.core.notice_c_loaded_filter import (
+                    matching_source_label, matching_source_reason,
+                )
+                reason = matching_source_reason(item, state.text, field=state.field)
+                summary = " · ".join(x for x in (
+                    status + matching_source_label(item), reason,
+                ) if x)
             else:
                 summary = " · ".join(x for x in [
                     self._library_state_label(item),
@@ -406,7 +411,9 @@ def _render_search_results(self) -> int:
                 item, identity_id=live_identity,
             )) is not None
         )
-    from cifereca.core.notice_c_loaded_filter import matching_source_label
+    from cifereca.core.notice_c_loaded_filter import (
+        matching_source_label, matching_source_reason,
+    )
     ui_rows: list[BookListItem] = []
     for known in state.filter(self._search_local_objects.values()):
         if known.get("source") == "notice_c_public":
@@ -423,7 +430,10 @@ def _render_search_results(self) -> int:
                     "Notice C publique · "
                     + ("à actualiser" if (known.get("metadata") or {}).get(
                         "notice_c_stale") else "index partiel")
-                    + matching_source_label(known),
+                    + matching_source_label(known)
+                    + ((" · " + reason) if (reason := matching_source_reason(
+                        known, state.text, field=state.field,
+                    )) else ""),
                     self.service.provider_display_name(str(known.get(
                         "provider_id") or "local")), None,
                 )
