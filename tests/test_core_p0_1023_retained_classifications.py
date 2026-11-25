@@ -254,3 +254,56 @@ def test_public_collection_is_a_distinct_retained_search_field(tmp_path):
                 db = Storage(path)
     finally:
         db.close()
+
+
+def test_public_plural_authors_are_retained_and_independently_searchable(tmp_path):
+    from cifereca.core.search import local_match_explanation
+
+    path = tmp_path / "authors.sqlite"
+    db = Storage(path)
+    names = ["Élise Rivière", "Camille Dumas"]
+    try:
+        source, first = _publish(db, {"authors": names})
+        other_source, other = _publish(
+            db, {"subjects": ["Camille Dumas"]}, record="edition-b",
+        )
+        assert first.document != other.document
+        assert first.sources[0].public_bibliography.classification.wire() == {
+            "authors": names,
+        }
+        for phase in ("live", "retained"):
+            for query in ("elise riviere", "Camille Dumas"):
+                page = search_public_notice_c(db, query, field="author", now=100)
+                assert page.status == "partial" and not page.has_more
+                hit, = page.hits
+                assert hit.document == first.document
+                row, = _known(db, query, field="author")
+                assert row["_cover_document_ref"] == first.document
+                assert row["metadata"]["authors"] == names
+                assert local_match_explanation(row, query) == "Correspondance : Auteur"
+            assert not search_public_notice_c(
+                db, "rivière camille", field="author", now=100,
+            ).hits
+            assert [x.document for x in search_public_notice_c(
+                db, "camille dumas", field="subject", now=100,
+            ).hits] == [other.document]
+            assert not search_public_notice_c(
+                db, "camille dumas", field="title", now=100,
+            ).hits
+            assert db.entitlements() == [] and db.acquisitions() == []
+            if phase == "live":
+                for saved in (source, other_source):
+                    assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+                db.close()
+                db = Storage(path)
+    finally:
+        db.close()
+
+
+def test_public_author_labels_keep_bounds_and_refuse_private_objects():
+    assert declared_public_classification({"authors": ["x" * 241]}) is None
+    assert declared_public_classification({"authors": ["person@example.test"]}) is None
+    assert decode_public_classification({"authors": [{"name": "Author"}]}) is None
+    assert declared_public_classification({"authors": ["Autrice"], "owned": True}).wire() == {
+        "authors": ["Autrice"],
+    }

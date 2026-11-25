@@ -91,8 +91,8 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
             parts = value
         else:
             return None
-        # Explicit literary award labels have a tighter per-value bound.
-        limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
+        # Author names and award labels use the existing local name bound.
+        limit = 240 if name in ("authors", "awards", "prizes", "literary_prizes") else 8192
         for part in parts:
             if type(part) is not str or not _public_bibliographic_text(part, limit=limit):
                 return None
@@ -112,7 +112,7 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
 # award keys remain distinct from subject/genre in the shared local matcher.
 _CLASSIFICATION_FIELDS = frozenset((
     "subjects", "subject", "genres", "genre", "tags", "keywords", "themes",
-    "awards", "prizes", "literary_prizes", "collection",
+    "awards", "prizes", "literary_prizes", "collection", "authors",
 ))
 
 
