@@ -17,7 +17,7 @@ def _execution_fence_current(scope, lock):
 
 def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=False,
                             still_current=lambda: True, receipt_current=None):
-    """Isolated recipe for one exact rename, never keeper/classification.
+    """Isolated recipe for one exact rename or independent classification, never keeper.
 
     Delegate all writes to the existing maintenance broker. A postcheck
     failure reports recovery required; it never invokes a second writer or
@@ -37,8 +37,8 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                      and type(accepted) is OrganizerDryRunPlan
                      and accepted.scope is scope and accepted.confirmed is True
                      and accepted.executable is False and len(accepted.entries) == 1
-                     and accepted.entries[0].operation == "rename"
-                     and accepted.entries[0].state == "review_only"
+                     and (accepted.entries[0].operation, accepted.entries[0].state) in (
+                         ("rename", "review_only"), ("classify", "relocation_held"))
                      and _lock_ok(shared_lock)
                      and _execution_fence_current(scope, shared_lock))
     except Exception:
@@ -55,8 +55,14 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
             return {"status": "blocked", "changed": 0}
         old = scope.root / scope.directory / entry.current
         new = scope.root / scope.directory / entry.proposed
-        if (old.parent != new.parent or not old.is_file()
-                or new.exists() or new.is_symlink()
+        classification = entry.operation == "classify"
+        owner = scope.root / scope.directory
+        if (not old.is_relative_to(owner) or not new.is_relative_to(owner)
+                or ".." in old.parts or ".." in new.parts
+                or (not classification and old.parent != new.parent)
+                or (classification and (old.parent == new.parent or old.name != new.name
+                    or not new.parent.is_dir() or new.parent.resolve() != new.parent))
+                or not old.is_file() or new.exists() or new.is_symlink()
                 or scope.storage.placement_for_path(new) is not None):
             return {"status": "blocked", "changed": 0}
         broker = LibraryMaintenanceBrokerImpl(scope.service)
@@ -99,7 +105,9 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                     raise RuntimeError("organizer_review_revoked")
 
         invoked = True
-        result = broker.run(plan, ReviewedRenameControl())
+        control = ReviewedRenameControl()
+        result = (broker._run_filename_relocation(plan, control, classified_target=new)
+                  if classification else broker.run(plan, control))
         post_stamp = sqlite_source_stamp(scope.database)
         if post_stamp is None:
             return {"status": "recovery_required", "changed": None}
@@ -130,7 +138,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or not _lock_ok(shared_lock)
                 or not _execution_fence_current(scope, shared_lock)):
             return {"status": "recovery_required", "changed": None}
-        return {"status": "renamed", "changed": 1}
+        return {"status": "classified" if classification else "renamed", "changed": 1}
     except Exception:
         return {"status": "recovery_required" if invoked else "blocked",
                 "changed": None if invoked else 0}

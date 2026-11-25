@@ -369,7 +369,10 @@ def _group(scope, group):
     for row in rows:
         file, verified_path = review_organizer_file(
             scope, group.artifact_id, row, descriptions[row[0]],
-            allow_classified_path=group.status == "unique" and len(rows) == 1,
+            # The exact registered local occurrence is admitted above for
+            # naming advice; the same unique verified file may be classified.
+            # Neither advice grants execution; the writer and fence still veto.
+            allow_classified_path=report["status"] == "unique" and len(rows) == 1,
         )
         files.append(file)
         if verified_path is not None:

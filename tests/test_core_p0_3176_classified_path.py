@@ -136,3 +136,110 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
     assert old.samefile(target) and old.read_bytes() == target.read_bytes() == data
     assert rows(store) == before and store.acquisitions() == history
     assert store.entitlements() == []
+
+
+@pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure"])
+def test_native_classification_uses_the_common_writer_and_keeps_authority(
+    store, tmp_path, monkeypatch, case,
+):
+    """One consent → actual activation → Core writer → FS/SQLite receipt.
+
+    The production fence is deliberately closed. Only the synthetic case
+    admits the exact temporary library under the shared acquisition lock.
+    """
+    from types import SimpleNamespace as NS
+    from cifereca.core import canonical_recovery, library_organizer_execution
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+    from cifereca.gui.organizer_native_confirmation import NativeOrganizerConfirmation
+    from cifereca.locking import InterProcessLock
+    from tests.test_library_declaration_actions import Widget, Dialog, Runner
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
+                         metadata=TYPED, provider_id="local")
+    target = root / "A/Livres/Autrice" / old.name
+    target.parent.mkdir(parents=True)
+    if case == "checkpoint":
+        store.acquisition_put({
+            "provider_id": "local", "credential_id": "fixture-account",
+            "identity_id": "A", "item_id": "fixture-checkpoint",
+            "status": "attention_required",
+            "metadata": {"phase": "index_pending", "path": str(old)},
+        })
+    baseline, data, history = store.placement_get(pid), old.read_bytes(), store.acquisitions()
+    before = rows(store)
+    service = _service(store, root)
+    key = "library.organizer.read"
+    resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
+                                        "organizer", (key,))
+    broker = resolver(key)
+    plugin = object()
+    resolved = NS(plugin_id="organizer", service=plugin, registry_generation=1)
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"organizer": NS(service=plugin, activation_brokers=resolver)})
+    page = broker.preview(identity_id="A", confirmed=True)
+    draft = broker.prepare_dry_run(token=page.token, confirmed=True)
+    if case == "checkpoint" and draft is None:
+        # A dependency can already prevent a preview. Never manufacture a
+        # plan just to reach the writer.
+        assert old.read_bytes() == data and store.placement_get(pid) == baseline
+        assert store.acquisitions() == history and not target.exists()
+        resolver.close()
+        return
+    page = broker.confirm_dry_run(token=draft.token, confirmed=True)
+    entry, = page.dry_run_entries
+    assert entry.operation == "classify" and entry.state == "relocation_held"
+    assert entry.proposed == str(target.relative_to(root / "A"))
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    with InterProcessLock(lock_path):
+        pass
+    if case != "production_hold":
+        monkeypatch.setattr(library_organizer_execution, "_execution_fence_current",
+                            lambda scope, lock: scope.root == root and scope.storage is store)
+    if case == "collision":
+        target.write_bytes(b"foreign")
+    elif case == "sql_failure":
+        def fail(*args, **kwargs):
+            raise RuntimeError("synthetic SQLite failure")
+        monkeypatch.setattr(store, "relocate_local_path", fail)
+
+    messages = []
+    runner = Runner()
+    runner.deferred = True
+    Dialog.dialogs = []
+    window = NS(service=service, plugin_manager=manager, runner=runner, toast=messages.append)
+    lease = NS(identity_id="A", is_current=lambda: True)
+    ui = NativeOrganizerConfirmation(window, resolved, lease, Gtk=NS(Button=Widget))
+    ui.observe(page)
+    assert ui.open(NS(MessageDialog=Dialog))
+    dialog, = Dialog.dialogs
+    assert "rangement" in dialog.label
+    assert entry.current in dialog.body and entry.proposed in dialog.body
+    assert old.read_bytes() == data and store.placement_get(pid) == baseline
+    dialog.respond("apply")
+    assert len(runner.queue) == 1
+    runner.run()
+    assert not ui.open(NS(MessageDialog=Dialog))
+    if case == "success":
+        assert messages == ["Rangement confirmé. Relancez la revue locale."]
+        assert not old.exists() and target.read_bytes() == data
+        current = store.placement_get(pid)
+        assert current["path"] == str(target)
+        for field in ("artifact_id", "identity_id", "provider_id", "source_item_id", "state"):
+            assert current[field] == baseline[field]
+        assert store.placement_for_path(old) is None
+        assert all(e["metadata"]["path"] == str(target)
+                   for e in store.catalog_entries(placement_id=pid))
+    else:
+        assert messages and "confirmé" not in messages[0]
+        assert old.read_bytes() == data and store.placement_get(pid) == baseline
+        if case == "collision":
+            assert target.read_bytes() == b"foreign"
+        else:
+            assert not target.exists()
+    assert rows(store) == before and store.acquisitions() == history
+    assert store.entitlements() == []
+    resolver.close()
