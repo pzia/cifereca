@@ -387,7 +387,7 @@ def _is_digest(value):
 
 
 def historical_user_digest(value):
-    if value is None or value == "":
+    if value is None or (type(value) is str and value == ""):
         return ""
     if type(value) is not str or not 0 < len(value) <= 256:
         raise ValueError("historical_rearm_profile_unverified")
@@ -421,7 +421,9 @@ def _historical_rearm_binding_in_db(db, source):
                 or data["result"] != "exact_marker_released"
                 or data["proof"] != "owner_attested_same_activation_and_pre_dispatch_refusal"
                 or not _is_digest(data["journal_sha256"])
-                or not _is_digest(fingerprint)
+                or type(fingerprint) is not str
+                or not fingerprint.startswith("canonical.adept_marker_review.v1:")
+                or not _is_digest(fingerprint.split(":", 1)[1])
                 or key != _stable("canonical.adept_historical_rearm.v1", fingerprint)
                 or not all(type(v) is str and 0 < len(v) <= 256 for v in (borrower, profile))
                 or (user != "" and not _is_digest(user))):
