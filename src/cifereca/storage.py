@@ -2626,7 +2626,8 @@ class Storage:
     def identity_get(self, identity_id: str) -> dict[str, Any] | None:
         return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
 
-    def relocate_local_path(self, old_path: Path, new_path: Path, *, identity_id: str, provider_id: str) -> None:
+    def relocate_local_path(self, old_path: Path, new_path: Path, *, identity_id: str,
+                            provider_id: str, classification_root: Path | None = None) -> None:
         from .core.canonical_publication import _canonical_write_transaction
 
         old_text = str(old_path.expanduser().resolve())
@@ -2754,6 +2755,51 @@ class Storage:
                         or not old_row[5] or old_row[5] != target_row[5]
                     ):
                         raise ValueError("relocate_scope_conflict")
+                # The reviewed classification writer supplies the exact library
+                # root, not a caller-selected relative string. Qualify that
+                # same-profile, same-inode staged move inside this transaction.
+                # Ordinary rename callers retain their previous contract.
+                classification_relative = None
+                if classification_root is not None:
+                    import stat
+
+                    root = Path(classification_root)
+                    old_name, new_name = Path(old_text), Path(new_text)
+                    profiles = db.execute(
+                        "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
+                        (identity_id,),
+                    ).fetchall()
+                    if (not root.is_absolute() or root.resolve() != root
+                            or Path(old_path) != old_name or Path(new_path) != new_name
+                            or len(profiles) != 1 or old_row is None or target_row is not None
+                            or not old_row[4] or not old_row[5]
+                            or old_name.parent == new_name.parent
+                            or old_name.name != new_name.name):
+                        raise ValueError("relocate_classification_scope_conflict")
+                    directory = profiles[0][0]
+                    if (type(directory) is not str or not directory
+                            or directory in (".", "..") or Path(directory).name != directory
+                            or chr(92) in directory):
+                        raise ValueError("relocate_classification_scope_conflict")
+                    owners = db.execute(
+                        "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
+                        (directory,),
+                    ).fetchall()
+                    owner = root / directory
+                    if (len(owners) != 1 or owners[0][0] != identity_id
+                            or not old_name.is_relative_to(owner)
+                            or not new_name.is_relative_to(owner)
+                            or db.execute("SELECT state FROM placements WHERE placement_id=?",
+                                          (old_row[0],)).fetchone()[0] != "present"):
+                        raise ValueError("relocate_classification_scope_conflict")
+                    old_stat = old_name.stat(follow_symlinks=False)
+                    new_stat = new_name.stat(follow_symlinks=False)
+                    if (not stat.S_ISREG(old_stat.st_mode) or not stat.S_ISREG(new_stat.st_mode)
+                            or (old_stat.st_dev, old_stat.st_ino) !=
+                               (new_stat.st_dev, new_stat.st_ino)):
+                        raise ValueError("relocate_classification_scope_conflict")
+                    classification_relative = (str(old_name.relative_to(root)),
+                                               str(new_name.relative_to(root)))
                 placement_metadata = None
                 # A different catalogue projection may still point at the
                 # source path even when it uses another placement ID. Do not
@@ -2807,12 +2853,20 @@ class Storage:
                             if (type(relative) is not str or len(relative) > 4096
                                     or Path(relative).is_absolute()
                                     or ".." in Path(relative).parts
-                                    or Path(relative).name != old_name.name
-                                    or old_name.parent != new_name.parent):
+                                    or Path(relative).name != old_name.name):
                                 raise ValueError("relocate_relative_path_requires_relink")
-                            placement_metadata["relative_path"] = str(
-                                Path(relative).with_name(new_name.name)
-                            )
+                            if old_name.parent != new_name.parent:
+                                # Catalog writes paths relative to the library
+                                # root, including the profile directory. Only
+                                # the exact observed value can be migrated.
+                                if (classification_relative is None
+                                        or relative != classification_relative[0]):
+                                    raise ValueError("relocate_relative_path_requires_relink")
+                                placement_metadata["relative_path"] = classification_relative[1]
+                            else:
+                                placement_metadata["relative_path"] = str(
+                                    Path(relative).with_name(new_name.name)
+                                )
                     else:
                         placement_metadata = None
                 # A catalog entry bound to a placement can carry an

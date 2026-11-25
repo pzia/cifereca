@@ -8,6 +8,8 @@ import json
 
 import pytest
 
+from tests.test_core_p0_3171_atomic_publication_v14 import store
+
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.plugin_api import LibraryMutationRequest
 from tests.test_core041_artifact_authority import Control, make_service
@@ -186,3 +188,70 @@ def test_generic_metadata_checkpoint_blocks_relocation_without_stranding_path(
         broker.run(plan, Control())
     _assert_unchanged(service, placement_id, old, new)
     assert service.storage.metadata_get(key) == value
+
+
+@pytest.mark.parametrize("case", [
+    "success", "legacy_call", "profile_relative", "wrong_root", "foreign_owner",
+    "distinct_inode", "checkpoint", "target_placement",
+])
+def test_classification_relative_path_requires_exact_scoped_staged_move(
+    store, tmp_path, case,
+):
+    """The common SQL writer migrates the scan's actual library-relative field.
+
+    A fixture stages the physical name; production execution remains gated.
+    """
+    import os
+    from tests.test_core_p0_3171_atomic_publication_v14 import register, rows
+    from tests.test_core_p0_3176_organizer_review import _put_epub
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    register(store, "B", "seller", "card-B")
+    old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
+                         provider_id="local")
+    new = root / ("B" if case == "foreign_owner" else "A") / "Livres/Autrice" / old.name
+    new.parent.mkdir(parents=True)
+    data = old.read_bytes()
+    if case == "distinct_inode":
+        new.write_bytes(data)
+    else:
+        os.link(old, new)
+    relative = str(old.relative_to(root / "A" if case == "profile_relative" else root))
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
+                   (json.dumps({"relative_path": relative, "artifact_kind": "file"}), pid))
+    if case == "checkpoint":
+        store.acquisition_put({
+            "provider_id": "local", "credential_id": "fixture-account",
+            "identity_id": "A", "item_id": "fixture-checkpoint",
+            "status": "attention_required",
+            "metadata": {"phase": "index_pending", "path": str(old)},
+        })
+    if case == "target_placement":
+        store.placement_put({"identity_id": "A", "provider_id": "local",
+                             "state": "missing", "path": str(new)})
+    baseline, history, counts = store.placement_get(pid), store.acquisitions(), rows(store)
+    before_catalog = store.catalog_entries(placement_id=pid)
+    kwargs = {} if case == "legacy_call" else {
+        "classification_root": tmp_path if case == "wrong_root" else root,
+    }
+    if case == "success":
+        store.relocate_local_path(old, new, identity_id="A", provider_id="local", **kwargs)
+        current = store.placement_get(pid)
+        assert current["path"] == str(new)
+        assert current["metadata"] == {
+            "relative_path": str(new.relative_to(root)), "artifact_kind": "file",
+        }
+        for field in ("artifact_id", "identity_id", "provider_id", "source_item_id", "state"):
+            assert current[field] == baseline[field]
+        assert store.placement_for_path(old) is None
+        assert all(e["metadata"]["path"] == str(new)
+                   for e in store.catalog_entries(placement_id=pid))
+    else:
+        with pytest.raises(ValueError, match="relocate_"):
+            store.relocate_local_path(old, new, identity_id="A", provider_id="local", **kwargs)
+        assert store.placement_get(pid) == baseline
+        assert store.catalog_entries(placement_id=pid) == before_catalog
+    assert old.read_bytes() == new.read_bytes() == data
+    assert rows(store) == counts and store.acquisitions() == history
