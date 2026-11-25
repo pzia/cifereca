@@ -124,7 +124,21 @@ def test_desktop_context_resolves_exact_ready_generation_without_extra_scan(tmp_
 
 def test_visible_priority_snapshot_ignores_clipped_and_retired_cells():
     from types import SimpleNamespace as NS
-    from cifereca.gui.master_detail import MasterDetailPage
+    import ast
+    from pathlib import Path
+
+    # The Core CI interpreter deliberately lacks PyGObject. Exercise the
+    # actual method body, as the existing headless GUI adapters do.
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/master_detail.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "MasterDetailPage")
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "visible_notice_priority_documents")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), "exec"), namespace)
+    snapshot = namespace["visible_notice_priority_documents"]
     from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
 
     class Cell:
@@ -147,7 +161,6 @@ def test_visible_priority_snapshot_ignores_clipped_and_retired_cells():
               _notice_priority_cells={
                   cell: NS(get_item=lambda row=row: row) for cell, row in zip(cells, rows)
               })
-    snapshot = MasterDetailPage.visible_notice_priority_documents
     assert snapshot(page) == (docs[0], docs[1])
     current.remove(docs[1])
     assert snapshot(page) == (docs[0],)
