@@ -124,7 +124,8 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
 
 
 @pytest.mark.parametrize("case", ["success", "production", "cancelled", "lock_busy", "late_revocation",
-                                  "external_contender", "lock_replaced"])
+                                  "external_contender", "lock_replaced", "stale_before_worker",
+                                  "postcommit_view_revoked"])
 def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, case):
     from types import SimpleNamespace as NS
     from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
@@ -166,6 +167,16 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
                             lambda s, lock: s.root == root and s.storage is store)
     if case == "cancelled":
         active[0] = False
+    if case == "stale_before_worker":
+        store.metadata_set("native-review-stale", "changed")
+    if case == "postcommit_view_revoked":
+        original_run = LibraryMaintenanceBrokerImpl.run
+        def revoke_after_commit(self, plan, control=None):
+            result = original_run(self, plan, control)
+            assert result.ok and result.changed == 1
+            active[0] = False
+            return result
+        monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", revoke_after_commit)
     if case == "late_revocation":
         original = LibraryMaintenanceBrokerImpl.plan
         def revoke(self, request):
@@ -205,8 +216,11 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
     assert command() == {"status": "blocked", "changed": 0}
     assert lock_path.read_bytes() == lock_bytes
     new = old.with_name("Autrice - Roman commun.epub")
-    if case in ("success", "external_contender"):
-        assert result == {"status": "renamed", "changed": 1}
+    if case in ("success", "external_contender", "postcommit_view_revoked"):
+        expected = ({"status": "recovery_required", "changed": None}
+                    if case == "postcommit_view_revoked"
+                    else {"status": "renamed", "changed": 1})
+        assert result == expected
         assert new.read_bytes() == data and not old.exists()
         assert store.placement_get(pid)["path"] == str(new)
     else:
