@@ -789,6 +789,15 @@ class PluginManager:
             self._deactivate_record(self._records[plugin_id])
         self._prune_inactive_import_roots()
 
+    def _revoke_shared_dependency_selections(self) -> None:
+        """Shared executable dependencies can change every selected reducer.
+
+        The serialized lifecycle owner holds the publication guard. Revoke
+        before releasing that guard; a normal shutdown is not a mutation.
+        """
+        if self._records and self._before_plugin_retire is not None:
+            self._before_plugin_retire(frozenset(self._records))
+
     @_serialize_lifecycle
     def deactivate_all(self) -> None:
         for record in reversed(list(self._records.values())):
@@ -1057,7 +1066,13 @@ class PluginManager:
         packages = self.packages.active_packages()
         manifests = [item.manifest for item in packages]
         transaction = self.python_dependencies.ensure(manifests, package_roots=[item.root for item in packages])
-        transaction.commit()
+        try:
+            if getattr(transaction, "changed", False):
+                self._revoke_shared_dependency_selections()
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
         if activate:
             self.activate()
         return self.python_dependencies.diagnostic(manifests)
@@ -1095,6 +1110,7 @@ class PluginManager:
                     transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
                 if getattr(transaction, "changed", False):
                     # A shared venv change is not a package-local operation.
+                    self._revoke_shared_dependency_selections()
                     self.deactivate_all()
                 elif old_active != version:
                     self._retire_package_runtime(package_id, manifest)
@@ -1115,6 +1131,7 @@ class PluginManager:
                     self._diag("python dependency rollback", "error", {"package": package_id, "error": str(exc)})
             try:
                 if getattr(transaction, "changed", False):
+                    self._revoke_shared_dependency_selections()
                     self.deactivate_all()
                 else:
                     self._retire_package_runtime(package_id, manifest)
@@ -1153,6 +1170,7 @@ class PluginManager:
         transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
         try:
             if getattr(transaction, "changed", False):
+                self._revoke_shared_dependency_selections()
                 self.deactivate_all()
             else:
                 self._retire_package_runtime(package_id, package.manifest)
@@ -1162,6 +1180,7 @@ class PluginManager:
             return target
         except Exception:
             if getattr(transaction, "changed", False):
+                self._revoke_shared_dependency_selections()
                 self.deactivate_all()
             else:
                 self._retire_package_runtime(package_id, package.manifest)
@@ -1182,6 +1201,7 @@ class PluginManager:
         transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
         try:
             if getattr(transaction, "changed", False):
+                self._revoke_shared_dependency_selections()
                 self.deactivate_all()
             else:
                 self._retire_package_runtime(package_id, package.manifest)
@@ -1190,6 +1210,7 @@ class PluginManager:
             transaction.commit()
         except Exception:
             if getattr(transaction, "changed", False):
+                self._revoke_shared_dependency_selections()
                 self.deactivate_all()
             else:
                 self._retire_package_runtime(package_id, package.manifest)
