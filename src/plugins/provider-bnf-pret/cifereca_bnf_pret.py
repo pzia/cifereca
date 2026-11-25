@@ -203,6 +203,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._epoch = uuid4().hex
         self._closed = False
         self.last_search_warnings = []
+        self._private_search_inputs = {}
         # Only loans positively observed during this credential session are
         # eligible for an explicit, fresh-read token retrieval.
         self._observed_loans = {}
@@ -281,6 +282,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             self.connected = False
             self._accounts = []
             self._observed_loans = {}
+            self._private_search_inputs = {}
             self._last_loan_inventory_evidence = None
             username = str(self.credentials.get('username') or '').strip()
             password = str(self.credentials.get('password') or '')
@@ -1032,6 +1034,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
     def search(self, query, scope='all', page=0, field='all', content_types=()):
         with self._lock:
             self.last_search_warnings = []
+            self._private_search_inputs = {}
             if self._closed:
                 raise ProviderConfigurationError('session_closed')
             # Unhashable scopes (lists/mappings) must be a capability
@@ -1061,9 +1064,14 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             account_scope = ((account.identity_id, account.provider_id,
                       account.credential_id, account.unique_id)
                      if account is not None else None)
+            input_digests = {}
             try:
+                # Legacy/test clients cannot attest the actual HTTP bytes.
+                witness_kwargs = ({'input_digests': input_digests}
+                                  if account is not None and type(self.client) is ReaderHTTPClient else {})
                 records, warnings = read_search(
                     self.client, query, is_current=lambda: not self._closed and epoch == self._epoch,
+                    **witness_kwargs,
                 )
             except (ReaderHTTPError, WebParseError) as error:
                 if self._closed or epoch != self._epoch:
@@ -1089,6 +1097,19 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                 and not any(code in warnings for code in ("partial_search", "ambiguous_search"))
             )
             rows = []
+            implementation = None
+            if qualified and input_digests and warnings == ('inventory_not_exhaustive',):
+                try:
+                    # Digest the installed parser/projection, not a nominal
+                    # version string or an observation reconstructed from C.
+                    digest = hashlib.sha256()
+                    for filename in ('cifereca_bnf_pret_web.py', 'cifereca_bnf_pret_catalog.py',
+                                     'cifereca_bnf_pret_paging.py', 'cifereca_bnf_pret_http.py',
+                                     'cifereca_bnf_pret.py'):
+                        digest.update(hashlib.sha256(Path(__file__).with_name(filename).read_bytes()).digest())
+                    implementation = digest.hexdigest()
+                except OSError:
+                    pass
             for record in records:
                 row = self._search_result(record)
                 if qualified and record.web_reference_evidence is True:
@@ -1101,8 +1122,37 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                         "source_field": "results.Book.resource_link",
                         "evidence": "bnf-pret.authenticated_search_record_identifier",
                     }
+                if (qualified and record.web_reference_evidence is True
+                        and implementation is not None and input_digests.get(record.resource_id)):
+                    values = tuple((name, getattr(row, name)) for name in ('title', 'author', 'publisher'))
+                    self._private_search_inputs[id(row)] = (
+                        row, account, account_scope, epoch, input_digests[record.resource_id],
+                        implementation, values,
+                    )
                 rows.append(row)
             return rows
+
+    def private_search_parse_evidence(self, row):
+        """Digest-only evidence for the exact latest authenticated Search row.
+
+        No raw body, transport locator, new request or credential is exposed.
+        The proposed fields are the observed nonempty descriptive strings.
+        """
+        with self._lock:
+            item = self._private_search_inputs.pop(id(row), None)
+            if item is None:
+                return None
+            original, account, scope, epoch, input_digest, implementation, values = item
+            if (original is not row or self._closed or not self.connected
+                    or epoch != self._epoch or len(self._accounts) != 1
+                    or self._accounts[0] is not account
+                    or (account.identity_id, account.provider_id, account.credential_id,
+                        account.unique_id) != scope
+                    or (row.source_provider, row.source_credential, row.source_account_id) != scope[1:]
+                    or tuple((name, getattr(row, name)) for name, _ in values) != values):
+                return None
+            return input_digest, implementation, tuple(name for name, value in values
+                                                        if type(value) is str and value)
 
     def _search_result(self, record):
         language = normalize_language_tag(record.language) if record.language else None
@@ -1368,6 +1418,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._accounts = []
         self._observed_loans = {}
         with self._lock:
+            self._private_search_inputs = {}
             self.client.clear()
             self.client.close()
 

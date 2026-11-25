@@ -9,7 +9,7 @@ from cifereca_bnf_pret_web import (
     ORIGIN, _dom, parse_search_page, parse_detail, WebParseError,
 )
 from cifereca_bnf_pret_paging import _params, observed_next_results_url
-from cifereca_bnf_pret_http import ReaderHTTPError
+from cifereca_bnf_pret_http import ReaderHTTPError, ReaderHTTPClient
 
 MAX_SEARCH_PAGES = 5
 MAX_SEARCH_RECORDS = 500
@@ -43,7 +43,7 @@ def next_link(html, current_url):
     return observed_next_results_url(current_url, targets.pop())
 
 
-def read_search(client, query, *, is_current=lambda: True):
+def read_search(client, query, *, is_current=lambda: True, input_digests=None):
     url = query_url(query)
     deadline = time.monotonic() + 30
     records = {}
@@ -53,7 +53,11 @@ def read_search(client, query, *, is_current=lambda: True):
         try:
             if not is_current():
                 raise ReaderHTTPError('session_closed')
-            current, html = client.request('GET', url, deadline=deadline)
+            observed = []
+            kwargs = {}
+            if input_digests is not None and type(client) is ReaderHTTPClient:
+                kwargs['observe_search_input'] = observed.append
+            current, html = client.request('GET', url, deadline=deadline, **kwargs)
             if not is_current():
                 raise ReaderHTTPError('session_closed')
             expected, actual = _params(url), _params(current)
@@ -63,6 +67,12 @@ def read_search(client, query, *, is_current=lambda: True):
                 raise WebParseError('search_redirect_mismatch')
             parsed = parse_search_page(html)
             for record in parsed.records:
+                # No digest fabricated from the decoded HTML or parsed DTO.
+                # An edition seen on several pages has ambiguous input.
+                if input_digests is not None:
+                    input_digests[record.resource_id] = (
+                        observed[0] if len(observed) == 1 and parsed.status == 'ok'
+                        and record.resource_id not in records else None)
                 previous = records.get(record.resource_id)
                 if previous is not None and previous != record:
                     if 'ambiguous_search' not in warnings:

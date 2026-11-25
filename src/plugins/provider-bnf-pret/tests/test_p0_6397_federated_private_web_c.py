@@ -404,3 +404,117 @@ def test_private_commit_failure_never_counts_rolled_back_publication(harness, mo
     assert choices is not None and len(choices.choices) == 1
     assert len(client.calls) == 1
     assert storage.entitlements() == storage.acquisitions() == storage.placements() == []
+
+
+def test_private_parse_witness_actual_http_search_approval_and_guard(harness, monkeypatch, tmp_path):
+    """Q5/Q7: existing federated path, explicit click, exact input and owner-only alert."""
+    from hashlib import sha256
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    import json
+    import zipfile
+    import httpx
+
+    from cifereca_bnf_pret_http import ReaderHTTPClient
+    from cifereca.core.notice_c_private_search_web import _source_key
+    from cifereca.core.notice_cover_projection import notice_cover_document_ref
+    from cifereca.core.notice_cover_repository import read_notice_cover
+    from cifereca.core.notice_parse_witness_approval import (
+        private_search_witness, private_search_witness_diagnostic,
+    )
+    from cifereca.core.notice_parse_witness_store import read_approved_parse_witness
+    from cifereca.gui.notice_parse_witness_controller import request_selected_parse_witness
+
+    service, session, account, _ = harness
+    body = results(card(extra='<span itemprop="author">Auteur privé</span>')).encode("utf-8")
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.method == "GET" and request.url.path == "/resources"
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                              content=body)
+    session.client = ReaderHTTPClient(transport=httpx.MockTransport(handler))
+    service._notice_regression_capture_directory = tmp_path / "private-captures"
+    scope = capture_search_read_scope(service, "alice")
+    row, = service.search("fiction", provider_id=session.provider_id, force=True)
+    assert row.author == "Auteur privé"
+    key = _source_key(row, "alice")
+    doc = notice_cover_document_ref(key)
+    source = read_notice_cover(service.storage, doc)
+    assert source.observation.fields_copy()["private_bibliography"]["author"] == row.author
+    proposal = private_search_witness(service, row, scope=scope)
+    assert proposal is not None and proposal.receipt[0] == sha256(body).hexdigest()
+    assert tuple(f.path[-1] for f in proposal.fields) == ("title", "author")
+    def baseline():
+        return read_approved_parse_witness(
+            service.storage, key=key, parser_id=source.observation.parser_id,
+        )
+    assert baseline() is None
+    assert private_search_witness(service, replace(row), scope=scope) is None
+    assert private_search_witness(service, row, scope=capture_search_read_scope(service, "bob")) is None
+
+    class Button:
+        def __init__(self, label): self.label = label
+        def connect(self, signal, callback): self.callback = callback
+        def set_sensitive(self, value): pass
+
+    actions, pending, toasts = [], [], []
+    cell = NS(key="private-selected")
+    panel = NS(add_actions=actions.extend, get_mapped=lambda: True)
+    host = NS(service=service, _route_display_token=object(),
+              search_page=NS(detail=panel, selection=NS(get_selected_item=lambda: cell)),
+              search_objects={cell.key: row}, _search_detail_context_current=lambda *args: True,
+              runner=NS(submit=lambda label, work, done, failed, **kw:
+                        pending.append((work, done))), toast=toasts.append)
+    def deliver():
+        work, done = pending.pop(0)
+        done(work())
+    assert request_selected_parse_witness(
+        host, row, selected_id=row.id, context=(1, 1, 1, "alice"), Gtk=NS(Button=Button),
+    )
+    deliver()
+    button, = actions
+    assert button._cifereca_action_id == "approve-private-parse-witness"
+    assert baseline() is None
+    button.callback(button)
+    deliver()
+    assert baseline().generation == 1
+    assert baseline().baseline.approved_input_sha256 == sha256(body).hexdigest()
+    assert len(calls) == 1
+
+    # Simulate an installed parser/projection upgrade on the same HTTP input.
+    # Only author disappears; the exact BnF record and account remain valid.
+    original = session._search_result
+    monkeypatch.setattr(session, "_search_result",
+                        lambda record: replace(original(record), author=None))
+    read_bytes = Path.read_bytes
+    def upgraded(path):
+        content = read_bytes(path)
+        return (content + b"\n# synthetic upgrade" if path.name == "cifereca_bnf_pret_web.py"
+                else content)
+    monkeypatch.setattr(Path, "read_bytes", upgraded)
+    rejected, = service.search("fiction", provider_id=session.provider_id, force=True)
+    diagnostic = private_search_witness_diagnostic(service, rejected, scope=scope)
+    assert diagnostic is not None
+    assert diagnostic["status"] == "parser_regression_confirmed"
+    assert diagnostic["fields"] == ("author",)
+    assert diagnostic["capture_state"] == "partial"
+    assert read_notice_cover(service.storage, doc) == source
+    assert private_search_witness(service, rejected, scope=scope) is None
+    assert private_search_witness_diagnostic(
+        service, rejected, scope=capture_search_read_scope(service, "bob"),
+    ) is None
+    archive, = (tmp_path / "private-captures").glob("*.zip")
+    with zipfile.ZipFile(archive) as capture:
+        manifest = json.loads(capture.read("manifest.json"))
+        assert set(manifest["omitted"]) == {"response.raw", "current_parse.json", "last_healthy.json"}
+        assert all("Auteur privé".encode() not in capture.read(name) for name in capture.namelist())
+    again, = service.search("fiction", provider_id=session.provider_id, force=True)
+    assert private_search_witness_diagnostic(service, again, scope=scope)["status"] == "parser_regression_confirmed"
+    assert list((tmp_path / "private-captures").glob("*.zip")) == [archive]
+    assert len(calls) == 3
+    assert search_public_notice_c(service.storage, "fiction").hits == ()
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+    session.connected = False
+    assert private_search_witness(service, row, scope=scope, approved=proposal) is None
+    assert private_search_witness_diagnostic(service, again, scope=scope) is None

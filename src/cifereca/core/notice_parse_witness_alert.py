@@ -154,10 +154,15 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     )
     if review.status not in ("parser_regression_confirmed", "parser_drift_suspected"):
         return False, None
+    # Private source values must not enter the generic restart exporter:
+    # it is not an owner-authenticated reader. Keep only approved field
+    # digests and technical context; omitted private members are explicit.
+    private = candidate.key.visibility == "private"
     snapshots = {
         "baseline.json": pin[0],
-        **({"last_healthy.json": current.raw_json} if current is not None else {}),
-        "current_parse.json": candidate.raw_json,
+        **({"last_healthy.json": current.raw_json}
+           if current is not None and not private else {}),
+        **({"current_parse.json": candidate.raw_json} if not private else {}),
         "environment.json": json.dumps({
             "parser_id": candidate.parser_id,
             "parser_version": candidate.parser_version,
@@ -166,7 +171,8 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
             "implementation_sha256": implementation_digest,
             "approved_implementation_sha256": approved.baseline.parser_implementation_sha256,
             "input_sha256": input_digest,
-            "raw_input_export": "subject_to_core_policy",
+            "raw_input_export": ("private_not_retained" if private else "subject_to_core_policy"),
+            **({"private_snapshot_omission": "owner_scope_not_export_authorized"} if private else {}),
             **({"last_healthy_omission": "not_attested"} if current is None else {}),
         }, sort_keys=True),
     }
