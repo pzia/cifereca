@@ -217,29 +217,89 @@ def _naming(scope, path, signature, description, *, opf=None):
     return name, "rename_advice_only"
 
 
-def _classified_path(scope, path, name, details):
-    """Layout advice for one ordinary Acquisitions file, not a move plan.
+def _completed_acsm_layout(scope, path, artifact_id):
+    """Read-only eligibility of one finalized technical subdirectory.
 
-    Keep the validated filename from the existing naming policy. A missing
-    directory is a possible layout, not a grant to create it. A separate
-    maintenance transaction must still qualify all operational references.
+    The folder name is never provenance: the same canonical checkpoint
+    validator used by the relocation transaction must verify the receipt.
     """
+    import json
+    from .canonical_recovery import _relocated_completed_checkpoint
+    from .duplicate_maintenance_guard import _mentions_exact_path
+
     owner = scope.root / scope.directory
     relative = path.relative_to(owner)
-    if len(relative.parts) != 2 or relative.parts[0] != "Acquisitions":
-        return None, "classified_source_not_admitted"
-    if details is None or details[3] not in ("Livres", "BD-Manga", "Documents") or not name:
-        return None, "classified_evidence_unavailable"
-    authors = details[1]
-    if len(authors) != 1:
-        return None, "classified_author_unverified"
-    author = authors[0]
-    if (not _text(author, 255) or len(author.encode("utf-8")) > 255
-            or author != author.strip() or author.startswith(".")
-            or "/" in author or chr(92) in author
-            or not author.isprintable()):
-        return None, "classified_author_unverified"
-    target = owner / details[3] / author / name
+    if (len(relative.parts) != 3
+            or re.fullmatch(r"acsm-[0-9a-f]{64}", relative.parts[1]) is None):
+        return None
+    provider = relative.parts[0]
+    target = owner / provider / path.name
+    with scope.storage._lock:
+        db = scope.storage._connect()
+        if db.in_transaction:
+            return None
+        with db:
+            db.execute("BEGIN")
+            placement = db.execute(
+                "SELECT provider_id,source_item_id FROM placements "
+                "WHERE path=? AND identity_id=? AND artifact_id=? AND state='present'",
+                (str(path), scope.identity, artifact_id),
+            ).fetchone()
+            if placement != (None, None):
+                return None
+            candidates = db.execute(
+                "SELECT acquisition_id,provider_id,credential_id,account_id,item_id,"
+                "identity_id,status,artifact_id,metadata_json FROM acquisition_ledger "
+                "WHERE identity_id=? AND artifact_id=? LIMIT 33",
+                (scope.identity, artifact_id),
+            ).fetchall()
+            if not candidates or len(candidates) > 32:
+                return None
+            verified = 0
+            for row in candidates:
+                raw = row[-1]
+                if type(raw) is not str or len(raw) > 65536:
+                    return None
+                data = json.loads(raw)
+                if type(data) is not dict:
+                    return None
+                if not _mentions_exact_path(data, str(path)):
+                    continue
+                if row[1] != provider:
+                    return None
+                _relocated_completed_checkpoint(
+                    db, row[0], row[1:], identity_id=scope.identity,
+                    artifact_id=artifact_id, old_path=str(path), new_path=str(target))
+                verified += 1
+            if not verified:
+                return None
+    return target
+
+
+def _classified_path(scope, path, name, details, artifact_id):
+    """Layout advice, never a move grant or a proof derived from a pathname."""
+    owner = scope.root / scope.directory
+    relative = path.relative_to(owner)
+    if len(relative.parts) == 3 and relative.parts[1].startswith("acsm-"):
+        target = _completed_acsm_layout(scope, path, artifact_id)
+        if target is None:
+            return None, "classified_source_not_admitted"
+    else:
+        if len(relative.parts) != 2 or relative.parts[0] != "Acquisitions":
+            return None, "classified_source_not_admitted"
+        if details is None or details[3] not in ("Livres", "BD-Manga", "Documents") or not name:
+            return None, "classified_evidence_unavailable"
+        authors = details[1]
+        if len(authors) != 1:
+            return None, "classified_author_unverified"
+        author = authors[0]
+        if (not _text(author, 255) or len(author.encode("utf-8")) > 255
+                or author != author.strip() or author.startswith(".")
+                or "/" in author or chr(92) in author
+                or not author.isprintable()):
+            return None, "classified_author_unverified"
+        target = owner / details[3] / author / name
+    target_relative = target.relative_to(owner)
     with scope.storage._lock:
         db = scope.storage._connect()
         if db.in_transaction:
@@ -251,7 +311,7 @@ def _classified_path(scope, path, name, details):
     fd = None
     try:
         fd = _open_root(owner)
-        for component in (details[3], author):
+        for component in target_relative.parts[:-1]:
             try:
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY |
                                 os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
@@ -260,7 +320,7 @@ def _classified_path(scope, path, name, details):
             os.close(fd)
             fd = child
         try:
-            os.stat(name, dir_fd=fd, follow_symlinks=False)
+            os.stat(target.name, dir_fd=fd, follow_symlinks=False)
         except FileNotFoundError:
             return str(target.relative_to(owner)), "classified_layout_advice_only"
         return None, "classified_target_occupied"
@@ -303,7 +363,7 @@ def review_organizer_file(scope, artifact_id, row, description, *, allow_classif
                                    opf=details[:2] if details is not None else None)
             layout, layout_reason = (None, None)
             if allow_classified_path:
-                layout, layout_reason = _classified_path(scope, path, name, details)
+                layout, layout_reason = _classified_path(scope, path, name, details, artifact_id)
             recheck()
         return result(relative, name, reason, path,
                       details[3] if details is not None else None, layout, layout_reason)
