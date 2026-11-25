@@ -87,3 +87,26 @@ def test_mid_page_revocation_discards_result_and_never_mutates(
     if change == "revoke":
         assert broker.preview(identity_id="A", confirmed=True) is None
         assert calls == [True]
+
+
+def test_cancel_consumed_token_revokes_inflight_continuation(store, tmp_path, monkeypatch):
+    service, root, _ = _service(store, tmp_path)
+    for index in range(5):
+        _extra(store, root, f"more-{index}.pdf")
+    broker = LocalOriginBatchReadBrokerImpl(service)
+    first = broker.preview(identity_id="A", confirmed=True)
+    assert first.can_continue
+    before = rows(store)
+    original = engine.suggest_local_placement_documents
+    calls = []
+
+    def observed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append(True)
+        broker.cancel(token=first.token)
+        return result
+
+    monkeypatch.setattr(engine, "suggest_local_placement_documents", observed)
+    assert broker.next_page(token=first.token, confirmed=True) is None
+    assert calls == [True] and rows(store) == before
+    assert broker.next_page(token=first.token, confirmed=True) is None
