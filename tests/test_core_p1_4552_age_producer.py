@@ -61,3 +61,36 @@ def test_producer_requires_transaction_and_nonempty_trusted_filter(tmp_path):
                 request_current_public_age_txn(sql, **args)
         with pytest.raises(ValueError, match="invalid_public_age_filter"):
             request_current_public_age(storage, **args)
+
+
+def test_current_producer_preserves_explicit_origin_locator(tmp_path):
+    from tests.test_core_p1_4552_public_age_inheritance import setup
+
+    with closing(Storage(tmp_path / "origin-producer.sqlite")) as storage:
+        group, sources = setup(storage, tmp_path)
+        binding = installed()
+        target = sources[0].observation.key.edition_id
+        args = dict(target_edition_id=target, scope="fr:editions", now=300,
+                    implementation_digests=(binding.source_sha256,))
+        configure_descriptive_selection(
+            storage, canonical_type="age", scope=args["scope"],
+            selected_plugin_id=DECLARATION.plugin_id, selected_version=DECLARATION.version,
+            declarations=(DECLARATION,), text_schemas=(SCHEMA,),
+            installed_registry=(binding,), expected_generation=0,
+        )
+        persist_exact_public_search_cover(storage, sources[0])
+        with pytest.raises(ValueError, match="invalid_descriptive_spec"):
+            request_current_public_age(storage, **args, group_document="invalid")
+        ref = request_current_public_age(storage, **args, group_document=group.document)
+        assert ref is not None
+        assert request_current_public_age(storage, **args, group_document=group.document) == ref
+        assert request_current_public_age(storage, **args) is None
+        job = journal.read_job(storage, ref)
+        assert job.spec.public_age_locator == (target, args["scope"], group.document.source_key)
+        assert job.attempts == 0
+        with storage._lock, storage._connect() as sql:
+            sql.execute("DELETE FROM origin_links")
+        with pytest.raises(ValueError, match="relation_changed|origin_group_required"):
+            request_current_public_age(storage, **args, group_document=group.document)
+        assert journal.read_job(storage, ref) == job
+        assert storage.entitlements() == storage.acquisitions() == []
