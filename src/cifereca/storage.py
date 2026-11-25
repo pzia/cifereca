@@ -5272,6 +5272,22 @@ class Storage:
             return None
         row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); return row
 
+    @staticmethod
+    def _available_placement_id_in_db(db, path: str, preferred: str) -> str:
+        """Allocate a physical occurrence ID inside the caller's write transaction.
+
+        A relocation preserves its Placement ID. The old path can later
+        contain a different occurrence (including a surviving hardlink).
+        Do not reuse the relocated row's ID or move its references.
+        """
+        candidate = preferred
+        for generation in range(64):
+            if db.execute("SELECT 1 FROM placements WHERE placement_id=?",
+                          (candidate,)).fetchone() is None:
+                return candidate
+            candidate = Storage._stable_id("placement", path, "occurrence", generation + 1)
+        raise ValueError("placement_id_allocation_exhausted")
+
     def placement_put(self, item: dict[str, Any]) -> str:
         row = dict(item); now = int(time.time())
         path = str(Path(str(row.get("path") or "")).expanduser().resolve())
@@ -5298,6 +5314,9 @@ class Storage:
                 ):
                     if stored and proposed and stored != proposed:
                         raise ValueError("placement_scope_conflict")
+                placement_id = str(current[0])
+            elif not row.get("placement_id"):
+                placement_id = self._available_placement_id_in_db(db, path, placement_id)
             db.execute(
                 "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET artifact_id=excluded.artifact_id,identity_id=COALESCE(excluded.identity_id,placements.identity_id),"

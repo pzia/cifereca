@@ -271,7 +271,7 @@ class LocalCatalog:
         root = root.expanduser().resolve()
         path_text = str(root)
         existing = self.storage.placement_for_path(Path(path_text))
-        placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
+        placement_id = existing["placement_id"] if existing else None
         identity_hint, provider_hint = self._path_hints(root)
         if identity_id is not None and identity_hint and identity_id != identity_hint:
             # An explicit caller cannot register A's physical bundle as B's
@@ -320,7 +320,7 @@ class LocalCatalog:
             manifest, metadata={"discovered_by": "targeted_catalog_index", "bundle_manifest_file": BUNDLE_MANIFEST_NAME}
         )
         artifact_was_new = self.storage.artifact_get(artifact.artifact_id) is None
-        placement_was_new = self.storage.placement_get(placement_id) is None
+        placement_was_new = existing is None
         self.storage.artifact_put(artifact)
         try:
             relative = str(root.relative_to(self.root.resolve()))
@@ -332,7 +332,7 @@ class LocalCatalog:
             stat_meta = {"manifest_size": int(stat.st_size), "manifest_mtime_ns": int(stat.st_mtime_ns)}
         except OSError:
             stat_meta = {}
-        self.storage.placement_put({
+        placement_id = self.storage.placement_put({
             "placement_id": placement_id, "artifact_id": artifact.artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": item_id,
             "state": "present", "last_seen_at": now,
@@ -458,7 +458,7 @@ class LocalCatalog:
                 raise OSError("catalog_index_file_changed") from exc
         path_text = str(path)
         existing = self.storage.placement_for_path(Path(path_text))
-        placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
+        placement_id = existing["placement_id"] if existing else None
         identity_hint, provider_hint = self._path_hints(path)
         identity_hint = identity_id or identity_hint
         # The compatibility backup_items table may describe a path, but it
@@ -513,12 +513,12 @@ class LocalCatalog:
             # transactionally, so no second, racy catalogue write is needed.
             return {"status": "invalid", "path": path_text, "reason": invalid_reason, "media_format": media_format}
 
-        catalog_entry_id = stable_id('catalog', placement_id)
-        previous_entry = self.storage.catalog_entry_get(catalog_entry_id)
+        previous_entry = (self.storage.catalog_entry_get(stable_id('catalog', placement_id))
+                          if placement_id is not None else None)
         digest = self.sha256(path)
         artifact_id = f"sha256:{digest}"
         artifact_was_new = self.storage.artifact_get(artifact_id) is None
-        placement_was_new = self.storage.placement_get(placement_id) is None
+        placement_was_new = existing is None
         mime_type = mimetypes.guess_type(path.name)[0]
         if media_format in {"epub", "kepub"}:
             mime_type = "application/epub+zip"
@@ -551,7 +551,7 @@ class LocalCatalog:
         except ValueError:
             relative = path.name
         source_item_id = proposed_item
-        self.storage.placement_put({
+        placement_id = self.storage.placement_put({
             "placement_id": placement_id, "artifact_id": artifact_id, "path": path_text,
             "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": source_item_id,
             "state": "present", "last_seen_at": now,
@@ -560,6 +560,7 @@ class LocalCatalog:
                 "relative_path": relative, "artifact_kind": "file", **stat_meta,
             },
         })
+        catalog_entry_id = stable_id("catalog", placement_id)
         self.storage.catalog_entry_put({
             "catalog_entry_id": catalog_entry_id, "artifact_id": artifact_id,
             "placement_id": placement_id, "title": str(title or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
@@ -780,8 +781,7 @@ class LocalCatalog:
                 previous = self.storage.placement_for_path(Path(path_text))
                 self.storage.placement_put(
                     {
-                        "placement_id": (previous or {}).get("placement_id")
-                            or stable_id("placement", path_text),
+                        "placement_id": (previous or {}).get("placement_id"),
                         "artifact_id": (previous or {}).get("artifact_id"),
                         "path": path_text,
                         "identity_id": (previous or {}).get("identity_id") or identity_hint,
@@ -847,8 +847,8 @@ class LocalCatalog:
                 identity_hint = identity_hint or existing.get("identity_id")
                 provider_hint = provider_hint or existing.get("provider_id")
                 proposed_item = proposed_item or existing.get("source_item_id")
-            placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
-            previous_placement = self.storage.placement_get(placement_id)
+            placement_id = existing["placement_id"] if existing else None
+            previous_placement = existing
             placement_was_new = previous_placement is None
             stat = validation_stat
             previous_meta = dict((previous_placement or {}).get("metadata") or {})
@@ -891,7 +891,7 @@ class LocalCatalog:
                     self.storage.artifact_put(artifact)
             if not same_scanned_file(path, stat):
                 raise OSError("catalog_scan_file_changed")
-            self.storage.placement_put(
+            placement_id = self.storage.placement_put(
                 {
                     "placement_id": placement_id,
                     "artifact_id": artifact_id,
