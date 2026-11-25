@@ -124,6 +124,10 @@ def crash_classification(root, boundary):
         with storage._lock, storage._connect() as db:
             db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
                        (json.dumps({"relative_path": str(old.relative_to(library))}), pid))
+            # The precommit fixture must model an existing catalogue path,
+            # not rely on the relocation itself to synthesize that field.
+            db.execute("UPDATE catalog_entries SET metadata_json=? WHERE placement_id=?",
+                       (json.dumps({"path": str(old)}), pid))
         broker = LibraryMaintenanceBrokerImpl(_service(storage, library))
         plan = broker.plan(LibraryMutationRequest("normalize_filename", placement_id=pid))
         relocate = storage.relocate_local_path
