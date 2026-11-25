@@ -488,9 +488,14 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
 
     # Explicit per-account opt-in only; a fresh authorized Search retains
     # its bounded original page in this session, never in Storage or a ZIP.
+    from cifereca_bnf_pret import DESCRIPTOR
+    opt_in, = [option for option in DESCRIPTOR.account_options
+               if option.key == "private_search_replay"]
+    assert opt_in.default == "off" and opt_in.value_type == "boolean"
     session.options["private_search_replay"] = "on"
     row, = service.search("fiction", provider_id=session.provider_id, force=True)
     assert len(calls) == 2
+    assert session.private_search_replay(row, sha256(body).hexdigest(), check_only=True) is True
     assert replay_private_search_witness(service, row, scope=scope, check_only=True)
     assert not replay_private_search_witness(
         service, row, scope=capture_search_read_scope(service, "bob"),
@@ -522,6 +527,7 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
     replay_button.callback(replay_button)
     deliver()
     assert len(calls) == 2
+    assert toasts[-1] == "Rejeu local terminé."
     replay_alert = private_search_witness_diagnostic(service, row, scope=scope)
     assert replay_alert["status"] == "parser_regression_confirmed"
     assert replay_alert["fields"] == ("author",)
