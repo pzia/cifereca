@@ -2118,6 +2118,18 @@ class LibraryMaintenanceBrokerImpl:
                     # only our temporary name while SQLite still names old.
                     if control is not None:
                         control.check_cancelled()
+                    # fsync and the cooperative cancellation callback may
+                    # both yield to external filesystem changes. Do not
+                    # knowingly commit a pathname whose verified file or
+                    # canonical parent changed during that interval.
+                    if old.resolve() != old or new.resolve() != new:
+                        raise _LibraryFilenameConflict("Chemin modifié avant enregistrement")
+                    for path, expected in ((old, expected_old), (new, expected_new)):
+                        named = os.stat(path, follow_symlinks=False)
+                        if (not stat.S_ISREG(named.st_mode)
+                                or any(getattr(named, key) != getattr(expected, key)
+                                       for key in attrs)):
+                            raise _LibraryFilenameConflict("Fichier modifié avant enregistrement")
                     self.service.storage.relocate_local_path(
                         old, new,
                         identity_id=str(row.get("identity_id") or ""),
