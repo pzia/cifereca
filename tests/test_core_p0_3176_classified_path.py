@@ -138,7 +138,8 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
     assert store.entitlements() == []
 
 
-@pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure"])
+@pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure",
+                                  "acsm_success", "acsm_staged"])
 def test_native_classification_uses_the_common_writer_and_keeps_authority(
     store, tmp_path, monkeypatch, case,
 ):
@@ -157,11 +158,44 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     from tests.test_library_declaration_actions import Widget, Dialog, Runner
 
     root = tmp_path / "library"
-    register(store, "A", "seller", "card-A")
-    old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
-                         metadata=TYPED, provider_id="local")
-    target = root / "A/Livres/Autrice" / old.name
-    target.parent.mkdir(parents=True)
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    with InterProcessLock(lock_path):
+        pass
+    acsm = case.startswith("acsm_")
+    if acsm:
+        import hashlib
+        from cifereca.core.canonical_publication import publish_completed_acquisition
+        from cifereca.core.convergence_execution import CompletedDelivery
+        from tests.test_core_p0_3171_atomic_publication_v14 import new_source
+        register(store, "A", "numilog", "card-A")
+        source, snapshot = new_source(provider="numilog")
+        old, pid = _put_epub(store, root, "numilog/acsm-" + "a"*64 + "/legacy.epub",
+                             metadata=TYPED)
+        digest = hashlib.sha256(old.read_bytes()).hexdigest()
+        offer = "synthetic-offer"
+        with InterProcessLock(lock_path) as lock:
+            receipt = canonical_recovery.record_completed_delivery_for_recovery(
+                store, source=source, offer_id=offer,
+                completed=CompletedDelivery(source, offer, old, digest, "synthetic-receipt",
+                                            adept_receipt_ref="synthetic-adept"),
+                library_root=root, shared_lock=lock)
+            published = publish_completed_acquisition(
+                store, library_root=root, path=old, source=source, snapshot=snapshot,
+                final_sha256=digest, delivery_receipt_ref="synthetic-receipt",
+                adept_receipt_ref="synthetic-adept")
+            assert published.placement_id == pid
+            if case == "acsm_success":
+                canonical_recovery.mark_completed_delivery_published(
+                    store, source=source, offer_id=offer, artifact_id=published.artifact_id,
+                    shared_lock=lock)
+        target = root / "A/numilog" / old.name
+    else:
+        register(store, "A", "seller", "card-A")
+        old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
+                             metadata=TYPED, provider_id="local")
+        target = root / "A/Livres/Autrice" / old.name
+        target.parent.mkdir(parents=True)
     with store._lock, store._connect() as db:
         db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
                    (json.dumps({"relative_path": str(old.relative_to(root)),
@@ -176,6 +210,13 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     baseline, data, history = store.placement_get(pid), old.read_bytes(), store.acquisitions()
     before = rows(store)
     service = _service(store, root)
+    if case == "acsm_staged":
+        _, review = _run(service)
+        file, = review["groups"][0]["files"]
+        assert file["classified_path_advice"] is None
+        assert old.read_bytes() == data and not target.exists()
+        assert store.placement_get(pid) == baseline and store.acquisitions() == history
+        return
     key = "library.organizer.read"
     resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
                                         "organizer", (key,))
@@ -197,10 +238,6 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     entry, = page.dry_run_entries
     assert entry.operation == "classify" and entry.state == "relocation_held"
     assert entry.proposed == str(target.relative_to(root / "A"))
-    lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
-    with InterProcessLock(lock_path):
-        pass
     if case != "production_hold":
         monkeypatch.setattr(library_organizer_execution, "_execution_fence_current",
                             lambda scope, lock: scope.root == root and scope.storage is store)
@@ -228,7 +265,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     assert len(runner.queue) == 1
     runner.run()
     assert not ui.open(NS(MessageDialog=Dialog))
-    if case == "success":
+    if case in ("success", "acsm_success"):
         assert messages == ["Rangement confirmé. Relancez la revue locale."]
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
@@ -247,6 +284,29 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
             assert target.read_bytes() == b"foreign"
         else:
             assert not target.exists()
-    assert rows(store) == before and store.acquisitions() == history
+    assert rows(store) == before
+    if case == "acsm_success":
+        from dataclasses import replace
+        from cifereca.models import Account
+        from tests.test_core_p0_3171_convergence_execution import FakeService, run
+        with InterProcessLock(lock_path) as lock:
+            recovered = canonical_recovery.recover_completed_delivery(
+                store, source=source, offer_id=offer, library_root=root, shared_lock=lock)
+            assert recovered is not None and recovered.path == target
+            assert recovered.final_sha256 == digest and recovered.adept_receipt_ref == "synthetic-adept"
+        account = Account(identity_id="A", provider_id="numilog", credential_id="card-A",
+                          unique_id="buyer-A")
+        sync = FakeService(store, [account])
+        offered = replace(snapshot, rights=(replace(snapshot.rights[0],
+                          delivery="available", delivery_offer_id=offer),))
+        monkeypatch.setattr("cifereca.core.convergence_execution.acquisition_lock_file",
+                            lambda: lock_path)
+        results = run(sync, account, offered, root, lock_path, {source},
+                      lambda *_: pytest.fail("relocated attested EPUB must avoid GET"))
+        assert results[0].status == "present_attested"
+        assert not old.exists() and target.read_bytes() == data
+        assert rows(store) == before and sync.calls == 0
+    else:
+        assert store.acquisitions() == history
     assert store.entitlements() == []
     resolver.close()

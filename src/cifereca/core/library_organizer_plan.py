@@ -94,9 +94,14 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
         for group in fresh["groups"]:
             for file in group["files"]:
                 current, name = file["current"], file["proposed_name"]
-                if group["copies"] != 1 or not current or not name:
+                layout = file.get("classified_path_advice")
+                if group["copies"] != 1 or not current or (not name and not layout):
                     continue
-                if file["reason"] == "rename_advice_only":
+                # A final ACSM relocation preserves the existing name. The
+                # independent naming review remains available separately.
+                technical_layout = (layout and len(Path(current).parts) == 3
+                                    and Path(current).parts[1].startswith("acsm-"))
+                if file["reason"] == "rename_advice_only" and (rename_only or not technical_layout):
                     plan = broker.plan(LibraryMutationRequest(
                         "normalize_filename", placement_id=file["placement"]))
                     if (plan.operation != "normalize_filename"
@@ -108,10 +113,9 @@ def prepare_organizer_dry_run(scope, report, *, confirmed=False, group_index=Non
                     entries.append(OrganizerDryRunEntry(
                         file["placement"], "rename", current,
                         str(Path(current).with_name(name)), "review_only"))
-                if file.get("classified_path_advice"):
+                if layout and not (rename_only and technical_layout):
                     entries.append(OrganizerDryRunEntry(
-                        file["placement"], "classify", current,
-                        file["classified_path_advice"], "relocation_held"))
+                        file["placement"], "classify", current, layout, "relocation_held"))
         for choice in selected.preselected:
             keeper = next((f for g in fresh["groups"] for f in g["files"]
                            if f["placement"] == choice.keeper_placement_id), None)

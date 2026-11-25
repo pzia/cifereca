@@ -2010,7 +2010,7 @@ class LibraryMaintenanceBrokerImpl:
                     or not old.is_relative_to(classification_root)
                     or not classified_target.is_relative_to(classification_root)
                     or ".." in classified_target.parts
-                    or classified_target.name != old.name or new != old
+                    or classified_target.name != old.name
                     or classified_target.parent == old.parent
                     or not classified_target.parent.is_dir()
                     or classified_target.parent.resolve() != classified_target.parent
@@ -2176,7 +2176,8 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.relocate_local_path(
                     old, new,
                     identity_id=str(row.get("identity_id") or ""),
-                    provider_id=str(row.get("provider_id") or "local"),
+                    provider_id=(row.get("provider_id") if classified_target is not None
+                                 else str(row.get("provider_id") or "local")),
                     **({"classification_root": classification_root}
                        if classified_target is not None else {}),
                 )

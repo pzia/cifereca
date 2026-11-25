@@ -73,8 +73,9 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or row.get("path") != str(old)
                 or plan.operation != "normalize_filename"
                 or plan.destructive is not False
-                or plan.changes != (old.name, new.name)
-                or plan.facts.get("new_filename") != new.name
+                or (not classification and (plan.changes != (old.name, new.name)
+                    or plan.facts.get("new_filename") != new.name))
+                or (classification and (plan.changes != (old.name, plan.facts.get("new_filename"))))
                 or not scope.bound()
                 or sqlite_source_stamp(scope.database) != accepted.anchor.stamp
                 or still_current() is not True
