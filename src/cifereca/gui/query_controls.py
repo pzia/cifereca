@@ -101,11 +101,6 @@ class QueryControls(Gtk.Box):
         self.primary = Gtk.Box(spacing=8); self.append(self.primary)
         self.entry = Gtk.SearchEntry(); self.entry.set_hexpand(True)
         self.entry.set_placeholder_text('Filtre' if library else 'Recherche dans le connu')
-        self.entry.set_tooltip_text(
-            "Filtrer les documents chargés, sans interrogation distante." if library else
-            "Rechercher dans le connu avec Entrée ; affiner les résultats chargés en modifiant les filtres. "
-            "Tous les champs disponibles : titre, auteur, éditeur, sujet, série, collection, langue, prix littéraire et description."
-        )
         self.entry.connect('search-changed', lambda _e: self._changed())
         self.entry.connect('activate', lambda _e: activate())
         self.primary.append(self.entry)
@@ -153,7 +148,14 @@ class QueryControls(Gtk.Box):
             'Champ', 'Champ · Titre', 'Champ · Auteur', 'Champ · ISBN',
             'Champ · Sujet', 'Champ · Série', 'Champ · Collection', 'Champ · Langue',
         ]))
-        self.field.set_tooltip_text("Choisir le champ interrogé : titre, auteur, ISBN, sujet, série, collection ou langue.")
+        self.field.set_tooltip_text(
+            "Choisir un champ strict : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
+            "Filtrage des documents chargés, sans interrogation distante." if library else
+            "Choisir un champ strict : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
+            "Entrée lance la recherche dans le connu ; les filtres affinent les résultats chargés."
+        )
         self.field.connect('notify::selected', lambda *_: self._changed())
         self._scope_values = ('all','physical','digital','unknown')
         self.scope = insert_filter(Gtk.DropDown.new_from_strings([
