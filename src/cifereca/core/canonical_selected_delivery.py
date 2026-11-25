@@ -37,6 +37,7 @@ from .canonical_runtime_attempt import (
 )
 from .canonical_adept_attempt import (
     begin_loan_adept_attempt, pending_loan_adept_attempt, release_proven_unsubmitted_attempt,
+    read_historical_rearm_binding, historical_user_digest,
 )
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
 from .adept_runtime_preflight import AdeptProfileUnavailable, require_fresh_acsm_capability
@@ -224,9 +225,32 @@ def complete_selected_delivery(
         else (scope.identity_id, lambda: True)
     )
 
+    historical_rearm = read_historical_rearm_binding(storage, source)
+    if historical_rearm is not None and historical_rearm[0] != borrower_identity:
+        raise AdeptProfileUnavailable("historical_rearm_profile_changed")
+
     def require_borrower():
         if not borrower_current() or not current():
             raise ValueError("canonical_delivery_borrower_source_changed")
+
+    def require_historical_profile(profile, profile_id):
+        if historical_rearm is None:
+            return
+        try:
+            name, _ = service.resolve_adept_profile_for_identity(borrower_identity)
+            row = service._adept_profile_row(
+                name, service.adept_profiles_for_identity(borrower_identity, profile_name=name))
+            if (name != profile or type(row) is not dict
+                    or (row.get("name") or row.get("profile")) != name
+                    or row.get("profile_id") != profile_id
+                    or profile_is_explicitly_acsm_unready(row)
+                    or (borrower_identity, profile_id, historical_user_digest(row.get("user_uuid")))
+                        != historical_rearm
+                    or read_historical_rearm_binding(storage, source) != historical_rearm):
+                raise ValueError()
+        except Exception:
+            raise AdeptProfileUnavailable("historical_rearm_profile_changed") from None
+        require_borrower()
 
     def acsm_profile():
         require_borrower()
@@ -260,6 +284,7 @@ def complete_selected_delivery(
                 raise AdeptProfileUnavailable("canonical_delivery_adept_profile_binding_changed")
             if profile_is_explicitly_acsm_unready(profile_row):
                 raise AdeptProfileUnavailable("adept_profile_acsm_not_ready")
+        require_historical_profile(profile, profile_id)
         require_borrower()
         return profile, profile_id
 
@@ -269,6 +294,7 @@ def complete_selected_delivery(
                 and service._originating_adept_profile_id(borrower_identity, profile)
                     != profile_id):
             raise ValueError("adept_borrower_profile_changed")
+        require_historical_profile(profile, profile_id)
         require_borrower()
 
     directory, exclusive_owner = storage.exact_profile_directory_binding(
@@ -557,6 +583,13 @@ def complete_selected_delivery(
                     guarded = True
                 if not current():
                     raise ValueError("canonical_delivery_source_rebound")
+        # #7244: a manually released historical marker retains a durable
+        # negative profile constraint across restart. Check before even
+        # the candidate GET, not just before the ADEPT subprocess.
+        early_adept = None
+        if historical_rearm is not None:
+            early_adept = acsm_profile()
+            refresh_adept_profile(*early_adept)
         # #3121: a confirmed manual borrow may have already staged
         # its exact one-shot ACSM. The canonical executor must consume that
         # claim-bound token before asking the provider for another signed URL.
@@ -568,8 +601,8 @@ def complete_selected_delivery(
             admission_current=current,
         )
         require_borrower()
-        early_adept = None
-        if first_acsm is None and source.kind == "loan" and not runtime_guarded:
+        if (early_adept is None and first_acsm is None
+                and source.kind == "loan" and not runtime_guarded):
             probe_name = "downloadable_selected_candidate_is_acsm"
             probe = getattr_static(session, probe_name, None)
             if probe is not None:
@@ -586,6 +619,8 @@ def complete_selected_delivery(
                 if is_acsm:
                     early_adept = acsm_profile()
                     refresh_adept_profile(*early_adept)
+        if historical_rearm is not None:
+            require_adept_profile(*early_adept)
         candidate = (
             (first_acsm, "") if first_acsm is not None
             else getattr(session, reader_name)(
@@ -610,6 +645,8 @@ def complete_selected_delivery(
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
         require_borrower()
+        if historical_rearm is not None:
+            require_adept_profile(*early_adept)
         if not attempt_current():
             raise ValueError("canonical_delivery_staging_replaced")
         if not physical_owner_unique():
