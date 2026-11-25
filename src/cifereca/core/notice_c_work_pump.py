@@ -54,7 +54,8 @@ class PublicNoticeWorkPump:
     def __init__(self, storage, broker, *, clock=None, on_committed=None,
                  replay_registry=None, fetch_execution=None, purchase_execution=None,
                  on_purchase_committed=None, on_witness_rejected=None,
-                 capture_directory=None, prepare_public_age=None, public_age_digests=()):
+                 capture_directory=None, prepare_public_age=None, public_age_digests=(),
+                 on_descriptive_committed=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         if replay_registry is None:
@@ -97,6 +98,7 @@ class PublicNoticeWorkPump:
             prepare_purchase=None if purchase_execution is None else purchase_execution.prepare,
             finish_purchase=None if purchase_execution is None else purchase_execution.finish,
             prepare_descriptive=self._prepare_age if prepare_public_age is not None else None,
+            on_descriptive_committed=on_descriptive_committed,
         )
         lanes = tuple(dict.fromkeys(kind for kind, _digest in self._supported))
         if purchase_execution is not None:
