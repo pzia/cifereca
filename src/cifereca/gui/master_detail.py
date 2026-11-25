@@ -204,6 +204,7 @@ class MasterDetailPage(Gtk.Box):
         self.selection.set_can_unselect(True)
         self.selection.connect("notify::selected-item", self._selection_changed)
 
+        self._notice_priority_cells = {}
         self.factory = Gtk.SignalListItemFactory()
         self.factory.connect("setup", self._factory_setup)
         self.factory.connect("bind", self._factory_bind)
@@ -272,11 +273,74 @@ class MasterDetailPage(Gtk.Box):
         item = list_item.get_item()
         if isinstance(cell, BookListCell) and isinstance(item, BookListItem):
             cell.bind(item)
+            self._notice_priority_cells[cell] = list_item
 
     def _factory_unbind(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
         cell = list_item.get_child()
         if isinstance(cell, BookListCell):
+            self._notice_priority_cells.pop(cell, None)
             cell.unbind()
+
+    def priority_public_document(self, row):
+        """Reuse the exact live public C occurrence, not a displayed title."""
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        from .search_document_cover_bridge import search_document_is_current
+        from .search_known_public_c_guard import known_public_c_cell_current
+        from .local_public_c_cell_guard import local_public_c_cell_current
+
+        document = getattr(row, "_cover_document_ref", None)
+        if not is_canonical_cover_document(document):
+            return None
+        proof = getattr(row, "_cover_search_evidence", None)
+        known = getattr(row, "_cover_known_public_c_receipt", None)
+        local = getattr(row, "_cover_public_c_link", None)
+        if proof is not None:
+            if proof.document == document and search_document_is_current(self.window, proof):
+                return document
+        elif known is not None:
+            if known_public_c_cell_current(self.window, row, known):
+                return document
+        elif local is not None:
+            service = self.window.service
+            context = (
+                getattr(getattr(service, "current_identity", None), "identity_id", None),
+                getattr(service, "_account_context_epoch", None),
+                getattr(service, "_source_context_epoch", None),
+            )
+            if local_public_c_cell_current(self.window, row, service=service, context=context):
+                return document
+        return None
+
+    def visible_notice_priority_documents(self):
+        """Read only currently intersecting virtual cells, not the whole list."""
+        if not self.get_mapped():
+            return ()
+        documents = []
+        selected = self.priority_public_document(self.selection.get_selected_item())
+        if selected is not None:
+            documents.append(selected)
+        if not self.scroll.get_mapped():
+            return tuple(documents)
+        width, height = self.scroll.get_width(), self.scroll.get_height()
+        # GTK owns the live bind/unbind set. Limit the advisory snapshot,
+        # never walk the full Gio.ListStore or ask a supplier for a ref.
+        from itertools import islice
+        for cell, list_item in islice(self._notice_priority_cells.items(), 128):
+            if len(documents) >= 64:
+                break
+            if not cell.get_mapped():
+                continue
+            ok, bounds = cell.compute_bounds(self.scroll)
+            if not ok:
+                continue
+            x, y = bounds.get_x(), bounds.get_y()
+            if (x >= width or y >= height or x + bounds.get_width() <= 0
+                    or y + bounds.get_height() <= 0):
+                continue
+            document = self.priority_public_document(list_item.get_item())
+            if document is not None and document not in documents:
+                documents.append(document)
+        return tuple(documents)
 
     def bind_local_filter_focus(self, callback: Callable[[], bool] | None) -> None:
         """Optional page-local Ctrl+F target, independent of global Search."""
