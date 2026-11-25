@@ -8,7 +8,7 @@ from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
 from cifereca.core.notice_c_public_age_read import read_public_age_result, PublicAgeRead
-from cifereca.core.notice_c_public_age_request import request_public_age_consolidation
+from cifereca.core.notice_c_public_age_producer import request_current_public_age
 from cifereca.core.notice_c_public_age_execution import prepare_exact_public_age
 from cifereca.core.notice_descriptive_active_config import reconcile_active_descriptive_selection
 from cifereca.core.notice_consolidator_trusted_registry import TrustedConsolidatorRegistry
@@ -60,8 +60,14 @@ def test_public_age_read_current_then_unavailable_stale_and_unconfigured(tmp_pat
                 expected_generation=0,
             )
             assert read() == PublicAgeRead("unknown")
-            ref = request_public_age_consolidation(db, target_edition_id=target, scope=scope,
-                                                   now=100, expected_generation=0)
+            def produce(now):
+                return request_current_public_age(
+                    db, target_edition_id=target, scope=scope, now=now,
+                    implementation_digests=registry.public_age_digests(),
+                )
+
+            ref = produce(100)
+            assert ref is not None
             broker = TaskBrokerImpl(object(), max_workers=1, shared_admission=
                                     SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
             try:
@@ -76,6 +82,9 @@ def test_public_age_read_current_then_unavailable_stale_and_unconfigured(tmp_pat
                 assert current.status == "current"
                 assert "age_min" in current.materialization.value
                 assert not current.materialization.inherited
+                assert produce(100) == ref
+                assert journal.read_job(db, ref).state == "current"
+                assert journal.read_job(db, ref).attempts == 1
                 # The read is lineage/pin bound, not dependent on retention
                 # of a terminal job receipt.
                 recycle_terminal_jobs(db, now=1000000)
@@ -89,6 +98,12 @@ def test_public_age_read_current_then_unavailable_stale_and_unconfigured(tmp_pat
                 changed.metadata["bibliography_evidence"]["youth_age"]["ranges"][0]["age_min"] = 14
                 latest = persist(db, project(changed), at=101)
                 persist_exact_public_search_cover(db, latest)
+                assert read() == PublicAgeRead("stale")
+                replacement = produce(101)
+                assert replacement.key == ref.key and replacement.generation > ref.generation
+                assert journal.read_job(db, replacement).attempts == 0
+                assert produce(101) == replacement
+                # Requesting the replacement cannot expose stale materialization.
                 assert read() == PublicAgeRead("stale")
                 set_descriptive_selection(db, canonical_type="age", scope=scope, selection=None,
                                           installed_source_sha256=None,
