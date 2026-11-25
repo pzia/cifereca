@@ -101,6 +101,11 @@ class QueryControls(Gtk.Box):
         self.primary = Gtk.Box(spacing=8); self.append(self.primary)
         self.entry = Gtk.SearchEntry(); self.entry.set_hexpand(True)
         self.entry.set_placeholder_text('Filtre' if library else 'Recherche dans le connu')
+        self.entry.set_tooltip_text(
+            "Filtrer les documents chargés, sans interrogation distante." if library else
+            "Rechercher dans le connu avec Entrée ; affiner les résultats chargés en modifiant les filtres. "
+            "Tous les champs disponibles : titre, auteur, éditeur, sujet, série, collection, langue, prix littéraire et description."
+        )
         self.entry.connect('search-changed', lambda _e: self._changed())
         self.entry.connect('activate', lambda _e: activate())
         self.primary.append(self.entry)
