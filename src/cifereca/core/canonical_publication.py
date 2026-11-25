@@ -422,6 +422,7 @@ def publish_completed_acquisition(
             "WHERE path=?", (str(target),),
         ).fetchone()
         if existing_placement is None:
+            placement_id = storage._available_placement_id_in_db(db, str(target), placement_id)
             db.execute(
                 "INSERT INTO placements(placement_id,artifact_id,path,identity_id,"
                 "provider_id,source_item_id,state,last_seen_at,metadata_json,"
