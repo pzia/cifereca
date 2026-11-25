@@ -220,3 +220,29 @@ explicite ; aucun nouveau moteur de recherche n'est autorisé par cette matrice.
 
 **Garde de production** : ni activation destructrice #6937/#3176, ni
 levée de marqueur ADEPT #7244, ni nouveau chemin de publication.
+
+### Réception des budgets et de la reprise supervisée — 25/11/2026
+
+| Lot intégré | Fusion | PR CI |
+| --- | --- | --- |
+| #8063 | `3634d8e60e70f4ff7078db440d01f569f5e8a8d3` | Gates PR, AST et installation vertes |
+| #8064 | `e13cb85e588863aff6a1278db563fa9244e463fc` | 45555914756 |
+| #8066 | `859eebc295b72f350c7a1644161faf7f2c0c4d29` | 45558307649 |
+
+Le broker contextuel limite les admissions explicites de comparaison distante
+à 8 par fournisseur et 32 au total sur une fenêtre glissante de 60 secondes,
+par activation. Une nouvelle preview ou une annulation ne réinitialise pas
+ce budget. Ce compteur ne mesure pas les requêtes HTTP internes aux producteurs,
+ni les autres activations ou processus : aucun quota réseau global n'est attesté.
+
+Le batch local reste sans réseau, avec plafond de 128 Mio de travail estimé,
+3 secondes coopératives entre fichiers et 200 pages au maximum. Le curseur
+est lié à la revue et à l'image SQLite, non à un checkpoint durable. La reprise
+sur la page suivante est supervisée ; annuler révoque la continuation en vol,
+et un changement de scope impose une nouvelle revue. Aucun fichier trop gros
+n'est déclaré comparé. Le plafond temporel n'est pas un timeout I/O strict.
+
+Ces preuves ne suffisent pas à déclarer une reprise persistante après arrêt
+du processus. Les correctifs #8072 et #8073 restent à réceptionner séparément.
+Aucun élargissement de permission, aucune attribution de droit ou provenance,
+aucune qualification terrain ne découle de cette réception.
