@@ -1,4 +1,4 @@
-"""#3176 isolated single-rename receipt using the existing Core writer.
+"""#3176/#7407 isolated bounded relocation receipt using the existing Core writer.
 
 No production activation: the independent consumer/maintenance fence has
 not been qualified. Neither a confirmed dry-run nor a caller flag lifts it.
@@ -6,7 +6,11 @@ not been qualified. Neither a confirmed dry-run nor a caller flag lifts it.
 from dataclasses import replace
 from pathlib import Path
 
-from .library_organizer_plan import OrganizerDryRunPlan, confirm_organizer_dry_run
+from .library_organizer_plan import (
+    OrganizerDryRunPlan, confirm_organizer_dry_run, prepare_organizer_dry_run,
+    native_relocation_entries,
+)
+from .library_organizer_review import run_organizer_review
 from .canonical_recovery import _lock_ok
 from .library_sqlite_freshness import sqlite_source_stamp
 
@@ -17,15 +21,12 @@ def _execution_fence_current(scope, lock):
 
 def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=False,
                             still_current=lambda: True, receipt_current=None):
-    """Isolated recipe for one exact rename or independent classification, never keeper.
+    """Isolated recipe for exact independent relocations, never keeper.
 
     Delegate all writes to the existing maintenance broker. A postcheck
     failure reports recovery required; it never invokes a second writer or
     attempts speculative rollback after the commit boundary.
     """
-    from ..artifact_runtime import LibraryMaintenanceBrokerImpl
-    from ..plugin_api import LibraryMutationRequest
-
     # The native handoff retains precommit freshness by default; a receipt
     # is evaluated against the writer's newly captured stamp instead.
     if receipt_current is None:
@@ -36,9 +37,8 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                      and callable(receipt_current) and still_current() is True
                      and type(accepted) is OrganizerDryRunPlan
                      and accepted.scope is scope and accepted.confirmed is True
-                     and accepted.executable is False and len(accepted.entries) == 1
-                     and (accepted.entries[0].operation, accepted.entries[0].state) in (
-                         ("rename", "review_only"), ("classify", "relocation_held"))
+                     and accepted.executable is False
+                     and native_relocation_entries(accepted.entries)
                      and _lock_ok(shared_lock)
                      and _execution_fence_current(scope, shared_lock))
     except Exception:
@@ -46,13 +46,81 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
         return {"status": "blocked", "changed": 0}
     if not permitted:
         return {"status": "blocked", "changed": 0}
-    entry = accepted.entries[0]
-    invoked = False
+
+    # A batch never implicitly consents to newly discovered advice. The
+    # initial exact confirmation is checked once, then each remaining entry
+    # must still appear unchanged in a fresh review anchored to our receipt.
     try:
         fresh = confirm_organizer_dry_run(
             scope, page, replace(accepted, confirmed=False), confirmed=True)
         if fresh != accepted:
             return {"status": "blocked", "changed": 0}
+    except Exception:
+        return {"status": "blocked", "changed": 0}
+    entries = accepted.entries
+    total = len(entries)
+    stamp = accepted.anchor.stamp
+    completed = 0
+
+    def stopped(result):
+        if total == 1 or (completed == 0 and result["status"] == "blocked"):
+            return result
+        return {"status": ("partial" if result["status"] == "blocked"
+                           else "recovery_required"),
+                "changed": completed if result["status"] == "blocked" else None,
+                "completed": completed, "remaining": total - completed}
+
+    def receipt(stamp_after):
+        nonlocal stamp
+        if receipt_current(stamp_after) is not True:
+            return False
+        stamp = stamp_after
+        return True
+
+    for index, entry in enumerate(entries):
+        if index:
+            try:
+                if (still_current() is not True or not _lock_ok(shared_lock)
+                        or not _execution_fence_current(scope, shared_lock)
+                        or sqlite_source_stamp(scope.database) != stamp):
+                    return stopped({"status": "blocked", "changed": 0})
+                anchor = replace(accepted.anchor, stamp=stamp)
+                current_page = run_organizer_review(
+                    scope.service, scope, cursor=anchor if anchor.offset else None)
+                current_plan = prepare_organizer_dry_run(
+                    scope, current_page, confirmed=True,
+                    group_index=accepted.group_index, rename_only=accepted.rename_only)
+                # Retain the reviewed per-file evidence, not just identical
+                # path strings. Never substitute new or changed entries.
+                pending_ids = {e.placement_id for e in entries[index:]}
+                def pending_facts(report):
+                    return {f["placement"]: f for g in report["groups"]
+                            for f in g["files"] if f["placement"] in pending_ids}
+                if (current_plan is None or current_plan.anchor.stamp != stamp
+                        or any(e not in current_plan.entries for e in entries[index:])
+                        or pending_facts(current_page) != pending_facts(page)):
+                    return stopped({"status": "blocked", "changed": 0})
+            except Exception:
+                return stopped({"status": "blocked", "changed": 0})
+        result = _execute_reviewed_entry(
+            scope, entry, stamp, shared_lock=shared_lock,
+            still_current=still_current, receipt_current=receipt)
+        if result["status"] not in ("renamed", "classified"):
+            return stopped(result)
+        completed += 1
+    if total == 1:
+        return result
+    return {"status": "batch_completed", "changed": completed,
+            "completed": completed, "remaining": 0}
+
+
+def _execute_reviewed_entry(scope, entry, stamp, *, shared_lock, still_current,
+                            receipt_current):
+    from ..artifact_runtime import LibraryMaintenanceBrokerImpl
+    from ..plugin_api import LibraryMutationRequest
+
+    invoked = False
+    try:
         old = scope.root / scope.directory / entry.current
         new = scope.root / scope.directory / entry.proposed
         classification = entry.operation == "classify"
@@ -77,7 +145,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                     or plan.facts.get("new_filename") != new.name))
                 or (classification and (plan.changes != (old.name, plan.facts.get("new_filename"))))
                 or not scope.bound()
-                or sqlite_source_stamp(scope.database) != accepted.anchor.stamp
+                or sqlite_source_stamp(scope.database) != stamp
                 or still_current() is not True
                 or not _lock_ok(shared_lock)
                 or not _execution_fence_current(scope, shared_lock)):
@@ -102,7 +170,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 if (still_current() is not True or not scope.bound()
                         or not _lock_ok(shared_lock)
                         or not _execution_fence_current(scope, shared_lock)
-                        or sqlite_source_stamp(scope.database) != accepted.anchor.stamp):
+                        or sqlite_source_stamp(scope.database) != stamp):
                     raise RuntimeError("organizer_review_revoked")
 
         invoked = True
@@ -147,7 +215,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
 
 def admit_native_reviewed_rename(manager, resolved, page, *, service, identity_id,
                                  confirmed=False, view_current):
-    """Core-only one-shot worker; explicit consent and exact mounted review.
+    """Core-only one-shot worker; explicit consent and exact mounted review batch.
 
     No lock or database work on the UI thread: call the admission inside the
     admitted worker. A missing independent fence still refuses all writes.
@@ -190,11 +258,20 @@ def admit_native_reviewed_rename(manager, resolved, page, *, service, identity_i
         try:
             # Do not create/truncate an acquisition lock during maintenance.
             with InterProcessLock(acquisition_lock_file(create=False), existing_nofollow=True) as lock:
+                expected_stamp = plan.anchor.stamp
+
                 def current_lock():
-                    return live() and lock.strict_current()
-                def receipt_lock(stamp):
-                    return (view_current() is True and current(receipt_stamp=stamp) is True
+                    return (view_current() is True
+                            and current(receipt_stamp=expected_stamp) is True
                             and lock.strict_current())
+
+                def receipt_lock(stamp):
+                    nonlocal expected_stamp
+                    if (view_current() is True and current(receipt_stamp=stamp) is True
+                            and lock.strict_current()):
+                        expected_stamp = stamp
+                        return True
+                    return False
                 if not current_lock():
                     return {"status": "blocked", "changed": 0}
                 return execute_reviewed_rename(
