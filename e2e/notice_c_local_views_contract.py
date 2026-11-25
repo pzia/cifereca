@@ -1383,14 +1383,109 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     assert window.service._source_context_epoch == source_epoch
                     capture("00-notice-c-catalogue-http-fallback")
                     report["checks"]["P0_4980_catalogue_http_fallback_real_gtk"] = True
-                    report["local_c_stage"] = "complete"
-                    cleanup()
-                    window.present()
-                    complete()
+                    verify_postcommit_rebind(list_cover, detail_cover)
 
                 later(40, guard(lambda: painted(monotonic() + 8)))
 
             await_job(pool.submit(prepare), show_fallback, monotonic() + 8)
+
+        def verify_postcommit_rebind(list_cover, detail_cover):
+            """A new exact C proof repaints two subscribed real widgets."""
+            from cifereca.core.notice_c_cover_index import persist_consolidated_cover_source
+            from cifereca.core.notice_cover_repository import persist_notice_cover
+            from cifereca.core.notice_source_observation import NoticeSourceKey, admit_source_notice
+
+            report["local_c_stage"] = "postcommit_rebind"
+            covers = (list_cover, detail_cover)
+            original_gets = tuple(gets)
+            original_fallback_gets = tuple(fallback_gets)
+            initial_reads = len(reads)
+
+            def publish(address, stamp, expected):
+                assert get_ident() != gtk_thread
+                provider = "fixture-postcommit"
+                notice = admit_source_notice(
+                    key=NoticeSourceKey(
+                        provider_id=provider, visibility="public", identity_id=None,
+                        credential_id=None, account_id=None, branch_id="catalogue",
+                        record_id=provider, edition_id=provider, manifestation_role="digital",
+                    ),
+                    parser_id="fixture", parser_version="1", observed_at=stamp,
+                    status="complete", raw_fields={"cover": address},
+                )
+                source = persist_notice_cover(
+                    db, notice, field_path=("cover",), cover_inventory_complete=True,
+                )
+                return persist_consolidated_cover_source(
+                    db, canonical_edition_id="fixture:postcommit", source=source,
+                    relation_proof_id="fixture:postcommit:exact", expected_epoch=expected,
+                )
+
+            def ready(address):
+                return all(
+                    cover.get_mapped() and cover._request is not None
+                    and cover._request.still_current and cover._request.source_uri == address
+                    and isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                    and not cover.placeholder.get_visible() and not cover.spinner.get_visible()
+                    for cover in covers
+                )
+
+            def assert_pixels(expected):
+                for cover in covers:
+                    texture = cover.picture.get_paintable()
+                    with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                        assert image.convert("RGB").getpixel((0, 0)) == expected
+
+            def show_initial(initial):
+                for variant, cover in zip(("list", "detail"), covers):
+                    cover.bind_document(n2, initial.document, variant=variant,
+                                        minimum_revision=initial.epoch)
+
+                def initial_painted(deadline):
+                    if not ready(url):
+                        assert monotonic() < deadline, "postcommit initial GTK timeout"
+                        later(40, guard(lambda: initial_painted(deadline)))
+                        return
+                    assert_pixels(replacement_pixels)
+                    assert reads[initial_reads:] == [initial.document]
+                    old_requests = tuple(cover._request for cover in covers)
+
+                    def commit():
+                        updated = publish(fallback_images[-1], 2, initial.epoch)
+                        assert updated.document == initial.document
+                        assert updated.epoch > initial.epoch
+                        # Actual N2 observer, after the authoritative SQLite commit.
+                        assert n2.refresh_committed_source_in_worker(updated.document, updated.epoch)
+                        return updated
+
+                    def committed(updated):
+                        def repainted(deadline):
+                            if not ready(fallback_images[-1]):
+                                assert monotonic() < deadline, "postcommit subscribed GTK timeout"
+                                later(40, guard(lambda: repainted(deadline)))
+                                return
+                            # No bind, click, selection or view refresh since commit.
+                            assert all(cover._request is not old and not old.still_current
+                                       for cover, old in zip(covers, old_requests))
+                            assert_pixels(pixels)
+                            assert reads[initial_reads:] == [updated.document, updated.document]
+                            assert tuple(gets) == original_gets
+                            assert tuple(fallback_gets) == original_fallback_gets
+                            assert window.service._account_context_epoch == account_epoch
+                            assert window.service._source_context_epoch == source_epoch
+                            report["checks"]["P0_6168_postcommit_rebind_real_gtk"] = True
+                            report["local_c_stage"] = "complete"
+                            cleanup()
+                            window.present()
+                            complete()
+
+                        later(40, guard(lambda: repainted(monotonic() + 8)))
+
+                    await_job(pool.submit(commit), committed, monotonic() + 8)
+
+                later(40, guard(lambda: initial_painted(monotonic() + 8)))
+
+            await_job(pool.submit(publish, url, 1, 0), show_initial, monotonic() + 8)
 
         stamp_value = 1794900000
         future = pool.submit(project)
