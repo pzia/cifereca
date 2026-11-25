@@ -196,7 +196,7 @@ class ReaderHTTPClient:
         self.http.cookies.clear()
 
     def request(self, method, url, *, data=None, authenticating=False, deadline=None,
-                observe_search_input=None):
+                observe_search_input=None, retain_search_input=None):
         deadline = deadline or time.monotonic() + 30
         for _ in range(12):
             if time.monotonic() >= deadline:
@@ -241,13 +241,15 @@ class ReaderHTTPClient:
                     encoding = r.encoding or 'utf-8'
                     html = body.decode(encoding, errors='strict')
                     # Only the actual, successfully decoded catalogue response.
-                    # The authenticated HTML itself never leaves this read via
-                    # the witness channel. Restrict v1 to unambiguous UTF-8.
+                    # Digest by default; exact bytes only for the explicitly
+                    # opted-in session-local cache. V1 admits only UTF-8.
                     if (observe_search_input is not None and method == 'GET'
                             and not authenticating and encoding.lower().replace('_', '-') == 'utf-8'
                             and urlsplit(str(r.url)).hostname == 'pret.bnf.fr'
                             and urlsplit(str(r.url)).path == '/resources'):
                         observe_search_input(sha256(body).hexdigest())
+                        if retain_search_input is not None:
+                            retain_search_input(bytes(body))
                     return str(r.url), html
             except (httpx.HTTPError, UnicodeError):
                 raise ReaderHTTPError('transport_unavailable') from None
