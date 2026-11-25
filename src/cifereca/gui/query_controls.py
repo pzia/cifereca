@@ -148,7 +148,14 @@ class QueryControls(Gtk.Box):
             'Champ', 'Champ · Titre', 'Champ · Auteur', 'Champ · ISBN',
             'Champ · Sujet', 'Champ · Série', 'Champ · Collection', 'Champ · Langue',
         ]))
-        self.field.set_tooltip_text("Choisir le champ interrogé : titre, auteur, ISBN, sujet, série, collection ou langue.")
+        self.field.set_tooltip_text(
+            "Choisir le champ interrogé (strict) : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
+            "Filtrage des documents chargés, sans interrogation distante." if library else
+            "Choisir le champ interrogé (strict) : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
+            "Entrée lance la recherche dans le connu ; les filtres affinent les résultats chargés."
+        )
         self.field.connect('notify::selected', lambda *_: self._changed())
         self._scope_values = ('all','physical','digital','unknown')
         self.scope = insert_filter(Gtk.DropDown.new_from_strings([

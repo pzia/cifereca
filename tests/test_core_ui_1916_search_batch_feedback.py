@@ -84,7 +84,9 @@ def test_batch_callbacks_do_not_resurrect_stale_generation_or_identity():
 
 
 def test_rendered_count_persists_distinct_closed_statuses_only_in_matching_context():
+    from unittest.mock import Mock
     host = view_host()
+    host.search_page.count_label.set_tooltip_text = Mock()
     host._search_mode = "global"
     host._online_source_statuses = {
         "private@example.invalid": "unavailable",
@@ -101,6 +103,9 @@ def test_rendered_count_persists_distinct_closed_statuses_only_in_matching_conte
     host._search_mode = "local"
     host._update_search_count(1)
     assert host.search_page.count_label.set_label.call_args.args[0] == "1 résultat · Connu"
+    tooltip = host.search_page.count_label.set_tooltip_text.call_args.args[0]
+    assert "index potentiellement incomplet" in tooltip
+    assert "résultats chargés" in tooltip and "Étendre en ligne" in tooltip
 
 
 def test_empty_failed_source_is_visible_before_remaining_providers_complete():
