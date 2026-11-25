@@ -647,5 +647,10 @@ def _update_search_count(self, shown: int) -> None:
     # adapters without GTK tooltip support retain the unchanged count.
     label = self.search_page.count_label
     if hasattr(label, "set_tooltip_text"):
-        label.set_tooltip_text(tooltip or None)
+        label.set_tooltip_text(tooltip or (
+            "Nombre de résultats affichés dans le connu ; index potentiellement incomplet. "
+            "Les filtres affinent les résultats chargés. Étendre en ligne interroge les catalogues distants."
+            if self._search_mode == "local" else
+            "Nombre de résultats affichés après extension ; la couverture des catalogues peut être incomplète."
+        ))
 
