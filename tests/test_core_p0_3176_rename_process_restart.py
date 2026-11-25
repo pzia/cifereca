@@ -258,8 +258,16 @@ def test_restart_classification_preserves_checkpoint_and_zero_get(tmp_path, monk
                 with monkeypatch.context() as patch:
                     patch.setattr(supervisor, "_ordinary_cleanup_enabled", lambda: True)
                     done = supervisor.supervise_canonical_duplicate(storage, **kwargs)
-                assert done.finished and done.removed_file, done.reason
+                # Unlinking one of two hardlinks changes the surviving
+                # inode's ctime. The existing writer correctly retains the
+                # tombstone when its pre-unlink fingerprint is no longer
+                # current; explicit recovery rehashes the survivor afresh.
+                assert done.removed_file and done.status == "cleanup_pending", done.reason
+                assert storage.placement_get(candidate["placement_id"])["state"] == "dedup_cleanup_pending"
                 assert not other.exists() and named.is_file()
+                resumed = supervisor.supervise_canonical_duplicate(
+                    storage, **{**kwargs, "action": "recover"})
+                assert resumed.finished and not resumed.removed_file, resumed.reason
                 assert physical_paths() == present_paths() == {str(named)}
                 assert rows(storage) == (1, 1, 1, 1)
         else:
