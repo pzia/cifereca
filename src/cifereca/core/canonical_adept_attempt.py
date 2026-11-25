@@ -368,3 +368,110 @@ def release_proven_unsubmitted_attempt(storage, *, source, offer_id, operation_i
         if inserted.rowcount != 1:
             raise ValueError("canonical_adept_unsubmitted_pending")
     _consume_proven_unsubmitted(storage, source=source, expected=expected, witness=witness)
+
+
+# Owner-supervised historical release uses the SAME canonical marker writer.
+# The immutable audit survives subsequent attempts; the scoped index is only
+# a negative profile constraint on the ordinary next Sync, never consent.
+def historical_rearm_audit_key(review):
+    return _stable("canonical.adept_historical_rearm.v1", review.fingerprint)
+
+
+def _historical_rearm_index(source):
+    return _stable("canonical.adept_historical_rearm_index.v1", _key(source))
+
+
+def _is_digest(value):
+    return (type(value) is str and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def historical_user_digest(value):
+    if value is None or (type(value) is str and value == ""):
+        return ""
+    if type(value) is not str or not 0 < len(value) <= 256:
+        raise ValueError("historical_rearm_profile_unverified")
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _historical_rearm_binding_in_db(db, source):
+    from .canonical_recovery import _scope, _unique_checkpoint_fields
+
+    index = db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB))<=128 THEN value ELSE NULL END "
+        "FROM metadata WHERE key=?", (_historical_rearm_index(source),),
+    ).fetchone()
+    if index is None:
+        return None
+    key = index[0]
+    if type(key) is not str or not key.startswith("canonical.adept_historical_rearm.v1:"):
+        raise ValueError("historical_rearm_audit_unverified")
+    row = db.execute(
+        "SELECT CASE WHEN length(CAST(value AS BLOB))<=65536 THEN value ELSE NULL END "
+        "FROM metadata WHERE key=?", (key,),
+    ).fetchone()
+    try:
+        data = json.loads(row[0], object_pairs_hook=_unique_checkpoint_fields)
+        fingerprint = data["marker_fingerprint"]
+        borrower = data["borrower_identity_id"]
+        profile = data["adept_profile_id"]
+        user = data["user_uuid_digest"]
+        if (type(data) is not dict or data["schema"] != 1
+                or data["source"] != _scope(source)
+                or data["result"] != "exact_marker_released"
+                or data["proof"] != "owner_attested_same_activation_and_pre_dispatch_refusal"
+                or not _is_digest(data["journal_sha256"])
+                or type(fingerprint) is not str
+                or not fingerprint.startswith("canonical.adept_marker_review.v1:")
+                or not _is_digest(fingerprint.split(":", 1)[1])
+                or key != _stable("canonical.adept_historical_rearm.v1", fingerprint)
+                or not all(type(v) is str and 0 < len(v) <= 256 for v in (borrower, profile))
+                or (user != "" and not _is_digest(user))):
+            raise ValueError()
+        return borrower, profile, user
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError, RecursionError):
+        raise ValueError("historical_rearm_audit_unverified") from None
+
+
+def read_historical_rearm_binding(storage, source):
+    """A durable negative profile constraint, not permission or proof of B."""
+    if source.kind != "loan":
+        return None
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise ValueError("canonical_adept_attempt_nested_transaction")
+        with db:
+            db.execute("BEGIN")
+            return _historical_rearm_binding_in_db(db, source)
+
+
+def _release_reviewed_historical_attempt_in_transaction(
+    db, *, source, review, witness, payload,
+):
+    """Internal CAS only: the supervisor owns fresh right/consent/profile/lease."""
+    if (not matches_reviewed_loan_adept_marker_in_transaction(db, source=source, review=review)
+            or review_loan_adept_unsubmitted_in_transaction(db, source=source) != witness
+            or witness.state not in ("not_recorded", "non_submission_recorded")):
+        raise ValueError("historical_rearm_marker_changed")
+    previous_binding = _historical_rearm_binding_in_db(db, source)
+    raw = _marker_row(db, source)
+    proof = _unsubmitted_row(db, source)
+    audit_key = historical_rearm_audit_key(review)
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (audit_key, payload))
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_historical_rearm_index(source), audit_key),
+    )
+    new_binding = _historical_rearm_binding_in_db(db, source)
+    if previous_binding is not None and previous_binding != new_binding:
+        raise ValueError("historical_rearm_profile_changed")
+    deleted = db.execute("DELETE FROM metadata WHERE key=? AND value=?", (_key(source), raw[0]))
+    if deleted.rowcount != 1:
+        raise ValueError("historical_rearm_marker_changed")
+    if proof is not None:
+        deleted = db.execute("DELETE FROM metadata WHERE key=? AND value=?",
+                             (_unsubmitted_key(source), proof[0]))
+        if deleted.rowcount != 1:
+            raise ValueError("historical_rearm_marker_changed")

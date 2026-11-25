@@ -159,6 +159,15 @@ def _selected_hold_summary(value):
             + "\\nRetéléchargement non autorisé ; aucun verrou modifié.").replace("\\n", "\n")
 
 
+def _rearm_attestable(value):
+    from ..core.adept_historical_maintenance import HistoricalHoldSelection
+    return (type(value) is HistoricalHoldSelection
+            and value.marker.state == "held_phase_unknown"
+            and value.witness.state in ("not_recorded", "non_submission_recorded")
+            and not value.recorded_inactive and value.copy_evidence == "not_proven"
+            and value.final_receipt_evidence == "not_observed")
+
+
 def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combined",
                                           view_current=lambda: True):
     """Mount the existing controller on one functional surface.
@@ -179,7 +188,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
     row = Adw.ActionRow()
     row.set_title("Verrous de téléchargements ADEPT" if mode == "holds"
                   else "Provenances de prêts historiques")
-    row.set_subtitle("Diagnostic local des verrous ; aucun déverrouillage autorisé."
+    row.set_subtitle("Diagnostic local ; reprise supervisée uniquement après attestation et qualification Core."
                      if mode == "holds" else "Rapport local du profil actif, sans accès fournisseur.")
     start = window.action_button("Examiner…", "system-search-symbolic")
     holds = window.action_button("Verrous…", "dialog-warning-symbolic")
@@ -222,6 +231,9 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
     last_route = None
     last_generation = None
     hold_mode = mode == "holds"
+    selected_hold = None
+    rearm_button = None
+    rearm_dialog = None
 
     def mounted():
         try:
@@ -229,7 +241,18 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
         except Exception:
             return False
 
+    def clear_rearm():
+        nonlocal selected_hold, rearm_dialog
+        selected_hold = None
+        if rearm_button is not None:
+            rearm_button.set_sensitive(False)
+            rearm_button.set_visible(False)
+        dialog, rearm_dialog = rearm_dialog, None
+        if dialog is not None:
+            dialog.close()
+
     def selection_changed(_control):
+        clear_rearm()
         compare.set_sensitive(
             mounted() and not busy and 0 <= selection.get_active() < len(selected_rows)
             and last_request is not None and last_request.current()
@@ -239,6 +262,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
 
     def reset_selection():
         nonlocal selected_rows, last_page
+        clear_rearm()
         selected_rows = ()
         last_page = None
         inventory_actions.set_visible(False)
@@ -368,6 +392,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
         if operation is None:
             detail.set_text(last_text + "\n\nInventaire local indisponible.")
             return
+        clear_rearm()
         busy = True
         for widget in (start, holds, verify, next_page, selection, compare):
             widget.set_sensitive(False)
@@ -375,7 +400,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
         delivered = False
 
         def done(value):
-            nonlocal busy, delivered
+            nonlocal busy, delivered, selected_hold, rearm_button
             if delivered:
                 return
             delivered = True
@@ -399,6 +424,14 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
                 next_page.set_sensitive(following is not None)
                 selection.set_sensitive(bool(selected_rows))
                 selection_changed(selection)
+                if _rearm_attestable(value):
+                    selected_hold = value
+                    if rearm_button is None:
+                        rearm_button = Gtk.Button(label="Autoriser le retéléchargement…")
+                        inventory_actions.append(rearm_button)
+                        rearm_button.connect("clicked", rearm_clicked)
+                    rearm_button.set_visible(True)
+                    rearm_button.set_sensitive(True)
                 return
             summary = "Inventaire local indisponible ou preuves modifiées. Aucun constat d’absence."
             if type(value) is dict:
@@ -433,6 +466,116 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
             )
         except Exception:
             done(None)
+
+    def rearm_clicked(button):
+        nonlocal rearm_dialog
+        value = selected_hold
+        request, route, generation = last_request, last_route, last_generation
+
+        def current():
+            return (mounted() and not getattr(window, "_closed", False)
+                    and window.service is service and selected_hold is value
+                    and request is not None and request.current()
+                    and getattr(window, "_route_display_token", None) is route
+                    and getattr(window, "_identity_context_generation", None) == generation)
+
+        if (busy or rearm_dialog is not None or not _rearm_attestable(value)
+                or button.get_root() is None or not current()):
+            return
+        from ..core.adept_historical_rearm import (
+            _digest, _profile_ref, rearm_reviewed_historical_hold,
+        )
+        source = value.source
+        dialog = Adw.MessageDialog.new(
+            window, "Attestation propriétaire — reprise ADEPT",
+            "Identité : " + _hold_coordinate(source.scope.identity_id)
+            + "\n" + _selected_hold_summary(value)
+            + "\nEmpreinte du verrou : " + value.marker.fingerprint
+            + "\n\nEn confirmant, j’atteste que le journal identifié concerne exactement "
+              "ce prêt, ce compte, ce verrou et ce profil ADEPT, que la tentative a été "
+              "refusée avant lancement et que la même activation a été conservée sans "
+              "réactivation. Le Core vérifiera les droits, le consentement, l’offre "
+              "courante et la récupération locale. Seul le verrou exact sera retiré "
+              "avec audit ; aucun téléchargement de contenu ici. La prochaine "
+              "synchronisation canonique reste soumise à ses propres contrôles.")
+        dialog.set_body_use_markup(False)
+        inputs = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        digest = Gtk.Entry()
+        digest.set_placeholder_text("SHA-256 du journal de l’incident (64 hex)")
+        digest.set_max_length(64)
+        profile = Gtk.Entry()
+        profile.set_placeholder_text("Identifiant stable du profil ADEPT historique")
+        profile.set_max_length(256)
+        inputs.append(digest)
+        inputs.append(profile)
+        dialog.set_extra_child(inputs)
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("apply", "Attester et confirmer")
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.set_response_enabled("apply", False)
+        rearm_dialog = dialog
+
+        def changed(_entry):
+            dialog.set_response_enabled(
+                "apply", current() and _digest(digest.get_text())
+                and _profile_ref(profile.get_text()))
+
+        digest.connect("changed", changed)
+        profile.connect("changed", changed)
+
+        def response(_dialog, response_id):
+            nonlocal busy, rearm_dialog
+            if rearm_dialog is not dialog:
+                return
+            rearm_dialog = None
+            sha, profile_id = digest.get_text(), profile.get_text()
+            if (response_id != "apply" or busy or not current()
+                    or not _digest(sha) or not _profile_ref(profile_id)):
+                return
+            busy = True
+            for control in (start, holds, verify, next_page, selection, compare, button):
+                control.set_sensitive(False)
+            detail.set_text(last_text + "\n\nQualification de la reprise en cours…")
+            delivered = False
+
+            def done(result):
+                nonlocal busy, delivered
+                if delivered:
+                    return
+                delivered = True
+                busy = False
+                visible = current() and button.get_root() is not None
+                clear_rearm()
+                if not visible:
+                    return
+                reset_selection()
+                start.set_sensitive(True)
+                holds.set_sensitive(True)
+                detail.set_text(
+                    "Verrou exact retiré ; attestation journalisée. Relancer la revue "
+                    "ou la synchronisation canonique."
+                    if result == "exact_marker_released" else
+                    "Reprise non autorisée : preuve, portée ou état non qualifié. "
+                    "Relancer la revue avant toute nouvelle confirmation.")
+
+            def work():
+                return rearm_reviewed_historical_hold(
+                    service, value, journal_sha256=sha,
+                    historical_profile_id=profile_id, confirmed=True,
+                    view_current=current)
+
+            try:
+                window.runner.submit(
+                    "Qualification de la reprise ADEPT…", work, done,
+                    lambda _exc: done(None), control=button,
+                    priority=TaskPriority.MAINTENANCE,
+                    kind="maintenance-plan", origin="user")
+            except Exception:
+                done(None)
+
+        dialog.connect("response", response)
+        dialog.present()
 
     selection.connect("changed", selection_changed)
     compare.connect("clicked", compare_clicked)
