@@ -1139,7 +1139,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         The proposed fields are the observed nonempty descriptive strings.
         """
         with self._lock:
-            item = self._private_search_inputs.get(id(row))
+            item = self._private_search_inputs.pop(id(row), None)
             if item is None:
                 return None
             original, account, scope, epoch, input_digest, implementation, values = item
