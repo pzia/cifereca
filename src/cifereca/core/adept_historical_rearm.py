@@ -47,7 +47,7 @@ def _profile_ref(value):
 
 
 def _audit_key(review):
-    return _stable("canonical.adept_historical_rearm.v1", review.marker.fingerprint)
+    return marker.historical_rearm_audit_key(review.marker)
 
 
 def _local_admissible(db, selection, inventory_scope):
@@ -200,6 +200,7 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
             "schema": 1, "source": recovery._scope(source),
             "borrower_identity_id": borrower, "adept_profile_id": historical_profile_id,
             "marker_fingerprint": selection.marker.fingerprint,
+            "user_uuid_digest": marker.historical_user_digest(pinned_profile[1]),
             "proof": "owner_attested_same_activation_and_pre_dispatch_refusal",
             "journal_sha256": journal_sha256,
             "non_submission_witness": selection.witness.reason,
@@ -218,19 +219,9 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
                         or not _fresh_active_offer(snapshot, right, source)
                         or not _local_admissible(db, selection, inventory_scope)):
                     raise ValueError("historical_rearm_scope_changed")
-                raw = marker._marker_row(db, source)
-                proof = marker._unsubmitted_row(db, source)
-                db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
-                           (_audit_key(selection), payload))
-                deleted = db.execute("DELETE FROM metadata WHERE key=? AND value=?",
-                                     (marker._key(source), raw[0]))
-                if deleted.rowcount != 1:
-                    raise ValueError("historical_rearm_marker_changed")
-                if proof is not None:
-                    deleted = db.execute("DELETE FROM metadata WHERE key=? AND value=?",
-                                         (marker._unsubmitted_key(source), proof[0]))
-                    if deleted.rowcount != 1:
-                        raise ValueError("historical_rearm_marker_changed")
+                marker._release_reviewed_historical_attempt_in_transaction(
+                    db, source=source, review=selection.marker,
+                    witness=selection.witness, payload=payload)
                 if (not request.current() or not lock.strict_current()
                         or service._plugin_manager is not manager
                         or getattr(manager, "registry_generation", None) != generation):
