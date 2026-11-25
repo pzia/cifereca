@@ -63,6 +63,7 @@ class LocalOriginDetailReadBrokerImpl:
         self._lock = Lock()
         self._generation = 0
         self._active = None
+        self._continuation = None
         self._revoked = False
 
     def _reserve_dispatch(self, generation, provider):
@@ -194,6 +195,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._generation += 1
             generation = self._generation
             self._active = None
+            self._continuation = None
             self._public.clear()
             self._private.clear()
             self._remote_loans.clear()
@@ -231,7 +233,15 @@ class LocalOriginDetailReadBrokerImpl:
             self._native_preview = None
             self._generation += 1
             generation = self._generation
-        return self._read(request, view, generation)
+            # The consumed token is cancellation-only until this worker exits.
+            # It cannot admit another page, and cannot revoke a newer preview.
+            self._continuation = (token, generation)
+        try:
+            return self._read(request, view, generation)
+        finally:
+            with self._lock:
+                if self._continuation == (token, generation):
+                    self._continuation = None
 
     def search_public(self, *, token, confirmed=False):
         if (confirmed is not True or type(token) is not str
@@ -571,8 +581,12 @@ class LocalOriginDetailReadBrokerImpl:
 
     def cancel(self, *, token):
         with self._lock:
-            if self._active is not None and type(token) is str and token == self._active[0]:
+            if type(token) is str and (
+                (self._active is not None and token == self._active[0])
+                or self._continuation == (token, self._generation)
+            ):
                 self._active = None
+                self._continuation = None
                 self._empty_public_cache.clear()
                 self._public.clear()
                 self._private.clear()
@@ -588,6 +602,7 @@ class LocalOriginDetailReadBrokerImpl:
             self._revoked = True
             self._empty_public_cache.clear()
             self._active = None
+            self._continuation = None
             self._public.clear()
             self._private.clear()
             self._remote_loans.clear()

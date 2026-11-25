@@ -100,3 +100,48 @@ def test_result_revoked_during_worker_never_crosses_port(store, tmp_path, monkey
     assert not hasattr(broker, "storage") and not hasattr(broker, "revoke")
     assert preview(broker, pid, view=lambda: view[0]) is None
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("change", ["cancel", "replace", "complete"])
+def test_consumed_page_token_only_cancels_its_inflight_continuation(
+    store, tmp_path, monkeypatch, change,
+):
+    from pathlib import Path
+
+    service, root, pid = fixture(store, tmp_path)
+    broker = module.LocalOriginDetailReadBrokerImpl(service)
+    first = preview(broker, pid)
+    assert first.can_continue
+    path = Path(store.placement_get(pid)["path"])
+    before, data = rows(store), path.read_bytes()
+    actual = module.run_local_origin_suggestion
+    replacements = []
+
+    def changed(*args):
+        value = actual(*args)
+        assert broker.next_page(token=first.token, confirmed=True) is None
+        if change == "replace":
+            # A newer generation must survive both the old cancel and the
+            # old worker's finally block.
+            monkeypatch.setattr(module, "run_local_origin_suggestion", actual)
+            replacements.append(preview(broker, pid))
+        if change != "complete":
+            broker.cancel(token=first.token)
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "run_local_origin_suggestion", changed)
+        second = broker.next_page(token=first.token, confirmed=True)
+    assert broker.next_page(token=first.token, confirmed=True) is None
+    if change == "cancel":
+        assert second is None and broker._active is None
+        assert preview(broker, pid).can_continue
+    elif change == "replace":
+        assert second is None
+        replacement, = replacements
+        assert broker.next_page(token=replacement.token, confirmed=True).page == 2
+    else:
+        assert second.page == 2 and second.can_continue
+        broker.cancel(token=first.token)
+        assert broker.next_page(token=second.token, confirmed=True).page == 3
+    assert rows(store) == before and path.read_bytes() == data
