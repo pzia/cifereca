@@ -84,7 +84,9 @@ def test_batch_callbacks_do_not_resurrect_stale_generation_or_identity():
 
 
 def test_rendered_count_persists_distinct_closed_statuses_only_in_matching_context():
+    from unittest.mock import Mock
     host = view_host()
+    host.search_page.count_label.set_tooltip_text = Mock()
     host._search_mode = "global"
     host._online_source_statuses = {
         "private@example.invalid": "unavailable",
