@@ -138,13 +138,17 @@ def test_desktop_deployment_config_provisions_real_core_without_implicit_selecti
     from cifereca.config import Config
     from cifereca.core.search_orchestration import _ingest_public_search_c
 
-    data = archive_bytes()
+    from pathlib import Path
+    from scripts.plugin_packaging import build_plugin_zip
+
+    package = Path(__file__).resolve().parents[1] / "src/plugins/metadata-age-standard"
+    archive = build_plugin_zip(package, tmp_path / "dist")
+    data = archive.read_bytes()
+    # Trusted build owner supplies the independent deployment pin.
     digest = sha256(data).hexdigest()
-    archive = tmp_path / "age.zip"
-    archive.write_bytes(data)
     config = Config(tmp_path / "config.json")
     config.set("notice_c.public_age_deployment", {
-        "archive": str(archive), "sha256": digest, "scope": "fr:editions",
+        "archive": str(archive), "sha256": digest, "scope": "public:editions",
     })
     config.save()
     with open_core(tmp_path, notice_age_desktop_config=True) as core:
@@ -159,10 +163,10 @@ def test_desktop_deployment_config_provisions_real_core_without_implicit_selecti
         source = row._core_notice_cover_document_ref
         from cifereca.core.notice_cover_repository import read_notice_cover
         target = read_notice_cover(core.storage, source).observation.key.edition_id
-        assert core.read_notice_age(target_edition_id=target, scope="fr:editions").status != "current"
+        assert core.read_notice_age(target_edition_id=target, scope="public:editions").status != "current"
         core.configure_notice_consolidator(
-            data, expected_sha256=digest, canonical_type="age", scope="fr:editions",
-            selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
+            data, expected_sha256=digest, canonical_type="age", scope="public:editions",
+            selected_plugin_id="metadata.age.standard", selected_version="1.0.0",
             expected_generation=0,
         )
     with open_core(tmp_path, notice_age_desktop_config=True) as core:
@@ -177,10 +181,10 @@ def test_desktop_deployment_config_provisions_real_core_without_implicit_selecti
         result = scan.result(timeout=10)
         handle, = result.handles
         assert handle.result(timeout=15) == "current"
-        assert core.read_notice_age(target_edition_id=target, scope="fr:editions").status == "current"
+        assert core.read_notice_age(target_edition_id=target, scope="public:editions").status == "current"
 
     config.set("notice_c.public_age_deployment", {
-        "archive": str(archive), "sha256": "0"*64, "scope": "fr:editions",
+        "archive": str(archive), "sha256": "0"*64, "scope": "public:editions",
     })
     config.save()
     with pytest.raises(ValueError, match="invalid_desktop_deployment"):
