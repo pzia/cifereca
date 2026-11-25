@@ -513,3 +513,89 @@ def test_explicit_plugin_witness_proposal_and_approval_on_normal_search(tmp_path
     finally:
         session.close()
         db.close()
+
+
+def test_witness_selected_click_rechecks_detail_generation_before_write(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from threading import RLock
+    from cifereca.gui.notice_parse_witness_controller import request_selected_parse_witness
+    from cifereca.core import notice_c_search_receipt, notice_parse_witness_approval
+    from cifereca.core.notice_parse_witness_store import read_approved_parse_witness
+
+    session, _, _, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "click-approval.sqlite")
+    try:
+        monkeypatch.setattr(notice_c_search_receipt, "time", lambda: 100)
+        monkeypatch.setattr(notice_parse_witness_approval, "time", lambda: 100)
+        identity = NS(identity_id="alice")
+        service = NS(storage=db, current_identity=identity,
+                     identity_by_id=lambda key: identity if key == "alice" else None,
+                     _source_context_epoch=0, _source_context_lock=RLock(),
+                     _provider_enabled_for_identity=lambda *args: True,
+                     _session_key=lambda provider, credential: (provider, credential),
+                     _sessions={(session.provider_id, "__public__"): session})
+        response = session.search_with_response_facets("loup", "catalog")
+        row, = search_orchestration._public_rows_from_response(response, session)
+        search_orchestration._ingest_public_search_c(
+            service, [row], identity_id="alice", now=100, require_public_cover_witness=True,
+        )
+        source = read_notice_cover(db, row._core_notice_cover_document_ref)
+        def baseline():
+            return read_approved_parse_witness(
+                db, key=source.observation.key, parser_id=source.observation.parser_id,
+            )
+
+        class Button:
+            def __init__(self, label):
+                self.label = label
+                self.sensitive = True
+            def connect(self, signal, callback):
+                assert signal == "clicked"
+                self.callback = callback
+            def set_sensitive(self, value):
+                self.sensitive = value
+
+        actions, pending, toasts = [], [], []
+        cell = NS(key="exact-row")
+        panel = NS(add_actions=actions.extend, get_mapped=lambda: True)
+        generation = [1]
+        host = NS(service=service, _route_display_token=object(),
+                  search_page=NS(detail=panel, selection=NS(get_selected_item=lambda: cell)),
+                  search_objects={cell.key: row},
+                  _search_detail_context_current=lambda selected, context:
+                      selected == row.id and context == (generation[0], 1, 1, "alice"),
+                  runner=NS(submit=lambda label, work, done, failed, **kw:
+                            pending.append((work, done, kw))), toast=toasts.append)
+        def receive():
+            work, done, options = pending.pop(0)
+            done(work())
+            return options
+        def show():
+            assert request_selected_parse_witness(
+                host, row, selected_id=row.id, context=(generation[0], 1, 1, "alice"),
+                Gtk=NS(Button=Button),
+            )
+            assert receive()["origin"] == "automatic"
+            return actions[-1]
+
+        old = show()
+        assert baseline() is None
+        old.callback(old)
+        old.callback(old)
+        assert len(pending) == 1 and not old.sensitive
+        # Selection A -> B -> A can leave the same row and panel objects.
+        # The incremented detail generation must revoke the queued click.
+        generation[0] += 2
+        assert receive()["origin"] == "user"
+        assert baseline() is None and not toasts
+        new = show()
+        assert baseline() is None
+        new.callback(new)
+        assert receive()["origin"] == "user"
+        assert baseline().generation == 1
+        assert baseline().baseline.approved_input_sha256 == sha256(body).hexdigest()
+        assert toasts == ["Témoin de parsing validé."]
+        assert len(calls) == 1
+    finally:
+        session.close()
+        db.close()
