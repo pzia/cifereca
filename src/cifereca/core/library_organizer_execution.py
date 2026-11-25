@@ -16,7 +16,7 @@ def _execution_fence_current(scope, lock):
 
 
 def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=False,
-                            still_current=lambda: True):
+                            still_current=lambda: True, receipt_current=None):
     """Isolated recipe for one exact rename, never keeper/classification.
 
     Delegate all writes to the existing maintenance broker. A postcheck
@@ -26,9 +26,14 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
     from ..artifact_runtime import LibraryMaintenanceBrokerImpl
     from ..plugin_api import LibraryMutationRequest
 
+    # The native handoff retains precommit freshness by default; a receipt
+    # is evaluated against the writer's newly captured stamp instead.
+    if receipt_current is None:
+        receipt_current = lambda _stamp: still_current()
+
     try:
         permitted = (confirmed is True and callable(still_current)
-                     and still_current() is True
+                     and callable(receipt_current) and still_current() is True
                      and type(accepted) is OrganizerDryRunPlan
                      and accepted.scope is scope and accepted.confirmed is True
                      and accepted.executable is False and len(accepted.entries) == 1
@@ -120,7 +125,10 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                     or old.exists() or old.is_symlink()):
                 return {"status": "recovery_required", "changed": None}
             recheck()
-        if sqlite_source_stamp(scope.database) != post_stamp:
+        if (sqlite_source_stamp(scope.database) != post_stamp
+                or receipt_current(post_stamp) is not True or not scope.bound()
+                or not _lock_ok(shared_lock)
+                or not _execution_fence_current(scope, shared_lock)):
             return {"status": "recovery_required", "changed": None}
         return {"status": "renamed", "changed": 1}
     except Exception:
@@ -175,11 +183,14 @@ def admit_native_reviewed_rename(manager, resolved, page, *, service, identity_i
             with InterProcessLock(acquisition_lock_file(create=False), existing_nofollow=True) as lock:
                 def current_lock():
                     return live() and lock.strict_current()
+                def receipt_lock(stamp):
+                    return (view_current() is True and current(receipt_stamp=stamp) is True
+                            and lock.strict_current())
                 if not current_lock():
                     return {"status": "blocked", "changed": 0}
                 return execute_reviewed_rename(
                     scope, report, plan, shared_lock=lock, confirmed=True,
-                    still_current=current_lock)
+                    still_current=current_lock, receipt_current=receipt_lock)
         except Exception:
             return {"status": "blocked", "changed": 0}
     return work if live() else None

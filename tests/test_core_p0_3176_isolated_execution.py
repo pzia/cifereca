@@ -124,7 +124,8 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
 
 
 @pytest.mark.parametrize("case", ["success", "production", "cancelled", "lock_busy", "late_revocation",
-                                  "external_contender", "lock_replaced"])
+                                  "external_contender", "lock_replaced", "stale_before_worker",
+                                  "postcommit_view_revoked"])
 def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, case):
     from types import SimpleNamespace as NS
     from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
@@ -166,6 +167,16 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
                             lambda s, lock: s.root == root and s.storage is store)
     if case == "cancelled":
         active[0] = False
+    if case == "stale_before_worker":
+        store.metadata_set("native-review-stale", "changed")
+    if case == "postcommit_view_revoked":
+        original_run = LibraryMaintenanceBrokerImpl.run
+        def revoke_after_commit(self, plan, control=None):
+            result = original_run(self, plan, control)
+            assert result.ok and result.changed == 1
+            active[0] = False
+            return result
+        monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", revoke_after_commit)
     if case == "late_revocation":
         original = LibraryMaintenanceBrokerImpl.plan
         def revoke(self, request):
@@ -205,8 +216,11 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
     assert command() == {"status": "blocked", "changed": 0}
     assert lock_path.read_bytes() == lock_bytes
     new = old.with_name("Autrice - Roman commun.epub")
-    if case in ("success", "external_contender"):
-        assert result == {"status": "renamed", "changed": 1}
+    if case in ("success", "external_contender", "postcommit_view_revoked"):
+        expected = ({"status": "recovery_required", "changed": None}
+                    if case == "postcommit_view_revoked"
+                    else {"status": "renamed", "changed": 1})
+        assert result == expected
         assert new.read_bytes() == data and not old.exists()
         assert store.placement_get(pid)["path"] == str(new)
     else:
@@ -445,3 +459,42 @@ def test_rename_writer_refuses_revocation_after_destination_fsync(
     assert result == {"status": "recovery_required", "changed": None}
     assert old.read_bytes() == data and not new.exists()
     assert store.placement_get(pid) == baseline
+
+
+@pytest.mark.parametrize("revocation", ["view", "fence"])
+def test_postcommit_revocation_cannot_deliver_success_receipt(
+    store, tmp_path, monkeypatch, revocation,
+):
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    old, pid = _put_epub(store, root, "Acquisitions/old.epub", provider_id="local")
+    data = old.read_bytes()
+    scope, page = _run(_service(store, root))
+    draft = prepare_organizer_dry_run(scope, page, confirmed=True, rename_only=True)
+    accepted = confirm_organizer_dry_run(scope, page, draft, confirmed=True)
+    new = root / scope.directory / accepted.entries[0].proposed
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    active, fence, calls = [True], [True], []
+    monkeypatch.setattr(execute, "_execution_fence_current", lambda s, lock: fence[0])
+    original = LibraryMaintenanceBrokerImpl.run
+
+    def writer(self, plan, control=None):
+        result = original(self, plan, control)
+        assert result.ok and result.changed == 1
+        calls.append(plan)
+        if revocation == "view":
+            active[0] = False
+        else:
+            fence[0] = False
+        return result
+
+    monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", writer)
+    with InterProcessLock(lock_path) as lock:
+        result = execute.execute_reviewed_rename(
+            scope, page, accepted, shared_lock=lock, confirmed=True,
+            still_current=lambda: active[0])
+    assert result == {"status": "recovery_required", "changed": None}
+    assert len(calls) == 1 and not old.exists()
+    assert new.read_bytes() == data and store.placement_get(pid)["path"] == str(new)
