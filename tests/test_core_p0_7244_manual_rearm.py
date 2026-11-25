@@ -5,6 +5,10 @@ No token GET, new borrow, fulfillment or filesystem publication is invoked.
 """
 from dataclasses import replace
 import json
+from pathlib import Path
+import sqlite3
+
+import httpx
 from types import SimpleNamespace as NS
 
 import pytest
@@ -24,7 +28,8 @@ from tests.test_core_p0_3171_atomic_publication_v14 import new_source, rows
 @pytest.mark.parametrize("scenario", [
     "accepted", "companion_witness", "unconfirmed", "bad_digest",
     "wrong_profile", "no_consent", "stale_marker", "busy",
-    "inactive_offer", "profile_changed", "audit_failure",
+    "inactive_offer", "profile_changed", "audit_failure", "view_revoked",
+    "next_sync", "next_sync_profile_changed",
 ])
 def test_owner_attested_exact_rearm(connected_core, tmp_path, monkeypatch, scenario):
     service, session, account, loan, state, downloaded = connected_core
@@ -112,8 +117,10 @@ def test_owner_attested_exact_rearm(connected_core, tmp_path, monkeypatch, scena
                 service, selected,
                 journal_sha256="c" * 64 if scenario != "bad_digest" else "bad",
                 historical_profile_id="stable-adobe" if scenario != "wrong_profile" else "other",
-                confirmed=scenario != "unconfirmed")
-        accepted = scenario in ("accepted", "companion_witness")
+                confirmed=scenario != "unconfirmed",
+                view_current=lambda: scenario != "view_revoked")
+        accepted = scenario in ("accepted", "companion_witness", "next_sync",
+                                "next_sync_profile_changed")
         if accepted:
             assert execute() == "exact_marker_released"
             assert not marker.pending_loan_adept_attempt(storage, source)
@@ -129,6 +136,8 @@ def test_owner_attested_exact_rearm(connected_core, tmp_path, monkeypatch, scena
                 assert audit["result"] == "exact_marker_released"
                 assert audit["fresh_offer_digest"] != marker._decode_marker(raw)["offer_digest"]
                 assert reopened.metadata_get(marker._key(source)) is None
+                assert marker.read_historical_rearm_binding(reopened, source) == (
+                    account.identity_id, "stable-adobe", marker.historical_user_digest("synthetic-user"))
             finally:
                 reopened.close()
             with pytest.raises(ValueError):
@@ -139,7 +148,7 @@ def test_owner_attested_exact_rearm(connected_core, tmp_path, monkeypatch, scena
                     with pytest.raises((ValueError, RuntimeError, OSError)):
                         execute()
             else:
-                with pytest.raises(Exception):
+                with pytest.raises((ValueError, RuntimeError, OSError, sqlite3.Error)):
                     execute()
             assert marker.pending_loan_adept_attempt(storage, source)
             assert storage.metadata_get(audit_key) is None
@@ -147,6 +156,76 @@ def test_owner_attested_exact_rearm(connected_core, tmp_path, monkeypatch, scena
         assert (rows(storage), storage.acquisitions(), storage.entitlements()) == before
         assert lock_path.read_bytes() == original_lock_bytes
         assert not downloaded
+        if scenario in ("next_sync", "next_sync_profile_changed"):
+            from cifereca.core import canonical_selected_delivery as delivery
+            from cifereca.core import convergence_execution as convergence
+            from cifereca.core.source_acquisition_consent import read_source_acquisition_consent
+            from cifereca.core.source_context import source_context_epoch
+            from cifereca.core.selected_loan_offer import select_exact_loan_offer
+            from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
+
+            monkeypatch.setattr(delivery, "acquisition_lock_file", lambda: lock_path)
+            monkeypatch.setattr(convergence, "acquisition_lock_file", lambda: lock_path)
+            original = session.client.http._transport.handler
+            token = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
+                     b'fulfillmentType="loan" auth="user"><resourceItemInfo>'
+                     b'<format>application/pdf</format></resourceItemInfo></fulfillmentToken>')
+
+            def transport(request):
+                result = original(request)
+                if request.url.path.startswith("/loans/"):
+                    return httpx.Response(200, content=token, headers={
+                        "content-type": "application/octet-stream"})
+                return result
+
+            monkeypatch.setattr(session.client.http._transport, "handler", transport)
+            fulfillment = []
+
+            def fulfill(request):
+                fulfillment.append(request)
+                assert request["profile"] == "reader-adobe"
+                Path(request["destination"]).write_bytes(BYTES)
+                return dict(ok=True, profile="reader-adobe",
+                            artifact=dict(path=request["destination"]))
+
+            monkeypatch.setattr(service, "execute_acquisition_request", fulfill)
+            if scenario == "next_sync_profile_changed":
+                profile[0] = "other-adobe"
+            status, selected_offer = select_exact_loan_offer(
+                session, account, loan, branch=source.branch, current=lambda: True)
+            assert status == "selected"
+            fresh, _, _ = selected_offer
+            root = tmp_path / "EBooks"
+
+            def sync():
+                with InterProcessLock(lock_path) as lock:
+                    return convergence.execute_admitted_convergence(
+                        service, account, session, fresh,
+                        admitted_epoch=source_context_epoch(service),
+                        shared_lock=lock, library_root=root,
+                        persisted_consent=frozenset({source}),
+                        consent_still_current=lambda key: key in read_source_acquisition_consent(
+                            service, account),
+                        deliver=lambda key, right: delivery.complete_selected_delivery(
+                            service, account, session, key, right, library_root=root,
+                            shared_lock=lock,
+                            consent_still_current=lambda: key in read_source_acquisition_consent(
+                                service, account)),
+                    )
+
+            first = sync()
+            if scenario == "next_sync_profile_changed":
+                assert first[0].status != "downloaded"
+                assert not downloaded and not fulfillment
+                assert rows(storage) == before[0]
+            else:
+                assert first[0].status == "downloaded"
+                assert len(downloaded) == len(fulfillment) == 1
+                assert sync()[0].status == "present_attested"
+                assert len(downloaded) == len(fulfillment) == 1
+                assert not marker.pending_loan_adept_attempt(storage, source)
+            assert storage.metadata_get(marker._key(sibling)) == raw
+            assert storage.metadata_get(audit_key) is not None
     finally:
         service._plugin_manager = old_manager
         service._required_plugin_service = old_required
