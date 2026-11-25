@@ -2812,12 +2812,40 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     public = tuple((position, source) for position, source in accepted
                                    if position in atomic_c)
                     refused_refs = set()
-                    _, requests = publish_search_groups_txn(
+                    linked, requests = publish_search_groups_txn(
                         db, tuple(source for _, source in public), now=now,
                         _refused_refs=refused_refs,
                     )
                     if requests:
                         pending_positions.update(position for position, _ in public)
+                    # The startup owner explicitly selected the applicable age
+                    # scope. Request only from this accepted C transaction, not
+                    # from a displayed row, title, profile or language inference.
+                    request_age = getattr(self, "_notice_work_request_search_age_txn", None)
+                    if callable(request_age):
+                        for position, source in public:
+                            if source.document.source_key in refused_refs:
+                                continue
+                            group = linked.get(source.document.source_key)
+                            if atomic_c[position] is None and group is None:
+                                continue
+                            db.execute("SAVEPOINT notice_c_search_age")
+                            try:
+                                ref = request_age(
+                                    db, target_edition_id=source.observation.key.edition_id,
+                                    group_document=group.document if group is not None else None,
+                                    now=now,
+                                )
+                            except (ValueError, TypeError, OSError, sqlite3.Error):
+                                db.execute("ROLLBACK TO SAVEPOINT notice_c_search_age")
+                                logging.getLogger("cifereca").warning(
+                                    "TRACE notice c public search code=age_request_unavailable"
+                                )
+                            else:
+                                if ref is not None:
+                                    pending_positions.add(position)
+                            finally:
+                                db.execute("RELEASE SAVEPOINT notice_c_search_age")
                     return tuple(position for position, source in public
                                  if source.document.source_key in refused_refs)
 
