@@ -307,3 +307,49 @@ def test_public_author_labels_keep_bounds_and_refuse_private_objects():
     assert declared_public_classification({"authors": ["Autrice"], "owned": True}).wire() == {
         "authors": ["Autrice"],
     }
+
+
+def test_public_c_sqlite_volume_worker_budget_and_pagination(tmp_path):
+    """Real persisted observations, worker thread, bounded honest pages."""
+    from concurrent.futures import ThreadPoolExecutor
+    from time import monotonic
+
+    path = tmp_path / "volume.sqlite"
+    with_db = Storage(path)
+    try:
+        for i in range(3000):
+            persist(with_db, verified_public(
+                record_id=f"volume-{i:04d}", title=f"Notice volume {i:04d}",
+            ))
+    finally:
+        with_db.close()
+
+    def read():
+        db = Storage(path)
+        try:
+            started = monotonic()
+            first = search_public_notice_c(
+                db, "notice volume", field="title", page_size=50,
+                max_scan=4000, now=100,
+            )
+            second = search_public_notice_c(
+                db, "notice volume", field="title", page_size=50,
+                page=1, max_scan=4000, now=100,
+            )
+            assert first.known_matches == second.known_matches == 3000
+            assert first.status == second.status == "partial"
+            assert first.has_more and second.has_more
+            assert len(first.hits) == len(second.hits) == 50
+            assert not {h.document for h in first.hits} & {h.document for h in second.hits}
+            bounded = search_public_notice_c(
+                db, "notice volume", field="title", max_scan=100, now=100,
+            )
+            assert bounded.status == "budget_exceeded" and bounded.has_more
+            assert bounded.known_matches <= 100
+            assert db.entitlements() == [] and db.acquisitions() == []
+            print(f"SQLite C 3000: worker queries {monotonic() - started:.3f}s")
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        worker.submit(read).result(timeout=120)
