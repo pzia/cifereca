@@ -823,3 +823,23 @@ preuve zéro actif et la fixture dérivée restent ouvertes. Le passage à
 une couverture complète des droits/v2 sur zéro réel exige cette preuve
 et sa CI ; le Core reste seul propriétaire de la transition métier.
 Aucune release ni mutation réelle n'est engagée par cette passation.
+
+
+## Témoins de parsing privés : rejeu local (#4552)
+
+L'option de compte `private_search_replay` est désactivée par défaut. Elle
+permet, seulement lorsque la conservation est autorisée, de retenir en mémoire
+de session les octets UTF-8 exacts des pages de catalogue déjà lues, au maximum
+2 Mio et 5 minutes après la recherche. Aucun HTML n'est écrit sur disque ou
+exporté dans les captures. Nouvelle recherche, expiration, reconnexion et
+fermeture invalident cette rétention. L'option ne confère aucun droit, ne
+déclenche aucune connexion ni requête et ne concerne pas les prêts, l'activité,
+l'authentification ou les téléchargements.
+
+Le rejeu du témoin explicitement approuvé repasse par le parseur courant sur
+l'entrée locale exacte, dans le compte et la session d'origine. Core contrôle
+le pin et les fences avant de publier le diagnostic ; l'ancienne notice
+saine n'est jamais remplacée par une relecture historique. Une entrée absente
+ou révoquée est indisponible, sans fallback réseau. L'alerte et le pin restent
+inspectables après réouverture de SQLite sous la liaison propriétaire courante,
+sans rétention du corps après redémarrage.
