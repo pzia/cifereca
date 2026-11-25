@@ -171,10 +171,13 @@ def publish_descriptive_materialization_txn(
                 input_digest=input_digest, implementation_digest=digest,
             )
         else:
+            from .notice_c_public_age_request import group_document_from_locator
             expected = journal.descriptive_job_spec(
                 target_edition_id=row.target_edition_id, canonical_type=row.canonical_type,
                 scope=row.scope, input_digest=input_digest, implementation_digest=digest,
                 public_age=job.spec.public_age_locator is not None,
+                group_document=(None if job.spec.public_age_locator is None else
+                                group_document_from_locator(job.spec.public_age_locator)),
             )
             if job.spec.public_age_locator is not None:
                 from .notice_c_public_age_request import reattest_public_age_job_txn

@@ -195,7 +195,7 @@ class CiferecaCore:
             self._notice_age_hold = hold
         return installed
 
-    def read_notice_age(self, *, target_edition_id, scope):
+    def read_notice_age(self, *, target_edition_id, scope, group_document=None):
         """Trusted Core consumer; same authority as the admitted worker.
 
         No reducer execution or scheduling, no interpretation or fallback.
@@ -213,7 +213,7 @@ class CiferecaCore:
             return PublicAgeRead("unavailable")
         return read_public_age_result(
             self.storage, target_edition_id=target_edition_id, scope=scope,
-            hold_selected=hold,
+            hold_selected=hold, group_document=group_document,
         )
 
     def configure_notice_consolidator(
