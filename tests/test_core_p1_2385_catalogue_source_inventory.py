@@ -365,3 +365,51 @@ def test_connected_session_must_occupy_exact_registry_key(provider, credential):
     assert row().catalog_search_available
     assert row().personal_inventory_available == (credential != "__public__")
     assert row().catalog_refresh == "unsupported"
+
+
+def test_shared_real_account_readiness_requires_live_association_per_profile():
+    service, _ = _rig()
+    shared = "a-numilog"
+    other = "b-numilog"
+    credentials = {"alice": shared, "bob": shared}
+    service.accounts_for_identity = lambda identity: [
+        NS(provider_id="numilog", identity_id=identity,
+           credential_id=credentials[identity]),
+    ] if identity in credentials else []
+
+    def row(identity):
+        return next(r for r in catalogue_source_capabilities(
+            service, identity_id=identity,
+        ) if r.provider_id == "numilog")
+
+    def readiness(identity, expected):
+        value = row(identity)
+        assert value.catalog_search_supported
+        assert value.personal_inventory_supported
+        assert value.catalog_search_available is expected
+        assert value.personal_inventory_available is expected
+        assert value.catalog_refresh == "unsupported"
+        assert value.acquisition == "separate_explicit"
+
+    # A single genuinely shared account registration is sufficient for both
+    # profiles; no duplicate session or synthetic public Account is required.
+    readiness("alice", True)
+    readiness("bob", True)
+    # The same provider with a different real account cannot borrow readiness.
+    credentials["bob"] = other
+    readiness("alice", True)
+    readiness("bob", False)
+    service._sessions[service._session_key("numilog", other)] = NS(
+        provider_id="numilog", credential_id=other, connected=True,
+    )
+    readiness("bob", True)
+    service._sessions[service._session_key("numilog", shared)].connected = False
+    readiness("alice", False)
+    readiness("bob", True)
+    # Revoking only the association must hide readiness even while the
+    # original connected session remains available to other legitimate users.
+    credentials["alice"] = other
+    readiness("alice", True)
+    del credentials["bob"]
+    readiness("bob", False)
+    readiness("alice", True)
