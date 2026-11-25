@@ -413,3 +413,33 @@ def test_shared_real_account_readiness_requires_live_association_per_profile():
     del credentials["bob"]
     readiness("bob", False)
     readiness("alice", True)
+
+
+def test_replaced_registered_descriptor_does_not_publish_old_capabilities():
+    service, _ = _rig()
+    enabled = service._provider_enabled_for_identity
+    replacement = _plugin("gallica", search=False, personal=False)
+
+    def replace_during_read(name, identity):
+        if name == "gallica":
+            service.registry.register(replacement, replace=True)
+        return enabled(name, identity)
+
+    service._provider_enabled_for_identity = replace_during_read
+    rows = catalogue_source_capabilities(service, identity_id="alice")
+    assert "gallica" not in {row.provider_id for row in rows}
+    assert service.registry.maybe_get("gallica") is replacement
+    assert any(row.provider_id == "gutenberg" for row in rows)
+    assert "gallica" not in {row.provider_id for row in
+                             catalogue_source_capabilities(service, identity_id="alice")}
+
+
+def test_non_boolean_activation_evidence_fails_closed():
+    service, _ = _rig()
+    enabled = service._provider_enabled_for_identity
+    service._provider_enabled_for_identity = lambda name, identity: (
+        "unknown" if name == "gallica" else enabled(name, identity)
+    )
+    rows = catalogue_source_capabilities(service, identity_id="alice")
+    assert "gallica" not in {row.provider_id for row in rows}
+    assert any(row.provider_id == "gutenberg" for row in rows)
