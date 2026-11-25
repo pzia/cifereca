@@ -6,11 +6,11 @@ from ..task_queue import TaskPriority
 
 
 def request_selected_parse_witness(host, row, *, selected_id, context):
+    if getattr(row, "_core_notice_parse_input", None) is None or context is None:
+        return False
     service = host.service
     page = host.search_page
     panel = page.detail
-    if getattr(row, "_core_notice_parse_input", None) is None or context is None:
-        return False
     cell = page.selection.get_selected_item()
     key = getattr(cell, "key", None)
     if type(key) is not str or getattr(host, "search_objects", {}).get(key) is not row:
