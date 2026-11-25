@@ -315,3 +315,35 @@ def test_batch_remaining_byte_budget_defers_reviewable_files_without_skipping(
     assert cursor is None
     assert sorted(seen) == sorted(p.name for p in files)
     assert rows(store) == before and all(p.read_bytes() == BYTES for p in files)
+
+
+def test_batch_soft_deadline_during_first_path_does_not_skip_candidate(
+    store, tmp_path, monkeypatch,
+):
+    service, root, pid = _service(store, tmp_path)
+    files = [Path(store.placement_get(pid)["path"])]
+    files += [_extra(store, root, f"slow-{i}.pdf") for i in range(4)]
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    clock = [0]
+    original = batch.ordinary_suggestion_path
+
+    def slow_path(*args, **kwargs):
+        result = original(*args, **kwargs)
+        clock[0] += batch._SECONDS + 1
+        return result
+
+    monkeypatch.setattr(batch, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(batch, "ordinary_suggestion_path", slow_path)
+    before = rows(store)
+    cursor, seen = None, []
+    for index in range(5):
+        page = batch.run_origin_batch(service, scope, cursor=cursor)
+        assert page["page"] == index + 1
+        row, = page["entries"]
+        assert row["status"] == "compared"
+        seen.append(row["file"])
+        cursor = page["next_cursor"]
+        assert page["has_more"] == (index < 4)
+    assert cursor is None
+    assert sorted(seen) == sorted(p.name for p in files)
+    assert rows(store) == before and all(p.read_bytes() == BYTES for p in files)

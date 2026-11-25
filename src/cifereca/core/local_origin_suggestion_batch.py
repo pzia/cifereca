@@ -112,8 +112,9 @@ def _rows(scope, after):
 def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
     """Explicit pages. Recheck SQLite and scope; never treat skip as no match.
 
-    The byte/time budgets are cooperative between files, not hard I/O
-    deadlines. A file skipped for budget remains unassessed.
+    The time budget is cooperative between files, not a hard I/O
+    deadline. Each nonempty page attempts at least its first candidate;
+    the byte ceiling still applies even to that first candidate.
     """
     if type(scope) is not BatchScope or scope.request.service is not service:
         return None
@@ -150,6 +151,11 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
         for pid, raw, size in candidates[:_PAGE]:
             if not active() or sqlite_source_stamp(scope.database) != stamp:
                 return None
+            # Once a page has made progress, do not begin another file
+            # after the cooperative deadline, including excluded paths.
+            if entries and monotonic() >= deadline:
+                deferred = True
+                break
             path = ordinary_suggestion_path(
                 raw, library_root=scope.root, identity_id=owner, directory=scope.directory,
             )
@@ -162,14 +168,16 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                 # Yield before a reviewable file if the remaining page
                 # budget is exhausted. An intrinsically oversized file is
                 # still reported unassessed and advances the cursor.
+                within_time = not entries or monotonic() < deadline
                 if (entries and type(size) is int and 0 < 3 * size <= _MAX_BYTES
-                        and (total + 3 * size > _MAX_BYTES or monotonic() >= deadline)):
+                        and (total + 3 * size > _MAX_BYTES or not within_time)):
                     deferred = True
                     break
                 # Existing per-file verifier may rehash during rechecks:
                 # reserve three file lengths conservatively for this page.
                 if (type(size) is int and size > 0
-                        and total + 3 * size <= _MAX_BYTES and monotonic() < deadline):
+                        and total + 3 * size <= _MAX_BYTES
+                        and within_time):
                     total += 3 * size
                     try:
                         before = path.stat(follow_symlinks=False)
