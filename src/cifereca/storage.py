@@ -2627,7 +2627,7 @@ class Storage:
         return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
 
     def relocate_local_path(self, old_path: Path, new_path: Path, *, identity_id: str,
-                            provider_id: str, classification_root: Path | None = None) -> None:
+                            provider_id: str | None, classification_root: Path | None = None) -> None:
         from .core.canonical_publication import _canonical_write_transaction
 
         old_text = str(old_path.expanduser().resolve())
@@ -2658,6 +2658,8 @@ class Storage:
                         for declaration in declarations
                     ):
                         raise ValueError("relocate_active_declaration_requires_relink")
+                canonical_classification = classification_root is not None and provider_id is None
+                checkpoint_rows = []
                 # Reconciliation may *not* rename away an acquisition's
                 # checkpoint path and then claim that the download is absent.
                 # Historical and active metadata cannot safely be distinguished
@@ -2668,10 +2670,12 @@ class Storage:
                 if old_text != new_text:
                     import json as _json
                     from .core.duplicate_maintenance_guard import _mentions_exact_path
-                    for index, (raw,) in enumerate(db.execute(
-                        "SELECT metadata_json FROM acquisition_ledger LIMIT ?",
+                    for index, checkpoint in enumerate(db.execute(
+                        "SELECT acquisition_id,provider_id,credential_id,account_id,item_id,"
+                        "identity_id,status,artifact_id,metadata_json FROM acquisition_ledger LIMIT ?",
                         (_MAX_RELOCATION_ACQUISITION_ROWS + 1,),
                     )):
+                        raw = checkpoint[-1]
                         if (index >= _MAX_RELOCATION_ACQUISITION_ROWS
                                 or type(raw) is not str or len(raw) > 1024 * 1024):
                             raise ValueError("relocate_acquisition_context_unavailable")
@@ -2682,7 +2686,9 @@ class Storage:
                         if type(value) is not dict:
                             raise ValueError("relocate_acquisition_context_unavailable")
                         if _mentions_exact_path(value, old_text):
-                            raise ValueError("relocate_acquisition_reference_requires_relink")
+                            if not canonical_classification or len(checkpoint_rows) >= 32:
+                                raise ValueError("relocate_acquisition_reference_requires_relink")
+                            checkpoint_rows.append(checkpoint)
                     # Variant metadata may still identify this exact
                     # physical file as a source or output. Until a separate,
                     # scoped variant-path migration exists, refuse the rename
@@ -2724,7 +2730,7 @@ class Storage:
                     # identity must not remain dangling after this move.
                     if db.execute(
                         "SELECT 1 FROM backup_items WHERE local_path=? AND "
-                        "(provider_id<>? OR identity_id IS NULL "
+                        "(provider_id IS NOT ? OR identity_id IS NULL "
                         "OR identity_id<>?) LIMIT 1",
                         (old_text, provider_id, identity_id),
                     ).fetchone():
@@ -2738,8 +2744,10 @@ class Storage:
                 )
                 old_row = db.execute(placement_columns, (old_text,)).fetchone()
                 target_row = db.execute(placement_columns, (new_text,)).fetchone()
+                if provider_id is None and not canonical_classification:
+                    raise ValueError("relocate_scope_conflict")
                 if old_row and (
-                    not identity_id or not provider_id
+                    not identity_id or (not provider_id and not canonical_classification)
                     or old_row[2] != identity_id or old_row[3] != provider_id
                 ):
                     raise ValueError("relocate_scope_conflict")
@@ -2772,7 +2780,8 @@ class Storage:
                     if (not root.is_absolute() or root.resolve() != root
                             or Path(old_path) != old_name or Path(new_path) != new_name
                             or len(profiles) != 1 or old_row is None or target_row is not None
-                            or not old_row[4] or not old_row[5]
+                            or not old_row[4]
+                            or (old_row[5] is not None if canonical_classification else not old_row[5])
                             or old_name.parent == new_name.parent
                             or old_name.name != new_name.name):
                         raise ValueError("relocate_classification_scope_conflict")
@@ -2800,6 +2809,18 @@ class Storage:
                         raise ValueError("relocate_classification_scope_conflict")
                     classification_relative = (str(old_name.relative_to(root)),
                                                str(new_name.relative_to(root)))
+                checkpoint_updates = []
+                if canonical_classification:
+                    from .core.canonical_recovery import _relocated_completed_checkpoint
+                    if not checkpoint_rows:
+                        raise ValueError("relocate_acquisition_reference_requires_relink")
+                    for checkpoint in checkpoint_rows:
+                        checkpoint_updates.append((
+                            _relocated_completed_checkpoint(
+                                db, checkpoint[0], checkpoint[1:], identity_id=identity_id,
+                                artifact_id=old_row[4], old_path=old_text, new_path=new_text),
+                            checkpoint[0], checkpoint[-1],
+                        ))
                 placement_metadata = None
                 # A different catalogue projection may still point at the
                 # source path even when it uses another placement ID. Do not
@@ -2968,6 +2989,14 @@ class Storage:
                             "UPDATE catalog_entries SET identity_id=?,provider_id=?,metadata_json=?,updated_at=? WHERE catalog_entry_id=?",
                             (identity_id, provider_id, self._json_dump(metadata), now, catalog_entry_id),
                         )
+                for metadata, record_id, previous in checkpoint_updates:
+                    changed = db.execute(
+                        "UPDATE acquisition_ledger SET metadata_json=?,updated_at=? "
+                        "WHERE acquisition_id=? AND status='complete' AND metadata_json=?",
+                        (metadata, now, record_id, previous),
+                    )
+                    if changed.rowcount != 1:
+                        raise ValueError("relocate_acquisition_reference_requires_relink")
                 db.execute("RELEASE SAVEPOINT relocate_local_path")
             except Exception:
                 db.execute("ROLLBACK TO SAVEPOINT relocate_local_path")

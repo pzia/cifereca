@@ -95,3 +95,92 @@ def test_invalid_artifact_cannot_complete_journal(tmp_path, monkeypatch, artifac
             )
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("case", ["complete", "staged", "wrong_sha", "wrong_receipt",
+                                  "legacy_call", "foreign_owner", "rollback"])
+def test_relocate_completed_checkpoint_preserves_canonical_history(tmp_path, monkeypatch, case):
+    import json
+    import os
+
+    root = tmp_path / "EBooks"
+    storage = Storage(tmp_path / "canonical.sqlite")
+    key, snapshot = new_source()
+    owner = key.scope.identity_id
+    offer = "synthetic-offer"
+    artifact = "sha256:" + SHA
+    monkeypatch.setattr(recovery, "_lock_ok", lambda lock: True)
+    try:
+        register(storage, owner, key.scope.provider_id, key.scope.credential_id,
+                 account=key.scope.account_id)
+        old = target(tmp_path, owner)
+        new = root / ("other" if case == "foreign_owner" else owner) / "Livres" / old.name
+        new.parent.mkdir(parents=True)
+        record_id = recovery.record_completed_delivery_for_recovery(
+            storage, source=key, offer_id=offer,
+            completed=CompletedDelivery(key, offer, old, SHA, "synthetic-receipt"),
+            library_root=root, shared_lock=object(),
+        )
+        published = publish_completed_acquisition(
+            storage, library_root=root, path=old, source=key, snapshot=snapshot,
+            final_sha256=SHA, delivery_receipt_ref="synthetic-receipt",
+        )
+        if case != "staged":
+            recovery.mark_completed_delivery_published(
+                storage, source=key, offer_id=offer, artifact_id=artifact,
+                shared_lock=object(),
+            )
+        os.link(old, new)
+        with storage._lock, storage._connect() as db:
+            if case in ("wrong_sha", "wrong_receipt"):
+                raw = recovery._checkpoint(db, record_id)[7]
+                data = json.loads(raw)
+                if case == "wrong_sha":
+                    data["sha256"] = "b" * 64
+                else:
+                    data["receipt"] = "unrelated-receipt"
+                db.execute("UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+                           (json.dumps(data), record_id))
+            if case == "rollback":
+                db.execute(
+                    "CREATE TRIGGER fail_checkpoint_relocation BEFORE UPDATE OF metadata_json "
+                    "ON acquisition_ledger BEGIN SELECT RAISE(ABORT, 'fixture_rollback'); END"
+                )
+            checkpoint_before = recovery._checkpoint(db, record_id)
+            history = {table: db.execute("SELECT * FROM " + table).fetchall()
+                       for table in ("origin_links", "source_references", "artifacts", "entitlements")}
+        baseline = storage.placement_get(published.placement_id)
+        kwargs = {} if case == "legacy_call" else {"classification_root": root}
+        if case == "complete":
+            storage.relocate_local_path(old, new, identity_id=owner, provider_id=None, **kwargs)
+            moved = storage.placement_get(published.placement_id)
+            assert moved["path"] == str(new)
+            assert moved["provider_id"] is None and moved["source_item_id"] is None
+            assert moved["artifact_id"] == artifact and moved["identity_id"] == owner
+            assert storage.placement_for_path(old) is None
+            old.unlink()
+            recovered = recovery.recover_completed_delivery(
+                storage, source=key, offer_id=offer, library_root=root, shared_lock=object())
+            assert recovered is not None and recovered.path == new
+            assert recovered.final_sha256 == SHA and recovered.receipt_ref == "synthetic-receipt"
+            recovery.mark_completed_delivery_published(
+                storage, source=key, offer_id=offer, artifact_id=artifact, shared_lock=object())
+        else:
+            import sqlite3
+            with pytest.raises((ValueError, sqlite3.IntegrityError), match="relocate_|fixture_rollback"):
+                storage.relocate_local_path(old, new, identity_id=owner, provider_id=None, **kwargs)
+            assert storage.placement_get(published.placement_id) == baseline
+            assert storage.placement_for_path(new) is None and old.samefile(new)
+        with storage._lock, storage._connect() as db:
+            after = recovery._checkpoint(db, record_id)
+            assert {table: db.execute("SELECT * FROM " + table).fetchall()
+                    for table in history} == history
+            if case == "complete":
+                assert after[:7] == checkpoint_before[:7]
+                expected = json.loads(checkpoint_before[7])
+                expected["path"] = str(new)
+                assert json.loads(after[7]) == expected
+            else:
+                assert after == checkpoint_before
+    finally:
+        storage.close()

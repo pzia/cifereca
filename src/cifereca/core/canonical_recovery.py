@@ -318,6 +318,85 @@ def recover_completed_delivery(
     return completed
 
 
+def _published_receipt_links_current(db, source, artifact_id, provider_receipt, adept_receipt):
+    """Reuse the exact canonical B proof inside an existing SQL transaction."""
+    scope = source.scope
+    source_id = _stable(
+        "source", scope.identity_id, scope.provider_id, scope.credential_id,
+        scope.account_id, source.branch, source.edition_id,
+        source.right_id, source.kind,
+    )
+    def has_exact_link(kind, receipt):
+        origin_id = _stable(
+            "origin", kind, scope.identity_id, artifact_id,
+            source_id, receipt,
+        )
+        return db.execute(
+            "SELECT 1 FROM source_references s "
+            "JOIN origin_links o ON o.source_reference_id=s.source_reference_id "
+            "JOIN artifacts a ON a.artifact_id=o.artifact_id "
+            "WHERE s.source_reference_id=? AND s.identity_id=? "
+            "AND s.provider_id=? AND s.credential_id=? AND s.account_id=? "
+            "AND s.branch_id=? AND s.edition_id=? AND s.right_id=? "
+            "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' AND o.origin_link_id=? "
+            "AND o.origin_kind=? AND o.identity_id=? "
+            "AND o.artifact_id=? AND o.evidence_ref=? LIMIT 1",
+            (source_id, scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id, source.branch,
+             source.edition_id, source.right_id, source.kind,
+             origin_id, kind, scope.identity_id, artifact_id, receipt),
+        ).fetchone() is not None
+    return (has_exact_link("provider", provider_receipt)
+            and (not adept_receipt or has_exact_link("adept", adept_receipt)))
+
+
+def _relocated_completed_checkpoint(db, record_id, row, *, identity_id, artifact_id,
+                                    old_path, new_path):
+    """Return only the relocated operation journal, never modify origin history.
+
+    Call inside the common relocation transaction after staging and checking
+    the same physical file. Unknown, partial or ambiguous records fail closed.
+    """
+    from ..plugin_api.provider_rights_observation import ProviderRightsScope
+
+    if (row[5] != "complete" or row[6] != artifact_id
+            or row[4] != identity_id or type(artifact_id) is not str
+            or len(artifact_id) != 71 or not artifact_id.startswith("sha256:")
+            or any(c not in "0123456789abcdef" for c in artifact_id[7:])
+            or type(row[7]) is not str or len(row[7]) > 65536):
+        raise ValueError("relocate_acquisition_reference_requires_relink")
+    try:
+        data = json.loads(row[7], object_pairs_hook=_unique_checkpoint_fields)
+        if (type(data) is not dict or set(data) != {
+                "schema", "source", "offer_id", "path", "sha256", "receipt", "adept_receipt"}
+                or data["schema"] != _SCHEMA or data["path"] != old_path
+                or data["sha256"] != artifact_id[7:]
+                or type(data["source"]) is not list or len(data["source"]) != 8):
+            raise ValueError("invalid_checkpoint")
+        owner, provider, credential, account, branch, edition, right, kind = data["source"]
+        scope = ProviderRightsScope(owner, provider, credential, account)
+        source = SourceKey(scope, edition, right, kind, branch)
+        offer, receipt, adept = data["offer_id"], data["receipt"], data["adept_receipt"]
+        if (row[:5] != (provider, credential, account, edition, owner)
+                or owner != identity_id
+                or any(type(v) is not str or len(v) > 1024
+                       or any(c in v for c in "\x00\r\n")
+                       for v in (offer, receipt, adept))
+                or not offer or not receipt
+                or _stage_id(source, offer) != record_id
+                or not _exact_borrower_bound_in_db(db, scope)
+                or not _published_receipt_links_current(db, source, artifact_id, receipt, adept)):
+            raise ValueError("invalid_checkpoint")
+        from .duplicate_maintenance_guard import _mentions_exact_path
+        if any(_mentions_exact_path(v, old_path) for k, v in data.items() if k != "path"):
+            raise ValueError("invalid_checkpoint")
+        data["path"] = new_path
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    except (ValueError, TypeError, KeyError, RecursionError):
+        raise ValueError("relocate_acquisition_reference_requires_relink") from None
+
+
 def mark_completed_delivery_published(
     storage, *, source: SourceKey, offer_id: str,
     artifact_id: str, shared_lock: InterProcessLock,
@@ -365,34 +444,8 @@ def mark_completed_delivery_published(
                 or any(ch in item for item in (provider_receipt, adept_receipt)
                        for ch in "\x00\r\n")):
             raise ValueError("canonical_intake_checkpoint_conflict")
-        source_id = _stable(
-            "source", scope.identity_id, scope.provider_id, scope.credential_id,
-            scope.account_id, source.branch, source.edition_id,
-            source.right_id, source.kind,
-        )
-        def has_exact_link(kind, receipt):
-            origin_id = _stable(
-                "origin", kind, scope.identity_id, artifact_id,
-                source_id, receipt,
-            )
-            return db.execute(
-                "SELECT 1 FROM source_references s "
-                "JOIN origin_links o ON o.source_reference_id=s.source_reference_id "
-                "JOIN artifacts a ON a.artifact_id=o.artifact_id "
-                "WHERE s.source_reference_id=? AND s.identity_id=? "
-                "AND s.provider_id=? AND s.credential_id=? AND s.account_id=? "
-                "AND s.branch_id=? AND s.edition_id=? AND s.right_id=? "
-                "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
-                "AND s.evidence_ref<>'' AND o.origin_link_id=? "
-                "AND o.origin_kind=? AND o.identity_id=? "
-                "AND o.artifact_id=? AND o.evidence_ref=? LIMIT 1",
-                (source_id, scope.identity_id, scope.provider_id,
-                 scope.credential_id, scope.account_id, source.branch,
-                 source.edition_id, source.right_id, source.kind,
-                 origin_id, kind, scope.identity_id, artifact_id, receipt),
-            ).fetchone() is not None
-        if (not has_exact_link("provider", provider_receipt)
-                or (adept_receipt and not has_exact_link("adept", adept_receipt))
+        if (not _published_receipt_links_current(
+                db, source, artifact_id, provider_receipt, adept_receipt)
                 or db.execute(
                     "SELECT 1 FROM placements WHERE identity_id=? "
                     "AND artifact_id=? AND state='present' LIMIT 1",
