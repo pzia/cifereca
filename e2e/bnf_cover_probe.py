@@ -159,7 +159,7 @@ def main() -> int:
     stages = ["startup"]
     patch_search = patch.object(
         bnf, "read_search",
-        side_effect=lambda _client, query, *, is_current: (
+        side_effect=lambda _client, query, *, is_current, **_witness: (
             reads.append("search") or parsed, ()
         ),
     )
