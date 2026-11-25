@@ -359,7 +359,7 @@ def main():
         # charger une vraie fiche GTK ; le clic loupe est intercepté séparément.
         from cifereca.gui.query_model import QueryState
         window.search_controls.set_state(
-            QueryState(text="Camille", field="title", scope="all"), notify=False,
+            QueryState(text="Prix du Quai", field="all", scope="all"), notify=False,
         )
         window.navigate("search")
         search_started[0] = monotonic()
@@ -372,6 +372,7 @@ def main():
             return
         assert window.search_page.store.get_n_items() == 1, "Notice du catalogue connu absente"
         assert len(known_calls) == 1, f"Recherche locale non unique : {known_calls!r}"
+        assert "Correspondance : Prix littéraire" in window.search_page.store.get_item(0).meta
         # Spy only *after* starting the local search but *before* building suffix buttons.
         original_search_books[0] = getattr(window, "search_books", None)
         def observe(query, *, field="title", online=False, identity_id=None):
@@ -570,12 +571,17 @@ def main():
         capture("02-search-isbn-action")
         # Switch route without remote collection. Reuse the actual Library
         # master/detail renderer with the same locally indexed book.
+        from cifereca.gui.query_model import QueryState
         window._library_entries_cache = [dict(entry, key="ux942-library")]
+        component["library_query_before_parity"] = window.library_controls.state()
+        window.library_controls.set_state(QueryState(text="Prix du Quai", field="all", scope="all"), notify=False)
         window.navigate("library")
         later(260, library_select)
 
     def library_select():
         assert window.library_page.store.get_n_items() == 1
+        assert "Correspondance : Prix littéraire" in window.library_page.store.get_item(0).meta
+        report["checks"]["P0_1023_search_library_award_reason_parity"] = True
         window.library_page.selection.set_selected(0)
         later(270, verify_library)
 
@@ -599,6 +605,7 @@ def main():
         report["library_rows"] = shown
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
+        window.library_controls.set_state(component.pop("library_query_before_parity"), notify=False)
         assert len(report["online_calls"]) == 1
         # Continue testing generic GTK components, not retired provider-specific
         # ownership fixtures or noncanonical entitlement-backed downloads.
