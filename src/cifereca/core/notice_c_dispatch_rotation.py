@@ -42,6 +42,7 @@ class RotationPage:
     next_after: str | None
     examined: int
     corrupt: int
+    priority_hints: tuple = ()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -138,6 +139,11 @@ class PublicDispatchRotation:
             page = self._page(read_page, kind, quotient + int(offset < remainder))
             pages[index] = page
             positions[index] = 0
+            if kind != _PURCHASE_LANE:
+                for ref, rank in validate_priority_hints(page.priority_hints).items():
+                    if ref not in page.refs:
+                        raise ValueError("notice_rotation_invalid_page")
+                    ranks[ref] = min(rank, ranks.get(ref, 3))
             examined += page.examined
             corrupt += page.corrupt
             if not page.refs:
