@@ -188,7 +188,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
     row = Adw.ActionRow()
     row.set_title("Verrous de téléchargements ADEPT" if mode == "holds"
                   else "Provenances de prêts historiques")
-    row.set_subtitle("Diagnostic local des verrous ; aucun déverrouillage autorisé."
+    row.set_subtitle("Diagnostic local ; reprise supervisée uniquement après attestation et qualification Core."
                      if mode == "holds" else "Rapport local du profil actif, sans accès fournisseur.")
     start = window.action_button("Examiner…", "system-search-symbolic")
     holds = window.action_button("Verrous…", "dialog-warning-symbolic")
@@ -427,7 +427,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw, mode="combin
                 if _rearm_attestable(value):
                     selected_hold = value
                     if rearm_button is None:
-                        rearm_button = Gtk.Button(label="Attester et autoriser la reprise…")
+                        rearm_button = Gtk.Button(label="Autoriser le retéléchargement…")
                         inventory_actions.append(rearm_button)
                         rearm_button.connect("clicked", rearm_clicked)
                     rearm_button.set_visible(True)
