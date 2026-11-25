@@ -26,7 +26,8 @@ class PublicAgeRead:
     materialization: DescriptiveMaterialization | None = None
 
 
-def read_public_age_result(storage, *, target_edition_id, scope, hold_selected):
+def read_public_age_result(storage, *, target_edition_id, scope, hold_selected,
+                           group_document=None):
     """Return a closed status; only current carries a materialization.
 
     unconfigured: no schema-pinned explicit selection.
@@ -51,7 +52,8 @@ def read_public_age_result(storage, *, target_edition_id, scope, hold_selected):
                                           schema=candidate.schema)
 
             def capture(db):
-                snapshot = _snapshot(db, target_edition_id=target_edition_id, scope=scope)
+                snapshot = _snapshot(db, target_edition_id=target_edition_id, scope=scope,
+                                     group_document=group_document)
                 if snapshot is None or snapshot[1] != pin:
                     raise ValueError("notice_descriptive_public_age_input_changed")
                 _, latest, admitted = snapshot

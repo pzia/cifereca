@@ -39,7 +39,12 @@ def test_core_consumer_request_and_read_share_trusted_authority(tmp_path):
             assert journal.read_job(core.storage, ref).state != "error"
             Event().wait(.01)
         assert journal.read_job(core.storage, ref).state == "current"
+        # SQL commit precedes release of the nonblocking lifecycle guard.
+        # A concurrent read may legitimately fail closed during that interval.
         result = core.read_notice_age(**args)
+        while result.status == "unavailable" and monotonic() < deadline:
+            Event().wait(.01)
+            result = core.read_notice_age(**args)
         assert result.status == "current"
         assert "age_min" in result.materialization.value
         assert not result.materialization.inherited

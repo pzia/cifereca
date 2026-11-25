@@ -8,7 +8,7 @@ at publication; the writer reattests the current source and pin in SQL.
 from contextlib import contextmanager
 
 from .notice_c_public_age_request import (
-    capture_exact_c_age_txn, reattest_public_age_job_txn,
+    capture_public_age_job_sources_txn, group_document_from_locator, reattest_public_age_job_txn,
 )
 from .notice_consolidator_manifest import ManifestTextConsolidator
 from .notice_descriptive_selection_store import require_descriptive_selection
@@ -24,8 +24,11 @@ def prepare_exact_public_age(storage, spec, control, *, hold_selected):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         pin, admitted = reattest_public_age_job_txn(db, spec)
-        target, scope = spec.public_age_locator
-        facts, links = capture_exact_c_age_txn(db, target_edition_id=target)
+        target, scope = spec.public_age_locator[:2]
+        facts, links = capture_public_age_job_sources_txn(
+            db, target_edition_id=target,
+            group_document=group_document_from_locator(spec.public_age_locator),
+        )
         coordinate = DescriptiveMaterialization(
             1, "", "age", target, scope, "", "", "", "", False, (),
         )

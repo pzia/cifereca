@@ -54,7 +54,7 @@ class JobSpec:
     implementation_digest: str
     dependencies: tuple[JobRef, ...] = ()
     source_ref: str | None = None
-    public_age_locator: tuple[str, str] | None = None
+    public_age_locator: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -125,18 +125,29 @@ def _descriptive_target(target_edition_id, canonical_type, scope):
 
 
 def descriptive_job_spec(*, target_edition_id, canonical_type, scope,
-                         input_digest, implementation_digest, public_age=False):
+                         input_digest, implementation_digest, public_age=False,
+                         group_document=None):
     """Opaque work coordinate; an optional public-age locator is not authority."""
     if type(public_age) is not bool or (public_age and canonical_type != "age"):
         raise ValueError("notice_work_invalid_descriptive_spec")
+    if group_document is not None and (not public_age or not is_canonical_cover_document(group_document)):
+        raise ValueError("notice_work_invalid_descriptive_spec")
+    locator = (target_edition_id, scope) if public_age else None
+    if group_document is not None:
+        locator += (group_document.source_key,)
     spec = JobSpec(
         "consolidate_descriptive",
         _descriptive_target(target_edition_id, canonical_type, scope),
         input_digest, implementation_digest,
-        public_age_locator=(target_edition_id, scope) if public_age else None,
+        public_age_locator=locator,
     )
     _check_spec(spec)
     return spec
+
+
+def _valid_age_group_ref(value):
+    prefix = "notice-c:canonical-cover:v1:"
+    return type(value) is str and value.startswith(prefix) and _digest(value[len(prefix):])
 
 
 def _check_spec(spec):
@@ -164,7 +175,8 @@ def _check_spec(spec):
                     _INITIAL_PUBLIC_C_DIGEST, _INITIAL_GROUP_C_DIGEST)):
             raise ValueError("notice_work_invalid_descriptive_spec")
         locator = spec.public_age_locator
-        if locator is not None and (type(locator) is not tuple or len(locator) != 2
+        if locator is not None and (type(locator) is not tuple or len(locator) not in (2, 3)
+                or (len(locator) == 3 and not _valid_age_group_ref(locator[2]))
                 or spec.target != _descriptive_target(locator[0], "age", locator[1])):
             raise ValueError("notice_work_invalid_descriptive_spec")
         return

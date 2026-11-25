@@ -352,7 +352,8 @@ class NoticeWorkRuntime:
             self._public_age_digests = implementation_digests
             return True
 
-    def request_public_age(self, *, target_edition_id, scope, expected_generation):
+    def request_public_age(self, *, target_edition_id, scope, expected_generation,
+                           group_document=None):
         """Explicit trusted Core producer, on an existing worker, never GTK.
 
         Scope applicability belongs to the caller. The exact public C and
@@ -370,7 +371,7 @@ class NoticeWorkRuntime:
         ref = request_public_age_consolidation(
             self._storage, target_edition_id=target_edition_id, scope=scope,
             now=clock(), expected_generation=expected_generation,
-            implementation_digests=digests,
+            implementation_digests=digests, group_document=group_document,
         )
         if ref is not None:
             self.request_tick()
