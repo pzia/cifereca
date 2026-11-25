@@ -8,7 +8,13 @@ from ..task_queue import TaskPriority
 
 
 def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None):
-    private = getattr(row, "_core_private_notice_parse_input", None) is not None
+    # A restored private DTO is only a lookup coordinate. The worker
+    # independently authorizes the exact durable source; approval still
+    # requires the same-call producer receipt.
+    account = getattr(row, "source_account_id", None)
+    credential = getattr(row, "source_credential", None)
+    private = (type(account) is str and bool(account)
+               and type(credential) is str and credential not in ("", "__public__"))
     if (not private and getattr(row, "_core_notice_parse_input", None) is None) or context is None:
         return False
     witness = private_search_witness if private else public_search_witness
