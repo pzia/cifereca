@@ -102,3 +102,65 @@ def test_search_commit_triggers_selected_age_without_manual_request(tmp_path, mo
         assert core.read_notice_age(**args).status == "current"
         core.plugins.set_enabled("plugin.age.alpha", False)
         assert core.read_notice_age(**args).status == "unconfigured"
+
+
+def test_search_group_triggers_directed_inherited_age(tmp_path, monkeypatch):
+    """Q9: actual origin-linked Search commit, worker and read; no manual job."""
+    from cifereca.core.search_orchestration import _ingest_public_search_c
+    from tests.test_core_p0_4982_search_atomic_groups import _job_refs
+    from tests.test_core_p0_6366_origin_attested_public_c import _origins, A_URL, B_URL
+
+    data = archive_bytes()
+    digest = sha256(data).hexdigest()
+    archive = tmp_path / "age.zip"
+    archive.write_bytes(data)
+    registry = TrustedConsolidatorRegistry(((data, digest),))
+    with open_core(tmp_path, notice_age_registry=registry,
+                   notice_age_search_scope="fr:editions") as core:
+        _origins(core.storage, tmp_path)
+        core.plugins.installer.install(archive)
+        core.plugins.refresh()
+        core.configure_notice_consolidator(
+            data, expected_sha256=digest, canonical_type="age", scope="fr:editions",
+            selected_plugin_id="plugin.age.alpha", selected_version="1.0.0",
+            expected_generation=0,
+        )
+        a = original(source_provider="seller-a", title="L'ouvrage commun", thumbnail_url=A_URL)
+        b = original(source_provider="seller-b", title="L'ouvrage commun", thumbnail_url=B_URL)
+        a.record_id = "edition-a"
+        b.record_id = "edition-b"
+        a.metadata["bibliography_evidence"]["youth_age"]["record_id"] = a.record_id
+        b.metadata = {}
+        before = (core.storage.entitlements(), core.storage.acquisitions())
+        with monkeypatch.context() as patch:
+            patch.setattr(core.library, "_notice_work_search_committed", lambda: None)
+            rows = [project(a), project(b)]
+            pairs = _ingest_public_search_c(
+                core.library, rows, identity_id="A", now=int(time()),
+                require_public_cover_witness=True,
+            )
+        assert len(pairs) == 2
+        group = rows[0]._core_notice_canonical_cover_document_ref
+        assert rows[1]._core_notice_canonical_cover_document_ref == group
+        args = dict(target_edition_id=pairs[1][1].observation.key.edition_id,
+                    scope="fr:editions", group_document=group)
+        refs = _job_refs(core.storage)
+        assert len(refs) == 2
+        deadline = monotonic() + 20
+        while monotonic() < deadline:
+            if all(journal.read_job(core.storage, ref).state == "current" for ref in refs):
+                break
+            scan = core.notice_work.request_tick()
+            if scan is not None:
+                for handle in scan.result(timeout=10).handles:
+                    handle.result(timeout=15)
+            Event().wait(.01)
+        assert all(journal.read_job(core.storage, ref).state == "current" for ref in refs)
+        result = core.read_notice_age(**args)
+        assert result.status == "current"
+        assert result.materialization.inherited
+        assert "age_min" in result.materialization.value
+        with core.storage._lock, core.storage._connect() as db:
+            db.execute("DELETE FROM origin_links")
+        assert core.read_notice_age(**args).status != "current"
+        assert (core.storage.entitlements(), core.storage.acquisitions()) == before
