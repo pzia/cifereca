@@ -139,7 +139,7 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
 
 
 @pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure",
-                                  "acsm_success", "acsm_staged"])
+                                  "acsm_success", "acsm_staged", "missing_directory", "missing_directory_hold"])
 def test_native_classification_uses_the_common_writer_and_keeps_authority(
     store, tmp_path, monkeypatch, case,
 ):
@@ -195,7 +195,8 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
                              metadata=TYPED, provider_id="local")
         target = root / "A/Livres/Autrice" / old.name
-        target.parent.mkdir(parents=True)
+        if case not in ("missing_directory", "missing_directory_hold"):
+            target.parent.mkdir(parents=True)
     with store._lock, store._connect() as db:
         db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
                    (json.dumps({"relative_path": str(old.relative_to(root)),
@@ -238,7 +239,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     entry, = page.dry_run_entries
     assert entry.operation == "classify" and entry.state == "relocation_held"
     assert entry.proposed == str(target.relative_to(root / "A"))
-    if case != "production_hold":
+    if case not in ("production_hold", "missing_directory_hold"):
         monkeypatch.setattr(library_organizer_execution, "_execution_fence_current",
                             lambda scope, lock: scope.root == root and scope.storage is store)
     if case == "collision":
@@ -265,7 +266,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     assert len(runner.queue) == 1
     runner.run()
     assert not ui.open(NS(MessageDialog=Dialog))
-    if case in ("success", "acsm_success"):
+    if case in ("success", "acsm_success", "missing_directory"):
         assert messages == ["Rangement confirmé. Relancez la revue locale."]
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
@@ -284,6 +285,8 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
             assert target.read_bytes() == b"foreign"
         else:
             assert not target.exists()
+        if case == "missing_directory_hold":
+            assert not target.parent.exists()
     assert rows(store) == before
     if case == "acsm_success":
         from dataclasses import replace
