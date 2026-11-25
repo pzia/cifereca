@@ -2313,7 +2313,19 @@ class LibraryMaintenanceBrokerImpl:
         _enforce_ordinary_dedup_hold(self.service, request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
-            return self._run_filename_relocation(plan, control)
+            from .locking import InterProcessLock, LockBusyError
+            from .paths import acquisition_lock_file
+
+            # The legacy/public naming entry is a writer as well. It must
+            # compete with native Maintenance and publication, never bypass
+            # their shared lease. An admitted same-thread caller may nest.
+            try:
+                with InterProcessLock(acquisition_lock_file(), reentrant=True):
+                    return self._run_filename_relocation(plan, control)
+            except LockBusyError:
+                raise _LibraryFilenameConflict(
+                    "Bibliothèque occupée : renommage indisponible"
+                ) from None
         if request.operation == "move_placement":
             result=self.service.materialize_to_identity(request.placement_id,str(request.target_identity_id))
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))
