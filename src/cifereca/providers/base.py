@@ -421,6 +421,16 @@ class ProviderSession(ABC):
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         raise ProviderCapabilityError(f"{self.provider_id}: search unsupported")
 
+    def private_search_parse_evidence(self, row: SearchResult):
+        """Optional cache-free same-call private Search witness evidence.
+
+        Return (exact response SHA-256, parser implementation SHA-256,
+        proposed field names) for the exact live authenticated result object,
+        or None. No raw bytes, network, rights or storage access. Core must
+        independently admit the account/session and source before using it.
+        """
+        return None
+
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         raise ProviderCapabilityError(f"{self.provider_id}: holdings unsupported")
 
