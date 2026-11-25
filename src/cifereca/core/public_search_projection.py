@@ -108,8 +108,11 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
     return projected
 
 
+# Descriptive labels, including explicitly declared literary awards. The
+# award keys remain distinct from subject/genre in the shared local matcher.
 _CLASSIFICATION_FIELDS = frozenset((
     "subjects", "subject", "genres", "genre", "tags", "keywords", "themes",
+    "awards", "prizes", "literary_prizes",
 ))
 
 
