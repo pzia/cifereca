@@ -224,7 +224,10 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
         assert new.read_bytes() == data and not old.exists()
         assert store.placement_get(pid)["path"] == str(new)
     else:
-        assert result == {"status": "blocked", "changed": 0}
+        expected = {"status": "blocked", "changed": 0}
+        if case == "production":
+            expected["reason"] = "production_fence_held"
+        assert result == expected
         assert old.read_bytes() == data and not new.exists()
         assert store.placement_get(pid) == baseline
 
@@ -556,7 +559,7 @@ def test_native_reviewed_batch_uses_same_writer_and_stops_on_remaining_drift(
     assert command() == {"status": "blocked", "changed": 0}
     expected = {
         "success": {"status": "batch_completed", "changed": 2, "completed": 2, "remaining": 0},
-        "production": {"status": "blocked", "changed": 0},
+        "production": {"status": "blocked", "changed": 0, "reason": "production_fence_held"},
         "late_collision": {"status": "partial", "changed": 1, "completed": 1, "remaining": 1},
     }
     assert result == expected[case]
