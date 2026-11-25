@@ -265,24 +265,102 @@ def verify_recommendation_c(window, view, *, later, capture, report, complete):
                 "views": 2, "sqlite_reads": len(reads),
                 "image_gets_total": len(gets), "gtk_applied": stats["ui_applied"],
             }
-            # Revocation under A->B->A must survive a still-warm N3 image.
-            from cifereca.gui.plugin_public_c_guard import plugin_public_c_cell_current
-            receipt = row._cover_plugin_c_receipt
-            assert plugin_public_c_cell_current(row, receipt)
-            window.service._account_context_epoch += 1
-            window.service.current_identity.identity_id = "bob"
-            assert not plugin_public_c_cell_current(row, receipt)
-            window.service.current_identity.identity_id = owner
-            window.service._account_context_epoch += 1
-            assert not plugin_public_c_cell_current(row, receipt)
-            close_stage()
             if not offline:
+                close_stage()
                 start_stage(True)
-            else:
+                return
+            verify_profile_aba(cover, row)
+
+        def verify_profile_aba(cover, row):
+            """Dispatch a real warm N3 completion after revoking its GTK lease."""
+            from cifereca.gui.plugin_public_c_guard import plugin_public_c_detail_current
+            from cifereca.gui.plugin_public_c_binding import (
+                issue_public_c_binding, public_c_binding_revision,
+            )
+
+            service = window.service
+            receipt = row._cover_plugin_c_receipt
+            current = lambda: plugin_public_c_detail_current(receipt.view, row, receipt)
+            assert current()
+            before = loader.stats()
+            before_n2 = n2.stats()
+            paint_receipts = []
+            # CoverView always queues the N3 completion through GLib.idle_add,
+            # even for a synchronous warm-cache delivery. Revoke before the
+            # GTK main loop can consume this original A completion.
+            cover.bind_document(
+                n2, ref, variant="detail", minimum_revision=epoch,
+                is_current=current,
+                on_texture_applied=lambda *_: paint_receipts.append("old"),
+            )
+            original_request = cover._request
+            assert original_request.still_current and original_request.source_uri == url
+            service._account_context_epoch += 1
+            service.current_identity.identity_id = "bob"
+            assert not current()
+            service.current_identity.identity_id = owner
+            service._account_context_epoch += 1
+            assert not current()
+
+            def rejected(deadline):
+                after = loader.stats()
+                if after["ui_stale"] <= before["ui_stale"]:
+                    assert monotonic() < deadline, "late A cover callback timeout"
+                    later(40, guard(lambda: rejected(deadline)))
+                    return
+                assert cover.picture.get_paintable() is None
+                assert cover.placeholder.get_visible() and not cover.spinner.get_visible()
+                assert after["ui_applied"] == before["ui_applied"]
+                assert not paint_receipts
+                # A new viewer may get the same PUBLIC C decision and N3
+                # media, but only with a freshly issued viewer lease.
+                fresh("bob", "B", lambda: fresh(owner, "A", finished))
+
+            def fresh(identity, tag, done):
+                service._account_context_epoch += 1
+                service.current_identity.identity_id = identity
+                bound = issue_public_c_binding(
+                    window, view._ranked[0].item, identity_id=identity,
+                )
+                assert bound is not None and bound[0] == ref
+                binding = bound[1]
+                live = lambda: public_c_binding_revision(window, ref, binding) == epoch
+                assert live() and not current()
+                cover.bind_document(
+                    n2, ref, variant="detail", minimum_revision=epoch,
+                    is_current=live,
+                    on_texture_applied=lambda *_: paint_receipts.append(tag),
+                )
+
+                def painted(deadline):
+                    if not paint_receipts or paint_receipts[-1] != tag:
+                        assert monotonic() < deadline, "new viewer cover timeout"
+                        later(40, guard(lambda: painted(deadline)))
+                        return
+                    assert live() and cover._request.still_current
+                    assert cover._request.source_uri == url
+                    assert cover.get_mapped() and not cover.placeholder.get_visible()
+                    texture = cover.picture.get_paintable()
+                    assert isinstance(texture, Gdk.Texture)
+                    with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                        assert image.convert("RGB").getpixel((0, 0)) == pixels
+                    done()
+
+                later(40, guard(lambda: painted(monotonic() + 8)))
+
+            def finished():
+                assert paint_receipts == ["B", "A"]
+                assert reads == [ref] and gets == ["GET"]
+                assert n2.stats()["n1_selected_count"] == before_n2["n1_selected_count"]
+                assert loader.stats()["download_ok"] == before["download_ok"]
+                assert service.current_identity.identity_id == owner and not current()
+                report["checks"]["P0_6168_public_gtk_aba_late_paint_revoked"] = True
                 report["recommendation_c_stage"] = "complete"
                 report["checks"]["P0_6366_recommendations_ranked_c_gtk_restart_offline"] = True
                 cleanup()
                 complete()
+
+            later(40, guard(lambda: rejected(monotonic() + 8)))
 
         job = pool.submit(rank)
         await_job(job, show, monotonic() + 10)
