@@ -230,7 +230,9 @@ def private_search_witness(service, row, *, scope, approved=None):
                     return None
                 _, source, _ = _checked_source_state(db, document, _opaque_key(document))
                 if (source is None or source.epoch != stamp[1]
-                        or source.observation != observation):
+                        or source.observation.source_revision != observation.source_revision
+                        or source.observation.key != observation.key
+                        or source.observation.raw_json != observation.raw_json):
                     return None
                 key = admitted_source_scope_sha256(observation.key, parser_id=observation.parser_id)
                 saved = db.execute("SELECT value FROM metadata WHERE key=?",
