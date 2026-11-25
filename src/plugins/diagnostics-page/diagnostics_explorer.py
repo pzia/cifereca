@@ -83,6 +83,52 @@ def cover_failure_page_summary(rows: list[dict[str, Any]]) -> str:
             f" ({reasons}) · nombre de requêtes HTTP distinctes inconnu")
 
 
+_NOTICE_CAPTURE_LABELS = {
+    "pending": "capture en attente",
+    "complete": "archive créée",
+    "partial": "archive partielle",
+    "failed": "échec de création de l’archive",
+    "capacity_refused": "capacité de capture atteinte",
+    "metadata_unavailable": "état de capture indisponible",
+}
+
+
+def notice_capture_label(raw: Mapping[str, Any]) -> str | None:
+    """Present only the closed journal envelope; not a live witness lookup.
+
+    The canonical journal is historical and installation-wide. Its opaque
+    capture ID is not an authorization to inspect private source metadata.
+    """
+    if (raw.get("source") != "journal" or raw.get("module") != "NOTICE"
+            or raw.get("logger") != "cifereca"):
+        return None
+    operation = raw.get("operation")
+    if type(operation) is not str or operation not in (
+        "parser_witness_rejected", "regression_capture_resumed",
+    ) or raw.get("message") != operation:
+        return None
+    detail = raw.get("detail")
+    if type(detail) is not dict or set(detail) != {"diagnostic_id", "capture_state"}:
+        return None
+    state = detail["capture_state"]
+    diagnostic = detail["diagnostic_id"]
+    if type(state) is not str or state not in _NOTICE_CAPTURE_LABELS:
+        return None
+    if state == "capacity_refused":
+        if diagnostic is not None:
+            return None
+    elif type(diagnostic) is not str or re.fullmatch(r"[0-9a-f]{64}", diagnostic) is None:
+        return None
+    status = ("warning" if operation == "parser_witness_rejected" else
+              "error" if state == "failed" else "partial" if state == "partial" else "ok")
+    severity = ("error" if status == "error" else "warning" if status in ("warning", "partial") else "info")
+    if raw.get("status") != status or raw.get("severity") != severity:
+        return None
+    prefix = ("Parsing : régression possible" if operation == "parser_witness_rejected"
+              else "Parsing : reprise de capture")
+    return prefix + " · " + _NOTICE_CAPTURE_LABELS[state]
+
+
 def local_timestamp_label(value: object) -> str:
     """Present a broker UTC instant in the machine's local offset, GUI only.
 
@@ -316,6 +362,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
+        capture_label = notice_capture_label(raw)
+        if capture_label is not None:
+            safe["message"] = capture_label
         cover_reason = published_cover_failure(raw)
         if cover_reason is not None:
             safe["cover_reason"] = cover_reason
