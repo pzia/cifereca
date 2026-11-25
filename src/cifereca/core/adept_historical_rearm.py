@@ -97,7 +97,7 @@ def _fresh_active_offer(observed, right, source):
 
 
 def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
-                                   historical_profile_id, confirmed):
+                                   historical_profile_id, confirmed, view_current=None):
     """Core-only operation after the operator attests THIS exact incident.
 
     The confirmation states that the identified journal documents refusal
@@ -106,7 +106,10 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
     not a machine verification of its content. No generic reset is exposed.
     A successful return records only the exact local CAS and its audit.
     """
-    if (confirmed is not True or type(selection) is not HistoricalHoldSelection
+    def view_live():
+        return view_current is None or (callable(view_current) and view_current() is True)
+
+    if (not view_live() or confirmed is not True or type(selection) is not HistoricalHoldSelection
             or selection.request.service is not service
             or not _digest(journal_sha256) or not _profile_ref(historical_profile_id)
             or selection.marker.state != "held_phase_unknown"
@@ -124,7 +127,7 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
         raise ValueError("historical_rearm_local_recovery")
     with InterProcessLock(recovery.acquisition_lock_file(create=False),
                           existing_nofollow=True) as lock:
-        if not selection.current() or not lock.strict_current():
+        if not view_live() or not selection.current() or not lock.strict_current():
             raise ValueError("historical_rearm_scope_changed")
         loan = Loan(id=source.right_id, record_id=source.edition_id,
                     provider="UNKNOWN", medium="digital", title="", state="active",
@@ -148,7 +151,7 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
                 raise ValueError("historical_rearm_local_recovery_or_consent")
 
         def current():
-            return (lock.strict_current() and selection.current()
+            return (view_live() and lock.strict_current() and selection.current()
                     and lease.current(service)
                     and source in read_source_acquisition_consent(service, account))
 
@@ -214,7 +217,7 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
         # commit; the durable stamp catches concurrent persisted changes.
         with source_context_mutation(service):
             with marker._durable_marker_transaction(storage) as db:
-                if (not request.current() or not lock.strict_current()
+                if (not view_live() or not request.current() or not lock.strict_current()
                         or sqlite_source_stamp(request.database) != selection.stamp
                         or not _fresh_active_offer(snapshot, right, source)
                         or not _local_admissible(db, selection, inventory_scope)):
@@ -222,7 +225,7 @@ def rearm_reviewed_historical_hold(service, selection, *, journal_sha256,
                 marker._release_reviewed_historical_attempt_in_transaction(
                     db, source=source, review=selection.marker,
                     witness=selection.witness, payload=payload)
-                if (not request.current() or not lock.strict_current()
+                if (not view_live() or not request.current() or not lock.strict_current()
                         or service._plugin_manager is not manager
                         or getattr(manager, "registry_generation", None) != generation):
                     raise ValueError("historical_rearm_scope_changed")
