@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 import threading
+import time
 from uuid import uuid4
 import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
@@ -53,7 +54,13 @@ DESCRIPTOR = ProviderDescriptor(
         advisory_loan_medium='digital',
         help_text='4 par défaut. Valeur indicative renseignée par vous : '
                   'elle ne change pas vos droits auprès de la BnF.',
-    ),),
+    ), AccountOptionField(
+        'private_search_replay', 'Rejeu local des témoins de recherche',
+        default='off', value_type='boolean',
+        help_text='Conserver en mémoire les dernières pages du catalogue de ce compte '
+                  'pendant 5 minutes maximum, sans export ni requête supplémentaire. '
+                  'À activer uniquement si cette conservation est autorisée.',
+    )),
     notes=('Inventaire partiel : aucune clôture de prêt par absence.',
            'SSO HTTP expérimental ; une étape interactive supplémentaire est refusée.'),
 )
@@ -204,6 +211,9 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._closed = False
         self.last_search_warnings = []
         self._private_search_inputs = {}
+        self._private_replay_pages = {}
+        self._private_replay_timer = None
+        self._private_replay_deadline = 0
         # Only loans positively observed during this credential session are
         # eligible for an explicit, fresh-read token retrieval.
         self._observed_loans = {}
@@ -283,6 +293,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             self._accounts = []
             self._observed_loans = {}
             self._private_search_inputs = {}
+            self._clear_private_replay()
             self._last_loan_inventory_evidence = None
             username = str(self.credentials.get('username') or '').strip()
             password = str(self.credentials.get('password') or '')
@@ -1035,6 +1046,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         with self._lock:
             self.last_search_warnings = []
             self._private_search_inputs = {}
+            self._clear_private_replay()
             if self._closed:
                 raise ProviderConfigurationError('session_closed')
             # Unhashable scopes (lists/mappings) must be a capability
@@ -1065,10 +1077,13 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                       account.credential_id, account.unique_id)
                      if account is not None else None)
             input_digests = {}
+            replay_pages = {} if self._private_replay_enabled() else None
             try:
                 # Legacy/test clients cannot attest the actual HTTP bytes.
                 witness_kwargs = ({'input_digests': input_digests}
                                   if account is not None and type(self.client) is ReaderHTTPClient else {})
+                if witness_kwargs and replay_pages is not None:
+                    witness_kwargs['replay_pages'] = replay_pages
                 records, warnings = read_search(
                     self.client, query, is_current=lambda: not self._closed and epoch == self._epoch,
                     **witness_kwargs,
@@ -1099,29 +1114,11 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             rows = []
             implementation = None
             if qualified and input_digests and warnings == ('inventory_not_exhaustive',):
-                try:
-                    # Digest the installed parser/projection, not a nominal
-                    # version string or an observation reconstructed from C.
-                    digest = hashlib.sha256()
-                    for filename in ('cifereca_bnf_pret_web.py', 'cifereca_bnf_pret_catalog.py',
-                                     'cifereca_bnf_pret_paging.py', 'cifereca_bnf_pret_http.py',
-                                     'cifereca_bnf_pret.py'):
-                        digest.update(hashlib.sha256(Path(__file__).with_name(filename).read_bytes()).digest())
-                    implementation = digest.hexdigest()
-                except OSError:
-                    pass
+                implementation = self._private_parser_digest()
             for record in records:
                 row = self._search_result(record)
                 if qualified and record.web_reference_evidence is True:
-                    row.source_account_id = account_scope[3]
-                    row.metadata["authenticated_web_evidence"] = {
-                        "schema": 1, "provider_id": row.source_provider,
-                        "record_id": row.record_id, "docbase": row.docbase,
-                        "medium": row.medium, "source_revision": row.revision_id,
-                        "scenario": row.scenario, "access_mode": "authenticated",
-                        "source_field": "results.Book.resource_link",
-                        "evidence": "bnf-pret.authenticated_search_record_identifier",
-                    }
+                    self._stamp_private_catalogue_row(row, account_scope)
                 if (qualified and record.web_reference_evidence is True
                         and implementation is not None and input_digests.get(record.resource_id)):
                     values = tuple((name, getattr(row, name)) for name in ('title', 'author', 'publisher'))
@@ -1129,8 +1126,113 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
                         row, account, account_scope, epoch, input_digests[record.resource_id],
                         implementation, values,
                     )
+                    raw = replay_pages.get(record.resource_id) if replay_pages is not None else None
+                    if (type(raw) is bytes and self._private_replay_enabled()
+                            and hashlib.sha256(raw).hexdigest() == input_digests[record.resource_id]):
+                        self._private_replay_pages[record.resource_id] = (
+                            raw, account, account_scope, epoch, input_digests[record.resource_id],
+                        )
                 rows.append(row)
+            if self._private_replay_pages:
+                # Bound actual retention even if the session is idle.
+                self._private_replay_deadline = time.monotonic() + 300
+                timer = threading.Timer(300, self._expire_private_replay)
+                timer.daemon = True
+                self._private_replay_timer = timer
+                try:
+                    timer.start()
+                except RuntimeError:
+                    self._clear_private_replay()
             return rows
+
+    @staticmethod
+    def _private_parser_digest():
+        try:
+            digest = hashlib.sha256()
+            for filename in ('cifereca_bnf_pret_web.py', 'cifereca_bnf_pret_catalog.py',
+                             'cifereca_bnf_pret_paging.py', 'cifereca_bnf_pret_http.py',
+                             'cifereca_bnf_pret.py'):
+                digest.update(hashlib.sha256(Path(__file__).with_name(filename).read_bytes()).digest())
+            return digest.hexdigest()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _stamp_private_catalogue_row(row, account_scope):
+        row.source_account_id = account_scope[3]
+        row.metadata["authenticated_web_evidence"] = {
+            "schema": 1, "provider_id": row.source_provider,
+            "record_id": row.record_id, "docbase": row.docbase,
+            "medium": row.medium, "source_revision": row.revision_id,
+            "scenario": row.scenario, "access_mode": "authenticated",
+            "source_field": "results.Book.resource_link",
+            "evidence": "bnf-pret.authenticated_search_record_identifier",
+        }
+
+    def _private_replay_enabled(self):
+        value = self.options.get("private_search_replay")
+        return type(value) is str and value == "on"
+
+    def _clear_private_replay(self):
+        self._private_replay_pages = {}
+        self._private_replay_deadline = 0
+        timer, self._private_replay_timer = self._private_replay_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _expire_private_replay(self):
+        with self._lock:
+            # An old canceled timer must not evict a replacement search.
+            if time.monotonic() >= self._private_replay_deadline:
+                self._clear_private_replay()
+
+    def private_search_replay(self, row, input_digest, *, check_only=False):
+        """Cache-only current parser of a single approved, exact private page."""
+        with self._lock:
+            if (not self._private_replay_enabled() or self._closed or not self.connected
+                    or time.monotonic() >= self._private_replay_deadline):
+                self._clear_private_replay()
+                return None
+            if (type(row) is not SearchResult or type(row.record_id) is not str
+                    or type(input_digest) is not str or type(check_only) is not bool):
+                return None
+            item = self._private_replay_pages.get(row.record_id)
+            if item is None:
+                return None
+            raw, account, scope, epoch, digest = item
+            if (digest != input_digest or epoch != self._epoch or len(self._accounts) != 1
+                    or self._accounts[0] is not account
+                    or (account.identity_id, account.provider_id, account.credential_id,
+                        account.unique_id) != scope
+                    or (row.source_provider, row.source_credential, row.source_account_id) != scope[1:]
+                    or (row.docbase, row.medium, row.scenario, row.revision_id, row.source_collection)
+                        != ('BNF_PRET', 'digital', 'BNF_PRET', None, None)
+                    or hashlib.sha256(raw).hexdigest() != digest):
+                return None
+            if check_only:
+                return True
+            from cifereca_bnf_pret_catalog import parse_search_page
+            try:
+                parsed = parse_search_page(raw.decode('utf-8', errors='strict'))
+            except (WebParseError, UnicodeError):
+                return None
+            matches = [record for record in parsed.records if record.resource_id == row.record_id]
+            implementation = self._private_parser_digest()
+            if (parsed.status != 'ok' or len(matches) != 1
+                    or matches[0].web_reference_evidence is not True or implementation is None
+                    or not self._private_replay_enabled() or self._closed or not self.connected
+                    or epoch != self._epoch or time.monotonic() >= self._private_replay_deadline
+                    or len(self._accounts) != 1 or self._accounts[0] is not account
+                    or (account.identity_id, account.provider_id, account.credential_id,
+                        account.unique_id) != scope):
+                return None
+            candidate = self._search_result(matches[0])
+            self._stamp_private_catalogue_row(candidate, scope)
+            self._private_search_inputs[id(candidate)] = (
+                candidate, account, scope, epoch, digest, implementation,
+                tuple((name, getattr(candidate, name)) for name in ('title', 'author', 'publisher')),
+            )
+            return candidate
 
     def private_search_parse_evidence(self, row):
         """Digest-only evidence for the exact latest authenticated Search row.
@@ -1419,6 +1521,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._observed_loans = {}
         with self._lock:
             self._private_search_inputs = {}
+            self._clear_private_replay()
             self.client.clear()
             self.client.close()
 

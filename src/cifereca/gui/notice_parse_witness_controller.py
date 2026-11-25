@@ -1,14 +1,21 @@
 """Explicit approval of an exact scoped parser-witness proposal in Search."""
 from ..core.notice_parse_witness_approval import (PublicWitnessProposal, public_search_witness,
                                                   public_search_witness_diagnostic,
-                                                  private_search_witness, private_search_witness_diagnostic)
+                                                  private_search_witness, private_search_witness_diagnostic,
+                                                  replay_private_search_witness)
 from ..core.search_orchestration import capture_search_read_scope
 from ..core.notice_parse_witness_store import ApprovedParseWitness
 from ..task_queue import TaskPriority
 
 
 def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None):
-    private = getattr(row, "_core_private_notice_parse_input", None) is not None
+    # A restored private DTO is only a lookup coordinate. The worker
+    # independently authorizes the exact durable source; approval still
+    # requires the same-call producer receipt.
+    account = getattr(row, "source_account_id", None)
+    credential = getattr(row, "source_credential", None)
+    private = (type(account) is str and bool(account)
+               and type(credential) is str and credential not in ("", "__public__"))
     if (not private and getattr(row, "_core_notice_parse_input", None) is None) or context is None:
         return False
     witness = private_search_witness if private else public_search_witness
@@ -47,7 +54,7 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
         nonlocal Gtk
         if not current() or result is None:
             return
-        proposal, diagnostic = result
+        proposal, diagnostic, replay_available = result
         if Gtk is None:
             from gi.repository import Gtk
         names = {"title": "titre", "record_id": "identifiant", "author": "auteur",
@@ -91,6 +98,43 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
                     priority=TaskPriority.METADATA, kind="detail-cache", origin="user")
             inspect.connect("clicked", inspect_click)
             panel.add_actions([inspect])
+        if replay_available:
+            replay_button = Gtk.Button(label="Rejouer localement le témoin")
+            replay_button._cifereca_action_id = "replay-private-parse-witness"
+            replay_submitted = False
+
+            def replay_click(_button):
+                nonlocal replay_submitted
+                if (replay_submitted or not current()
+                        or getattr(replay_button, "_cifereca_action_context_revoked", False)):
+                    return
+                replay_submitted = True
+                replay_button.set_sensitive(False)
+
+                def work():
+                    if not worker_current() or not replay_private_search_witness(
+                            service, row, scope=scope):
+                        return None
+                    return True, inspect_witness(service, row, scope=scope)
+
+                def completed(value):
+                    if not current():
+                        return
+                    if value is None:
+                        host.toast("Entrée locale indisponible ; aucun accès réseau.")
+                        return
+                    _, updated = value
+                    if updated is not None and updated != diagnostic:
+                        loaded((None, updated, False))
+                    host.toast("Rejeu local terminé." if updated is not None
+                               else "Rejeu local terminé : aucun écart actif.")
+
+                host.runner.submit("Rejeu local du témoin…", work, completed,
+                                   lambda _error: completed(None),
+                                   priority=TaskPriority.METADATA, kind="detail-cache", origin="user")
+
+            replay_button.connect("clicked", replay_click)
+            panel.add_actions([replay_button])
         if type(proposal) is not PublicWitnessProposal:
             return
         label = ", ".join(names[f.path[-1]] for f in proposal.fields)
@@ -130,7 +174,9 @@ def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None)
         diagnostic = inspect_witness(service, row, scope=scope)
         # A degraded parse is never implicitly offered for approval.
         proposal = witness(service, row, scope=scope) if diagnostic is None else None
-        return proposal, diagnostic
+        replay_available = (private and replay_private_search_witness(
+            service, row, scope=scope, check_only=True))
+        return proposal, diagnostic, replay_available
 
     host.runner.submit(
         "Lecture de la proposition de témoin…",

@@ -398,19 +398,7 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
             if rejected:
                 # Capture is deliberately partial for private inputs. Only
                 # sanitized technical metadata is queued by the shared gate.
-                if diagnostic is not None:
-                    from .notice_regression_capture_intent import export_capture
-                    from .notice_parse_witness_alert import report_capture_diagnostic
-                    try:
-                        state = export_capture(
-                            storage, diagnostic, members={},
-                            directory=getattr(service, "_notice_regression_capture_directory", None),
-                        )
-                    except (ValueError, OSError, SQLiteError):
-                        state = "metadata_unavailable"
-                    if state is not None:
-                        report_capture_diagnostic(getattr(service, "diagnostics", None),
-                                                  diagnostic, state, rejected=True)
+                _export_private_witness_capture(service, diagnostic)
                 continue
             # Account only after both the SQLite transaction and Core's
             # mutation context completed. A failed commit must never be
@@ -422,6 +410,24 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
             # Optional private documentary enrichment must not hide Search results.
             continue
     return count
+
+
+def _export_private_witness_capture(service, diagnostic):
+    """Shared post-commit private capture: no private body or values exported."""
+    if diagnostic is None:
+        return
+    from .notice_regression_capture_intent import export_capture
+    from .notice_parse_witness_alert import report_capture_diagnostic
+    try:
+        state = export_capture(
+            service.storage, diagnostic, members={},
+            directory=getattr(service, "_notice_regression_capture_directory", None),
+        )
+    except (ValueError, OSError, SQLiteError):
+        state = "metadata_unavailable"
+    if state is not None:
+        report_capture_diagnostic(getattr(service, "diagnostics", None),
+                                  diagnostic, state, rejected=True)
 
 
 def read_authenticated_web_for_search(service, row, *, reader_scope):

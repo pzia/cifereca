@@ -171,7 +171,7 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
             "implementation_sha256": implementation_digest,
             "approved_implementation_sha256": approved.baseline.parser_implementation_sha256,
             "input_sha256": input_digest,
-            "raw_input_export": ("private_not_retained" if private else "subject_to_core_policy"),
+            "raw_input_export": ("private_not_export_authorized" if private else "subject_to_core_policy"),
             **({"private_snapshot_omission": "owner_scope_not_export_authorized"} if private else {}),
             **({"last_healthy_omission": "not_attested"} if current is None else {}),
         }, sort_keys=True),

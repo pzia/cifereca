@@ -259,8 +259,16 @@ def private_search_witness(service, row, *, scope, approved=None):
 
 
 def private_search_witness_diagnostic(service, row, *, scope):
-    """Read the selected exact private witness, never from a foreign or revoked session."""
-    from .notice_c_private_search_web import _prepare
+    """Read a durable exact private witness, including a restored Search row.
+
+    A DTO locates an existing source; only the current account binding and
+    the durable source/connection fence authorize inspection. No fresh parse,
+    reapproval, provider request, or trust in the DTO URL is required.
+    """
+    from .notice_c_private_search_web import _source_key, _sql_binding_current
+    from .notice_c_authenticated_web_choices import _capture, _source_links
+    from .notice_cover_projection import notice_cover_document_ref
+    from .notice_cover_repository import _checked_source_state, _opaque_key, read_current_notice_cover
     from .notice_parse_witness_alert import read_parse_witness_diagnostic
     from sqlite3 import Error as SQLiteError
 
@@ -270,22 +278,33 @@ def private_search_witness_diagnostic(service, row, *, scope):
         with service._source_context_lock:
             if not scope.current(service) or service.current_identity is not scope.identity:
                 return None
-            prepared = _prepare(service, row, scope.identity_id)
-            if prepared is None:
+            key = _source_key(row, scope.identity_id)
+            if key is None:
                 return None
-            call, observation, document = prepared
-            source = read_notice_cover(service.storage, document)
-            if source is None:
+            document = notice_cover_document_ref(key)
+            binding = _capture(service, scope, document)
+            if binding is None:
                 return None
+            storage = service.storage
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN")
+                if not _sql_binding_current(db, document, binding.connection_epoch):
+                    return None
+                _, source, _ = _checked_source_state(db, document, _opaque_key(document))
+                if (source is None or source.observation.key != key
+                        or not _source_links(source, binding)):
+                    return None
+            observation = source.observation
             pin = read_approved_parse_witness(service.storage, key=observation.key,
                                               parser_id=observation.parser_id)
             alert = read_parse_witness_diagnostic(service.storage, key=observation.key,
                                                   parser_id=observation.parser_id)
             if (pin is None or alert is None or pin.generation != alert["generation"]
-                    or read_notice_cover(service.storage, document) != source
+                    or read_current_notice_cover(service.storage, document) != source
                     or read_approved_parse_witness(service.storage, key=observation.key,
                                                   parser_id=observation.parser_id) != pin
-                    or not call.binding.current(service, call.scope)):
+                    or not binding.current(service, scope)
+                    or service.current_identity is not scope.identity):
                 return None
             names = []
             for field in alert["fields"]:
@@ -304,3 +323,116 @@ def private_search_witness_diagnostic(service, row, *, scope):
             }
     except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, OSError, SQLiteError):
         return None
+
+
+def replay_private_search_witness(service, row, *, scope, check_only=False):
+    """Review an approved exact private input locally, never refresh Search.
+
+    A live same-call producer receipt selects the retained bytes. The existing
+    owner binding, source fence and pin CAS are checked again after parsing.
+    This is diagnostic-only: historical input cannot overwrite current C.
+    """
+    from .notice_c_private_search_web import (
+        _MARKER, _PARSE_MARKER, _WITNESS, _prepare, _sql_binding_current,
+        capture_authenticated_search_call, stamp_authenticated_search_rows,
+        _export_private_witness_capture,
+    )
+    from .notice_c_authenticated_web_choices import _capture, _source_links
+    from .notice_cover_repository import _checked_source_state, _opaque_key
+    from .notice_parse_witness import admitted_source_scope_sha256
+    from .notice_parse_witness_store import _decode, _PREFIX
+    from .notice_parse_witness_alert import review_publication_txn
+    from sqlite3 import Error as SQLiteError
+
+    if (type(row) is not SearchResult or type(scope) is not SearchReadScope
+            or type(check_only) is not bool):
+        return False
+    try:
+        diagnostic = None
+        with service._source_context_lock:
+            if not scope.current(service) or service.current_identity is not scope.identity:
+                return False
+            prepared = _prepare(service, row, scope.identity_id)
+            if prepared is None:
+                return False
+            call, observation, document = prepared
+            packet = row.__dict__[_MARKER].parse_input
+            stamp = row.__dict__.get(_PARSE_MARKER)
+            if (packet is None or type(stamp) is not tuple or len(stamp) != 5
+                    or stamp[0] is not _WITNESS or type(stamp[1]) is not int
+                    or any(type(value) is not str for value in stamp[2:])
+                    or stamp[2:] != (observation.source_revision, packet[0], packet[1])):
+                return False
+            # The same-call binding uses a placeholder document to capture
+            # the account before Search. Inspect the actual source through
+            # a fresh exact-document binding, never through that placeholder.
+            binding = _capture(service, scope, document)
+            if (binding is None or binding.session is not call.binding.session
+                    or binding.account is not call.binding.account
+                    or binding.connection_epoch != call.binding.connection_epoch
+                    or binding.session_epoch != call.binding.session_epoch):
+                return False
+            storage = service.storage
+            source_key = _opaque_key(document)
+            pin_key = admitted_source_scope_sha256(observation.key, parser_id=observation.parser_id)
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN")
+                if not _sql_binding_current(db, document, call.binding.connection_epoch):
+                    return False
+                _, source, fence = _checked_source_state(db, document, source_key)
+                saved = db.execute("SELECT value FROM metadata WHERE key=?",
+                                   (_PREFIX + pin_key,)).fetchone()
+                if (source is None or source.epoch != stamp[1] or saved is None
+                        or source.observation.key != observation.key
+                        or not _source_links(source, binding)):
+                    return False
+                pin = _decode(saved[0], pin_key)
+                if pin.baseline.approved_input_sha256 != packet[0]:
+                    return False
+            replay = getattr(call.binding.session, "private_search_replay", None)
+            if not callable(replay):
+                return False
+            if check_only:
+                return (replay(row, packet[0], check_only=True) is True
+                        and scope.current(service) and service.current_identity is scope.identity
+                        and call.binding.current(service, call.scope))
+            fresh_call = capture_authenticated_search_call(service, call.binding.session, scope.identity_id)
+            if fresh_call is None:
+                return False
+            candidate = replay(row, packet[0], check_only=False)
+            if type(candidate) is not SearchResult or candidate is row:
+                return False
+            stamp_authenticated_search_rows(service, fresh_call, [candidate])
+            admitted = _prepare(service, candidate, scope.identity_id)
+            if admitted is None:
+                return False
+            new_call, parsed, parsed_document = admitted
+            replay_packet = candidate.__dict__[_MARKER].parse_input
+            if (parsed_document != document or parsed.key != observation.key
+                    or parsed.parser_id != observation.parser_id
+                    or replay_packet is None or replay_packet[0] != packet[0]
+                    or new_call.binding.session is not call.binding.session
+                    or new_call.binding.account is not call.binding.account
+                    or new_call.binding.session_epoch != call.binding.session_epoch
+                    or new_call.binding.connection_epoch != call.binding.connection_epoch
+                    or not call.binding.current(service, call.scope)
+                    or not scope.current(service) or service.current_identity is not scope.identity):
+                return False
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if not _sql_binding_current(db, document, call.binding.connection_epoch):
+                    return False
+                _, current, current_fence = _checked_source_state(db, document, source_key)
+                live_pin = db.execute("SELECT value FROM metadata WHERE key=?",
+                                      (_PREFIX + pin_key,)).fetchone()
+                if (current != source or current_fence != fence or live_pin != saved
+                        or not scope.current(service) or service.current_identity is not scope.identity):
+                    return False
+                _, diagnostic = review_publication_txn(
+                    db, current=source.observation, candidate=parsed,
+                    input_digest=replay_packet[0], implementation_digest=replay_packet[1],
+                )
+        _export_private_witness_capture(service, diagnostic)
+        return True
+    except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, OSError, SQLiteError):
+        return False

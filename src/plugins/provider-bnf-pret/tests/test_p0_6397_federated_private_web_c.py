@@ -407,7 +407,7 @@ def test_private_commit_failure_never_counts_rolled_back_publication(harness, mo
 
 
 def test_private_parse_witness_actual_http_search_approval_and_guard(harness, monkeypatch, tmp_path):
-    """Q5/Q7: existing federated path, explicit click, exact input and owner-only alert."""
+    """Q5–Q7: existing federated path, explicit approval/replay, durable owner-only alert."""
     from hashlib import sha256
     from pathlib import Path
     from types import SimpleNamespace as NS
@@ -421,6 +421,7 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
     from cifereca.core.notice_cover_repository import read_notice_cover
     from cifereca.core.notice_parse_witness_approval import (
         private_search_witness, private_search_witness_diagnostic,
+        replay_private_search_witness,
     )
     from cifereca.core.notice_parse_witness_store import read_approved_parse_witness
     from cifereca.gui.notice_parse_witness_controller import request_selected_parse_witness
@@ -481,6 +482,36 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
     assert baseline().generation == 1
     assert baseline().baseline.approved_input_sha256 == sha256(body).hexdigest()
     assert len(calls) == 1
+    assert not session._private_replay_pages
+    assert not replay_private_search_witness(service, row, scope=scope, check_only=True)
+    assert not replay_private_search_witness(service, row, scope=scope)
+
+    # Explicit per-account opt-in only; a fresh authorized Search retains
+    # its bounded original page in this session, never in Storage or a ZIP.
+    from cifereca_bnf_pret import DESCRIPTOR
+    opt_in, = [option for option in DESCRIPTOR.account_options
+               if option.key == "private_search_replay"]
+    assert opt_in.default == "off" and opt_in.value_type == "boolean"
+    session.options["private_search_replay"] = "on"
+    row, = service.search("fiction", provider_id=session.provider_id, force=True)
+    assert len(calls) == 2
+    assert session.private_search_replay(row, sha256(body).hexdigest(), check_only=True) is True
+    assert replay_private_search_witness(service, row, scope=scope, check_only=True)
+    assert not replay_private_search_witness(
+        service, row, scope=capture_search_read_scope(service, "bob"),
+    )
+    assert not replay_private_search_witness(service, replace(row), scope=scope)
+    actions.clear()
+    groups = []
+    panel.add_group = lambda title, values: groups.append((title, values))
+    host.search_objects[cell.key] = row
+    assert request_selected_parse_witness(
+        host, row, selected_id=row.id, context=(2, 1, 1, "alice"), Gtk=NS(Button=Button),
+    )
+    deliver()
+    replay_button, = [action for action in actions
+                      if action._cifereca_action_id == "replay-private-parse-witness"]
+    assert not groups
 
     # Simulate an installed parser/projection upgrade on the same HTTP input.
     # Only author disappears; the exact BnF record and account remain valid.
@@ -493,6 +524,17 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
         return (content + b"\n# synthetic upgrade" if path.name == "cifereca_bnf_pret_web.py"
                 else content)
     monkeypatch.setattr(Path, "read_bytes", upgraded)
+    replay_button.callback(replay_button)
+    deliver()
+    assert len(calls) == 2
+    assert toasts[-1] == "Rejeu local terminé."
+    replay_alert = private_search_witness_diagnostic(service, row, scope=scope)
+    assert replay_alert["status"] == "parser_regression_confirmed"
+    assert replay_alert["fields"] == ("author",)
+    assert replay_alert["capture_state"] == "partial"
+    assert read_notice_cover(service.storage, doc) == source
+    assert groups[-1][0] == "Parsing : régression possible"
+    replay_archive, = (tmp_path / "private-captures").glob("*.zip")
     rejected, = service.search("fiction", provider_id=session.provider_id, force=True)
     diagnostic = private_search_witness_diagnostic(service, rejected, scope=scope)
     assert diagnostic is not None
@@ -505,6 +547,7 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
         service, rejected, scope=capture_search_read_scope(service, "bob"),
     ) is None
     archive, = (tmp_path / "private-captures").glob("*.zip")
+    assert archive == replay_archive
     with zipfile.ZipFile(archive) as capture:
         manifest = json.loads(capture.read("manifest.json"))
         assert set(manifest["omitted"]) == {"response.raw", "current_parse.json", "last_healthy.json"}
@@ -512,9 +555,67 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
     again, = service.search("fiction", provider_id=session.provider_id, force=True)
     assert private_search_witness_diagnostic(service, again, scope=scope)["status"] == "parser_regression_confirmed"
     assert list((tmp_path / "private-captures").glob("*.zip")) == [archive]
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert replay_private_search_witness(service, again, scope=scope, check_only=True)
+    session._private_replay_deadline = 0
+    assert not replay_private_search_witness(service, again, scope=scope)
+    assert not session._private_replay_pages and len(calls) == 4
     assert search_public_notice_c(service.storage, "fiction").hits == ()
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
     session.connected = False
     assert private_search_witness(service, row, scope=scope, approved=proposal) is None
     assert private_search_witness_diagnostic(service, again, scope=scope) is None
+
+    # Reopen the actual SQLite database with a new service and session. A
+    # restored Search DTO contains no transient producer receipt. It can
+    # inspect the durable alert, never approve or republish it.
+    restored = SearchResult(**asdict(again))
+    assert "_core_private_web_search_receipt" not in restored.__dict__
+    assert "_core_private_notice_parse_input" not in restored.__dict__
+    reopened = LibraryService(service.config, Storage(service.storage.path), Diagnostics())
+    fresh_session, fresh_account, fresh_client = active(results(card()))
+    reopened.accounts = [fresh_account]
+    reopened._sessions = {
+        reopened._session_key(fresh_account.provider_id, fresh_account.credential_id): fresh_session
+    }
+    monkeypatch.setattr(reopened, "_provider_enabled_for_identity", lambda *args: True)
+    try:
+        fresh_scope = capture_search_read_scope(reopened, "alice")
+        assert private_search_witness(reopened, restored, scope=fresh_scope) is None
+        assert not replay_private_search_witness(reopened, restored, scope=fresh_scope)
+        assert private_search_witness_diagnostic(reopened, restored, scope=fresh_scope) == diagnostic
+        assert private_search_witness_diagnostic(
+            reopened, restored, scope=capture_search_read_scope(reopened, "bob"),
+        ) is None
+        assert private_search_witness_diagnostic(
+            reopened, replace(restored, record_id="foreign-record"), scope=fresh_scope,
+        ) is None
+        actions.clear()
+        groups = []
+        panel.add_group = lambda title, values: groups.append((title, values))
+        host.service = reopened
+        host.search_objects[cell.key] = restored
+        assert request_selected_parse_witness(
+            host, restored, selected_id=restored.id,
+            context=(2, 1, 1, "alice"), Gtk=NS(Button=Button),
+        )
+        deliver()
+        inspect, = actions
+        assert inspect._cifereca_action_id == "inspect-private-parse-witness"
+        inspect.callback(inspect)
+        deliver()
+        assert groups[-1][0] == "Preuve du témoin"
+        assert ("Champs atteints", "auteur") in groups[-1][1]
+        assert read_notice_cover(reopened.storage, doc) == source
+        assert not fresh_client.calls
+        assert list((tmp_path / "private-captures").glob("*.zip")) == [archive]
+        # Persisted connection revocation takes effect even when the new
+        # session still holds its former Account and is marked connected.
+        reopened.storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": fresh_account.provider_id,
+            "credential_id": fresh_account.credential_id, "enabled": False,
+        })
+        assert private_search_witness_diagnostic(reopened, restored, scope=fresh_scope) is None
+        assert not fresh_client.calls
+    finally:
+        reopened.close()

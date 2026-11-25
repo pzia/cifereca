@@ -43,10 +43,12 @@ def next_link(html, current_url):
     return observed_next_results_url(current_url, targets.pop())
 
 
-def read_search(client, query, *, is_current=lambda: True, input_digests=None):
+def read_search(client, query, *, is_current=lambda: True, input_digests=None,
+                replay_pages=None):
     url = query_url(query)
     deadline = time.monotonic() + 30
     records = {}
+    remaining_replay_bytes = 2 * 1024 * 1024
     # No link absence, count or successful HTML parse attests exhaustiveness.
     warnings = ['inventory_not_exhaustive']
     for page_index in range(MAX_SEARCH_PAGES):
@@ -54,9 +56,12 @@ def read_search(client, query, *, is_current=lambda: True, input_digests=None):
             if not is_current():
                 raise ReaderHTTPError('session_closed')
             observed = []
+            retained = []
             kwargs = {}
             if input_digests is not None and type(client) is ReaderHTTPClient:
                 kwargs['observe_search_input'] = observed.append
+                if replay_pages is not None and remaining_replay_bytes > 0:
+                    kwargs['retain_search_input'] = retained.append
             current, html = client.request('GET', url, deadline=deadline, **kwargs)
             if not is_current():
                 raise ReaderHTTPError('session_closed')
@@ -66,6 +71,10 @@ def read_search(client, query, *, is_current=lambda: True, input_digests=None):
             if expected != actual:
                 raise WebParseError('search_redirect_mismatch')
             parsed = parse_search_page(html)
+            raw = (retained[0] if len(retained) == 1 and parsed.status == 'ok'
+                   and 0 < len(retained[0]) <= remaining_replay_bytes else None)
+            if raw is not None:
+                remaining_replay_bytes -= len(raw)
             for record in parsed.records:
                 # No digest fabricated from the decoded HTML or parsed DTO.
                 # An edition seen on several pages has ambiguous input.
@@ -73,6 +82,12 @@ def read_search(client, query, *, is_current=lambda: True, input_digests=None):
                     input_digests[record.resource_id] = (
                         observed[0] if len(observed) == 1 and parsed.status == 'ok'
                         and record.resource_id not in records else None)
+                if replay_pages is not None:
+                    if (raw is not None and input_digests is not None
+                            and input_digests.get(record.resource_id) is not None):
+                        replay_pages[record.resource_id] = raw
+                    else:
+                        replay_pages.pop(record.resource_id, None)
                 previous = records.get(record.resource_id)
                 if previous is not None and previous != record:
                     if 'ambiguous_search' not in warnings:
