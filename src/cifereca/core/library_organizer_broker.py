@@ -194,8 +194,8 @@ class LibraryOrganizerReadBrokerImpl:
                     or page.mutation_authorized is not False
                     or plan is None or plan.confirmed is not True
                     or plan.executable is not False or len(plan.entries) != 1
-                    or plan.entries[0].operation != "rename"
-                    or plan.entries[0].state != "review_only"
+                    or (plan.entries[0].operation, plan.entries[0].state) not in (
+                        ("rename", "review_only"), ("classify", "relocation_held"))
                     or self._current(page.token) is None):
                 return None
             # Consume only the private handoff; the visible simulation stays

@@ -89,6 +89,7 @@ class NoticeWorkRuntime:
         self._public_age_digests = ()
         self._dispatch_requested = False
         self._priority_hints = ()
+        self._priority_targets = ()
         self._lock = RLock()
         self._closed = False
         self._scan = None
@@ -504,6 +505,28 @@ class NoticeWorkRuntime:
             self._priority_hints = hints
             return True
 
+    def replace_priority_documents(self, documents):
+        """Bounded advisory public C context from the desktop owner, no SQLite."""
+        from .notice_c_cover_index import is_canonical_cover_document
+        from .notice_c_dispatch_rotation import _PRIORITY
+
+        if type(documents) is not tuple or len(documents) > 128:
+            raise ValueError("notice_work_invalid_priority_targets")
+        targets = {}
+        for pair in documents:
+            if (type(pair) is not tuple or len(pair) != 2
+                    or not is_canonical_cover_document(pair[0])
+                    or type(pair[1]) is not str or pair[1] not in _PRIORITY):
+                raise ValueError("notice_work_invalid_priority_targets")
+            document, reason = pair
+            old = targets.get(document.source_key, "background_stale")
+            targets[document.source_key] = min(old, reason, key=_PRIORITY.__getitem__)
+        with self._lock:
+            if self._closed:
+                return False
+            self._priority_targets = tuple(targets.items())
+            return True
+
     def request_tick(self):
         """Nonblocking heartbeat hint; no SQLite on the submitting thread.
 
@@ -568,8 +591,13 @@ class NoticeWorkRuntime:
             pump = self._pump
             registry = self._replay_registry
             priority_hints = self._priority_hints
-        outcome = (pump.tick(control=control, priority_hints=priority_hints)
-                   if priority_hints else pump.tick(control=control))
+            priority_targets = self._priority_targets
+        options = {}
+        if priority_hints:
+            options["priority_hints"] = priority_hints
+        if priority_targets:
+            options["priority_targets"] = priority_targets
+        outcome = pump.tick(control=control, **options)
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
@@ -641,6 +669,7 @@ class NoticeWorkRuntime:
             self._scan = None
             self._hint_pending = False
             self._priority_hints = ()
+            self._priority_targets = ()
             self._observer = None
             self._pending_replay_registry = None
             authority = self._fetch_authority

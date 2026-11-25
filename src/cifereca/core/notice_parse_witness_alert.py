@@ -145,6 +145,7 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     review = review_admitted_source_parse_witness(
         approved.baseline, observation=candidate, input_sha256=input_digest,
         publication_review=True,
+        parser_implementation_sha256=implementation_digest,
     )
     record_parse_witness_review_txn(
         db, key=candidate.key, parser_id=candidate.parser_id,
@@ -161,6 +162,7 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
             "parser_version": candidate.parser_version,
             "previous_parser_version": current.parser_version,
             "implementation_sha256": implementation_digest,
+            "approved_implementation_sha256": approved.baseline.parser_implementation_sha256,
             "input_sha256": input_digest,
             "raw_input_export": "subject_to_core_policy",
         }, sort_keys=True),

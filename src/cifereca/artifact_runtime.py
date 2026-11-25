@@ -1969,233 +1969,288 @@ class LibraryMaintenanceBrokerImpl:
 
         return operation
 
+    def _run_filename_relocation(self, plan, control, *, classified_target=None):
+        """Single FS/SQLite writer for naming and private reviewed classification."""
+        request = plan.request
+        def require_current_plan():
+            fresh = self.plan(request)
+            if (plan.operation != "normalize_filename" or plan.destructive is not False
+                    or plan.changes != fresh.changes or plan.facts != fresh.facts):
+                raise _LibraryFilenameConflict("Plan de renommage périmé")
+            if control is not None:
+                control.check_cancelled()
+
+        require_current_plan()
+        row=self.service.storage.placement_get(request.placement_id)
+        if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
+        # A recorded placement may have been replaced by a symlink
+        # after its last scan. resolve() BEFORE checking the source would
+        # silently turn a library rename into a mutation outside the
+        # indexed path. Also refuse symlinked ancestors, legacy aliases
+        # and special files before creating any hardlink.
+        old=Path(str(row.get("path") or ""))
+        try:
+            if (not old.is_absolute() or ".." in old.parts
+                    or old.is_symlink() or old.resolve() != old
+                    or not stat.S_ISREG(
+                        os.stat(old, follow_symlinks=False).st_mode
+                    )):
+                raise _LibraryFilenameConflict("Source non canonique ou symbolique")
+        except (OSError, RuntimeError):
+            raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+        new=old.with_name(str(plan.facts.get("new_filename") or old.name))
+        if classified_target is not None:
+            # Private organizer path only. No new public mutation operation.
+            # This first receipt handles an existing canonical directory
+            # and independent classification, not renaming or mkdir.
+            if (control is None or type(classified_target) is not type(old)
+                    or not classified_target.is_absolute()
+                    or ".." in classified_target.parts
+                    or classified_target.name != old.name or new != old
+                    or classified_target.parent == old.parent
+                    or not classified_target.parent.is_dir()
+                    or classified_target.parent.resolve() != classified_target.parent
+                    or classified_target.exists() or classified_target.is_symlink()
+                    or self.service.storage.placement_for_path(classified_target) is not None):
+                raise _LibraryFilenameConflict("Classement non admissible")
+            new = classified_target
+        # Old/restored plans must not change the reader filename convention.
+        _require_epub_filename_convention(old, new)
+        if new != old:
+            # A stored artifact_id is not evidence that the bytes on
+            # disk are still those of the indexed book. Rehash the actual
+            # source under a no-follow fd for this explicit maintenance
+            # operation, before creating the destination hardlink or
+            # changing SQLite. Size + mtime alone are not a fingerprint.
+            evidence = self.service.storage.artifact_get(str(row.get("artifact_id") or ""))
+            digest = evidence.get("sha256") if type(evidence) is dict else None
+            length = evidence.get("size") if type(evidence) is dict else None
+            if (type(digest) is not str or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)
+                    or row.get("artifact_id") != "sha256:" + digest
+                    or type(length) is not int or length <= 0
+                    or not hasattr(os, "O_NOFOLLOW")):
+                raise _LibraryFilenameConflict("Empreinte source non attestée")
+            try:
+                fd = os.open(
+                    old, os.O_RDONLY | os.O_NOFOLLOW |
+                    getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0),
+                )
+                try:
+                    before = os.fstat(fd)
+                    if not stat.S_ISREG(before.st_mode) or before.st_size != length:
+                        raise _LibraryFilenameConflict("Fichier source modifié")
+                    hasher = hashlib.sha256()
+                    while chunk := os.read(fd, 1024 * 1024):
+                        hasher.update(chunk)
+                    after = os.fstat(fd)
+                    named = os.stat(old, follow_symlinks=False)
+                    attrs = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    if (any(getattr(before, key) != getattr(after, key) or
+                            getattr(before, key) != getattr(named, key)
+                            for key in attrs)
+                            or hasher.hexdigest() != digest):
+                        raise _LibraryFilenameConflict("Fichier source modifié")
+                finally:
+                    os.close(fd)
+            except OSError:
+                raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+            # Never allow a target symlink to redirect the new SQLite
+            # pathname to a different inode/root, even at equal SHA.
+            if new.is_symlink():
+                raise _LibraryFilenameConflict("Destination symbolique refusée")
+            # Never overwrite or merge a path on SHA equality alone:
+            # a different identity/provider/edition may share those bytes.
+            # Perform this check before os.replace() can change the disk.
+            target = self.service.storage.placement_for_path(new)
+            if target and str(target.get("placement_id")) != str(row.get("placement_id")):
+                if not all((
+                    row.get("identity_id"),
+                    row.get("provider_id"),
+                    row.get("artifact_id"),
+                    row.get("source_item_id"),
+                    target.get("identity_id") == row.get("identity_id"),
+                    target.get("provider_id") == row.get("provider_id"),
+                    target.get("artifact_id") == row.get("artifact_id"),
+                    target.get("source_item_id") == row.get("source_item_id"),
+                )):
+                    raise _LibraryFilenameConflict("Collision de placement")
+            if new.exists():
+                if target is None:
+                    raise _LibraryFilenameConflict("Destination existante non attestée")
+                if sha256_file(new) != sha256_file(old):
+                    raise _LibraryFilenameConflict("Collision de nom")
+            # Keep at least one path named by SQLite at every crash
+            # boundary. A hardlink in the same directory creates the
+            # destination atomically while the old DB path still exists;
+            # then commit SQLite, and only finally unlink the old name.
+            # If the destination is already attested with identical bytes,
+            # preserve its inode: it already satisfies the new DB path.
+            # Never replace an existing unrelated or symlinked target.
+            # Hashing and target validation may be slow. Repeat the exact
+            # naming/placement check and cancellation before creating any
+            # additional filesystem name (no change to the safety hold).
+            require_current_plan()
+            try:
+                current = os.stat(old, follow_symlinks=False)
+                if any(getattr(current, attr) != getattr(before, attr) for attr in attrs):
+                    raise _LibraryFilenameConflict("Fichier source modifié")
+            except OSError:
+                raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+            created_target = False
+            if classified_target is not None and (
+                    new.exists() or new.is_symlink() or target is not None):
+                raise _LibraryFilenameConflict("Collision de classement")
+            if not new.exists():
+                try:
+                    if classified_target is None:
+                        os.link(old, new, follow_symlinks=False)
+                    else:
+                        from .core.library_inventory import _open_root
+                        with ExitStack() as parents:
+                            source_dir = _open_root(old.parent)
+                            parents.callback(os.close, source_dir)
+                            target_dir = _open_root(new.parent)
+                            parents.callback(os.close, target_dir)
+                            pinned = os.stat(old.name, dir_fd=source_dir, follow_symlinks=False)
+                            if (any(getattr(pinned, key) != getattr(before, key) for key in attrs)
+                                    or os.fstat(source_dir).st_dev != os.fstat(target_dir).st_dev):
+                                raise _LibraryFilenameConflict("Classement hors volume ou source modifiée")
+                            os.link(old.name, new.name, src_dir_fd=source_dir,
+                                    dst_dir_fd=target_dir, follow_symlinks=False)
+                except FileExistsError:
+                    raise _LibraryFilenameConflict("Collision de nom")
+                created_target = True
+            try:
+                from .core.library_inventory import _open_root
+
+                if classified_target is not None and not created_target:
+                    raise _LibraryFilenameConflict("Collision de classement")
+                expected_old = os.stat(old, follow_symlinks=False)
+                expected_new = os.stat(new, follow_symlinks=False)
+                if classified_target is not None and (
+                        not stat.S_ISREG(expected_old.st_mode)
+                        or not stat.S_ISREG(expected_new.st_mode)
+                        or any(getattr(expected_old, key) != getattr(before, key)
+                               or getattr(expected_new, key) != getattr(before, key)
+                               for key in attrs[:-1])):
+                    raise _LibraryFilenameConflict("Source de classement modifiée")
+                # Persist the destination bytes and directory entry
+                # before SQLite can make it the authoritative pathname.
+                with ExitStack() as descriptors:
+                    directory_fd = _open_root(new.parent)
+                    descriptors.callback(os.close, directory_fd)
+                    target_fd = os.open(
+                        new.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                        dir_fd=directory_fd,
+                    )
+                    descriptors.callback(os.close, target_fd)
+                    target_stat = os.fstat(target_fd)
+                    if (not stat.S_ISREG(target_stat.st_mode)
+                            or any(getattr(target_stat, key) != getattr(expected_new, key)
+                                   for key in attrs)):
+                        raise _LibraryFilenameConflict("Destination modifiée avant enregistrement")
+                    os.fsync(target_fd)
+                    os.fsync(directory_fd)
+                # Cancellation during fsync must not commit a stale
+                # reviewed rename. The existing exception path removes
+                # only our temporary name while SQLite still names old.
+                if control is not None:
+                    control.check_cancelled()
+                # fsync and the cooperative cancellation callback may
+                # both yield to external filesystem changes. Do not
+                # knowingly commit a pathname whose verified file or
+                # canonical parent changed during that interval.
+                if old.resolve() != old or new.resolve() != new:
+                    raise _LibraryFilenameConflict("Chemin modifié avant enregistrement")
+                for path, expected in ((old, expected_old), (new, expected_new)):
+                    named = os.stat(path, follow_symlinks=False)
+                    if (not stat.S_ISREG(named.st_mode)
+                            or any(getattr(named, key) != getattr(expected, key)
+                                   for key in attrs)):
+                        raise _LibraryFilenameConflict("Fichier modifié avant enregistrement")
+                self.service.storage.relocate_local_path(
+                    old, new,
+                    identity_id=str(row.get("identity_id") or ""),
+                    provider_id=str(row.get("provider_id") or "local"),
+                )
+            except Exception:
+                # Remove our temporary name only when the DB still
+                # witnesses the old path. Preserve both on an uncertain
+                # commit outcome or a name that changed concurrently.
+                if created_target:
+                    try:
+                        current_placement = self.service.storage.placement_get(row["placement_id"])
+                        old_stat = os.stat(old, follow_symlinks=False)
+                        new_stat = os.stat(new, follow_symlinks=False)
+                        original = before.st_dev, before.st_ino
+                        if (current_placement and current_placement.get("path") == str(old)
+                                and original == (old_stat.st_dev, old_stat.st_ino)
+                                == (new_stat.st_dev, new_stat.st_ino)
+                                and (classified_target is None or
+                                     (old.resolve() == old and new.resolve() == new))):
+                            new.unlink()
+                    except (OSError, sqlite3.Error, RuntimeError):
+                        pass
+                raise
+            # A crash at this point leaves a valid, extra old hardlink;
+            # SQLite already points at the durable destination. Refuse to
+            # unlink a replaced source path or any unexpected new inode.
+            cleanup_pending = False
+            try:
+                old_stat = os.stat(old, follow_symlinks=False)
+                new_stat = os.stat(new, follow_symlinks=False)
+                # Even an attested existing destination can be replaced
+                # externally during the SQLite transaction. In that case
+                # keep the original file as an inert, recoverable duplicate.
+                new_unchanged = all(
+                    getattr(new_stat, attr) == getattr(expected_new, attr)
+                    for attr in (
+                        'st_dev', 'st_ino', 'st_size',
+                        'st_mtime_ns', 'st_ctime_ns',
+                    )
+                )
+                same_inode = (
+                    (old_stat.st_dev, old_stat.st_ino)
+                    == (new_stat.st_dev, new_stat.st_ino)
+                )
+                old_unchanged = all(
+                    getattr(old_stat, attr) == getattr(expected_old, attr)
+                    for attr in (
+                        'st_dev', 'st_ino', 'st_size',
+                        'st_mtime_ns', 'st_ctime_ns',
+                    )
+                )
+                if (not old_unchanged or not new_unchanged
+                        or (created_target and not same_inode)
+                        or (classified_target is not None and
+                            (old.resolve() != old or new.resolve() != new))):
+                    cleanup_pending = True
+                else:
+                    old.unlink()
+                    if classified_target is not None:
+                        with ExitStack() as descriptors:
+                            source_dir = _open_root(old.parent)
+                            descriptors.callback(os.close, source_dir)
+                            os.fsync(source_dir)
+            except OSError:
+                cleanup_pending = True
+        else:
+            cleanup_pending = False
+        placed=self.service.storage.placement_for_path(new)
+        return LibraryMutationResult(
+            True, 1 if new != old else 0, plan.summary,
+            (_placement_ref(placed),) if placed else (),
+            warnings=(("Ancien nom conservé : nettoyage local à vérifier.",)
+                      if cleanup_pending else ()),
+        )
+
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
         request=plan.request
         _enforce_ordinary_dedup_hold(self.service, request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
-            def require_current_plan():
-                fresh = self.plan(request)
-                if (plan.operation != "normalize_filename" or plan.destructive is not False
-                        or plan.changes != fresh.changes or plan.facts != fresh.facts):
-                    raise _LibraryFilenameConflict("Plan de renommage périmé")
-                if control is not None:
-                    control.check_cancelled()
-
-            require_current_plan()
-            row=self.service.storage.placement_get(request.placement_id)
-            if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
-            # A recorded placement may have been replaced by a symlink
-            # after its last scan. resolve() BEFORE checking the source would
-            # silently turn a library rename into a mutation outside the
-            # indexed path. Also refuse symlinked ancestors, legacy aliases
-            # and special files before creating any hardlink.
-            old=Path(str(row.get("path") or ""))
-            try:
-                if (not old.is_absolute() or ".." in old.parts
-                        or old.is_symlink() or old.resolve() != old
-                        or not stat.S_ISREG(
-                            os.stat(old, follow_symlinks=False).st_mode
-                        )):
-                    raise _LibraryFilenameConflict("Source non canonique ou symbolique")
-            except (OSError, RuntimeError):
-                raise _LibraryFilenameConflict("Source locale non vérifiable") from None
-            new=old.with_name(str(plan.facts.get("new_filename") or old.name))
-            # Old/restored plans must not change the reader filename convention.
-            _require_epub_filename_convention(old, new)
-            if new != old:
-                # A stored artifact_id is not evidence that the bytes on
-                # disk are still those of the indexed book. Rehash the actual
-                # source under a no-follow fd for this explicit maintenance
-                # operation, before creating the destination hardlink or
-                # changing SQLite. Size + mtime alone are not a fingerprint.
-                evidence = self.service.storage.artifact_get(str(row.get("artifact_id") or ""))
-                digest = evidence.get("sha256") if type(evidence) is dict else None
-                length = evidence.get("size") if type(evidence) is dict else None
-                if (type(digest) is not str or len(digest) != 64
-                        or any(c not in "0123456789abcdef" for c in digest)
-                        or row.get("artifact_id") != "sha256:" + digest
-                        or type(length) is not int or length <= 0
-                        or not hasattr(os, "O_NOFOLLOW")):
-                    raise _LibraryFilenameConflict("Empreinte source non attestée")
-                try:
-                    fd = os.open(
-                        old, os.O_RDONLY | os.O_NOFOLLOW |
-                        getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0),
-                    )
-                    try:
-                        before = os.fstat(fd)
-                        if not stat.S_ISREG(before.st_mode) or before.st_size != length:
-                            raise _LibraryFilenameConflict("Fichier source modifié")
-                        hasher = hashlib.sha256()
-                        while chunk := os.read(fd, 1024 * 1024):
-                            hasher.update(chunk)
-                        after = os.fstat(fd)
-                        named = os.stat(old, follow_symlinks=False)
-                        attrs = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-                        if (any(getattr(before, key) != getattr(after, key) or
-                                getattr(before, key) != getattr(named, key)
-                                for key in attrs)
-                                or hasher.hexdigest() != digest):
-                            raise _LibraryFilenameConflict("Fichier source modifié")
-                    finally:
-                        os.close(fd)
-                except OSError:
-                    raise _LibraryFilenameConflict("Source locale non vérifiable") from None
-                # Never allow a target symlink to redirect the new SQLite
-                # pathname to a different inode/root, even at equal SHA.
-                if new.is_symlink():
-                    raise _LibraryFilenameConflict("Destination symbolique refusée")
-                # Never overwrite or merge a path on SHA equality alone:
-                # a different identity/provider/edition may share those bytes.
-                # Perform this check before os.replace() can change the disk.
-                target = self.service.storage.placement_for_path(new)
-                if target and str(target.get("placement_id")) != str(row.get("placement_id")):
-                    if not all((
-                        row.get("identity_id"),
-                        row.get("provider_id"),
-                        row.get("artifact_id"),
-                        row.get("source_item_id"),
-                        target.get("identity_id") == row.get("identity_id"),
-                        target.get("provider_id") == row.get("provider_id"),
-                        target.get("artifact_id") == row.get("artifact_id"),
-                        target.get("source_item_id") == row.get("source_item_id"),
-                    )):
-                        raise _LibraryFilenameConflict("Collision de placement")
-                if new.exists():
-                    if target is None:
-                        raise _LibraryFilenameConflict("Destination existante non attestée")
-                    if sha256_file(new) != sha256_file(old):
-                        raise _LibraryFilenameConflict("Collision de nom")
-                # Keep at least one path named by SQLite at every crash
-                # boundary. A hardlink in the same directory creates the
-                # destination atomically while the old DB path still exists;
-                # then commit SQLite, and only finally unlink the old name.
-                # If the destination is already attested with identical bytes,
-                # preserve its inode: it already satisfies the new DB path.
-                # Never replace an existing unrelated or symlinked target.
-                # Hashing and target validation may be slow. Repeat the exact
-                # naming/placement check and cancellation before creating any
-                # additional filesystem name (no change to the safety hold).
-                require_current_plan()
-                try:
-                    current = os.stat(old, follow_symlinks=False)
-                    if any(getattr(current, attr) != getattr(before, attr) for attr in attrs):
-                        raise _LibraryFilenameConflict("Fichier source modifié")
-                except OSError:
-                    raise _LibraryFilenameConflict("Source locale non vérifiable") from None
-                created_target = False
-                if not new.exists():
-                    try:
-                        os.link(old, new, follow_symlinks=False)
-                    except FileExistsError:
-                        raise _LibraryFilenameConflict("Collision de nom")
-                    created_target = True
-                try:
-                    from .core.library_inventory import _open_root
-
-                    expected_old = os.stat(old, follow_symlinks=False)
-                    expected_new = os.stat(new, follow_symlinks=False)
-                    # Persist the destination bytes and directory entry
-                    # before SQLite can make it the authoritative pathname.
-                    with ExitStack() as descriptors:
-                        directory_fd = _open_root(new.parent)
-                        descriptors.callback(os.close, directory_fd)
-                        target_fd = os.open(
-                            new.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-                            dir_fd=directory_fd,
-                        )
-                        descriptors.callback(os.close, target_fd)
-                        target_stat = os.fstat(target_fd)
-                        if (not stat.S_ISREG(target_stat.st_mode)
-                                or any(getattr(target_stat, key) != getattr(expected_new, key)
-                                       for key in attrs)):
-                            raise _LibraryFilenameConflict("Destination modifiée avant enregistrement")
-                        os.fsync(target_fd)
-                        os.fsync(directory_fd)
-                    # Cancellation during fsync must not commit a stale
-                    # reviewed rename. The existing exception path removes
-                    # only our temporary name while SQLite still names old.
-                    if control is not None:
-                        control.check_cancelled()
-                    # fsync and the cooperative cancellation callback may
-                    # both yield to external filesystem changes. Do not
-                    # knowingly commit a pathname whose verified file or
-                    # canonical parent changed during that interval.
-                    if old.resolve() != old or new.resolve() != new:
-                        raise _LibraryFilenameConflict("Chemin modifié avant enregistrement")
-                    for path, expected in ((old, expected_old), (new, expected_new)):
-                        named = os.stat(path, follow_symlinks=False)
-                        if (not stat.S_ISREG(named.st_mode)
-                                or any(getattr(named, key) != getattr(expected, key)
-                                       for key in attrs)):
-                            raise _LibraryFilenameConflict("Fichier modifié avant enregistrement")
-                    self.service.storage.relocate_local_path(
-                        old, new,
-                        identity_id=str(row.get("identity_id") or ""),
-                        provider_id=str(row.get("provider_id") or "local"),
-                    )
-                except Exception:
-                    # Remove our temporary name only when the DB still
-                    # witnesses the old path. Preserve both on an uncertain
-                    # commit outcome or a name that changed concurrently.
-                    if created_target:
-                        try:
-                            current_placement = self.service.storage.placement_get(row["placement_id"])
-                            old_stat = os.stat(old, follow_symlinks=False)
-                            new_stat = os.stat(new, follow_symlinks=False)
-                            original = before.st_dev, before.st_ino
-                            if (current_placement and current_placement.get("path") == str(old)
-                                    and original == (old_stat.st_dev, old_stat.st_ino)
-                                    == (new_stat.st_dev, new_stat.st_ino)):
-                                new.unlink()
-                        except (OSError, sqlite3.Error, RuntimeError):
-                            pass
-                    raise
-                # A crash at this point leaves a valid, extra old hardlink;
-                # SQLite already points at the durable destination. Refuse to
-                # unlink a replaced source path or any unexpected new inode.
-                cleanup_pending = False
-                try:
-                    old_stat = os.stat(old, follow_symlinks=False)
-                    new_stat = os.stat(new, follow_symlinks=False)
-                    # Even an attested existing destination can be replaced
-                    # externally during the SQLite transaction. In that case
-                    # keep the original file as an inert, recoverable duplicate.
-                    new_unchanged = all(
-                        getattr(new_stat, attr) == getattr(expected_new, attr)
-                        for attr in (
-                            'st_dev', 'st_ino', 'st_size',
-                            'st_mtime_ns', 'st_ctime_ns',
-                        )
-                    )
-                    same_inode = (
-                        (old_stat.st_dev, old_stat.st_ino)
-                        == (new_stat.st_dev, new_stat.st_ino)
-                    )
-                    old_unchanged = all(
-                        getattr(old_stat, attr) == getattr(expected_old, attr)
-                        for attr in (
-                            'st_dev', 'st_ino', 'st_size',
-                            'st_mtime_ns', 'st_ctime_ns',
-                        )
-                    )
-                    if (not old_unchanged or not new_unchanged
-                            or (created_target and not same_inode)):
-                        cleanup_pending = True
-                    else:
-                        old.unlink()
-                except OSError:
-                    cleanup_pending = True
-            else:
-                cleanup_pending = False
-            placed=self.service.storage.placement_for_path(new)
-            return LibraryMutationResult(
-                True, 1 if new != old else 0, plan.summary,
-                (_placement_ref(placed),) if placed else (),
-                warnings=(("Ancien nom conservé : nettoyage local à vérifier.",)
-                          if cleanup_pending else ()),
-            )
+            return self._run_filename_relocation(plan, control)
         if request.operation == "move_placement":
             result=self.service.materialize_to_identity(request.placement_id,str(request.target_identity_id))
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))

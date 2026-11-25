@@ -59,3 +59,112 @@ def test_runtime_forwards_latest_hints_without_creating_work(tmp_path, monkeypat
             broker.close()
             if pool is not None:
                 pool.shutdown(wait=True, cancel_futures=True)
+
+
+def test_desktop_context_resolves_exact_ready_generation_without_extra_scan(tmp_path):
+    from types import SimpleNamespace as NS
+    from cifereca import app
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_c_exact_recompute import IMPLEMENTATION_DIGEST
+    from cifereca.core.notice_c_work_pump import PublicNoticeWorkPump
+    from cifereca.core.notice_c_dispatch_rotation import RotationOffer
+
+    with closing(Storage(tmp_path / "context.sqlite")) as storage:
+        docs = [canonical_cover_document_ref("edition:" + str(i)) for i in range(3)]
+        jobs = [journal.request_job(
+            storage, journal.public_job_spec(
+                "recompute_aggregate", doc, input_digest="1"*64,
+                implementation_digest=IMPLEMENTATION_DIGEST,
+            ), now=100, expected_generation=0,
+        ) for doc in docs]
+        # Choose the lexically last ready key as the visible selection:
+        # ordinary key order would not promote it first.
+        order = sorted(range(3), key=lambda i: jobs[i].key)
+        visible, recent = docs[order[-1]], docs[order[1]]
+        recent_row = NS(_cover_document_ref=recent, _cover_public_c_link=NS(document=recent))
+        selected = [NS(_cover_document_ref=visible)]
+        mapped = [True]
+        snapshots = []
+        runtime = NS(bind_committed_observer=lambda _: True,
+                     replace_priority_documents=lambda value: snapshots.append(value),
+                     request_tick=lambda: None)
+        window = NS(_closed=False, _identity_context_generation=1, _recent_loaded_generation=1,
+                    document_covers=NS(refresh_committed_source_in_worker=lambda *_: None),
+                    search_page=NS(get_mapped=lambda: mapped[0],
+                                   selection=NS(get_selected_item=lambda: selected[0])),
+                    recent_page=NS(get_mapped=lambda: False, store=NS(
+                        get_n_items=lambda: 1, get_item=lambda _: recent_row)))
+        app._bind_desktop_notice_work(NS(notice_work=runtime), window)
+        callbacks = []
+        app._start_notice_work_wakeup(window, timeout_add_seconds=lambda _, cb: callbacks.append(cb) or 1,
+                                     source_remove=lambda _: None)
+        assert callbacks[0]() is True
+        assert snapshots[-1] == ((visible, "interactive_visible"), (recent, "recent_acquisition"))
+        budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+        broker = TaskBrokerImpl(object(), max_workers=3, shared_admission=budget)
+        owner = NoticeWorkRuntime(storage, broker, clock=lambda: 100)
+        try:
+            assert owner.replace_priority_documents(snapshots[-1])
+            pump = PublicNoticeWorkPump(storage, broker, clock=lambda: 100)
+            pump._bridge.offer = lambda ref, **_: RotationOffer("accepted", ref)
+            outcome = pump.tick(priority_targets=owner._priority_targets)
+            assert outcome.handles[0] == jobs[order[-1]]
+            assert outcome.examined <= 32
+            mapped[0] = False
+            window._identity_context_generation = 2
+            assert callbacks[0]() is True
+            assert snapshots[-1] == ()
+            assert owner.replace_priority_documents(snapshots[-1])
+            assert owner._priority_targets == ()
+        finally:
+            owner.close()
+            broker.close()
+
+
+def test_visible_priority_snapshot_ignores_clipped_and_retired_cells():
+    from types import SimpleNamespace as NS
+    import ast
+    from pathlib import Path
+
+    # The Core CI interpreter deliberately lacks PyGObject. Exercise the
+    # actual method body, as the existing headless GUI adapters do.
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/master_detail.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "MasterDetailPage")
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "visible_notice_priority_documents")
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), "exec"), namespace)
+    snapshot = namespace["visible_notice_priority_documents"]
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+
+    class Cell:
+        def __init__(self, y, mapped=True):
+            self.y, self.mapped = y, mapped
+        def get_mapped(self):
+            return self.mapped
+        def compute_bounds(self, _viewport):
+            return True, NS(get_x=lambda: 0, get_y=lambda: self.y,
+                            get_width=lambda: 100, get_height=lambda: 30)
+
+    docs = [canonical_cover_document_ref("edition:visible-" + str(i)) for i in range(5)]
+    rows = [NS(document=doc) for doc in docs]
+    cells = [Cell(5), Cell(98), Cell(100), Cell(-30), Cell(30, False)]
+    current = {row.document for row in rows}
+    page = NS(get_mapped=lambda: True, selection=NS(get_selected_item=lambda: rows[0]),
+              scroll=NS(get_mapped=lambda: True, get_width=lambda: 200, get_height=lambda: 100),
+              priority_public_document=lambda row: (
+                  row.document if row is not None and row.document in current else None),
+              _notice_priority_cells={
+                  cell: NS(get_item=lambda row=row: row) for cell, row in zip(cells, rows)
+              })
+    assert snapshot(page) == (docs[0], docs[1])
+    current.remove(docs[1])
+    assert snapshot(page) == (docs[0],)
+    current.remove(docs[0])
+    assert snapshot(page) == ()
+    page.get_mapped = lambda: False
+    assert snapshot(page) == ()

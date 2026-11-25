@@ -1196,7 +1196,7 @@ def main():
                                           if isinstance(node, Gtk.ComboBoxText))
                             native, = (node for node in walk(window[0]._tools_box)
                                        if isinstance(node, Gtk.Button)
-                                       and node.get_label() == "Confirmer le renommage…")
+                                       and node.get_label() == "Confirmer l’opération…")
                             assert not native.get_visible()
 
                             def find_candidate():

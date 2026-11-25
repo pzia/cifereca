@@ -543,10 +543,12 @@ class ReadyPage:
     next_after: str | None
     examined: int
     corrupt: int
+    priority_hints: tuple = ()
 
 
 def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
-                    supported=None, purchase_refs=None, public_age_digests=None):
+                    supported=None, purchase_refs=None, public_age_digests=None,
+                    priority_targets=()):
     """Bounded, read-only keyset scan of the existing durable public journal.
 
     Keep next_after across ticks, restarting at None at the end of a sweep.
@@ -583,8 +585,18 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
         for ref in purchase_refs:
             _check_ref(ref)
         purchase_refs = frozenset(purchase_refs)
+    ranks = {"interactive_visible": 0, "recent_acquisition": 1,
+             "author_neighborhood": 2, "background_stale": 3}
+    if (type(priority_targets) is not tuple or len(priority_targets) > 128
+            or any(type(pair) is not tuple or len(pair) != 2
+                   or not _valid_age_group_ref(pair[0])
+                   or type(pair[1]) is not str or pair[1] not in ranks
+                   for pair in priority_targets)):
+        raise ValueError("notice_work_invalid_priority_targets")
+    targets = dict(priority_targets)
     lower = _PREFIX + after if after is not None else _PREFIX
     refs = []
+    hints = []
     corrupt = 0
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
@@ -630,10 +642,21 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                 if (job.state == "pending" and job.due <= now
                         and job.lease_until <= now
                         and _dependency_status(db, job.spec, memo=memo) == "ready"):
+                    if targets and job.spec.implementation_digest != _PURCHASE_INTENT_DIGEST:
+                        coordinates = [job.spec.target]
+                        if job.spec.public_age_locator is not None:
+                            from .notice_c_cover_index import canonical_cover_document_ref
+                            locator = job.spec.public_age_locator
+                            coordinates.append(canonical_cover_document_ref(locator[0]).source_key)
+                            if len(locator) == 3:
+                                coordinates.append(locator[2])
+                        reasons = [targets[key] for key in coordinates if key in targets]
+                        if reasons:
+                            hints.append((job.ref, min(reasons, key=ranks.__getitem__)))
                     refs.append(job.ref)
             except ValueError:
                 # Never expose the invalid payload or make it executable.
                 # A damaged entry/dependency must not block unrelated jobs.
                 corrupt += 1
     next_after = keys[-1][0][len(_PREFIX):] if len(keys) == limit else None
-    return ReadyPage(tuple(refs), next_after, len(keys), corrupt)
+    return ReadyPage(tuple(refs), next_after, len(keys), corrupt, tuple(hints))
