@@ -120,7 +120,10 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                     or old.exists() or old.is_symlink()):
                 return {"status": "recovery_required", "changed": None}
             recheck()
-        if sqlite_source_stamp(scope.database) != post_stamp:
+        if (sqlite_source_stamp(scope.database) != post_stamp
+                or still_current() is not True or not scope.bound()
+                or not _lock_ok(shared_lock)
+                or not _execution_fence_current(scope, shared_lock)):
             return {"status": "recovery_required", "changed": None}
         return {"status": "renamed", "changed": 1}
     except Exception:
