@@ -168,3 +168,46 @@ def test_visible_priority_snapshot_ignores_clipped_and_retired_cells():
     assert snapshot(page) == ()
     page.get_mapped = lambda: False
     assert snapshot(page) == ()
+
+
+def test_visible_attested_work_group_prioritizes_existing_member_jobs_only(tmp_path):
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+    from cifereca.core.notice_c_exact_recompute import IMPLEMENTATION_DIGEST
+    from tests.test_core_p1_4552_public_age_inheritance import setup
+
+    with closing(Storage(tmp_path / "neighborhood.sqlite")) as storage:
+        group, sources = setup(storage, tmp_path)
+        member_docs = tuple(canonical_cover_document_ref(s.observation.key.edition_id)
+                            for s in sources)
+        unrelated = canonical_cover_document_ref("edition:unrelated")
+        def job(document):
+            return journal.request_job(
+                storage, journal.public_job_spec(
+                    "recompute_aggregate", document, input_digest="1"*64,
+                    implementation_digest=IMPLEMENTATION_DIGEST,
+                ), now=300, expected_generation=0,
+            )
+        first, second, other = map(job, (*member_docs, unrelated))
+        def page(targets):
+            return journal.read_ready_page(
+                storage, now=300, priority_targets=targets,
+                supported=(("recompute_aggregate", IMPLEMENTATION_DIGEST),),
+            )
+        targets = ((group.document.source_key, "interactive_visible"),)
+        visible = page(targets)
+        assert set(visible.refs) == {first, second, other}
+        assert dict(visible.priority_hints) == {
+            first: "author_neighborhood", second: "author_neighborhood",
+        }
+        assert dict(page(targets + ((member_docs[0].source_key, "interactive_visible"),)
+                         ).priority_hints) == {
+            first: "interactive_visible", second: "author_neighborhood",
+        }
+        assert page(()).priority_hints == ()
+        with storage._lock, storage._connect() as sql:
+            sql.execute("DELETE FROM origin_links")
+        assert page(targets).priority_hints == ()
+        assert set(page(targets).refs) == {first, second, other}
+        assert all(journal.read_job(storage, ref).attempts == 0
+                   for ref in (first, second, other))
