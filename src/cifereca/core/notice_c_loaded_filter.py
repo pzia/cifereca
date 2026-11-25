@@ -13,6 +13,8 @@ from .notice_cover_repository import is_notice_cover_document
 
 _TOKEN = object()
 _MARKER = object()
+_MATCH_HIT = object()
+_MATCH_FIELD = "_core_notice_c_match_source"
 _FIELD = "_core_notice_c_filter_sources"
 
 
@@ -168,6 +170,7 @@ def _filter_source_row(hit, *, marker=None):
     }
     if marker is not None:
         row[_MARKER] = marker
+        row[_MATCH_HIT] = hit
     return row
 
 
@@ -269,6 +272,12 @@ def collapse_filter_sources(rows, originals):
         if primary is None:
             primary = dict(originals[marker])
             primary["_notice_c_matched_providers"] = ()
+            primary.pop(_MATCH_FIELD, None)
+            hit = row.get(_MATCH_HIT)
+            if type(hit) is PublicNoticeCHit:
+                # First independently filtered source is the highest ranked
+                # match. Preserve its receipt, never union the other fields.
+                primary[_MATCH_FIELD] = (_TOKEN, hit)
             groups[marker] = primary
             out.append(primary)
         provider = row.get("provider_id")
@@ -288,3 +297,26 @@ def matching_source_label(row):
         return ""
     suffix = f" (+{len(providers) - 3})" if len(providers) > 3 else ""
     return " · Correspondance : " + ", ".join(providers[:3]) + suffix
+
+
+def matching_source_reason(row, query, *, field="all"):
+    """Explain the exact best filtered C source; no I/O or new authority."""
+    from .notice_c_known_projection import known_public_primary_facts
+    from .search import local_match_explanation
+
+    if type(query) is not str or not query.strip() or field != "all":
+        return ""
+    hit = known_public_primary_facts(row)
+    if hit is None:
+        return ""
+    if _MATCH_FIELD in row:
+        receipt = row[_MATCH_FIELD]
+        if (type(receipt) is not tuple or len(receipt) != 2
+                or receipt[0] is not _TOKEN
+                or not any(candidate is receipt[1] for candidate in (_sources(row) or ()))):
+            return ""
+        hit = receipt[1]
+    elif _FIELD in row and _sources(row):
+        # A genuine group must have been filtered before explaining it.
+        return ""
+    return local_match_explanation(_filter_source_row(hit), query, field=field)

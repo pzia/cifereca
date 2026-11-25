@@ -73,7 +73,9 @@ def test_real_local_search_rerender_changes_signature_when_only_c_epoch_changes(
         _search_mode="local",
         _search_local_objects={known["key"]: known},
         _search_local_snapshot_dirty=False,
-        search_controls=NS(state=lambda: NS(filter=lambda rows: list(rows))),
+        search_controls=NS(state=lambda: NS(
+            text="", field="all", filter=lambda rows: list(rows),
+        )),
         search_page=NS(show_rows=lambda rows: produced.append(list(rows))),
         _attach_row_facets=lambda *_a: None,
         _update_search_count=lambda _count: None,
