@@ -184,3 +184,121 @@ def public_search_witness_diagnostic(service, row, *, scope):
             }
     except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, OSError):
         return None
+
+
+def private_search_witness(service, row, *, scope, approved=None):
+    """Propose or explicitly approve a private same-call digest under the existing CAS.
+
+    No retained body is required: the admitted producer hashed the actual HTTP
+    response before decoding. The Core receipt is bound to the live account,
+    original row, source revision and installed parser. No GET or raw export.
+    """
+    from .notice_c_private_search_web import (
+        _MARKER, _PARSE_MARKER, _WITNESS, _prepare, _sql_binding_current,
+    )
+    from .notice_cover_repository import _checked_source_state, _opaque_key
+    from .notice_parse_witness_store import _prepare_approved_parse_witness_digest, _decode, _PREFIX
+    from .notice_parse_witness import admitted_source_scope_sha256
+    from sqlite3 import Error as SQLiteError
+
+    if (type(row) is not SearchResult or type(scope) is not SearchReadScope
+            or (approved is not None and type(approved) is not PublicWitnessProposal)):
+        return None
+    try:
+        with service._source_context_lock:
+            if not scope.current(service) or service.current_identity is not scope.identity:
+                return None
+            prepared = _prepare(service, row, scope.identity_id)
+            if prepared is None:
+                return None
+            call, observation, document = prepared
+            packet = row.__dict__[_MARKER].parse_input
+            stamp = row.__dict__.get(_PARSE_MARKER)
+            if (packet is None or type(stamp) is not tuple or len(stamp) != 5
+                    or stamp[0] is not _WITNESS or type(stamp[1]) is not int
+                    or stamp[2:] != (observation.source_revision, packet[0], packet[1])):
+                return None
+            bibliography = observation.fields_copy()["private_bibliography"]
+            fields = tuple(CriticalParseField(
+                ("private_bibliography", name), "string",
+                expected_sha256=field_digest(bibliography[name]),
+            ) for name in packet[2])
+            storage = service.storage
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN IMMEDIATE" if approved is not None else "BEGIN")
+                if not _sql_binding_current(db, document, call.binding.connection_epoch):
+                    return None
+                _, source, _ = _checked_source_state(db, document, _opaque_key(document))
+                if (source is None or source.epoch != stamp[1]
+                        or source.observation != observation):
+                    return None
+                key = admitted_source_scope_sha256(observation.key, parser_id=observation.parser_id)
+                saved = db.execute("SELECT value FROM metadata WHERE key=?",
+                                   (_PREFIX + key,)).fetchone()
+                generation = _decode(saved[0], key).generation if saved is not None else 0
+                proposal = PublicWitnessProposal(
+                    document, source.epoch, (packet[0], packet[1], observation.source_revision,
+                                            call.binding.connection_epoch, call.binding.session_epoch),
+                    generation, fields,
+                )
+                if approved is None:
+                    return proposal
+                if approved != proposal:
+                    return None
+                key, baseline = _prepare_approved_parse_witness_digest(
+                    observation=observation, input_digest=packet[0], critical_fields=fields,
+                    expected_generation=generation, parser_implementation_sha256=packet[1],
+                )
+                return _publish_approved_parse_witness_txn(
+                    db, key, baseline, expected_generation=generation,
+                )
+    except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, OSError, SQLiteError):
+        return None
+
+
+def private_search_witness_diagnostic(service, row, *, scope):
+    """Read the selected exact private witness, never from a foreign or revoked session."""
+    from .notice_c_private_search_web import _prepare
+    from .notice_parse_witness_alert import read_parse_witness_diagnostic
+    from sqlite3 import Error as SQLiteError
+
+    if type(row) is not SearchResult or type(scope) is not SearchReadScope:
+        return None
+    try:
+        with service._source_context_lock:
+            if not scope.current(service) or service.current_identity is not scope.identity:
+                return None
+            prepared = _prepare(service, row, scope.identity_id)
+            if prepared is None:
+                return None
+            call, observation, document = prepared
+            source = read_notice_cover(service.storage, document)
+            if source is None:
+                return None
+            pin = read_approved_parse_witness(service.storage, key=observation.key,
+                                              parser_id=observation.parser_id)
+            alert = read_parse_witness_diagnostic(service.storage, key=observation.key,
+                                                  parser_id=observation.parser_id)
+            if (pin is None or alert is None or pin.generation != alert["generation"]
+                    or read_notice_cover(service.storage, document) != source
+                    or read_approved_parse_witness(service.storage, key=observation.key,
+                                                  parser_id=observation.parser_id) != pin
+                    or not call.binding.current(service, call.scope)):
+                return None
+            names = []
+            for field in alert["fields"]:
+                index = int(field.removeprefix("critical_field_")) - 1
+                if not 0 <= index < len(pin.baseline.critical_fields):
+                    return None
+                path = pin.baseline.critical_fields[index].path
+                if (len(path) != 2 or path[0] != "private_bibliography"
+                        or path[1] not in ("title", "author", "publisher")):
+                    return None
+                names.append(path[1])
+            return {
+                "provider": document.provider_id, "status": alert["status"],
+                "fields": tuple(names), "capture_state": alert["capture_state"],
+                "last_healthy_at": source.observation.observed_at, "generation": pin.generation,
+            }
+    except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, OSError, SQLiteError):
+        return None
