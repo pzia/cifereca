@@ -14,6 +14,7 @@ from .llm_service import optional_llm_service
 from ..task_admission import SharedTaskAdmission
 from .notice_c_work_runtime import NoticeWorkRuntime, validate_notice_work_admission
 from .notice_c_reparse_execution import PublicReplayRegistry
+from .notice_consolidator_trusted_registry import TrustedConsolidatorRegistry
 
 
 @dataclass(slots=True)
@@ -48,6 +49,7 @@ class CiferecaCore:
         activate_plugins: bool = True,
         notice_work_admission: SharedTaskAdmission | None = None,
         notice_replay_registry: PublicReplayRegistry | None = None,
+        notice_age_registry: TrustedConsolidatorRegistry | None = None,
     ) -> Self:
         # Explicit trusted composition/acceptance option only; ordinary
         # CLI and GTK startup retain their current admission and behavior.
@@ -55,6 +57,11 @@ class CiferecaCore:
                 type(notice_replay_registry) is not PublicReplayRegistry
                 or notice_work_admission is None):
             raise ValueError("notice_reparse_invalid_registry")
+        if notice_age_registry is not None and (
+                type(notice_age_registry) is not TrustedConsolidatorRegistry
+                or notice_work_admission is None or no_plugins
+                or not notice_age_registry.public_age_digests()):
+            raise ValueError("invalid_trusted_consolidator_archives")
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
@@ -151,7 +158,7 @@ class CiferecaCore:
 
                 library._notice_work_register_search_replay = register_search_replay
             library._notice_work_request_public_replay = notice_work.request_public_replay
-        return cls(
+        core = cls(
             config=config,
             storage=storage,
             diagnostics=diagnostics,
@@ -160,6 +167,14 @@ class CiferecaCore:
             brokers=brokers,
             notice_work=notice_work,
         )
+        if notice_age_registry is not None:
+            try:
+                if not core.install_notice_age_execution(notice_age_registry):
+                    raise ValueError("notice_work_invalid_public_age_port")
+            except Exception:
+                core.close()
+                raise
+        return core
 
     def install_notice_age_execution(self, registry):
         """Trusted startup owner only; explicitly provision independent archives.
@@ -167,7 +182,6 @@ class CiferecaCore:
         No trust is derived from installed package receipts or plugin config.
         Must run before the first Notice C heartbeat.
         """
-        from .notice_consolidator_trusted_registry import TrustedConsolidatorRegistry
         from .notice_c_public_age_execution import prepare_exact_public_age
         from contextlib import contextmanager
 
