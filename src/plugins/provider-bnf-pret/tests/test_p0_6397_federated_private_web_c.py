@@ -518,3 +518,56 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
     session.connected = False
     assert private_search_witness(service, row, scope=scope, approved=proposal) is None
     assert private_search_witness_diagnostic(service, again, scope=scope) is None
+
+    # Reopen the actual SQLite database with a new service and session. A
+    # restored Search DTO contains no transient producer receipt. It can
+    # inspect the durable alert, never approve or republish it.
+    restored = SearchResult(**asdict(again))
+    assert "_core_private_web_search_receipt" not in restored.__dict__
+    assert "_core_private_notice_parse_input" not in restored.__dict__
+    reopened = LibraryService(service.config, Storage(service.storage.path), Diagnostics())
+    fresh_session, fresh_account, fresh_client = active(results(card()))
+    reopened.accounts = [fresh_account]
+    reopened._sessions = {
+        reopened._session_key(fresh_account.provider_id, fresh_account.credential_id): fresh_session
+    }
+    monkeypatch.setattr(reopened, "_provider_enabled_for_identity", lambda *args: True)
+    try:
+        fresh_scope = capture_search_read_scope(reopened, "alice")
+        assert private_search_witness(reopened, restored, scope=fresh_scope) is None
+        assert private_search_witness_diagnostic(reopened, restored, scope=fresh_scope) == diagnostic
+        assert private_search_witness_diagnostic(
+            reopened, restored, scope=capture_search_read_scope(reopened, "bob"),
+        ) is None
+        assert private_search_witness_diagnostic(
+            reopened, replace(restored, record_id="foreign-record"), scope=fresh_scope,
+        ) is None
+        actions.clear()
+        groups = []
+        panel.add_group = lambda title, values: groups.append((title, values))
+        host.service = reopened
+        host.search_objects[cell.key] = restored
+        assert request_selected_parse_witness(
+            host, restored, selected_id=restored.id,
+            context=(2, 1, 1, "alice"), Gtk=NS(Button=Button),
+        )
+        deliver()
+        inspect, = actions
+        assert inspect._cifereca_action_id == "inspect-private-parse-witness"
+        inspect.callback(inspect)
+        deliver()
+        assert groups[-1][0] == "Preuve du témoin"
+        assert ("Champs atteints", "auteur") in groups[-1][1]
+        assert read_notice_cover(reopened.storage, doc) == source
+        assert not fresh_client.calls
+        assert list((tmp_path / "private-captures").glob("*.zip")) == [archive]
+        # Persisted connection revocation takes effect even when the new
+        # session still holds its former Account and is marked connected.
+        reopened.storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": fresh_account.provider_id,
+            "credential_id": fresh_account.credential_id, "enabled": False,
+        })
+        assert private_search_witness_diagnostic(reopened, restored, scope=fresh_scope) is None
+        assert not fresh_client.calls
+    finally:
+        reopened.close()
