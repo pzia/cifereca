@@ -632,7 +632,7 @@ def main():
             return False
         assert section_contains(historical_rows[0], "Origine et provenance")
         assert section_contains(held_rows[0], "Reprise des opérations")
-        assert "aucun déverrouillage autorisé" in held_rows[0].get_subtitle()
+        assert "reprise supervisée uniquement après attestation et qualification Core" in held_rows[0].get_subtitle()
         assert not any(isinstance(node, Gtk.Button)
                        and getattr(node, "_cifereca_action_label", "") == "Verrous…"
                        for node in walk(historical_rows[0]))
