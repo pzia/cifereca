@@ -248,6 +248,11 @@ class NativeOrganizerConfirmation:
                 if not current():
                     return
                 status = result.get("status") if type(result) is dict else None
+                if (status == "blocked" and result.get("changed") == 0
+                        and result.get("reason") == "production_fence_held"):
+                    self.window.toast(
+                        "Revue et portée vérifiées ; exécution suspendue par la garde Core.")
+                    return
                 self.window.toast({
                     "renamed": "Renommage confirmé. Relancez la revue locale.",
                     "classified": "Rangement confirmé. Relancez la revue locale.",
