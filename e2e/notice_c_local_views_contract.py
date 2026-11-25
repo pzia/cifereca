@@ -594,6 +594,13 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 window._populate_local_search(state["projected_rows"][2])
                 assert window.search_page.store.get_n_items() == 1
                 window.search_controls.set_state(
+                    QueryState(text="Cuisine", field="all", scope="all"), notify=False,
+                )
+                window._render_search_results()
+                assert window.search_page.store.get_n_items() == 1
+                assert "Correspondance : Sujet" in window.search_page.store.get_item(0).meta
+                report["checks"]["P0_1023_retained_c_match_reason_" + label] = True
+                window.search_controls.set_state(
                     QueryState(text="Cuisine Astronomie", field="subject", scope="all"),
                     notify=False,
                 )
