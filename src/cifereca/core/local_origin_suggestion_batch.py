@@ -144,6 +144,8 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
         # A later file review must not cause an earlier candidate to be
         # presented as still verified after its bytes or inode changed.
         observed = []
+        last_processed = after
+        deferred = False
         owner = scope.request.identity_id
         for pid, raw, size in candidates[:_PAGE]:
             if not active() or sqlite_source_stamp(scope.database) != stamp:
@@ -157,6 +159,13 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
             if path is not None:
                 label = path.name[:255]
                 reason = "review_budget"
+                # Yield before a reviewable file if the remaining page
+                # budget is exhausted. An intrinsically oversized file is
+                # still reported unassessed and advances the cursor.
+                if (entries and type(size) is int and 0 < 3 * size <= _MAX_BYTES
+                        and (total + 3 * size > _MAX_BYTES or monotonic() >= deadline)):
+                    deferred = True
+                    break
                 # Existing per-file verifier may rehash during rechecks:
                 # reserve three file lengths conservatively for this page.
                 if (type(size) is int and size > 0
@@ -178,6 +187,7 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                             return None
                         observed.append((path, (before.st_dev, before.st_ino, before.st_size,
                                                 before.st_mtime_ns, before.st_ctime_ns)))
+            last_processed = pid
             suggestions = result.get("suggestions") if result else None
             entries.append({
                 "file": label, "reason": reason,
@@ -206,8 +216,8 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
                 return None
         if not active() or sqlite_source_stamp(scope.database) != stamp:
             return None
-        more = len(candidates) > _PAGE
-        following = (BatchCursor(scope, stamp, candidates[_PAGE - 1][0], page + 1)
+        more = deferred or len(candidates) > _PAGE
+        following = (BatchCursor(scope, stamp, last_processed, page + 1)
                      if more and page < _MAX_PAGES else None)
         return {
             "status": "partial", "page": page, "entries": tuple(entries),
