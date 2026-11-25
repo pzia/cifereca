@@ -874,7 +874,61 @@ def main() -> int:
         }
         core.library.search_known_catalog = counted_search
         capture_stage("06-stale-local-reply-ignored")
-        begin_response_facets()
+        begin_loaded_search_volume()
+
+    def begin_loaded_search_volume():
+        # #1023: actual GTK list/filter over a several-thousand-entry
+        # loaded snapshot. This is not a provider or SQLite throughput test.
+        from dataclasses import replace
+        page = window.search_page
+        original_state = window.search_controls.state()
+        original_rows = list(window._search_local_objects.values())
+        before_calls = search_requests[0]
+        rows = [
+            dict(key=f"volume-1023-{i:04d}", item_id=f"edition-{i:04d}",
+                 identity_id=core.library.current_identity.identity_id,
+                 provider_id="local", title=f"Notice volume {i:04d}",
+                 author="Auteur fictif", media_format="epub",
+                 local_state="remote_catalog", metadata={"language": "fr"},
+                 description="Résumé fictif", thumbnail_url=None)
+            for i in range(3000)
+        ]
+        window.search_controls.set_state(
+            replace(original_state, text="Notice volume", field="title",
+                    scope="all", providers=(), types=(), languages=()),
+            notify=False,
+        )
+        start = monotonic()
+        window._populate_local_search(rows)
+        render_ms = round((monotonic() - start) * 1000, 2)
+        assert page.store.get_n_items() == 3000
+
+        def verify_volume():
+            assert page.listview.get_mapped()
+            assert page.store.get_n_items() == 3000
+            assert "3000" in page.count_label.get_text()
+            # Real GtkSearchEntry signal, not a direct projection call.
+            start_filter = monotonic()
+            window.search_controls.entry.set_text("Notice volume 2999")
+            def verify_filter():
+                if page.store.get_n_items() != 1:
+                    assert monotonic() - start_filter < 5, "Loaded filter did not settle"
+                    later(60, verify_filter)
+                    return
+                assert page.store.get_item(0).key == "volume-1023-2999"
+                assert page.listview.get_mapped()
+                assert search_requests[0] == before_calls
+                result["loaded_search_volume"] = {
+                    "rows": 3000, "render_ms": render_ms,
+                    "filter_settle_ms": round((monotonic() - start_filter) * 1000, 2),
+                    "implicit_searches": 0,
+                }
+                result["checks"]["P0_1023_native_loaded_search_3000"] = True
+                window.search_controls.set_state(original_state, notify=False)
+                window._populate_local_search(original_rows)
+                begin_response_facets()
+            later(120, verify_filter)
+        later(120, verify_volume)
 
     facet_queries = []
 
