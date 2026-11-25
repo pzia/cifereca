@@ -64,6 +64,7 @@ def test_cli_override_reaches_core_before_plugin_initialization(monkeypatch, fla
     opened.assert_called_once_with(
         no_plugins=False, force_plugins=(), activate_plugins=False,
         diagnostics_level="trace", notice_work_admission=admission,
+        notice_age_desktop_config=True,
     )
     effective.assert_called_once_with("trace")
 
