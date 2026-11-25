@@ -876,6 +876,39 @@ def main() -> int:
         capture("03b-library-563-real-gtk")
         report["library_563_u0_comparison"] = compare_library_render(w)
         report["checks"]["P0_library_563_u0_projection_equivalent"] = True
+        # #1023: keep the historical 563-row comparison unchanged. Extend
+        # only the loaded GTK snapshot, then restore it for existing routes.
+        entries = list(w._library_entries_cache)
+        extra = [dict(
+            key=f"p0-volume-{index:03d}", title=f"Notice volume {index:03d}",
+            author="Auteur fictif", identity_id="camille", provider_id="local",
+            medium="digital", media_format="epub", thumbnail_url=None,
+            metadata={"language": "fr"},
+        ) for index in range(563, 3000)]
+        started = monotonic()
+        w._render_library(entries + extra)
+        render_ms = round((monotonic() - started) * 1000, 2)
+        assert page.store.get_n_items() == 3000
+        assert "3000" in page.count_label.get_text()
+        volume_state = w.library_controls.state()
+        w.library_controls.set_state(
+            replace(volume_state, text="Notice volume 2999", field="title"),
+            notify=False,
+        )
+        started = monotonic()
+        w._render_library()
+        filter_ms = round((monotonic() - started) * 1000, 2)
+        assert page.store.get_n_items() == 1
+        assert page.store.get_item(0).key == "p0-volume-2999"
+        assert "3000" in page.count_label.get_text()
+        assert page.listview.get_mapped()
+        report["library_3000_loaded_volume"] = {
+            "rows": 3000, "render_ms": render_ms, "filter_ms": filter_ms,
+        }
+        report["checks"]["P0_1023_library_3000_loaded_filter"] = True
+        w.library_controls.set_state(volume_state, notify=False)
+        w._render_library(entries)
+        assert page.store.get_n_items() == 563
         state = replace(w.library_controls.state(), text="Notice volume 562", field="title")
         library_volume["filtered"] = state
         w.library_controls.set_state(state, notify=False)
