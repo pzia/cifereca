@@ -140,7 +140,7 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
 
 @pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure",
                                   "acsm_success", "acsm_staged", "missing_directory", "missing_directory_hold",
-                                  "acsm_reconstruct"])
+                                  "acsm_reconstruct", "acsm_expired_loan", "acsm_different_sha"])
 def test_native_classification_uses_the_common_writer_and_keeps_authority(
     store, tmp_path, monkeypatch, case,
 ):
@@ -170,7 +170,9 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         from cifereca.core.convergence_execution import CompletedDelivery
         from tests.test_core_p0_3171_atomic_publication_v14 import new_source
         register(store, "A", "numilog", "card-A")
-        source, snapshot = new_source(provider="numilog")
+        source, snapshot = new_source(provider="numilog", **(
+            {"kind": "loan", "branch": "loans", "right": "synthetic-loan"}
+            if case == "acsm_expired_loan" else {}))
         old, pid = _put_epub(store, root, "numilog/acsm-" + "a"*64 + "/legacy.epub",
                              metadata=TYPED)
         digest = hashlib.sha256(old.read_bytes()).hexdigest()
@@ -186,7 +188,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
                 final_sha256=digest, delivery_receipt_ref="synthetic-receipt",
                 adept_receipt_ref="synthetic-adept")
             assert published.placement_id == pid
-            if case in ("acsm_success", "acsm_reconstruct"):
+            if case in ("acsm_success", "acsm_reconstruct", "acsm_expired_loan", "acsm_different_sha"):
                 canonical_recovery.mark_completed_delivery_published(
                     store, source=source, offer_id=offer, artifact_id=published.artifact_id,
                     shared_lock=lock)
@@ -211,6 +213,13 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         })
     baseline, data, history = store.placement_get(pid), old.read_bytes(), store.acquisitions()
     before = rows(store)
+    if case == "acsm_expired_loan":
+        with store._lock, store._connect() as db:
+            historical_proofs = tuple(db.execute("SELECT * FROM " + table).fetchall()
+                                      for table in ("artifacts", "source_references", "origin_links"))
+        from cifereca.core.library_inventory import scan_identity_roots
+        initial = scan_identity_roots({"A": (root / "A",)})
+        assert not initial.reasons and [(f.path, f.sha256) for f in initial.files] == [(str(old), digest)]
     service = _service(store, root)
     if case == "acsm_staged":
         _, review = _run(service)
@@ -267,7 +276,8 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     assert len(runner.queue) == 1
     runner.run()
     assert not ui.open(NS(MessageDialog=Dialog))
-    if case in ("success", "acsm_success", "missing_directory", "acsm_reconstruct"):
+    if case in ("success", "acsm_success", "missing_directory", "acsm_reconstruct",
+                "acsm_expired_loan", "acsm_different_sha"):
         assert messages == ["Rangement confirmé. Relancez la revue locale."]
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
@@ -289,7 +299,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         if case == "missing_directory_hold":
             assert not target.parent.exists()
     assert rows(store) == before
-    if case in ("acsm_success", "acsm_reconstruct"):
+    if case in ("acsm_success", "acsm_reconstruct", "acsm_expired_loan", "acsm_different_sha"):
         from dataclasses import replace
         from cifereca.models import Account
         from tests.test_core_p0_3171_convergence_execution import FakeService, run
@@ -301,8 +311,11 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         account = Account(identity_id="A", provider_id="numilog", credential_id="card-A",
                           unique_id="buyer-A")
         sync = FakeService(store, [account])
-        offered = replace(snapshot, rights=(replace(snapshot.rights[0],
-                          delivery="available", delivery_offer_id=offer),))
+        offered = replace(snapshot, rights=(replace(snapshot.rights[0], **(
+            {"state": "inactive", "delivery": "unavailable", "delivery_offer_id": "",
+             "evidence_ref": "synthetic-expired-loan-observation",
+             "observed_at": "2026-11-25T08:00:00+00:00"} if case == "acsm_expired_loan"
+            else {"delivery": "available", "delivery_offer_id": offer})),))
         monkeypatch.setattr("cifereca.core.convergence_execution.acquisition_lock_file",
                             lambda: lock_path)
         results = run(sync, account, offered, root, lock_path, {source},
@@ -310,9 +323,26 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         assert results[0].status == "present_attested"
         assert not old.exists() and target.read_bytes() == data
         assert rows(store) == before and sync.calls == 0
-        if case == "acsm_reconstruct":
+        if case == "acsm_expired_loan":
+            from cifereca.core.library_reconciliation import read_library_snapshot, reconcile
+            inv = scan_identity_roots({"A": (root / "A",)})
+            assert not inv.reasons and [(f.path, f.sha256) for f in inv.files] == [(str(target), digest)]
+            report = reconcile(inv, read_library_snapshot(tmp_path / "state.sqlite", identity_id="A"))
+            assert not report.reasons
+            assert any(e.reason == "explicit_placement_sha_size" for e in report.edges)
+            # Historical loan bytes are not a live reading entitlement.
+            assert "confirmed_link" not in report.files[0]
+            with store._lock, store._connect() as db:
+                assert tuple(db.execute("SELECT * FROM " + table).fetchall()
+                             for table in ("artifacts", "source_references", "origin_links")) == historical_proofs
+            assert recovered.receipt_ref == "synthetic-receipt"
+            assert source.kind == "loan" and offered.rights[0].state == "inactive"
+            assert len(store.acquisitions()) == len(history) == 1
+            assert store.placements() == [current]
+        if case in ("acsm_reconstruct", "acsm_different_sha"):
             _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
-                                          source, snapshot, account, sync, pid, target, data, digest)
+                                          source, snapshot, account, sync, pid, target, data, digest,
+                                          different_sha=case == "acsm_different_sha")
     else:
         assert store.acquisitions() == history
     assert store.entitlements() == []
@@ -320,7 +350,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
 
 
 def _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
-                                 source, snapshot, account, sync, keeper, target, data, digest):
+                                 source, snapshot, account, sync, keeper, target, data, digest, *, different_sha=False):
     """Owner #3176: qualify recovery of a deliberately lost reproducible link.
 
     The only injected defect is removal of the exact synthetic provider link.
@@ -364,18 +394,52 @@ def _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
     assert not plan_existing_verified_presence(store, offered, library_root=root).decisions[0].provider_satisfied
     download = root / "A/numilog/reacquired.epub"
 
+    if different_sha:
+        import hashlib
+        from tests.test_core_p0_2835_epub_layout import _book
+        fresh_data = _book(TYPED.replace("https://schema.org/Book", "https://schema.org/CreativeWork")).getvalue()
+        fresh_digest = hashlib.sha256(fresh_data).hexdigest()
+        assert fresh_digest != digest
+    else:
+        fresh_data, fresh_digest = data, digest
+
     def deliver(key, right):
         assert key == source and right.delivery_offer_id == "fresh-recovery-offer"
         assert not download.exists()
         sync.calls += 1
-        download.write_bytes(data)
-        return CompletedDelivery(key, right.delivery_offer_id, download, digest,
-                                 "synthetic-receipt", adept_receipt_ref="synthetic-adept")
+        download.write_bytes(fresh_data)
+        return CompletedDelivery(key, right.delivery_offer_id, download, fresh_digest,
+                                 "fresh-receipt" if different_sha else "synthetic-receipt",
+                                 adept_receipt_ref="fresh-adept" if different_sha else "synthetic-adept")
 
     outcome, = run(sync, account, offered, root, lock_path, {source}, deliver)
     assert outcome.status == "downloaded" and sync.calls == 1
-    assert outcome.artifact_id == "sha256:" + digest
+    assert outcome.artifact_id == "sha256:" + fresh_digest
     candidate = outcome.placement_id
+    if different_sha:
+        from cifereca.core.canonical_post_placement import verified_post_placement_duplicates
+        assert target.read_bytes() == data and download.read_bytes() == fresh_data
+        assert candidate != keeper
+        assert candidate not in verified_post_placement_duplicates(
+            store, library_root=root, placement_id=keeper)
+        with InterProcessLock(lock_path) as lock:
+            preview = supervisor.supervise_canonical_duplicate(
+                store, library_root=root, candidate_placement_id=candidate,
+                keeper_placement_id=keeper, action="preview")
+            assert preview.status == "preview_blocked"
+            with monkeypatch.context() as patch:
+                patch.setattr(supervisor, "_ordinary_cleanup_enabled", lambda: True)
+                rejected = supervisor.supervise_canonical_duplicate(
+                    store, library_root=root, candidate_placement_id=candidate,
+                    keeper_placement_id=keeper, action="commit", confirmed=True, shared_lock=lock)
+            assert rejected.status == "blocked" and not rejected.removed_file
+        inv = scan_identity_roots({"A": (root / "A",)})
+        assert not inv.reasons
+        assert {f.path: f.sha256 for f in inv.files} == {str(target): digest, str(download): fresh_digest}
+        assert {p["path"]: p["artifact_id"] for p in store.placements()} == {
+            str(target): "sha256:" + digest, str(download): "sha256:" + fresh_digest}
+        assert target.read_bytes() == data and download.read_bytes() == fresh_data
+        return
     assert candidate != keeper and target.read_bytes() == download.read_bytes() == data
     assert store.placement_get(candidate)["path"] == str(download)
     inventory_report([target, download])
