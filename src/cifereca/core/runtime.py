@@ -50,6 +50,7 @@ class CiferecaCore:
         notice_work_admission: SharedTaskAdmission | None = None,
         notice_replay_registry: PublicReplayRegistry | None = None,
         notice_age_registry: TrustedConsolidatorRegistry | None = None,
+        notice_age_search_scope: str | None = None,
     ) -> Self:
         # Explicit trusted composition/acceptance option only; ordinary
         # CLI and GTK startup retain their current admission and behavior.
@@ -62,6 +63,10 @@ class CiferecaCore:
                 or notice_work_admission is None or no_plugins
                 or not notice_age_registry.public_age_digests()):
             raise ValueError("invalid_trusted_consolidator_archives")
+        if notice_age_search_scope is not None:
+            from .notice_consolidator_selection import _identifier
+            if notice_age_registry is None or not _identifier(notice_age_search_scope, max_len=160):
+                raise ValueError("notice_descriptive_invalid_search_scope")
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
@@ -171,6 +176,20 @@ class CiferecaCore:
             try:
                 if not core.install_notice_age_execution(notice_age_registry):
                     raise ValueError("notice_work_invalid_public_age_port")
+                if notice_age_search_scope is not None:
+                    from .notice_c_public_age_producer import request_current_public_age_txn
+                    digests = notice_age_registry.public_age_digests()
+
+                    def request_search_age(db, *, target_edition_id, group_document, now):
+                        if notice_work.documentary_revision() is None:
+                            return None
+                        return request_current_public_age_txn(
+                            db, target_edition_id=target_edition_id,
+                            scope=notice_age_search_scope, group_document=group_document,
+                            now=now, implementation_digests=digests,
+                        )
+
+                    library._notice_work_request_search_age_txn = request_search_age
             except Exception:
                 core.close()
                 raise
