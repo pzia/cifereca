@@ -4044,7 +4044,11 @@ class LibraryService:
 
     def catalog_scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> dict[str, Any]:
         """Reconcile the local-first catalog from the Paris-owned library tree."""
-        return library_mutation.catalog_scan(self, repair_misnamed=repair_misnamed, force_covers=force_covers)
+        # Catalogue reconciliation is a writer, including a cover refresh.
+        # It must not observe a relocation halfway through its FS/SQLite
+        # transition. Sync may already own this lease in the same thread.
+        with InterProcessLock(acquisition_lock_file(), reentrant=True):
+            return library_mutation.catalog_scan(self, repair_misnamed=repair_misnamed, force_covers=force_covers)
 
     def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
         return library_projection.catalog_entries(self, state=state)
@@ -4053,7 +4057,10 @@ class LibraryService:
         self, path: Path, *, title: str | None = None, item_id: str | None = None,
         identity_id: str | None = None, provider_id: str | None = None,
     ) -> dict[str, Any]:
-        return library_mutation.catalog_index_path(self, path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id)
+        # Targeted indexing also publishes SQLite placement/catalogue state.
+        # Refuse a concurrent maintenance/publication owner before touching FS.
+        with InterProcessLock(acquisition_lock_file(), reentrant=True):
+            return library_mutation.catalog_index_path(self, path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id)
 
     def library_entries(self, *, identity_id: str | None = None, scan: bool = False) -> list[dict[str, Any]]:
         """Canonical Library projection; snapshot a legacy GUI selection at admission.
