@@ -583,7 +583,11 @@ def _materialize_to_identity_locked(
 
 def catalog_scan(self, *, repair_misnamed: bool=False, force_covers: bool=False) -> dict[str, Any]:
     """Reconcile the local-first catalog from the Paris-owned library tree."""
-    result = LocalCatalog(self.storage, self.library_dir()).scan(repair_misnamed=repair_misnamed, force_covers=force_covers)
+    result = LocalCatalog(
+        self.storage, self.library_dir(),
+        regression_capture_directory=getattr(self, '_notice_regression_capture_directory', None),
+        diagnostics=getattr(self, 'diagnostics', None),
+    ).scan(repair_misnamed=repair_misnamed, force_covers=force_covers)
     self.diagnostics.add(
         "CATALOG", "local scan", "ok" if not result.invalid else "warning",
         detail=result.as_dict(),
@@ -592,7 +596,11 @@ def catalog_scan(self, *, repair_misnamed: bool=False, force_covers: bool=False)
 
 
 def catalog_index_path(self, path: Path, *, title: str | None=None, item_id: str | None=None, identity_id: str | None=None, provider_id: str | None=None) -> dict[str, Any]:
-    return LocalCatalog(self.storage, self.library_dir()).index_path(
+    return LocalCatalog(
+        self.storage, self.library_dir(),
+        regression_capture_directory=getattr(self, '_notice_regression_capture_directory', None),
+        diagnostics=getattr(self, 'diagnostics', None),
+    ).index_path(
         path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
     )
 

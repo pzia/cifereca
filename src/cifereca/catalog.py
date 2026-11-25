@@ -116,9 +116,12 @@ class LocalCatalog:
     legacy flat layouts stay cataloged without inferring origin from a 0.7 backup.
     """
 
-    def __init__(self, storage: Any, root: Path) -> None:
+    def __init__(self, storage: Any, root: Path, *, regression_capture_directory=None,
+                 diagnostics=None) -> None:
         self.storage = storage
         self.root = root.expanduser()
+        self._notice_regression_capture_directory = regression_capture_directory
+        self._notice_diagnostics = diagnostics
 
     @staticmethod
     def sha256(path: Path) -> str:
@@ -596,12 +599,25 @@ class LocalCatalog:
         # An explicit force_covers scan still reinspects the EPUB on demand.
         complete=cached.get('epub_metadata_schema')==EPUB_METADATA_SCHEMA and not force
         if not complete:
-            inspected=inspect_epub(path)
-            if hasattr(self,'_cover_refresh_seen'):self._cover_refresh_seen.add(entry.get('artifact_id'))
-            # Content-derived facts attach to the Artifact hash, never a filename.
-            cached={**cached,**inspected}
-            if not inspected.get('epub_cover'):cached.pop('epub_cover',None)
-            self.storage.artifact_put({**artifact,'metadata':cached})
+            from .storage import Storage
+            if isinstance(self.storage, Storage):
+                from .core.notice_epub_witness import refresh_catalog_epub
+                cached, published = refresh_catalog_epub(
+                    self.storage, artifact, entry, path, parse=inspect_epub,
+                    directory=getattr(self, '_notice_regression_capture_directory', None),
+                    diagnostics=getattr(self, '_notice_diagnostics', None),
+                )
+                # A foreign Placement may block a shared write without
+                # admitting the owner's diagnostic. Let the owner's scan
+                # attempt its own exact review rather than mark it seen.
+                if published and hasattr(self,'_cover_refresh_seen'):
+                    self._cover_refresh_seen.add(entry.get('artifact_id'))
+            else:
+                inspected=inspect_epub(path)
+                if hasattr(self,'_cover_refresh_seen'):self._cover_refresh_seen.add(entry.get('artifact_id'))
+                cached={**cached,**inspected}
+                if not inspected.get('epub_cover'):cached.pop('epub_cover',None)
+                self.storage.artifact_put({**artifact,'metadata':cached})
         facts={key:value for key,value in cached.items() if key.startswith('epub_')}
         if not metadata.get('epub_metadata_schema'):
             descriptive={key:metadata[key] for key in ['description','publisher','published_at','languages','subjects','identifiers','series','collection'] if metadata.get(key)}
