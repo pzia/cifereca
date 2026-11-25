@@ -50,7 +50,7 @@ def request_current_public_age_txn(db, *, target_edition_id, scope, now,
 
 
 def request_current_public_age(storage, *, target_edition_id, scope, now,
-                               implementation_digests):
+                               implementation_digests, group_document=None):
     """Worker-only transaction wrapper; no submission or transport."""
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
