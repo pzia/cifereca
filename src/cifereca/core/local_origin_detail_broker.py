@@ -6,6 +6,7 @@ An activation-scoped lease will additionally guard entry and result delivery.
 """
 from secrets import token_hex
 from threading import Lock
+from time import monotonic
 
 from ..plugin_api.local_origin_detail import (
     LocalOriginDetailMatch, LocalOriginDetailPage, LocalOriginPublicChoice,
@@ -41,11 +42,17 @@ from .local_origin_suggestion_operator import (
 )
 
 
+_DISPATCH_WINDOW_SECONDS = 60
+_MAX_PROVIDER_DISPATCHES = 8
+_MAX_TOTAL_DISPATCHES = 32
+
+
 class LocalOriginDetailReadBrokerImpl:
     def __init__(self, service, *, activation_current=None):
         self._service = service
         self._activation_current = activation_current
         self._public = {}
+        self._dispatches = []
         self._empty_public_cache = _TerminalEmptyReviewCache()
         self._private = {}
         self._remote_loans = {}
@@ -57,6 +64,25 @@ class LocalOriginDetailReadBrokerImpl:
         self._generation = 0
         self._active = None
         self._revoked = False
+
+    def _reserve_dispatch(self, generation, provider):
+        """Bound explicit comparison admissions across all remote surfaces.
+
+        Charge attempts conservatively, including cache hits and failures.
+        Preview/cancel cannot replenish the activation-local budget.
+        """
+        with self._lock:
+            if self._revoked or generation != self._generation:
+                return False
+            now = monotonic()
+            self._dispatches = [(at, p) for at, p in self._dispatches
+                                if 0 <= now - at < _DISPATCH_WINDOW_SECONDS]
+            if (len(self._dispatches) >= _MAX_TOTAL_DISPATCHES
+                    or sum(p == provider for _, p in self._dispatches)
+                    >= _MAX_PROVIDER_DISPATCHES):
+                return False
+            self._dispatches.append((now, provider))
+            return True
 
     def _view_live(self, generation, view):
         # Pure lifetime check. The declaration authority calls its
@@ -225,6 +251,8 @@ class LocalOriginDetailReadBrokerImpl:
 
         try:
             if not live():
+                return None
+            if not self._reserve_dispatch(generation, choice.provider_id):
                 return None
             result = search_local_public_catalogue(
                 self._service, request, provider_id=choice.provider_id,
@@ -453,6 +481,8 @@ class LocalOriginDetailReadBrokerImpl:
         try:
             if not live():
                 return None
+            if not self._reserve_dispatch(generation, choice.scope.provider_id):
+                return None
             result = compare_remote_loan_catalogue(
                 self._service, choice, confirmed=True, still_current=live,
             )
@@ -505,6 +535,8 @@ class LocalOriginDetailReadBrokerImpl:
 
         try:
             if not live():
+                return None
+            if not self._reserve_dispatch(generation, choice.scope.provider_id):
                 return None
             result = compare_remote_purchase_catalogue(
                 self._service, choice, confirmed=True, still_current=live,

@@ -345,3 +345,43 @@ def test_terminal_empty_cache_never_crosses_revoked_or_changed_review_scope(
     assert not result.coverage_complete and not result.fresh_network_verified
     assert not result.association_authorized
     assert rows(service.storage) == before and path.read_bytes() == contents
+
+
+def test_remote_dispatch_budget_survives_preview_cancel_and_expires(rig, monkeypatch):
+    from cifereca.core import local_origin_detail_broker as module
+    service, session, request, calls, path = rig
+    clock = [100.0]
+    monkeypatch.setattr(module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "_MAX_PROVIDER_DISPATCHES", 2)
+    broker = LocalOriginDetailReadFactory(service).for_activation(
+        "fixture", current=lambda: True)
+    before, data = rows(service.storage), path.read_bytes()
+    for index in range(3):
+        page = preview(broker, request)
+        choice, = page.public_choices
+        result = broker.search_public(token=choice.token, confirmed=True)
+        assert (result is not None) == (index < 2)
+        broker.cancel(token=page.token)
+    assert len(calls) == 2
+    clock[0] = 159.0
+    choice, = preview(broker, request).public_choices
+    assert broker.search_public(token=choice.token, confirmed=True) is None
+    clock[0] = 160.0
+    choice, = preview(broker, request).public_choices
+    assert broker.search_public(token=choice.token, confirmed=True) is not None
+    assert len(calls) == 3
+    assert rows(service.storage) == before and path.read_bytes() == data
+
+
+def test_shared_dispatch_budget_counts_provider_and_total(monkeypatch):
+    from cifereca.core import local_origin_detail_broker as module
+    monkeypatch.setattr(module, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(module, "_MAX_PROVIDER_DISPATCHES", 2)
+    monkeypatch.setattr(module, "_MAX_TOTAL_DISPATCHES", 3)
+    broker = LocalOriginDetailReadBrokerImpl(object())
+    assert broker._reserve_dispatch(0, "one")
+    assert broker._reserve_dispatch(0, "one")
+    assert not broker._reserve_dispatch(0, "one")
+    assert broker._reserve_dispatch(0, "two")
+    assert not broker._reserve_dispatch(0, "three")
+    assert not broker._reserve_dispatch(1, "three")

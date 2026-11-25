@@ -105,6 +105,7 @@ class NoticeWorkRuntime:
             storage, broker, clock=clock, on_committed=self._notify,
             replay_registry=replay_registry,
             on_purchase_committed=self._notify_purchase,
+            on_descriptive_committed=self._notify_descriptive,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
                 prepare_public_age=self._prepare_public_age,
@@ -138,6 +139,7 @@ class NoticeWorkRuntime:
                 fetch_execution=self._fetch_execution,
                 purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
+                on_descriptive_committed=self._notify_descriptive,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
                 prepare_public_age=self._prepare_public_age,
@@ -292,6 +294,7 @@ class NoticeWorkRuntime:
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=execution, purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
+                on_descriptive_committed=self._notify_descriptive,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
                 prepare_public_age=self._prepare_public_age,
@@ -314,6 +317,7 @@ class NoticeWorkRuntime:
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=self._fetch_execution, purchase_execution=execution,
                 on_purchase_committed=self._notify_purchase,
+                on_descriptive_committed=self._notify_descriptive,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
                 prepare_public_age=self._prepare_public_age,
@@ -338,6 +342,7 @@ class NoticeWorkRuntime:
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=self._fetch_execution, purchase_execution=self._purchase_execution,
                 on_purchase_committed=self._notify_purchase,
+                on_descriptive_committed=self._notify_descriptive,
                 on_witness_rejected=self._notify_witness_rejected,
                 capture_directory=self._capture_directory,
                 prepare_public_age=prepare, public_age_digests=implementation_digests,
@@ -412,6 +417,12 @@ class NoticeWorkRuntime:
         report_capture_diagnostic(
             self._diagnostics, diagnostic_id, capture_state, rejected=rejected,
         )
+
+    def _notify_descriptive(self):
+        # Age changes affect documentary consumers, not cover epochs.
+        with self._lock:
+            if not self._closed:
+                self._documentary_revision += 1
 
     def _notify_purchase(self):
         with self._lock:
@@ -529,6 +540,7 @@ class NoticeWorkRuntime:
                     fetch_execution=self._fetch_execution,
                     purchase_execution=self._purchase_execution,
                     on_purchase_committed=self._notify_purchase,
+                    on_descriptive_committed=self._notify_descriptive,
                     on_witness_rejected=self._notify_witness_rejected,
                     capture_directory=self._capture_directory,
                     prepare_public_age=self._prepare_public_age,

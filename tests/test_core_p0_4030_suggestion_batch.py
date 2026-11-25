@@ -291,3 +291,27 @@ def test_batch_retains_c_window_limits_through_public_broker_and_display(
     assert not page.coverage_complete and not page.association_authorized
     assert not page.provider_access_performed
     assert rows(store) == before and path.read_bytes() == content
+
+
+def test_batch_remaining_byte_budget_defers_reviewable_files_without_skipping(
+    store, tmp_path, monkeypatch,
+):
+    service, root, pid = _service(store, tmp_path)
+    files = [Path(store.placement_get(pid)["path"])]
+    files += [_extra(store, root, f"deferred-{i}.pdf") for i in range(4)]
+    monkeypatch.setattr(batch, "_MAX_BYTES", 3 * len(BYTES))
+    scope = batch.admit_origin_batch(service, confirmed=True)
+    before = rows(store)
+    cursor = None
+    seen = []
+    for index in range(5):
+        page = batch.run_origin_batch(service, scope, cursor=cursor)
+        assert page["page"] == index + 1
+        row, = page["entries"]
+        assert row["status"] == "compared"
+        seen.append(row["file"])
+        cursor = page["next_cursor"]
+        assert page["has_more"] == (index < 4)
+    assert cursor is None
+    assert sorted(seen) == sorted(p.name for p in files)
+    assert rows(store) == before and all(p.read_bytes() == BYTES for p in files)
