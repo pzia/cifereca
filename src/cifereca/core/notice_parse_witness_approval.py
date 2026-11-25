@@ -337,7 +337,7 @@ def replay_private_search_witness(service, row, *, scope, check_only=False):
         capture_authenticated_search_call, stamp_authenticated_search_rows,
         _export_private_witness_capture,
     )
-    from .notice_c_authenticated_web_choices import _source_links
+    from .notice_c_authenticated_web_choices import _capture, _source_links
     from .notice_cover_repository import _checked_source_state, _opaque_key
     from .notice_parse_witness import admitted_source_scope_sha256
     from .notice_parse_witness_store import _decode, _PREFIX
@@ -363,6 +363,15 @@ def replay_private_search_witness(service, row, *, scope, check_only=False):
                     or any(type(value) is not str for value in stamp[2:])
                     or stamp[2:] != (observation.source_revision, packet[0], packet[1])):
                 return False
+            # The same-call binding uses a placeholder document to capture
+            # the account before Search. Inspect the actual source through
+            # a fresh exact-document binding, never through that placeholder.
+            binding = _capture(service, scope, document)
+            if (binding is None or binding.session is not call.binding.session
+                    or binding.account is not call.binding.account
+                    or binding.connection_epoch != call.binding.connection_epoch
+                    or binding.session_epoch != call.binding.session_epoch):
+                return False
             storage = service.storage
             source_key = _opaque_key(document)
             pin_key = admitted_source_scope_sha256(observation.key, parser_id=observation.parser_id)
@@ -375,7 +384,7 @@ def replay_private_search_witness(service, row, *, scope, check_only=False):
                                    (_PREFIX + pin_key,)).fetchone()
                 if (source is None or source.epoch != stamp[1] or saved is None
                         or source.observation.key != observation.key
-                        or not _source_links(source, call.binding)):
+                        or not _source_links(source, binding)):
                     return False
                 pin = _decode(saved[0], pin_key)
                 if pin.baseline.approved_input_sha256 != packet[0]:
