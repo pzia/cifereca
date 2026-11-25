@@ -274,6 +274,8 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
     from .notice_c_private_series_controller import request_selected_retained_series
     request_selected_retained_series(self, item, selected_id=selected_id, context=context)
+    from .notice_parse_witness_controller import request_selected_parse_witness
+    request_selected_parse_witness(self, item, selected_id=selected_id, context=context)
     # The four-field selection lease predates Core's independent account
     # and source epochs. A disconnect/rebind can replace the credential
     # session *without changing the selected book ID or GTK generation*.
@@ -479,6 +481,8 @@ def _apply_search_detail(
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
     from .notice_c_private_series_controller import request_selected_retained_series
     request_selected_retained_series(self, item, selected_id=selected_id, context=context)
+    from .notice_parse_witness_controller import request_selected_parse_witness
+    request_selected_parse_witness(self, item, selected_id=selected_id, context=context)
     # Capability-based action; legacy headless hosts without an installed
     # session registry cannot offer it and must not import GTK adapters.
     if getattr(getattr(self, "service", None), "_sessions", None) is not None:
@@ -509,6 +513,8 @@ def _search_detail_error(
     request_selected_authenticated_web_actions(self, item, selected_id=selected_id, context=context)
     from .notice_c_private_series_controller import request_selected_retained_series
     request_selected_retained_series(self, item, selected_id=selected_id, context=context)
+    from .notice_parse_witness_controller import request_selected_parse_witness
+    request_selected_parse_witness(self, item, selected_id=selected_id, context=context)
     # Provider exceptions can embed account IDs, private file paths or signed
     # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
