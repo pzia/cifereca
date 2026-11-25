@@ -136,9 +136,21 @@ def publish_approved_parse_witness(
 def _prepare_approved_parse_witness(*, observation, response_bytes,
                                     critical_fields, expected_generation,
                                     parser_implementation_sha256=None):
+    if (type(response_bytes) is not bytes
+            or not 0 < len(response_bytes) <= _MAX_RESPONSE_BYTES):
+        raise ValueError("invalid_parse_witness_publication")
+    return _prepare_approved_parse_witness_digest(
+        observation=observation, input_digest=sha256(response_bytes).hexdigest(),
+        critical_fields=critical_fields, expected_generation=expected_generation,
+        parser_implementation_sha256=parser_implementation_sha256,
+    )
+
+
+def _prepare_approved_parse_witness_digest(*, observation, input_digest,
+                                          critical_fields, expected_generation,
+                                          parser_implementation_sha256=None):
+    """Core-only: exact already-admitted input proof, including non-retained private bodies."""
     if (type(observation) is not NoticeSourceObservation
-            or type(response_bytes) is not bytes
-            or not 0 < len(response_bytes) <= _MAX_RESPONSE_BYTES
             or type(critical_fields) is not tuple
             or type(expected_generation) is not int
             or not 0 <= expected_generation <= _MAX_GENERATION):
@@ -149,7 +161,7 @@ def _prepare_approved_parse_witness(*, observation, response_bytes,
         )
         baseline = ParseWitness(
             source_scope_sha256=scope,
-            approved_input_sha256=sha256(response_bytes).hexdigest(),
+            approved_input_sha256=input_digest,
             parser_version=observation.parser_version,
             approved=True,
             critical_fields=critical_fields,
