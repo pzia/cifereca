@@ -149,10 +149,10 @@ class QueryControls(Gtk.Box):
             'Champ · Sujet', 'Champ · Série', 'Champ · Collection', 'Champ · Langue',
         ]))
         self.field.set_tooltip_text(
-            "Choisir un champ strict : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Choisir le champ interrogé (strict) : titre, auteur, ISBN, sujet, série, collection ou langue. "
             "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
             "Filtrage des documents chargés, sans interrogation distante." if library else
-            "Choisir un champ strict : titre, auteur, ISBN, sujet, série, collection ou langue. "
+            "Choisir le champ interrogé (strict) : titre, auteur, ISBN, sujet, série, collection ou langue. "
             "Tous les champs disponibles incluent aussi éditeur, prix littéraire et description. "
             "Entrée lance la recherche dans le connu ; les filtres affinent les résultats chargés."
         )
