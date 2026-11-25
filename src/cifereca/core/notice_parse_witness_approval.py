@@ -259,8 +259,16 @@ def private_search_witness(service, row, *, scope, approved=None):
 
 
 def private_search_witness_diagnostic(service, row, *, scope):
-    """Read the selected exact private witness, never from a foreign or revoked session."""
-    from .notice_c_private_search_web import _prepare
+    """Read a durable exact private witness, including a restored Search row.
+
+    A DTO locates an existing source; only the current account binding and
+    the durable source/connection fence authorize inspection. No fresh parse,
+    reapproval, provider request, or trust in the DTO URL is required.
+    """
+    from .notice_c_private_search_web import _source_key, _sql_binding_current
+    from .notice_c_authenticated_web_choices import _capture, _source_links
+    from .notice_cover_projection import notice_cover_document_ref
+    from .notice_cover_repository import _checked_source_state, _opaque_key, read_current_notice_cover
     from .notice_parse_witness_alert import read_parse_witness_diagnostic
     from sqlite3 import Error as SQLiteError
 
@@ -270,22 +278,33 @@ def private_search_witness_diagnostic(service, row, *, scope):
         with service._source_context_lock:
             if not scope.current(service) or service.current_identity is not scope.identity:
                 return None
-            prepared = _prepare(service, row, scope.identity_id)
-            if prepared is None:
+            key = _source_key(row, scope.identity_id)
+            if key is None:
                 return None
-            call, observation, document = prepared
-            source = read_notice_cover(service.storage, document)
-            if source is None:
+            document = notice_cover_document_ref(key)
+            binding = _capture(service, scope, document)
+            if binding is None:
                 return None
+            storage = service.storage
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN")
+                if not _sql_binding_current(db, document, binding.connection_epoch):
+                    return None
+                _, source, _ = _checked_source_state(db, document, _opaque_key(document))
+                if (source is None or source.observation.key != key
+                        or not _source_links(source, binding)):
+                    return None
+            observation = source.observation
             pin = read_approved_parse_witness(service.storage, key=observation.key,
                                               parser_id=observation.parser_id)
             alert = read_parse_witness_diagnostic(service.storage, key=observation.key,
                                                   parser_id=observation.parser_id)
             if (pin is None or alert is None or pin.generation != alert["generation"]
-                    or read_notice_cover(service.storage, document) != source
+                    or read_current_notice_cover(service.storage, document) != source
                     or read_approved_parse_witness(service.storage, key=observation.key,
                                                   parser_id=observation.parser_id) != pin
-                    or not call.binding.current(service, call.scope)):
+                    or not binding.current(service, scope)
+                    or service.current_identity is not scope.identity):
                 return None
             names = []
             for field in alert["fields"]:
