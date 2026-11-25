@@ -135,7 +135,8 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     from .notice_regression_capture_intent import enqueue_capture_txn
     if not db.in_transaction:
         raise ValueError("notice_work_transaction_required")
-    if candidate.key != current.key or candidate.parser_id != current.parser_id:
+    # An explicitly reviewed local input may lack an attested healthy parse.
+    if current is not None and (candidate.key != current.key or candidate.parser_id != current.parser_id):
         raise ValueError("notice_witness_source_changed")
     scope = admitted_source_scope_sha256(candidate.key, parser_id=candidate.parser_id)
     pin = db.execute("SELECT value FROM metadata WHERE key=?", (_PREFIX + scope,)).fetchone()
@@ -155,16 +156,18 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
         return False, None
     snapshots = {
         "baseline.json": pin[0],
-        "last_healthy.json": current.raw_json,
+        **({"last_healthy.json": current.raw_json} if current is not None else {}),
         "current_parse.json": candidate.raw_json,
         "environment.json": json.dumps({
             "parser_id": candidate.parser_id,
             "parser_version": candidate.parser_version,
-            "previous_parser_version": current.parser_version,
+            "previous_parser_version": (current.parser_version if current is not None
+                                        else approved.baseline.parser_version),
             "implementation_sha256": implementation_digest,
             "approved_implementation_sha256": approved.baseline.parser_implementation_sha256,
             "input_sha256": input_digest,
             "raw_input_export": "subject_to_core_policy",
+            **({"last_healthy_omission": "not_attested"} if current is None else {}),
         }, sort_keys=True),
     }
     bounded = {}
@@ -173,7 +176,9 @@ def review_publication_txn(db, *, current, candidate, input_digest, implementati
     # is needed even for a partial archive. Reserve it before the potentially
     # large baseline and observation snapshots, without raising the budget.
     for name in ("environment.json", "baseline.json", "last_healthy.json", "current_parse.json"):
-        value = snapshots[name]
+        value = snapshots.get(name)
+        if value is None:
+            continue
         size = len(value.encode("utf-8"))
         if size <= remaining:
             bounded[name] = value

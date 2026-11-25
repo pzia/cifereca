@@ -243,7 +243,7 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
 
     if not context_current():
         return
-    try:window.service.local_book_path(placement_id,identity_id=identity_id)
+    try:local_path = window.service.local_book_path(placement_id,identity_id=identity_id)
     except Exception:
         window._add_catalogue_action(detail, item); return
     opening=window.action_button('Ouvrir','document-open-symbolic')
@@ -263,6 +263,70 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 window.show_error('Ouverture locale indisponible', 'Ouverture du livre impossible')
     opening.connect('clicked',open_book)
     buttons=[opening]
+    if getattr(local_path, "suffix", "").lower() in (".epub", ".kepub"):
+        from ..core.notice_epub_witness import local_epub_witness, EpubWitnessProposal, EpubWitnessReview
+        from ..core.notice_parse_witness_store import ApprovedParseWitness
+        from ..core.notice_parse_witness import ParseWitnessReview
+        from ..core.search_orchestration import capture_search_read_scope
+        witness = window.action_button("Examiner le témoin EPUB", "document-properties-symbolic")
+        witness._cifereca_action_id = "review-local-epub-witness"
+        proposal = None
+        busy = False
+        revalidate = False
+
+        def witness_click(_button):
+            nonlocal busy, proposal, revalidate
+            if busy or not action_current(witness, gtk=True):
+                return
+            try:
+                scope = capture_search_read_scope(service, identity_id)
+            except ValueError:
+                return
+            busy = True
+            accepted = proposal
+            renewal = revalidate
+
+            def work():
+                return local_epub_witness(
+                    service, placement_id=placement_id, scope=scope,
+                    approved=accepted, revalidate=renewal,
+                    current=lambda: action_current(witness),
+                )
+
+            def done(result):
+                nonlocal busy, proposal, revalidate
+                busy = False
+                if not action_current(witness, gtk=True):
+                    return
+                proposal = result if type(result) is EpubWitnessProposal else None
+                revalidate = (proposal.revalidation if proposal is not None else
+                              type(result) is EpubWitnessReview and result.can_revalidate)
+                if proposal is not None:
+                    witness.set_label(("Revalider" if revalidate else "Valider") + " le témoin EPUB : titre"
+                                      + (" et auteurs" if proposal.authors else ""))
+                    witness.set_tooltip_text(proposal.title + "\n" + ", ".join(proposal.authors))
+                else:
+                    witness.set_label("Examiner une nouvelle baseline EPUB" if revalidate
+                                      else "Examiner le témoin EPUB")
+                    witness.set_tooltip_text("Rejouer le parseur local sans réseau")
+                    if type(result) is ApprovedParseWitness:
+                        window.toast("Témoin EPUB validé.")
+                    elif type(result) is EpubWitnessReview:
+                        labels = {"partial": "archive partielle", "complete": "archive créée",
+                                  "failed": "échec archive", "capacity_refused": "capacité atteinte",
+                                  "pending": "capture en attente"}
+                        window.toast("Parsing : régression possible · " +
+                                     labels.get(result.capture_state, "capture indisponible"))
+                    elif type(result) is ParseWitnessReview:
+                        window.toast("Parsing : régression possible" if result.affected_fields
+                                     else "Témoin EPUB contrôlé.")
+                    else:
+                        window.toast("Témoin EPUB indisponible (fichier ou contexte non admissible).")
+            window.runner.submit("Contrôle du témoin EPUB…", work, done,
+                                 lambda _error: done(None), priority=TaskPriority.METADATA,
+                                 kind="detail-cache", origin="user")
+        witness.connect("clicked", witness_click)
+        buttons.append(witness)
     source_provider = str(item.get('provider_id') or item.get('source_provider') or 'local')
     source_credential = str(item.get('source_credential') or (item.get('metadata') or {}).get('source_credential') or '')
     source_item_id = str(item.get('item_id') or item.get('source_item_id') or (item.get('record_id') or ''))
