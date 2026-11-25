@@ -46,6 +46,9 @@ def test_no_supposed_catalogue_sync_without_an_attested_contract():
     [catalog("x", scope="private-account")],
     [catalog("x", supported="true")],
     [catalog("x", available="true")],
+    [catalog("x", supported=False, available=True)],
+    [catalog("x"), catalog("x", available=False)],
+    [catalog("x", scope=[])],
 ])
 def test_malformed_or_private_capability_is_not_rendered(bad):
     label = sync_catalogue_overview(bad)
@@ -57,7 +60,7 @@ def test_malformed_or_private_capability_is_not_rendered(bad):
 
 def test_missing_catalogue_search_does_not_prove_a_missing_provider():
     assert "aucune recherche déclarée" in sync_catalogue_overview([])
-    label = sync_catalogue_overview([catalog("provider", supported=False)])
+    label = sync_catalogue_overview([catalog("provider", supported=False, available=False)])
     assert "aucune recherche déclarée" in label
 
 
@@ -122,3 +125,22 @@ def test_retired_numilog_backup_panel_cannot_overwrite_gtk_summary_widget():
     assert "Catalogues : état non vérifié" in window._sync_summary.label
     assert "Notices et droits" in window._sync_summary.label
     assert not window.runner.tasks
+
+
+def test_ambiguous_catalogue_snapshot_does_not_publish_partial_cards():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+
+    window, _broker, calls, _build, _page = _fixture(
+        sources=[_source(provider_id="fictional")],
+    )
+    window.service.catalogue_source_capabilities = lambda *, identity_id: [
+        catalog("public-one"), catalog("ambiguous"),
+        catalog("ambiguous", available=False),
+    ]
+    window._refresh_sync_page()
+    assert "Catalogues : état non vérifié" in window._sync_summary.label
+    assert all(not str(getattr(item, "label", "")).startswith("Catalogues · recherche")
+               for item in window._sync_sources_box.children)
+    assert window._sync_sources_box.children[0].children
+    assert window.runner.tasks == []
+    assert all(name == "sources" for name, *_ in calls)

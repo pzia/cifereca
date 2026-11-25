@@ -422,7 +422,9 @@ def _refresh_sync_page(self) -> None:
         declared capability snapshot is metadata-only and identity-scoped.
         No switch, network request, sync job or download is created here.
         """
-        from cifereca.gui.sync_catalogue_overview import sync_catalogue_overview
+        from cifereca.gui.sync_catalogue_overview import (
+            format_catalogue_overview, validated_catalogue_rows,
+        )
 
         def set_catalogue_summary(snapshot):
             # Some legacy inline provider panels also use 'summary' as a
@@ -436,7 +438,7 @@ def _refresh_sync_page(self) -> None:
                 # Only a closed, read-only capability count is shown. Never
                 # invent a catalogue-refresh control from search support.
                 header.set_label(header.get_label() + "\n"
-                                 + sync_catalogue_overview(snapshot))
+                                 + format_catalogue_overview(snapshot))
 
         reader = getattr(self.service, "catalogue_source_capabilities", None)
         if not callable(reader):
@@ -451,23 +453,16 @@ def _refresh_sync_page(self) -> None:
             return
         if not sync_action_scope_current(self, scope):
             return
-        if type(raw) not in (list, tuple) or len(raw) > 128:
-            set_catalogue_summary(None)
+        try:
+            snapshot = validated_catalogue_rows(raw)
+        except Exception:
+            # A malformed object is not a verified source declaration.
+            snapshot = None
+        set_catalogue_summary(snapshot)
+        if snapshot is None:
             return
-        set_catalogue_summary(raw)
-        catalogues = []
-        for item in raw:
-            provider = getattr(item, "provider_id", None)
-            if (type(provider) is not str or not 1 <= len(provider) <= 64
-                    or not all(char.isascii() and
-                               (char.isalnum() or char in "._-")
-                               for char in provider)
-                    or getattr(item, "catalog_search_supported", None) is not True
-                    or getattr(item, "catalog_refresh", None) != "unsupported"
-                    or getattr(item, "identity_scope", None) not in
-                        {"public", "authenticated"}):
-                continue
-            catalogues.append(item)
+        catalogues = [item for item in snapshot
+                      if item.catalog_search_supported and item.refresh_unsupported]
         if not catalogues:
             return
         # A disclosure keeps the #2141 dense Synchronisation page usable.
