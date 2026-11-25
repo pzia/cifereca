@@ -32,6 +32,7 @@ class CiferecaCore:
     plugins: PluginManager
     brokers: dict[str, object] = field(default_factory=dict, repr=False)
     notice_work: NoticeWorkRuntime | None = field(default=None, repr=False)
+    _notice_age_hold: object = field(default=None, init=False, repr=False)
 
     @classmethod
     def open(
@@ -184,11 +185,35 @@ class CiferecaCore:
                 with registry.hold_selected(self.plugins, pin) as candidate:
                     yield candidate
 
-        return self.notice_work.install_public_age_execution(
+        installed = self.notice_work.install_public_age_execution(
             lambda spec, control: prepare_exact_public_age(
                 self.storage, spec, control, hold_selected=hold,
             ),
             implementation_digests=digests,
+        )
+        if installed:
+            self._notice_age_hold = hold
+        return installed
+
+    def read_notice_age(self, *, target_edition_id, scope):
+        """Trusted Core consumer; same authority as the admitted worker.
+
+        No reducer execution or scheduling, no interpretation or fallback.
+        Call from a Core worker, never synchronously from GTK.
+        """
+        from .notice_c_public_age_read import PublicAgeRead, read_public_age_result
+        from .notice_c_cover_index import canonical_cover_document_ref
+        from .notice_consolidator_selection import _identifier
+
+        canonical_cover_document_ref(target_edition_id)
+        if not _identifier(scope, max_len=160):
+            raise ValueError("notice_descriptive_invalid_read_scope")
+        hold = self._notice_age_hold
+        if hold is None or self.notice_work is None or self.notice_work.documentary_revision() is None:
+            return PublicAgeRead("unavailable")
+        return read_public_age_result(
+            self.storage, target_edition_id=target_edition_id, scope=scope,
+            hold_selected=hold,
         )
 
     def configure_notice_consolidator(
@@ -223,6 +248,7 @@ class CiferecaCore:
             return DirectoryMigration(config, storage, root).abort()
 
     def close(self) -> None:
+        self._notice_age_hold = None
         if self.notice_work is not None:
             self.notice_work.close()
         self.plugins.close()
