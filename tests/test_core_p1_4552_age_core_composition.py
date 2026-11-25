@@ -132,3 +132,63 @@ def test_explicit_startup_registry_requires_admission_and_nonempty_trust(tmp_pat
         with pytest.raises(ValueError, match="invalid_trusted_consolidator_archives"):
             CiferecaCore.open(config_path=config, database_path=database, **extra)
         assert not database.exists()
+
+
+def test_desktop_deployment_config_provisions_real_core_without_implicit_selection(tmp_path):
+    from cifereca.config import Config
+    from cifereca.core.search_orchestration import _ingest_public_search_c
+
+    from pathlib import Path
+    from scripts.plugin_packaging import build_plugin_zip
+
+    package = Path(__file__).resolve().parents[1] / "src/plugins/metadata-age-standard"
+    archive = build_plugin_zip(package, tmp_path / "dist")
+    data = archive.read_bytes()
+    # Trusted build owner supplies the independent deployment pin.
+    digest = sha256(data).hexdigest()
+    config = Config(tmp_path / "config.json")
+    config.set("notice_c.public_age_deployment", {
+        "archive": str(archive), "sha256": digest, "scope": "public:editions",
+    })
+    config.save()
+    with open_core(tmp_path, notice_age_desktop_config=True) as core:
+        assert core._notice_age_hold is not None
+        assert callable(core.library._notice_work_request_search_age_txn)
+        core.plugins.installer.install(archive)
+        core.plugins.refresh()
+        # Explicit deployment trust alone must not select a consolidator.
+        row = project(original())
+        _ingest_public_search_c(core.library, [row], identity_id="A", now=int(time()),
+                                require_public_cover_witness=True)
+        source = row._core_notice_cover_document_ref
+        from cifereca.core.notice_cover_repository import read_notice_cover
+        target = read_notice_cover(core.storage, source).observation.key.edition_id
+        assert core.read_notice_age(target_edition_id=target, scope="public:editions").status != "current"
+        core.configure_notice_consolidator(
+            data, expected_sha256=digest, canonical_type="age", scope="public:editions",
+            selected_plugin_id="metadata.age.standard", selected_version="1.0.0",
+            expected_generation=0,
+        )
+    with open_core(tmp_path, notice_age_desktop_config=True) as core:
+        core.plugins.refresh()
+        from tests.test_core_p0_4982_search_atomic_groups import _job_refs
+        core.library._notice_work_search_committed = lambda: None
+        _ingest_public_search_c(core.library, [project(original())], identity_id="A",
+                                now=int(time()), require_public_cover_witness=True)
+        refs = _job_refs(core.storage)
+        assert len(refs) == 1
+        scan = core.notice_work.request_tick()
+        result = scan.result(timeout=10)
+        handle, = result.handles
+        assert handle.result(timeout=15) == "current"
+        assert core.read_notice_age(target_edition_id=target, scope="public:editions").status == "current"
+
+    config.set("notice_c.public_age_deployment", {
+        "archive": str(archive), "sha256": "0"*64, "scope": "public:editions",
+    })
+    config.save()
+    with pytest.raises(ValueError, match="invalid_desktop_deployment"):
+        open_core(tmp_path, notice_age_desktop_config=True)
+    # Non-desktop and ordinary no-config startup are unchanged.
+    with open_core(tmp_path) as core:
+        assert core._notice_age_hold is None

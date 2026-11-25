@@ -51,6 +51,7 @@ class CiferecaCore:
         notice_replay_registry: PublicReplayRegistry | None = None,
         notice_age_registry: TrustedConsolidatorRegistry | None = None,
         notice_age_search_scope: str | None = None,
+        notice_age_desktop_config: bool = False,
     ) -> Self:
         # Explicit trusted composition/acceptance option only; ordinary
         # CLI and GTK startup retain their current admission and behavior.
@@ -70,6 +71,14 @@ class CiferecaCore:
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
+        if notice_age_desktop_config is True:
+            if (notice_age_registry is not None or notice_age_search_scope is not None
+                    or notice_work_admission is None or no_plugins):
+                raise ValueError("notice_descriptive_invalid_desktop_composition")
+            from .notice_consolidator_desktop import desktop_age_configuration
+            notice_age_registry, notice_age_search_scope = desktop_age_configuration(
+                config.get("notice_c.public_age_deployment", None),
+            )
         # Normal Search also reviews approved witnesses without the optional
         # work pump; both paths must use the same configured destination.
         capture_directory = None
