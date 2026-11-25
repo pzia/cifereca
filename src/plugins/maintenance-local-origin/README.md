@@ -25,11 +25,18 @@ désinstallation retire les contributions ; aucun moteur natif de secours.
    d'observation. Une correspondance documentaire n'est pas un droit.
 3. Choisir explicitement un catalogue public admissible ou une surface
    privée affichée pour le compte connecté. La comparaison privée connue
-   est locale ; la relecture des prêts est une action réseau distincte
-   via l'inventaire typé (le titre et le fichier locaux ne sont pas
-   transmis). Aucune fraîcheur réseau ni exhaustivité n'est présumée.
+   est locale. « Relire les achats » et « Relire les prêts » sont des
+   actions distinctes pour le compte sélectionné, disponibles uniquement
+   si le port typé correspondant est admissible. Le titre et le fichier
+   locaux ne sont pas transmis à ces inventaires privés. Les achats
+   relus peuvent fournir une concordance de titre, auteur inconnu ; les
+   éditions homonymes restent distinctes. Aucun lien de livraison ou
+   d'enrichissement n'est suivi. Aucune fraîcheur réseau ni exhaustivité
+   n'est présumée.
 4. Sur un achat ou prêt privé déjà qualifié, choisir l'occurrence exacte
-   puis examiner l'aperçu de déclaration. La confirmation native Core
+   puis examiner l'aperçu de déclaration. Un achat distant simplement
+   concordant n'est pas une occurrence déclarable sans preuve exacte
+   préalable dans Core. La confirmation native Core
    utilise le parcours de déclaration existant ; elle reste une origine
    déclarée/non vérifiée, distincte d'une provenance fournisseur attestée
    et révocable via le parcours Core. Un résultat seulement documentaire,
@@ -38,7 +45,9 @@ désinstallation retire les contributions ; aucun moteur natif de secours.
    du fournisseur ou lorsque les preuves ne sont plus valides. Un résultat
    indisponible ou partiel ne signifie pas qu'aucune correspondance existe.
 
-**Limites de réception :** pas de recherche distante exhaustive des achats,
+**Limites de réception :** relecture distante des achats limitée au port
+facultatif d'observation typée (Numilog éprouvé hors ligne) ; pas de
+recherche distante exhaustive des achats,
 de classement global multi-sources, de garantie de fraîcheur réseau ni de
 preuve de couverture totale. Aucun achat, prêt, retour, téléchargement,
 changement de droit, déplacement ou suppression de fichier n'est déclenché

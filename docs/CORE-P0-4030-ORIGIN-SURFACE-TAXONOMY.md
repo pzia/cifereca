@@ -169,6 +169,46 @@ Ce mécanisme ne couvre pas l'ancienne action GUI indépendante, ne stocke
 aucun payload fournisseur et ne qualifie ni absence de droit ni absence
 exhaustive d'un document chez le fournisseur.
 
+### Achats distants et limites de fenêtre reçus — 25/11/2026
+
+Les lots suivants sont fusionnés sur main, avec vérification d'ascendance et
+gates vertes sur leurs HEAD respectifs :
+
+| Lot | Fusion | PR CI | Réception |
+| --- | --- | --- | --- |
+| #8045 | `c0ada4e757603ff97470ce2bcf0107e34a865dc7` | 45488328432 | Primitive explicite via PurchaseEnrichmentObservation, cinq cas |
+| #8055 | `1a389426aa192f05e5ee7b0b57d9a9b6d52d9b11` | 45491640172 | Port contextuel, action dédiée, choix bornés et révocation, dix cas |
+| #8057 | `517255c7d73d1ff5fd0b3ab3b25e485cae4f7b11` | 45492268843 | Sept cas de limites, omissions, homonymes et intégrité des tables SQLite |
+| #8059 | `f49e2a7905bcac8feb234f6f4e5fb0a96bb8dd7c` | 45492811632 | Trois cas avec le vrai parseur Numilog et transport HTTP simulé |
+
+#8055 : E2E 45491640224, AST 45491640200 et installation 45491640117
+également success. Les comparaisons de prêts #8032 (fusion 4ed052e,
+PR CI 45485126151) qualifient les branches numériques déclarées, jamais
+l'exhaustivité globale. #8037 (fusion e0683a2, PR CI 45485781988) conserve
+les limites de consultation C et les sources non indexées dans le batch.
+#8039 (fusion 8670650, PR CI 45488404851) et #8040 (fusion 31cb446) refusent
+les promotions URL/ISBN ambiguës. #8047 (fusion b68b2cf, PR CI 45489381151)
+publie atomiquement la continuation privée et la fenêtre de déclaration.
+
+Le choix « Relire les achats » est distinct de la comparaison locale en
+cache, de la synchronisation et du consentement à l'enrichissement public.
+Le Core consomme seulement le port typé existant du compte connecté,
+sans fallback vers un autre inventaire. Le titre privé lu est comparé
+localement ; le titre et les octets locaux ne sont pas transmis. Un
+locator public éventuellement transporté par le DTO n'est ni suivi,
+ni affiché. Les candidats ont titre concordant, auteur inconnu ; deux
+éditions homonymes restent distinctes. Aucun curseur distant n'est suivi
+automatiquement par le comparateur ; un producteur peut effectuer sa
+propre lecture paginée bornée selon son contrat. Aucun résultat ne
+devient une déclaration ou une preuve A/B par ce seul chemin.
+
+La réception Numilog concerne une session authentifiée synthétique,
+le vrai parseur et un HTTP MockTransport. Elle ne constitue pas une
+lecture réelle du compte ni une qualification de tous les fournisseurs
+d'achats. Les autres fournisseurs sans ce port restent sur leur surface
+connue admissible. Aucun marqueur de couverture globale ou de fraîcheur
+réseau n'est affirmé.
+
 **Critères de clôture encore à arbitrer en réception :** la somme des témoins
 ci-dessus doit être confrontée au parcours complet de l'utilisateur, dont les
 priorités public/achats/prêts sont **des priorités de présentation, pas un score
