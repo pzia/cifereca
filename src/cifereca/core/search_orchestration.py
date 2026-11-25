@@ -2146,7 +2146,7 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     # snapshot; progressive public C UI batches remain a subsequent gate.
     c_page = None
     if (type(query) is str and 2 <= len(query.strip()) <= 160
-            and field in ("all", "title", "author", "publisher", "subject", "series", "language")
+            and field in ("all", "title", "author", "publisher", "subject", "series", "collection", "language")
             and scope in ("all", "digital", "physical", "unknown")):
         from ..storage import Storage
         if isinstance(getattr(self, "storage", None), Storage):
