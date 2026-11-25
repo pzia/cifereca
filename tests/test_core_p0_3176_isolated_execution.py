@@ -498,3 +498,77 @@ def test_postcommit_revocation_cannot_deliver_success_receipt(
     assert result == {"status": "recovery_required", "changed": None}
     assert len(calls) == 1 and not old.exists()
     assert new.read_bytes() == data and store.placement_get(pid)["path"] == str(new)
+
+
+@pytest.mark.parametrize("case", ["success", "production", "late_collision"])
+def test_native_reviewed_batch_uses_same_writer_and_stops_on_remaining_drift(
+        store, tmp_path, monkeypatch, case):
+    from types import SimpleNamespace as NS
+    from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
+    from cifereca.core.maintenance_read_ports import maintenance_read_ports
+    from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+    from tests.test_core_p0_4030_epub_evidence import META
+
+    root = tmp_path / "library"
+    register(store, "A", "seller", "card-A")
+    first, first_id = _put_epub(
+        store, root, "Acquisitions/first.epub", provider_id="local")
+    second, second_id = _put_epub(
+        store, root, "Acquisitions/second.kepub.epub", provider_id="local",
+        metadata=META + "<!-- distinct bytes -->")
+    original = {first: (first_id, first.read_bytes()), second: (second_id, second.read_bytes())}
+    assert store.placement_get(first_id)["artifact_id"] != store.placement_get(second_id)["artifact_id"]
+    service = _service(store, root)
+    key = "library.organizer.read"
+    resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
+                                        "organizer", (key,))
+    broker = resolver(key)
+    plugin = object()
+    resolved = NS(plugin_id="organizer", service=plugin, registry_generation=1)
+    manager = NS(_registry_generation=1, service=lambda _: plugin,
+                 _records={"organizer": NS(service=plugin, activation_brokers=resolver)})
+    page = broker.preview(identity_id="A", confirmed=True)
+    page = broker.prepare_dry_run(token=page.token, confirmed=True, rename_only=True)
+    page = broker.confirm_dry_run(token=page.token, confirmed=True)
+    assert len(page.dry_run_entries) == 2
+    ordered = [(root / "A" / e.current, root / "A" / e.proposed)
+               for e in page.dry_run_entries]
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **kw: lock_path)
+    with InterProcessLock(lock_path):
+        pass
+    if case != "production":
+        monkeypatch.setattr(execute, "_execution_fence_current",
+                            lambda s, lock: s.root == root and s.storage is store)
+    if case == "late_collision":
+        original_run = LibraryMaintenanceBrokerImpl.run
+        def collide(self, plan, control=None):
+            result = original_run(self, plan, control)
+            assert result.ok and result.changed == 1
+            ordered[1][1].write_bytes(b"unrelated")
+            return result
+        monkeypatch.setattr(LibraryMaintenanceBrokerImpl, "run", collide)
+    command = execute.admit_native_reviewed_rename(
+        manager, resolved, page, service=service, identity_id="A",
+        confirmed=True, view_current=lambda: True)
+    assert callable(command)
+    result = command()
+    assert command() == {"status": "blocked", "changed": 0}
+    expected = {
+        "success": {"status": "batch_completed", "changed": 2, "completed": 2, "remaining": 0},
+        "production": {"status": "blocked", "changed": 0},
+        "late_collision": {"status": "partial", "changed": 1, "completed": 1, "remaining": 1},
+    }
+    assert result == expected[case]
+    for i, (old, new) in enumerate(ordered):
+        pid, data = original[old]
+        moved = case == "success" or (case == "late_collision" and i == 0)
+        assert store.placement_get(pid)["path"] == str(new if moved else old)
+        assert (new if moved else old).read_bytes() == data
+        if moved:
+            assert not old.exists()
+        elif case == "late_collision":
+            assert new.read_bytes() == b"unrelated"
+        else:
+            assert not new.exists()
+    resolver.close()
