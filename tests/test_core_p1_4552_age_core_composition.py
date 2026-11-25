@@ -34,11 +34,12 @@ def archive_bytes():
     )))
 
 
-def open_core(tmp_path):
+def open_core(tmp_path, **options):
     return CiferecaCore.open(
         config_path=tmp_path / "config.json", database_path=tmp_path / "state.sqlite",
         builtin_ui=False, activate_plugins=False, diagnostics_enabled=False,
         notice_work_admission=SharedTaskAdmission(max_inflight=4, reserve_user_slots=1),
+        **options,
     )
 
 
@@ -64,11 +65,10 @@ def test_core_explicit_registry_executes_durable_job_after_restart(tmp_path):
             now=int(time()), expected_generation=0,
         )
         assert core.brokers["tasks"]._executor is None
-    with open_core(tmp_path) as core:
+    with open_core(tmp_path, notice_age_registry=registry) as core:
         core.plugins.refresh()
-        assert not core.install_notice_age_execution(TrustedConsolidatorRegistry(()))
-        assert core.install_notice_age_execution(registry)
         assert not core.install_notice_age_execution(registry)
+        assert core.brokers["tasks"]._executor is None
         scan = core.notice_work.request_tick()
         result = scan.result(timeout=10)
         handle, = result.handles
@@ -115,3 +115,20 @@ def test_lifecycle_guard_refuses_concurrent_mutation_without_waiting(tmp_path, m
             worker.result(timeout=10)
         with core.plugins.hold_descriptive_lifecycle():
             core.plugins.refresh()
+
+
+def test_explicit_startup_registry_requires_admission_and_nonempty_trust(tmp_path):
+    data = archive_bytes()
+    registry = TrustedConsolidatorRegistry(((data, sha256(data).hexdigest()),))
+    config = tmp_path / "config.json"
+    database = tmp_path / "state.sqlite"
+    for extra in (
+        {"notice_age_registry": registry},
+        {"notice_age_registry": TrustedConsolidatorRegistry(()),
+         "notice_work_admission": SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)},
+        {"notice_age_registry": registry, "no_plugins": True,
+         "notice_work_admission": SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)},
+    ):
+        with pytest.raises(ValueError, match="invalid_trusted_consolidator_archives"):
+            CiferecaCore.open(config_path=config, database_path=database, **extra)
+        assert not database.exists()
