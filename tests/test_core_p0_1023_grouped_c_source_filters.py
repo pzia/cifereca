@@ -48,6 +48,16 @@ def test_filter_contributions_after_real_sqlite_restart(tmp_path):
         assert selected["_notice_c_matched_providers"] == ("numilog-catalog",)
         assert "numilog-catalog" in matching_source_label(selected)
         assert "_notice_c_matched_providers" not in row
+        from cifereca.core.notice_c_loaded_filter import matching_source_reason
+        all_fields = replace(state, field="all")
+        explained, = all_fields.filter([row])
+        assert matching_source_reason(explained, "cuisine") == "Correspondance : Sujet"
+        assert matching_source_reason(explained, "astronomie") == ""
+        assert matching_source_reason(explained, "cuisine", field="subject") == ""
+        assert matching_source_reason(row, "cuisine") == ""  # unfiltered group
+        stale_reason = dict(explained, metadata={**explained["metadata"],
+                                               "notice_c_epoch": group.epoch + 1})
+        assert matching_source_reason(stale_reason, "cuisine") == ""
         for bad in (
             replace(state, providers=("bnf",)),
             replace(state, types=("epub",)),
