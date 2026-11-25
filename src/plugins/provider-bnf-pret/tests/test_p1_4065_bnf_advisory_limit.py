@@ -3,7 +3,8 @@ from cifereca_bnf_pret import DESCRIPTOR, BnfProviderSession
 
 
 def test_bnf_advisory_limit_is_a_bounded_per_credential_option():
-    (field,) = DESCRIPTOR.account_options
+    (field,) = tuple(option for option in DESCRIPTOR.account_options
+                     if option.key == "manual_loan_limit")
     assert field.key == "manual_loan_limit"
     assert field.default == "4"
     assert field.value_type == "unsigned_integer"
