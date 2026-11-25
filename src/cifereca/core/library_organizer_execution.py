@@ -61,7 +61,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                 or ".." in old.parts or ".." in new.parts
                 or (not classification and old.parent != new.parent)
                 or (classification and (old.parent == new.parent or old.name != new.name
-                    or not new.parent.is_dir() or new.parent.resolve() != new.parent))
+                    or new.parent.resolve() != new.parent))
                 or not old.is_file() or new.exists() or new.is_symlink()
                 or scope.storage.placement_for_path(new) is not None):
             return {"status": "blocked", "changed": 0}
