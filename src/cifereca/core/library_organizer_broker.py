@@ -196,6 +196,12 @@ class LibraryOrganizerReadBrokerImpl:
                     or plan is None or plan.confirmed is not True
                     or plan.executable is not False
                     or not native_relocation_entries(plan.entries)
+                    or page.dry_run_group != plan.group_index
+                    or page.dry_run_rename_only is not plan.rename_only
+                    or page.dry_run_excluded != plan.excluded_count
+                    or type(page.dry_run_entries) is not tuple
+                    or page.dry_run_entries != tuple(OrganizerDryRunAdvice(
+                        e.operation, e.current, e.proposed, e.state) for e in plan.entries)
                     or self._current(page.token) is None):
                 return None
             # Consume only the private handoff; the visible simulation stays
