@@ -84,8 +84,33 @@ def loan_cover_decision(
         # An older worker must not invalidate a newer decision.
         return None
     if cache.publish_resolved(token, decision):
+        # Explain a missing loan cover once per published N2 revision, only
+        # when detailed diagnostics are requested. No second N1 resolution,
+        # supplier access, inferred association or raw coordinates.
+        if decision.status == "missing":
+            _report_missing_cover(host, loan, library_rows, decision)
         return decision
     return cache.peek(scope, revision=revision)
+
+
+def _report_missing_cover(host, loan, rows, decision):
+    from ..diagnostics import Diagnostics
+    from ..core.book_cover_diagnostics import describe_loan_cover_gap
+
+    diagnostics = getattr(host, "diagnostics", None)
+    if (type(diagnostics) is not Diagnostics or not diagnostics.enabled
+            or diagnostics.level not in ("detailed", "verbose", "trace")):
+        return
+    try:
+        gap = describe_loan_cover_gap(loan, rows, decision)
+        diagnostics.add(
+            "COVER", "loan cover gap", "ok", detail=gap.public_fields(),
+            level="detailed",
+        )
+    except Exception:
+        # Observation is not part of admission or presentation; a diagnostic
+        # sink failure must not remove a valid Core decision.
+        pass
 
 
 __all__ = ["loan_cover_decision"]

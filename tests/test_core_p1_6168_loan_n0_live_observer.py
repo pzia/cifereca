@@ -159,3 +159,56 @@ def test_loan_bridge_and_window_close_use_real_owner_scoped_lifecycle():
     assert close.index("loan_cover_trace.dispose()") < close.index(
         "window.runner.close()"
     )
+
+
+def test_missing_cover_publishes_closed_reason_once_for_current_n2_revision():
+    from cifereca.diagnostics import Diagnostics
+
+    obj, loan, views = host()
+    obj.diagnostics = Diagnostics(level="detailed")
+    row = a_row(loan)
+    row.update(provider_id=loan.source_provider, item_id=loan.record_id)
+    row.pop("_exact_loan_cover_proofs")
+    snapshot_method()(obj, [row])
+    assert views[-1] is None
+    assert ui_method()(obj, loan).thumbnail_url is None
+    assert ui_method()(obj, loan).thumbnail_url is None
+    entries = obj.diagnostics.snapshot()
+    assert len(entries) == 1
+    assert entries[0]["category"] == "COVER"
+    assert entries[0]["operation"] == "loan cover gap"
+    assert entries[0]["detail"] == {
+        "status": "missing",
+        "reason": "visible_library_image_without_loan_proof",
+        "library_candidate_observed": True,
+        "exact_loan_proof_selected": False,
+    }
+    assert loan.thumbnail_url is None
+    for secret in ("alice", "card-a", "account-a", "edition-1", "loan-1",
+                   "file://", "cover.png"):
+        assert secret not in repr(entries[0]["detail"])
+
+    # A fresh proof, not the diagnostic hint, enables the loan cover.
+    snapshot_method()(obj, [a_row(loan)])
+    assert views[-1] == row["thumbnail_url"]
+    assert len(obj.diagnostics.snapshot()) == 1
+    obj.service._account_context_epoch += 1
+    assert ui_method()(obj, loan).thumbnail_url is None
+    assert len(obj.diagnostics.snapshot()) == 1
+
+
+def test_missing_cover_diagnostics_are_opt_in_and_no_false_empty_snapshot():
+    from cifereca.diagnostics import Diagnostics
+
+    obj, loan, views = host()
+    obj.diagnostics = Diagnostics(level="normal")
+    row = a_row(loan)
+    row.pop("_exact_loan_cover_proofs")
+    snapshot_method()(obj, [row])
+    assert views[-1] is None and obj.diagnostics.snapshot() == []
+    obj.diagnostics.level = "detailed"
+    snapshot_method()(obj, [])
+    assert views[-1] is None and obj.diagnostics.snapshot() == []
+    snapshot_method()(obj, [row])
+    entry, = obj.diagnostics.snapshot()
+    assert entry["detail"]["reason"] == "no_admissible_evidence"

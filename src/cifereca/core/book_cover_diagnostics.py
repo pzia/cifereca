@@ -92,20 +92,32 @@ def diagnose_exact_loan_cover(
         loan, library_snapshot, revision=revision,
         snapshot_complete=snapshot_complete,
     )
+    return decision, describe_loan_cover_gap(loan, library_snapshot, decision)
+
+
+def describe_loan_cover_gap(
+    loan: Loan, library_snapshot: tuple[Mapping[str, object], ...],
+    decision: ResolvedBookCover | None,
+) -> LoanCoverGap:
+    """Explain an already admitted N1 result without another N1 resolution.
+
+    The CoreUI caller must pass the exact snapshot from that decision.
+    The hint is diagnostic only and never changes a decision or a right.
+    """
     if decision is None:
-        return None, LoanCoverGap("invalid", "source_unqualified", False, False)
+        return LoanCoverGap("invalid", "source_unqualified", False, False)
     if decision.status == "pending":
-        return decision, LoanCoverGap(
+        return LoanCoverGap(
             "pending", "partial_snapshot", False, False,
         )
     if decision.status == "ambiguous":
-        return decision, LoanCoverGap(
+        return LoanCoverGap(
             "ambiguous", "conflicting_evidence", False, False,
         )
     # This hint is not an attestation and must never affect N1's outcome.
     hint = _visible_unlinked_library_hint(loan, library_snapshot)
     if decision.status == "missing":
-        return decision, LoanCoverGap(
+        return LoanCoverGap(
             "missing",
             ("visible_library_image_without_loan_proof"
              if hint else "no_admissible_evidence"),
@@ -117,9 +129,9 @@ def diagnose_exact_loan_cover(
         reason = "attested_origin"
     else:
         reason = "supplier_catalogue_only"
-    return decision, LoanCoverGap(
+    return LoanCoverGap(
         "selected", reason, hint, decision.tier in ("embedded", "origin"),
     )
 
 
-__all__ = ["LoanCoverGap", "diagnose_exact_loan_cover"]
+__all__ = ["LoanCoverGap", "diagnose_exact_loan_cover", "describe_loan_cover_gap"]
