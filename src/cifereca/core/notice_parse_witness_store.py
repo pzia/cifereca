@@ -53,10 +53,11 @@ def _decode(raw: object, scope_digest: str) -> ApprovedParseWitness:
         if type(generation) is not int or not 1 <= generation <= _MAX_GENERATION:
             raise ValueError
         baseline = payload["baseline"]
-        if type(baseline) is not dict or set(baseline) != {
-            "source_scope_sha256", "approved_input_sha256",
-            "parser_version", "approved", "critical_fields",
-        } or type(baseline["critical_fields"]) is not list:
+        required = {"source_scope_sha256", "approved_input_sha256",
+                    "parser_version", "approved", "critical_fields"}
+        if (type(baseline) is not dict
+                or set(baseline) not in (required, required | {"parser_implementation_sha256"})
+                or type(baseline["critical_fields"]) is not list):
             raise ValueError
         fields = []
         if not 1 <= len(baseline["critical_fields"]) <= 32:
@@ -78,6 +79,7 @@ def _decode(raw: object, scope_digest: str) -> ApprovedParseWitness:
             parser_version=baseline["parser_version"],
             approved=baseline["approved"],
             critical_fields=tuple(fields),
+            parser_implementation_sha256=baseline.get("parser_implementation_sha256"),
         )
         if (not _valid_baseline(witness) or witness.approved is not True
                 or witness.source_scope_sha256 != scope_digest):
@@ -109,6 +111,7 @@ def publish_approved_parse_witness(
     storage, *, observation: NoticeSourceObservation,
     response_bytes: bytes, critical_fields: tuple[CriticalParseField, ...],
     expected_generation: int,
+    parser_implementation_sha256: str | None = None,
 ) -> ApprovedParseWitness:
     """Persist an explicitly approved baseline with cross-process CAS.
 
@@ -135,6 +138,7 @@ def publish_approved_parse_witness(
             parser_version=observation.parser_version,
             approved=True,
             critical_fields=critical_fields,
+            parser_implementation_sha256=parser_implementation_sha256,
         )
         if not _valid_baseline(baseline):
             raise ValueError
