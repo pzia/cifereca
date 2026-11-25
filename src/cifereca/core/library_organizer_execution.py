@@ -39,8 +39,7 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
                      and accepted.scope is scope and accepted.confirmed is True
                      and accepted.executable is False
                      and native_relocation_entries(accepted.entries)
-                     and _lock_ok(shared_lock)
-                     and _execution_fence_current(scope, shared_lock))
+                     and _lock_ok(shared_lock))
     except Exception:
         # An exception from a revoked view/lock/fence never authorizes a write.
         return {"status": "blocked", "changed": 0}
@@ -53,7 +52,19 @@ def execute_reviewed_rename(scope, page, accepted, *, shared_lock, confirmed=Fal
     try:
         fresh = confirm_organizer_dry_run(
             scope, page, replace(accepted, confirmed=False), confirmed=True)
-        if fresh != accepted:
+        if (fresh != accepted or not scope.bound()
+                or still_current() is not True or not _lock_ok(shared_lock)):
+            return {"status": "blocked", "changed": 0}
+        # Separate verified, current application admission from permission to
+        # mutate. Only the actual strict native lease can produce this hold
+        # receipt, and a changed scope/plan never produces it. This is NOT
+        # consumer exclusivity or a production authorization.
+        fence = _execution_fence_current(scope, shared_lock)
+        if fence is not True:
+            if (fence is False and shared_lock.strict_current()
+                    and still_current() is True and scope.bound()):
+                return {"status": "blocked", "changed": 0,
+                        "reason": "production_fence_held"}
             return {"status": "blocked", "changed": 0}
     except Exception:
         return {"status": "blocked", "changed": 0}

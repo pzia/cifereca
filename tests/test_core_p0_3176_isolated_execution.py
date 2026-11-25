@@ -23,6 +23,7 @@ def test_exact_confirmed_rename_uses_existing_writer(store, tmp_path, monkeypatc
     new = old.with_name("Autrice - Roman commun.epub")
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     if case != "production":
         monkeypatch.setattr(execute, "_execution_fence_current",
                             lambda s, lock: s.root == root and s.storage is store)
@@ -63,6 +64,7 @@ def test_reviewed_rename_keeps_authoritative_copy_at_failure_boundary(
     new = root / scope.directory / entry.proposed
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     fence_checks = []
 
     def isolated_fence(s, lock):
@@ -151,6 +153,7 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
     page = broker.confirm_dry_run(token=page.token, confirmed=True)
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     with InterProcessLock(lock_path):
         pass
     lock_bytes = lock_path.read_bytes()
@@ -224,7 +227,10 @@ def test_native_worker_consumes_exact_review_once(store, tmp_path, monkeypatch, 
         assert new.read_bytes() == data and not old.exists()
         assert store.placement_get(pid)["path"] == str(new)
     else:
-        assert result == {"status": "blocked", "changed": 0}
+        expected = {"status": "blocked", "changed": 0}
+        if case == "production":
+            expected["reason"] = "production_fence_held"
+        assert result == expected
         assert old.read_bytes() == data and not new.exists()
         assert store.placement_get(pid) == baseline
 
@@ -263,6 +269,7 @@ def test_native_organizer_worker_missing_lock_never_provisions_state(
         return lock_path
 
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", existing_lock)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", existing_lock)
     command = execute.admit_native_reviewed_rename(
         manager, resolved, page, service=service, identity_id="A",
         confirmed=True, view_current=lambda: True,
@@ -332,6 +339,7 @@ def test_postcommit_physical_drift_requires_recovery_not_success(
     new = root / scope.directory / entry.proposed
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     monkeypatch.setattr(execute, "_execution_fence_current",
                         lambda s, lock: s is scope and s.root == root and s.storage is store)
     original = LibraryMaintenanceBrokerImpl.run
@@ -385,6 +393,7 @@ def test_postcommit_drift_during_hash_cannot_report_rename_success(
     new = root / scope.directory / entry.proposed
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     monkeypatch.setattr(execute, "_execution_fence_current",
                         lambda s, lock: s is scope and s.storage is store)
     original = publication._verified_variant_file
@@ -432,6 +441,7 @@ def test_rename_writer_refuses_revocation_after_destination_fsync(
     new = root / scope.directory / entry.proposed
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     active, fence, reached = [True], [True], []
     monkeypatch.setattr(execute, "_execution_fence_current",
                         lambda s, lock: s is scope and fence[0])
@@ -476,6 +486,7 @@ def test_postcommit_revocation_cannot_deliver_success_receipt(
     new = root / scope.directory / accepted.entries[0].proposed
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **_kw: lock_path)
     active, fence, calls = [True], [True], []
     monkeypatch.setattr(execute, "_execution_fence_current", lambda s, lock: fence[0])
     original = LibraryMaintenanceBrokerImpl.run
@@ -535,6 +546,7 @@ def test_native_reviewed_batch_uses_same_writer_and_stops_on_remaining_drift(
                for e in page.dry_run_entries]
     lock_path = tmp_path / "acquisition.lock"
     monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **kw: lock_path)
+    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda **kw: lock_path)
     with InterProcessLock(lock_path):
         pass
     if case != "production":
@@ -556,7 +568,7 @@ def test_native_reviewed_batch_uses_same_writer_and_stops_on_remaining_drift(
     assert command() == {"status": "blocked", "changed": 0}
     expected = {
         "success": {"status": "batch_completed", "changed": 2, "completed": 2, "remaining": 0},
-        "production": {"status": "blocked", "changed": 0},
+        "production": {"status": "blocked", "changed": 0, "reason": "production_fence_held"},
         "late_collision": {"status": "partial", "changed": 1, "completed": 1, "remaining": 1},
     }
     assert result == expected[case]

@@ -992,6 +992,13 @@ def main():
                              for key, stage, target in derived_witnesses)
             return files, receipts
 
+        if args.guided_only == "organizer":
+            # Provision the normal shared acquisition lock in the disposable
+            # setup. An absent lock must not masquerade as a policy refusal.
+            with InterProcessLock(acquisition_lock_file()):
+                pass
+            assert acquisition_lock_file(create=False).is_file()
+
         before = durable_counts()
         evidence = fixture_evidence()
 
@@ -1259,8 +1266,13 @@ def main():
                                 host_window.toast = toast
                                 def refused():
                                     host_window.toast = original_toast
-                                    assert any("Lot de rangements et renommages indisponible ou refusé" in x
-                                               for x in notices)
+                                    # Distinguish a fresh, exact plan and live strict
+                                    # lease reaching the closed production policy
+                                    # from an earlier generic admission refusal.
+                                    assert notices == [
+                                        "Revue et portée vérifiées ; exécution suspendue par la garde Core."
+                                    ]
+                                    report["checks"]["P0_7407_real_native_admission_before_policy_hold"] = True
                                     assert not native.get_sensitive()
                                     assert fixture_evidence() == evidence and durable_counts() == before
                                     report["checks"]["P0_3176_real_native_rename_production_hold"] = True
