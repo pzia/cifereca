@@ -212,3 +212,45 @@ def test_public_award_retention_uses_existing_label_bounds():
     assert decode_public_classification({"literary_prizes": [{"name": "Prix"}]}) is None
     proof = declared_public_classification({"awards": ["Prix attesté"], "owned": True})
     assert proof.wire() == {"awards": ["Prix attesté"]}
+
+
+def test_public_collection_is_a_distinct_retained_search_field(tmp_path):
+    from cifereca.core.search import local_match_explanation
+
+    path = tmp_path / "collection.sqlite"
+    db = Storage(path)
+    try:
+        source, canonical = _publish(db, {"collection": "Prix du Quai"})
+        other_source, other = _publish(
+            db, {"subjects": ["Prix du Quai"]}, record="edition-b",
+        )
+        assert canonical.document != other.document
+        assert canonical.sources[0].public_bibliography.classification.wire() == {
+            "collection": "Prix du Quai",
+        }
+        for phase in ("live", "retained"):
+            page = search_public_notice_c(db, "prix quai", field="collection", now=100)
+            hit, = page.hits
+            assert hit.document == canonical.document
+            assert page.status == "partial" and not page.has_more
+            row, = _known(db, "prix quai", field="collection")
+            assert row["_cover_document_ref"] == canonical.document
+            assert row["metadata"]["collection"] == "Prix du Quai"
+            assert local_match_explanation(row, "prix quai") == "Correspondance : Collection"
+            assert [x.document for x in search_public_notice_c(
+                db, "prix quai", field="subject", now=100,
+            ).hits] == [other.document]
+            assert not search_public_notice_c(db, "prix quai", field="series", now=100).hits
+            ranked = search_public_notice_c(db, "prix quai", now=100, page_size=1)
+            assert ranked.hits[0].document == canonical.document and ranked.has_more
+            assert search_public_notice_c(
+                db, "prix quai", now=100, page_size=1, page=1,
+            ).hits[0].document == other.document
+            assert db.entitlements() == [] and db.acquisitions() == []
+            if phase == "live":
+                for saved in (source, other_source):
+                    assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+                db.close()
+                db = Storage(path)
+    finally:
+        db.close()
