@@ -546,6 +546,59 @@ class ReadyPage:
     priority_hints: tuple = ()
 
 
+def _attested_neighborhood_txn(db, targets):
+    """Bounded work-neighborhood hints from already admitted public C.
+
+    Only a live origin-linked group anchored in visible/recent context is
+    eligible. Reuse the existing strong-relation producer, not author/title
+    equality or a new graph. This is advisory and never requests work.
+    """
+    from .book_cover_projection import CoverDocumentScope
+    from .notice_c_cover_index import (
+        canonical_cover_document_ref, _db_key, _decode,
+    )
+    from .notice_c_aggregate_inputs import _capture_txn
+    from .notice_c_origin_recompute import _group_members
+    from .notice_c_origin_link_producer import reattest_exact_origin_group_txn
+
+    neighbors = set()
+    anchors = sorted(
+        (key for key, reason in targets.items()
+         if reason in ("interactive_visible", "recent_acquisition")),
+        key=lambda key: (targets[key] != "interactive_visible", key),
+    )[:16]
+    # At most one existing strong-group reattestation per page. Exact C
+    # point reads only to choose the anchor; no catalogue enumeration.
+    for key in anchors:
+        document = CoverDocumentScope(
+            kind="public_catalogue", identity_id=None, provider_id="cifereca.c",
+            credential_id="__public__", source_key=key,
+        )
+        try:
+            row = db.execute("SELECT value FROM metadata WHERE key=?",
+                             (_db_key(document),)).fetchone()
+            if row is None:
+                continue
+            group = _decode(row[0], document)
+            if len(group.sources) < 2:
+                continue
+        except (ValueError, TypeError):
+            continue
+        try:
+            inputs = _capture_txn(db, document)
+            _group_members(inputs)
+            sources = reattest_exact_origin_group_txn(db, inputs.sources)
+            for source in sources:
+                neighbors.add(source.document.source_key)
+                neighbors.add(canonical_cover_document_ref(
+                    source.observation.key.edition_id,
+                ).source_key)
+        except (ValueError, TypeError, OSError):
+            pass
+        break
+    return neighbors
+
+
 def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                     supported=None, purchase_refs=None, public_age_digests=None,
                     priority_targets=()):
@@ -618,6 +671,7 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
             (lower, _END, len(_PREFIX) + 64, len(_PREFIX) + 1, limit),
         ).fetchall()
         memo = {}
+        neighborhood = None
         for row in keys:
             key = row[0][len(_PREFIX):]
             try:
@@ -651,6 +705,11 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                             if len(locator) == 3:
                                 coordinates.append(locator[2])
                         reasons = [targets[key] for key in coordinates if key in targets]
+                        if not reasons:
+                            if neighborhood is None:
+                                neighborhood = _attested_neighborhood_txn(db, targets)
+                            if any(key in neighborhood for key in coordinates):
+                                reasons.append("author_neighborhood")
                         if reasons:
                             hints.append((job.ref, min(reasons, key=ranks.__getitem__)))
                     refs.append(job.ref)
