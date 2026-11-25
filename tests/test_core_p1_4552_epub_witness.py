@@ -2,6 +2,8 @@
 from hashlib import sha256
 from types import SimpleNamespace as NS
 from threading import RLock
+import json
+import zipfile
 
 from cifereca import epub_metadata
 from cifereca.storage import Storage
@@ -29,14 +31,16 @@ def test_exact_local_epub_explicit_pin_restart_and_parser_regression(tmp_path, m
         host = NS(storage=db, config=config, identities=list(identities.values()),
                   identity_by_id=identities.get, current_identity=identity,
                   library_dir=lambda: tmp_path, _source_context_lock=RLock(),
-                  _source_context_epoch=0)
+                  _source_context_epoch=0,
+                  _notice_regression_capture_directory=tmp_path / "captures")
         host.local_book_path = lambda placement, **kwargs: local_book_path(host, placement, **kwargs)
         return host
 
     db = Storage(db_path)
     try:
         db.artifact_put({"artifact_id": aid, "sha256": digest, "size": len(body),
-                         "media_format": "epub"})
+                         "media_format": "epub",
+                         "metadata": epub_metadata.inspect_epub(path, metadata_only=True)})
         placement = db.placement_put({"artifact_id": aid, "identity_id": "alice",
                                       "path": str(path), "state": "present"})
         host = service(db)
@@ -70,10 +74,37 @@ def test_exact_local_epub_explicit_pin_restart_and_parser_regression(tmp_path, m
             assert result.affected_fields == ("critical_field_1",)
         alert = read_parse_witness_diagnostic(db, key=proposal.key, parser_id=PARSER)
         assert alert["generation"] == 1 and alert["status"] == "parser_regression_confirmed"
+        assert alert["capture_state"] == "partial"
+        archive, = (tmp_path / "captures").glob("*.zip")
+        with zipfile.ZipFile(archive) as z:
+            manifest = json.loads(z.read("manifest.json"))
+            assert manifest["omitted"] == ["response.raw"]
+            assert "last_healthy.json" in z.namelist()
+            assert "title" not in json.loads(z.read("current_parse.json"))
+            assert "title" in json.loads(z.read("last_healthy.json"))
+        assert not local_epub_witness(host, placement_id=placement, scope=scope,
+                                      revalidate=True).can_revalidate
         assert read_approved_parse_witness(db, key=proposal.key, parser_id=PARSER) == pin
         assert db.placement_get(placement) == original_placement
         assert db.artifact_get(aid) == original_artifact
         assert path.read_bytes() == body
         assert db.entitlements() == db.acquisitions() == []
+        # Explicitly review a changed but still valid parser result before
+        # approving a replacement; never reset a degraded pin automatically.
+        def changed(*args, **kwargs):
+            value = original(*args, **kwargs)
+            value["epub_metadata"]["title"] = "New reviewed title"
+            return value
+        monkeypatch.setattr(epub_metadata, "inspect_epub", changed)
+        review = local_epub_witness(host, placement_id=placement, scope=scope)
+        assert review.can_revalidate and review.status == "parser_regression_confirmed"
+        renewal = local_epub_witness(host, placement_id=placement, scope=scope, revalidate=True)
+        assert type(renewal) is EpubWitnessProposal and renewal.revalidation
+        assert read_approved_parse_witness(db, key=proposal.key, parser_id=PARSER) == pin
+        assert local_epub_witness(host, placement_id=placement, scope=scope, approved=renewal) is None
+        replacement = local_epub_witness(host, placement_id=placement, scope=scope,
+                                         approved=renewal, revalidate=True)
+        assert replacement.generation == 2
+        assert read_parse_witness_diagnostic(db, key=proposal.key, parser_id=PARSER) is None
     finally:
         db.close(final=True)

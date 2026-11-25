@@ -264,7 +264,7 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
     opening.connect('clicked',open_book)
     buttons=[opening]
     if getattr(local_path, "suffix", "").lower() in (".epub", ".kepub"):
-        from ..core.notice_epub_witness import local_epub_witness, EpubWitnessProposal
+        from ..core.notice_epub_witness import local_epub_witness, EpubWitnessProposal, EpubWitnessReview
         from ..core.notice_parse_witness_store import ApprovedParseWitness
         from ..core.notice_parse_witness import ParseWitnessReview
         from ..core.search_orchestration import capture_search_read_scope
@@ -272,9 +272,10 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         witness._cifereca_action_id = "review-local-epub-witness"
         proposal = None
         busy = False
+        revalidate = False
 
         def witness_click(_button):
-            nonlocal busy, proposal
+            nonlocal busy, proposal, revalidate
             if busy or not action_current(witness, gtk=True):
                 return
             try:
@@ -283,28 +284,39 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 return
             busy = True
             accepted = proposal
+            renewal = revalidate
 
             def work():
                 return local_epub_witness(
                     service, placement_id=placement_id, scope=scope,
-                    approved=accepted, current=lambda: action_current(witness),
+                    approved=accepted, revalidate=renewal,
+                    current=lambda: action_current(witness),
                 )
 
             def done(result):
-                nonlocal busy, proposal
+                nonlocal busy, proposal, revalidate
                 busy = False
                 if not action_current(witness, gtk=True):
                     return
                 proposal = result if type(result) is EpubWitnessProposal else None
+                revalidate = (proposal.revalidation if proposal is not None else
+                              type(result) is EpubWitnessReview and result.can_revalidate)
                 if proposal is not None:
-                    witness.set_label("Valider le témoin EPUB : titre"
+                    witness.set_label(("Revalider" if revalidate else "Valider") + " le témoin EPUB : titre"
                                       + (" et auteurs" if proposal.authors else ""))
                     witness.set_tooltip_text(proposal.title + "\n" + ", ".join(proposal.authors))
                 else:
-                    witness.set_label("Examiner le témoin EPUB")
+                    witness.set_label("Examiner une nouvelle baseline EPUB" if revalidate
+                                      else "Examiner le témoin EPUB")
                     witness.set_tooltip_text("Rejouer le parseur local sans réseau")
                     if type(result) is ApprovedParseWitness:
                         window.toast("Témoin EPUB validé.")
+                    elif type(result) is EpubWitnessReview:
+                        labels = {"partial": "archive partielle", "complete": "archive créée",
+                                  "failed": "échec archive", "capacity_refused": "capacité atteinte",
+                                  "pending": "capture en attente"}
+                        window.toast("Parsing : régression possible · " +
+                                     labels.get(result.capture_state, "capture indisponible"))
                     elif type(result) is ParseWitnessReview:
                         window.toast("Parsing : régression possible" if result.affected_fields
                                      else "Témoin EPUB contrôlé.")

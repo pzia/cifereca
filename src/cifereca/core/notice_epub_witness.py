@@ -18,7 +18,8 @@ from .notice_parse_witness_store import (
     _MAX_RESPONSE_BYTES, _PREFIX, _decode, _prepare_approved_parse_witness,
     _publish_approved_parse_witness_txn,
 )
-from .notice_parse_witness_alert import record_parse_witness_review_txn
+from .notice_parse_witness_alert import review_publication_txn, read_parse_witness_diagnostic
+from .notice_regression_capture_intent import export_capture
 from .search_orchestration import SearchReadScope
 
 PARSER = "core.epub.metadata"
@@ -33,17 +34,53 @@ class EpubWitnessProposal:
     fields: tuple
     title: str
     authors: tuple
+    revalidation: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EpubWitnessReview:
+    status: str
+    affected_fields: tuple
+    capture_state: str
+    can_revalidate: bool
 
 
 def local_epub_witness(service, *, placement_id, scope, approved=None,
-                       current=lambda: True):
+                       current=lambda: True, revalidate=False):
+    pending = []
+    result = _review_local_epub(service, placement_id=placement_id, scope=scope,
+                                approved=approved, current=current,
+                                revalidate=revalidate, pending=pending)
+    # Export after commit, outside source and SQLite locks; omit raw book.
+    if pending:
+        key, diagnostic, review, can_revalidate = pending[0]
+        if (scope.current(service) and service.current_identity is scope.identity
+                and current() and diagnostic is not None):
+            try:
+                export_capture(service.storage, diagnostic, members={},
+                               directory=getattr(service, "_notice_regression_capture_directory", None))
+            except (OSError, ValueError, RuntimeError):
+                pass
+        if not scope.current(service) or service.current_identity is not scope.identity or not current():
+            return None
+        state = read_parse_witness_diagnostic(service.storage, key=key, parser_id=PARSER)
+        if type(result) is EpubWitnessProposal:
+            return result
+        return EpubWitnessReview(review.status, review.affected_fields,
+                                 state["capture_state"] if state else "metadata_unavailable",
+                                 can_revalidate)
+    return result
+
+
+def _review_local_epub(service, *, placement_id, scope, approved, current,
+                       revalidate, pending):
     """Propose/review on explicit worker request, or approve an exact proposal.
 
     The existing witness input bound applies to this first local port.
     Never export book bytes or accept caller-supplied parse/digest claims.
     """
     if (type(scope) is not SearchReadScope or type(placement_id) is not str
-            or not placement_id or (approved is not None
+            or not placement_id or type(revalidate) is not bool or (approved is not None
             and type(approved) is not EpubWitnessProposal)):
         return None
 
@@ -121,10 +158,36 @@ def local_epub_witness(service, *, placement_id, scope, approved=None,
                                 input_sha256=artifact["sha256"], publication_review=True,
                             )
                             if approved is None:
-                                record_parse_witness_review_txn(
-                                    db, key=key, parser_id=PARSER,
-                                    generation=baseline.generation, review=review,
+                                # Reuse a cached Artifact observation only if it
+                                # independently matches the exact approved pin.
+                                healthy = None
+                                stored = artifact.get("metadata") or {}
+                                if (stored.get("epub_status") == "ok"
+                                        and str(stored.get("epub_metadata_schema")) == baseline.baseline.parser_version):
+                                    previous = stored.get("epub_metadata") or {}
+                                    try:
+                                        candidate = admit_source_notice(
+                                            key=key, parser_id=PARSER,
+                                            parser_version=baseline.baseline.parser_version,
+                                            observed_at=obs.observed_at,
+                                            raw_fields={n: previous[n] for n in ("title", "authors") if n in previous},
+                                        )
+                                        if review_admitted_source_parse_witness(
+                                            baseline.baseline, observation=candidate,
+                                            input_sha256=artifact["sha256"],
+                                        ).status == "unchanged":
+                                            healthy = candidate
+                                    except (ValueError, TypeError, KeyError):
+                                        pass
+                                rejected, diagnostic = review_publication_txn(
+                                    db, current=healthy, candidate=obs,
+                                    input_digest=artifact["sha256"], implementation_digest=None,
                                 )
+                                if rejected:
+                                    can_revalidate = (obs.status == "complete"
+                                                      and type(fields.get("title")) is str
+                                                      and bool(fields["title"]))
+                                    pending.append((key, diagnostic, review, can_revalidate))
                         if (obs.status != "complete" or type(fields.get("title")) is not str
                                 or not fields["title"]):
                             return review
@@ -139,12 +202,12 @@ def local_epub_witness(service, *, placement_id, scope, approved=None,
                         proposal = EpubWitnessProposal(
                             key, baseline.generation if baseline else 0,
                             scope.source_epoch, obs.parser_version, tuple(critical),
-                            fields["title"], tuple(authors),
+                            fields["title"], tuple(authors), revalidate,
                         )
                         if approved is None:
                             # Preserve a confirmed regression until explicitly
                             # reviewed; don't offer implicit reapproval.
-                            return review if review and review.status != "unchanged" else proposal
+                            return review if review and review.status != "unchanged" and not revalidate else proposal
                         if proposal != approved or not live():
                             return None
                         digest, new = _prepare_approved_parse_witness(
