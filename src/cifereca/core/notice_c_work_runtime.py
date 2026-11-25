@@ -88,6 +88,7 @@ class NoticeWorkRuntime:
         self._prepare_public_age = None
         self._public_age_digests = ()
         self._dispatch_requested = False
+        self._priority_hints = ()
         self._lock = RLock()
         self._closed = False
         self._scan = None
@@ -486,6 +487,23 @@ class NoticeWorkRuntime:
             self.request_tick()
         return requested
 
+    def replace_priority_hints(self, hints):
+        """Replace advisory exact-generation hints from the trusted Core owner.
+
+        This is a bounded process-local snapshot, not a queue or admission
+        authority. The owner must clear obsolete view/context hints. A scan
+        already in progress may use its previous snapshot; normal fair
+        dispatch and all journal/worker checks still apply.
+        """
+        from .notice_c_dispatch_rotation import validate_priority_hints
+
+        validate_priority_hints(hints)
+        with self._lock:
+            if self._closed:
+                return False
+            self._priority_hints = hints
+            return True
+
     def request_tick(self):
         """Nonblocking heartbeat hint; no SQLite on the submitting thread.
 
@@ -549,7 +567,9 @@ class NoticeWorkRuntime:
                 )
             pump = self._pump
             registry = self._replay_registry
-        outcome = pump.tick(control=control)
+            priority_hints = self._priority_hints
+        outcome = (pump.tick(control=control, priority_hints=priority_hints)
+                   if priority_hints else pump.tick(control=control))
         if type(outcome) is DispatchTick:
             with self._lock:
                 if not self._closed:
@@ -620,6 +640,7 @@ class NoticeWorkRuntime:
             handle = self._scan
             self._scan = None
             self._hint_pending = False
+            self._priority_hints = ()
             self._observer = None
             self._pending_replay_registry = None
             authority = self._fetch_authority
