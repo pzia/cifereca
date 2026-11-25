@@ -431,6 +431,15 @@ class ProviderSession(ABC):
         """
         return None
 
+    def private_search_replay(self, row: SearchResult, input_digest: str, *, check_only=False):
+        """Optional account-bound, cache-only replay of an approved exact input.
+
+        The default is unavailable. An implementation may return True for
+        check_only, or a fresh same-input SearchResult for explicit replay.
+        No fallback network request, storage, raw export or right is granted.
+        """
+        return None
+
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         raise ProviderCapabilityError(f"{self.provider_id}: holdings unsupported")
 
