@@ -2100,6 +2100,24 @@ class LibraryMaintenanceBrokerImpl:
                     raise _LibraryFilenameConflict("Fichier source modifié")
             except OSError:
                 raise _LibraryFilenameConflict("Source locale non vérifiable") from None
+            # A hardlink and its rollback change the source inode's ctime,
+            # even if the SQL writer refuses relocation and keeps the old
+            # path. Protect non-reproducible declarations BEFORE staging.
+            # Native organizer/declaration writes share the acquisition lock;
+            # the existing transactional declaration veto is still mandatory.
+            from .core.library_declared_links import DeclarationRejected, _records
+            storage = self.service.storage
+            with storage._lock, storage._connect() as db:
+                try:
+                    declarations = _records(db)
+                except DeclarationRejected:
+                    raise ValueError("relocate_declared_context_unavailable") from None
+                if any(d["state"] == "active" and (
+                        d["file"]["path"] == str(old)
+                        or tuple(d["file"]["fingerprint"][:2]) ==
+                           (before.st_dev, before.st_ino))
+                       for d in declarations):
+                    raise ValueError("relocate_active_declaration_requires_relink")
             created_target = False
             if classified_target is not None and (
                     new.exists() or new.is_symlink() or target is not None):

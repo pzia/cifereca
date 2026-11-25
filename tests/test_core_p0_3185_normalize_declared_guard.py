@@ -51,7 +51,11 @@ def _run(tmp_path):
 def test_active_declared_link_blocks_file_rename_without_sqlite_or_hardlink_change(tmp_path):
     service, artifact, placement, broker, plan, old, new = _run(tmp_path)
     before = old.read_bytes()
-    _declare(service.storage, artifact, old)
+    stat_before = old.stat()
+    statement = _declare(service.storage, artifact, old)
+    statement["file"]["fingerprint"] = [getattr(stat_before, "st_" + key)
+                                       for key in ("dev", "ino", "size", "mtime_ns", "ctime_ns")]
+    service.storage.metadata_set(_PREFIX + "a" * 32, json.dumps(statement, sort_keys=True))
     try:
         with pytest.raises(ValueError, match="relocate_active_declaration_requires_relink"):
             broker.run(plan)
@@ -60,7 +64,9 @@ def test_active_declared_link_blocks_file_rename_without_sqlite_or_hardlink_chan
         row, = service.storage.catalog_entries()
         assert row["metadata"]["path"] == str(old)
         stored = json.loads(service.storage.metadata_get(_PREFIX + "a" * 32))
-        assert stored["file"]["path"] == str(old)
+        assert stored == statement
+        assert [getattr(old.stat(), "st_" + key) for key in
+                ("dev", "ino", "size", "mtime_ns", "ctime_ns")] == stored["file"]["fingerprint"]
     finally:
         service.storage.close()
 
@@ -93,5 +99,27 @@ def test_revoked_or_unrelated_statement_does_not_block_normalize(
         assert service.storage.placement_get(placement)["path"] == str(new)
         statement = json.loads(service.storage.metadata_get(_PREFIX + "a" * 32))
         assert statement["file"]["path"] == str(statement_path)
+    finally:
+        service.storage.close()
+
+
+def test_active_declaration_on_same_inode_alias_preserves_fingerprint(tmp_path):
+    service, artifact, placement, broker, plan, old, new = _run(tmp_path)
+    alias = old.with_name("declared-alias.epub")
+    import os
+    os.link(old, alias)
+    before = alias.stat()
+    statement = _declare(service.storage, artifact, alias)
+    statement["file"]["fingerprint"] = [getattr(before, "st_" + key)
+                                       for key in ("dev", "ino", "size", "mtime_ns", "ctime_ns")]
+    service.storage.metadata_set(_PREFIX + "a" * 32, json.dumps(statement, sort_keys=True))
+    try:
+        with pytest.raises(ValueError, match="relocate_active_declaration_requires_relink"):
+            broker.run(plan)
+        assert old.samefile(alias) and not new.exists()
+        assert service.storage.placement_get(placement)["path"] == str(old)
+        assert [getattr(alias.stat(), "st_" + key) for key in
+                ("dev", "ino", "size", "mtime_ns", "ctime_ns")] == statement["file"]["fingerprint"]
+        assert json.loads(service.storage.metadata_get(_PREFIX + "a" * 32)) == statement
     finally:
         service.storage.close()
