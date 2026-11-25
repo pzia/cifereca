@@ -147,6 +147,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     The production fence is deliberately closed. Only the synthetic case
     admits the exact temporary library under the shared acquisition lock.
     """
+    import json
     from types import SimpleNamespace as NS
     from cifereca.core import canonical_recovery, library_organizer_execution
     from cifereca.core.activation_scoped_broker import ActivationBrokerResolver
@@ -161,6 +162,10 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
                          metadata=TYPED, provider_id="local")
     target = root / "A/Livres/Autrice" / old.name
     target.parent.mkdir(parents=True)
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
+                   (json.dumps({"relative_path": str(old.relative_to(root)),
+                                "artifact_kind": "file"}), pid))
     if case == "checkpoint":
         store.acquisition_put({
             "provider_id": "local", "credential_id": "fixture-account",
@@ -228,6 +233,8 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
         assert current["path"] == str(target)
+        assert current["metadata"]["relative_path"] == str(target.relative_to(root))
+        assert current["metadata"]["artifact_kind"] == "file"
         for field in ("artifact_id", "identity_id", "provider_id", "source_item_id", "state"):
             assert current[field] == baseline[field]
         assert store.placement_for_path(old) is None

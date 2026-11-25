@@ -1999,12 +1999,16 @@ class LibraryMaintenanceBrokerImpl:
         except (OSError, RuntimeError):
             raise _LibraryFilenameConflict("Source locale non vérifiable") from None
         new=old.with_name(str(plan.facts.get("new_filename") or old.name))
+        classification_root = None
         if classified_target is not None:
+            classification_root = _canonical_maintenance_root(self.service)
             # Private organizer path only. No new public mutation operation.
             # This first receipt handles an existing canonical directory
             # and independent classification, not renaming or mkdir.
             if (control is None or type(classified_target) is not type(old)
                     or not classified_target.is_absolute()
+                    or not old.is_relative_to(classification_root)
+                    or not classified_target.is_relative_to(classification_root)
                     or ".." in classified_target.parts
                     or classified_target.name != old.name or new != old
                     or classified_target.parent == old.parent
@@ -2173,6 +2177,8 @@ class LibraryMaintenanceBrokerImpl:
                     old, new,
                     identity_id=str(row.get("identity_id") or ""),
                     provider_id=str(row.get("provider_id") or "local"),
+                    **({"classification_root": classification_root}
+                       if classified_target is not None else {}),
                 )
             except Exception:
                 # Remove our temporary name only when the DB still
