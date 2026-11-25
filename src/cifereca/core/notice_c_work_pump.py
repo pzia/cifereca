@@ -148,7 +148,7 @@ class PublicNoticeWorkPump:
         control.check_cancelled()
         return PreparedAggregate(publish)
 
-    def tick(self, *, control=None, priority_hints=()):
+    def tick(self, *, control=None, priority_hints=(), priority_targets=()):
         """Scan bounded class slices and submit hints without waiting.
 
         Reentry is rejected immediately. A refusal leaves the cursor at
@@ -176,11 +176,14 @@ class PublicNoticeWorkPump:
                 else:
                     supported = tuple(pair for pair in self._supported if pair[0] == kind)
                     options = {}
+                if priority_targets and kind != _PURCHASE_LANE:
+                    options["priority_targets"] = priority_targets
                 page = journal.read_ready_page(
                     self._storage, now=now, after=after, limit=limit,
                     supported=supported, **options,
                 )
-                return RotationPage(page.refs, page.next_after, page.examined, page.corrupt)
+                return RotationPage(page.refs, page.next_after, page.examined, page.corrupt,
+                                    page.priority_hints)
 
             def offer_lane(kind, ref):
                 circuit = "network" if kind in ("fetch_source_notice", _PURCHASE_LANE) else "local"

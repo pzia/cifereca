@@ -54,6 +54,35 @@ def _bind_desktop_notice_work(core, window):
             return None
 
     window._notice_work_tick = hint
+    replace_documents = getattr(runtime, "replace_priority_documents", None)
+    if callable(replace_documents):
+        def refresh_priority_context():
+            # GTK owns selection and snapshot lifetimes; no Storage access
+            # or job creation on this thread. Clear context on each pulse.
+            from .core.notice_c_cover_index import is_canonical_cover_document
+            documents = []
+            for name in ("search_page", "library_page", "recent_page"):
+                page = getattr(window, name, None)
+                if page is None or not page.get_mapped():
+                    continue
+                row = page.selection.get_selected_item()
+                document = getattr(row, "_cover_document_ref", None)
+                if is_canonical_cover_document(document):
+                    documents.append((document, "interactive_visible"))
+            recent = getattr(window, "recent_page", None)
+            generation = getattr(window, "_identity_context_generation", None)
+            if (recent is not None and generation is not None
+                    and getattr(window, "_recent_loaded_generation", None) == generation):
+                # Only current recent rows with exact Core public C links.
+                for index in range(min(32, recent.store.get_n_items())):
+                    row = recent.store.get_item(index)
+                    link = getattr(row, "_cover_public_c_link", None)
+                    document = getattr(row, "_cover_document_ref", None)
+                    if (is_canonical_cover_document(document)
+                            and getattr(link, "document", None) == document):
+                        documents.append((document, "recent_acquisition"))
+            replace_documents(tuple(documents))
+        window._notice_work_refresh_priorities = refresh_priority_context
     # Do not call GTK from the worker or schedule one idle callback per
     # catalogue commit. The already installed desktop heartbeat consumes
     # only the latest watermark, covering both A/C receipts and C aggregates.
@@ -92,6 +121,14 @@ def _start_notice_work_wakeup(window, *, timeout_add_seconds, source_remove):
         if source[0] is None or getattr(window, "_closed", False):
             source[0] = None
             return False
+        priorities = getattr(window, "_notice_work_refresh_priorities", None)
+        if callable(priorities):
+            try:
+                priorities()
+            except Exception:
+                logging.getLogger("cifereca").warning(
+                    "TRACE notice work lifecycle code=priority_unavailable"
+                )
         hint()
         refresh = getattr(window, "_notice_work_refresh_documents", None)
         if callable(refresh):
