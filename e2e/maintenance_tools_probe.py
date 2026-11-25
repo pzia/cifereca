@@ -311,6 +311,197 @@ def exercise_native_transfer(*, parent, Gtk, Adw, device, until, report, capture
     until(ready, start)
 
 
+def exercise_native_historical_rearm(*, parent, Gtk, Adw, device, until, report, capture, done):
+    """#7244: native confirmation -> real Core CAS, isolated BnF MockTransport."""
+    from datetime import datetime, timezone
+    from tempfile import TemporaryDirectory
+    from cifereca.config import Config
+    from cifereca.core import canonical_adept_attempt as marker, canonical_recovery as recovery
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.core.source_acquisition_consent import set_source_acquisition_consent
+    from cifereca.core.source_convergence import SourceKey
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+
+    bnf = ROOT / "src/plugins/provider-bnf-pret"
+    for directory in (bnf, bnf / "tests"):
+        if str(directory) not in sys.path:
+            sys.path.insert(0, str(directory))
+    from bnf_token_fixture import connected
+
+    temporary = TemporaryDirectory(prefix="native-7244-")
+    root = Path(temporary.name)
+    config = Config(root / "config.json")
+    config.set("library.directory", str(root / "library"))
+    config.set("providers.accounts", [])
+    config.set("identities", [{"id": "default", "label": "Synthetic reader",
+                               "directory_name": "reader"}])
+    service = LibraryService(config, Storage(root / "state.sqlite"), Diagnostics())
+    session, account, loan, _state, calls, downloaded = connected()
+    account.identity_id = loan.identity_id = "default"
+    service.accounts = [account]
+    storage = service.storage
+    connection = storage.provider_connection_put({
+        "identity_id": account.identity_id, "provider_id": account.provider_id,
+        "credential_id": account.credential_id, "label": "Synthetic BnF", "enabled": True,
+    })
+    storage.provider_account_put({
+        "identity_id": account.identity_id, "provider_id": account.provider_id,
+        "credential_id": account.credential_id, "connection_id": connection,
+        "account_id": account.unique_id, "label": "Synthetic borrower",
+    })
+    service._sessions[service._session_key(account.provider_id, account.credential_id)] = session
+    session.identity_broker = SimpleNamespace(accounts=lambda identity_id=None: (
+        SimpleNamespace(provider_id=account.provider_id, scope_version=2,
+                        identity_id=account.identity_id, credential_id=account.credential_id,
+                        account_id=account.unique_id),
+    ) if identity_id in (None, account.identity_id) else ())
+    snapshot = session.rights_observation_snapshot(account)
+    source = SourceKey(snapshot.scope, loan.record_id, loan.id, "loan", "bnf_html")
+    persist_attested_source_references(storage, snapshot)
+    set_source_acquisition_consent(service, account, source, allowed=True)
+    raw = marker._value("synthetic-historical-offer", "a" * 32)
+    storage.metadata_set(marker._key(source), raw)
+    selected = marker.review_loan_adept_marker(storage, source)
+    audit_key = marker.historical_rearm_audit_key(selected)
+    lock_path = root / "acquisition.lock"
+    with InterProcessLock(lock_path):
+        pass
+    original_lock = recovery.acquisition_lock_file
+    recovery.acquisition_lock_file = lambda **_kwargs: lock_path
+    old_manager, old_required = service._plugin_manager, service._required_plugin_service
+    runtime = SimpleNamespace(preflight_acsm_profile=lambda name: name == "reader-adobe")
+    service._plugin_manager = SimpleNamespace(registry_generation=1)
+    service._required_plugin_service = lambda _key: runtime
+    service.resolve_adept_profile_for_identity = lambda _identity: ("reader-adobe", "configured")
+    service.adept_profiles_for_identity = lambda *_args, **_kwargs: [
+        {"name": "reader-adobe", "profile_id": "stable-adobe",
+         "user_uuid": "synthetic-user", "fetch_capable": True}]
+    service._originating_adept_profile_id = lambda *_args: "stable-adobe"
+    service.execute_acquisition_request = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("No fulfillment in Maintenance"))
+    host = Adw.Window(transient_for=parent, modal=True, title="Recette ADEPT #7244")
+    host.set_default_size(880, 680)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    for side in ("top", "bottom", "start", "end"):
+        getattr(content, "set_margin_" + side)(16)
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_child(content)
+    host.set_content(scrolled)
+    host.service, host.runner, host._closed = service, parent.runner, False
+    host.action_button = parent.action_button
+    assert add_adept_historical_maintenance_line(
+        host, content, Gtk=Gtk, Adw=Adw, mode="holds",
+        view_current=lambda: not host._closed)
+
+    def button(label):
+        return next((b for b in walk(content) if isinstance(b, Gtk.Button)
+                     and b.get_label() == label), None)
+
+    def ready(widget):
+        if widget is None or not widget.get_mapped() or not widget.get_sensitive():
+            return False
+        try:
+            x, y = device.widget_point(widget)
+            return x >= 0 and y >= 0
+        except RuntimeError:
+            return False
+
+    def click(widget):
+        report["pointer_actions"].append(device.click_widget(widget))
+
+    def label_contains(fragment):
+        return any(isinstance(w, Gtk.Label) and fragment in w.get_text()
+                   for w in walk(content))
+
+    def dialog():
+        return next((w for w in Gtk.Window.list_toplevels()
+                     if isinstance(w, Adw.MessageDialog) and w.get_mapped()
+                     and w.get_heading() == "Attestation propriétaire — reprise ADEPT"), None)
+
+    def start():
+        row = next(w for w in walk(content) if isinstance(w, Adw.ActionRow))
+        launch = next(w for w in walk(row) if isinstance(w, Gtk.Button))
+        until(lambda: ready(launch), lambda: open_holds(launch))
+
+    def open_holds(launch):
+        click(launch)
+        until(lambda: ready(button("Vérifier les fichiers"))
+              and label_contains("Verrous connus : 1"), verify)
+
+    def verify():
+        click(button("Vérifier les fichiers"))
+        until(lambda: ready(button("Vérifier les fichiers"))
+              and label_contains("Copie finale non prouvée"), select)
+
+    def select():
+        combo = next(w for w in walk(content) if isinstance(w, Gtk.ComboBoxText))
+        combo.set_active(0)
+        until(lambda: ready(button("Examiner le verrou sélectionné")),
+              lambda: compare())
+
+    def compare():
+        click(button("Examiner le verrou sélectionné"))
+        until(lambda: ready(button("Autoriser le retéléchargement…")), open_dialog)
+
+    def open_dialog():
+        click(button("Autoriser le retéléchargement…"))
+        until(lambda: dialog() is not None, cancel)
+
+    def response_button(label):
+        return next((w for w in walk(dialog()) if isinstance(w, Gtk.Button)
+                     and label in str(w.get_label() or "").replace("_", "")), None)
+
+    def cancel():
+        assert not dialog().get_response_enabled("apply")
+        until(lambda: ready(response_button("Annuler")),
+              lambda: (click(response_button("Annuler")), until(lambda: dialog() is None, reopen)))
+
+    def reopen():
+        assert storage.metadata_get(marker._key(source)) == raw
+        assert storage.metadata_get(audit_key) is None and not downloaded
+        click(button("Autoriser le retéléchargement…"))
+        until(lambda: dialog() is not None, attest)
+
+    def attest():
+        entries = [w for w in walk(dialog().get_extra_child()) if isinstance(w, Gtk.Entry)]
+        assert len(entries) == 2
+        entries[0].set_text("c" * 64)
+        assert not dialog().get_response_enabled("apply")
+        entries[1].set_text("stable-adobe")
+        assert dialog().get_response_enabled("apply")
+        capture("10-native-adept-attestation")
+        until(lambda: ready(response_button("Attester et confirmer")), apply)
+
+    def apply():
+        click(response_button("Attester et confirmer"))
+        until(lambda: label_contains("Verrou exact retiré ; attestation journalisée."), finish)
+
+    def finish():
+        assert not marker.pending_loan_adept_attempt(storage, source)
+        audit = json.loads(storage.metadata_get(audit_key))
+        assert audit["marker_fingerprint"] == selected.fingerprint
+        assert audit["journal_sha256"] == "c" * 64
+        assert audit["adept_profile_id"] == "stable-adobe"
+        assert audit["result"] == "exact_marker_released"
+        assert not downloaded and not storage.placements() and not storage.acquisitions()
+        assert all(method == "GET" or "/loans/" not in path for method, _, path in calls)
+        report["checks"]["P0_7244_native_attestation_cancel_then_exact_cas"] = True
+        capture("11-native-adept-audit")
+        host._closed = True
+        host.destroy()
+        recovery.acquisition_lock_file = original_lock
+        service._plugin_manager, service._required_plugin_service = old_manager, old_required
+        service.close()
+        temporary.cleanup()
+        done()
+
+    host.present()
+    until(lambda: host.get_mapped(), start)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
@@ -1702,6 +1893,13 @@ def main():
     def finish_transfer():
         if args.width in (1366, 1600):
             gtk_phase_2027("maint_transfer_done")
+        if args.width == 1366:
+            exercise_native_historical_rearm(parent=window[0], Gtk=Gtk, Adw=Adw,
+                device=device[0], until=until, report=report, capture=capture, done=finish_rearm)
+        else:
+            finish_rearm()
+
+    def finish_rearm():
         gtk_phase_2027("maint_done")
         report["status"] = "PASS"
         result[0] = 0
