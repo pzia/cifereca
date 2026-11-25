@@ -5,7 +5,7 @@ from ..core.notice_parse_witness_store import ApprovedParseWitness
 from ..task_queue import TaskPriority
 
 
-def request_selected_parse_witness(host, row, *, selected_id, context):
+def request_selected_parse_witness(host, row, *, selected_id, context, Gtk=None):
     if getattr(row, "_core_notice_parse_input", None) is None or context is None:
         return False
     service = host.service
@@ -28,17 +28,22 @@ def request_selected_parse_witness(host, row, *, selected_id, context):
                 and scope.current(service) and service.current_identity is scope.identity
                 and getattr(host, "_route_display_token", None) is route
                 and getattr(panel, "_notice_witness_token", None) is token
+                # This existing detail guard only reads scalar generations,
+                # selected ID and current identity; no GTK query on worker.
+                and host._search_detail_context_current(selected_id, context)
                 and getattr(host, "search_objects", {}).get(key) is row)
 
     def current():
         return (worker_current() and host.search_page is page and page.detail is panel
                 and page.selection.get_selected_item() is cell
-                and host._search_detail_context_current(selected_id, context))
+                and (not callable(getattr(panel, "get_mapped", None)) or panel.get_mapped()))
 
     def loaded(proposal):
+        nonlocal Gtk
         if type(proposal) is not PublicWitnessProposal or not current():
             return
-        from gi.repository import Gtk
+        if Gtk is None:
+            from gi.repository import Gtk
         names = {"title": "titre", "record_id": "identifiant", "author": "auteur",
                  "format": "format", "publisher": "éditeur", "docbase": "base",
                  "medium": "support"}
@@ -47,9 +52,14 @@ def request_selected_parse_witness(host, row, *, selected_id, context):
         button._cifereca_action_id = "approve-public-parse-witness"
         button._cifereca_action_priority = 60
 
+        submitted = False
+
         def click(_button):
-            if not current() or getattr(button, "_cifereca_action_context_revoked", False):
+            nonlocal submitted
+            if (submitted or not current()
+                    or getattr(button, "_cifereca_action_context_revoked", False)):
                 return
+            submitted = True
             button.set_sensitive(False)
 
             def done(result):
