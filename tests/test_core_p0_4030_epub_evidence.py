@@ -210,3 +210,63 @@ def test_ambiguous_opf_urls_do_not_hide_descriptive_comparison(store, tmp_path, 
     assert result["public_comparison_evidence"] is not None
     assert not result["provider_access_performed"] and not result["association_authorized"]
     assert not result["may_write_origin_or_right"] and path.read_bytes() == before
+
+
+def _dc(name, value):
+    return f'<dc:{name} xmlns:dc="http://purl.org/dc/elements/1.1/">{value}</dc:{name}>'
+
+
+@pytest.mark.parametrize("extra,expected", [
+    (_dc("language", "fr-FR") + _dc("language", "en") + _dc("language", "fr-FR")
+     + _dc("date", "2024-02-29") + _dc("date", "2024"), (("fr-FR", "en"), ("2024-02-29", "2024"))),
+    (_dc("language", "fr\u202e") + _dc("date", "2024-02"), ((), ("2024-02",))),
+    (_dc("language", "en") + _dc("date", "2023-02-29"), (("en",), ())),
+    (_dc("language", "fr") * 9 + _dc("date", "2024"), ((), ("2024",))),
+    (_dc("language", "fr") + _dc("date", "2024") * 9, (("fr",), ())),
+])
+def test_local_opf_context_claims_are_bounded_independent_and_literal(extra, expected):
+    from cifereca.core.local_origin_epub_evidence import _read_epub_details
+
+    stream = _book(META + extra)
+    before = stream.getvalue()
+    details = _read_epub_details(stream, include_context_claims=True)
+    assert details[-2:] == expected
+    assert len(_read_epub_details(stream, include_source_claims=True)) == 5
+    assert read_epub_description(stream) == ("Roman commun", ("Autrice",))
+    assert stream.tell() == 3 and stream.getvalue() == before
+
+
+def test_local_opf_context_survives_exact_review_and_plugin_presentation(store, tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    from cifereca.core.local_origin_detail_broker import LocalOriginDetailReadBrokerImpl
+    from tests.test_core_p0_4030_suggestion_operator import Config
+    from tests.test_core_p0_3171_atomic_publication_v14 import rows
+
+    root, path, pid = _local_epub(
+        store, tmp_path, META + _dc("language", "fr-FR") + _dc("date", "2024-02")
+        + _dc("identifier", "urn:isbn:9780306406157"),
+    )
+    owner = NS(identity_id="A", directory_name="A")
+    service = NS(storage=store, config=Config(root), current_identity=owner,
+                 identity_by_id=lambda identity: owner if identity == "A" else None,
+                 _source_context_epoch=1, _account_context_epoch=1)
+    before, data = rows(store), path.read_bytes()
+    page = LocalOriginDetailReadBrokerImpl(service).preview(
+        identity_id="A", placement_id=pid, still_current=lambda: True, confirmed=True,
+    )
+    assert page.local_languages == ("fr-FR",)
+    assert page.local_dates == ("2024-02",)
+    assert page.local_isbns == ("9780306406157",)
+    assert not (page.provider_access_performed or page.association_authorized or page.coverage_complete)
+    plugin_path = (Path(__file__).resolve().parents[1]
+                   / "src/plugins/maintenance-local-origin/cifereca_local_origin_detail.py")
+    spec = importlib.util.spec_from_file_location("origin_opf_context", plugin_path)
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    displayed = plugin.known_rows(page)
+    assert ("Langues déclarées dans l’OPF", "fr-FR") in displayed
+    assert ("Dates déclarées dans l’OPF (nature non attestée)", "2024-02") in displayed
+    assert ("ISBN déclarés dans l’OPF", "9780306406157") in displayed
+    assert rows(store) == before and path.read_bytes() == data
