@@ -221,5 +221,70 @@ def test_restart_classification_preserves_checkpoint_and_zero_get(tmp_path, monk
         assert (storage.placements(), storage.acquisitions(), rows(storage)) == before
         assert sorted((str(path), sha256(path.read_bytes()).hexdigest())
                       for path in library.rglob("*.epub")) == physical
-        # The surviving extra name is not a new Placement or authority to
-        # unlink. Its cleanup remains separately governed by the product hold.
+        # Inventory detects the extra physical name. Explicit local indexing
+        # restores path parity without synthesizing a new provider origin.
+        from cifereca.catalog import LocalCatalog
+        from cifereca.core.library_inventory import scan_identity_roots
+        from cifereca.core import canonical_dedup_supervisor as supervisor
+
+        def physical_paths():
+            inv = scan_identity_roots({"A": (library / "A",)})
+            assert not inv.reasons
+            assert all(f.sha256 == receipt.final_sha256 for f in inv.files)
+            return {f.path for f in inv.files}
+
+        def present_paths():
+            return {p["path"] for p in storage.placements() if p["state"] == "present"}
+
+        if boundary != "after_cleanup":
+            assert physical_paths() - present_paths() == {str(other)}
+            with InterProcessLock(lock_path) as lease:
+                indexed = LocalCatalog(storage, library).index_path(other, identity_id="A")
+                assert indexed["status"] == "indexed"
+                candidate = storage.placement_for_path(other)
+                assert candidate["artifact_id"] == placement["artifact_id"]
+                assert candidate["identity_id"] == "A"
+                assert candidate["provider_id"] is None and candidate["source_item_id"] is None
+                assert physical_paths() == present_paths() == {str(old), str(new)}
+                assert rows(storage) == (1, 2, 1, 1)
+                kwargs = dict(library_root=library, candidate_placement_id=candidate["placement_id"],
+                              keeper_placement_id=placement["placement_id"], shared_lock=lease,
+                              action="commit", confirmed=True)
+                held = supervisor.supervise_canonical_duplicate(storage, **kwargs)
+                assert held.reason == "ordinary_cleanup_suspended"
+                assert old.samefile(new)
+                # Only the isolated existing supervisor is admitted. Restore
+                # the durable SQL choice, not the most attractive filename.
+                with monkeypatch.context() as patch:
+                    patch.setattr(supervisor, "_ordinary_cleanup_enabled", lambda: True)
+                    done = supervisor.supervise_canonical_duplicate(storage, **kwargs)
+                assert done.finished and done.removed_file, done.reason
+                assert not other.exists() and named.is_file()
+                assert physical_paths() == present_paths() == {str(named)}
+                assert rows(storage) == (1, 1, 1, 1)
+        else:
+            assert physical_paths() == present_paths() == {str(named)}
+        # If the process died before commit, replay the common writer only
+        # after parity is restored, on the authoritative original path.
+        if boundary == "before_commit":
+            from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
+            from cifereca.plugin_api import LibraryMutationRequest
+            from tests.test_core_p0_3176_organizer_review import _service
+            broker = LibraryMaintenanceBrokerImpl(_service(storage, library))
+            with InterProcessLock(lock_path) as lease:
+                plan = broker.plan(LibraryMutationRequest("normalize_filename",
+                                                          placement_id=placement["placement_id"]))
+                broker._run_filename_relocation(plan, Control(), classified_target=new)
+        assert not old.exists() and new.is_file()
+        assert physical_paths() == present_paths() == {str(new)}
+        assert rows(storage) == (1, 1, 1, 1)
+        with InterProcessLock(lock_path) as lease:
+            final = recovery.recover_completed_delivery(
+                storage, source=source, offer_id="synthetic-offer",
+                library_root=library, shared_lock=lease)
+            assert final is not None and final.path == new
+            assert final.final_sha256 == receipt.final_sha256
+        assert run(service, account, offered, library, lock_path, {source},
+                   lambda *_: pytest.fail("reconciled interruption must not GET"))[0].status == "present_attested"
+        assert service.calls == 0
+        assert physical_paths() == present_paths() == {str(new)}
