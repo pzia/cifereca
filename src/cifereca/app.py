@@ -265,6 +265,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
         core_options["notice_work_admission"] = SharedTaskAdmission(
             max_inflight=16, reserve_user_slots=3,
         )
+        core_options["notice_age_desktop_config"] = True
     # Apply an explicit CLI override before constructing services/plugins.
     # Do not persist it: only an IHM preference change saves the next launch.
     if verbose:
