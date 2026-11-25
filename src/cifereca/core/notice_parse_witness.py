@@ -46,6 +46,7 @@ class ParseWitness:
     parser_version: str
     approved: bool
     critical_fields: tuple[CriticalParseField, ...]
+    parser_implementation_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +67,9 @@ def _valid_baseline(witness: object) -> bool:
             or _SHA.fullmatch(witness.approved_input_sha256) is None
             or type(witness.parser_version) is not str
             or _VERSION.fullmatch(witness.parser_version) is None
+            or (witness.parser_implementation_sha256 is not None and (
+                type(witness.parser_implementation_sha256) is not str
+                or _SHA.fullmatch(witness.parser_implementation_sha256) is None))
             or type(witness.critical_fields) is not tuple
             or not 1 <= len(witness.critical_fields) <= _MAX_FIELDS):
         return False
@@ -129,11 +133,12 @@ def review_parse_witness(
     input_sha256: str | None, parser_version: str,
     raw_fields: object, complete: bool,
     publication_review: bool = False,
+    parser_implementation_sha256: str | None = None,
 ) -> ParseWitnessReview:
     """Classify one already parsed response without network or values in logs.
 
     A confirmed regression requires: approved baseline, exact same source
-    scope and raw response bytes, a *different* parser version, complete
+    scope and raw response bytes, a *different* parser version or independently admitted implementation digest, complete
     parsing, and a missing/invalid critical field. Changed input supports
     structural suspicion, never confirmation. Trusted publication review also
     admits partial parses;
@@ -148,6 +153,9 @@ def review_parse_witness(
             )
             or type(parser_version) is not str
             or _VERSION.fullmatch(parser_version) is None
+            or (parser_implementation_sha256 is not None and (
+                type(parser_implementation_sha256) is not str
+                or _SHA.fullmatch(parser_implementation_sha256) is None))
             or type(complete) is not bool
             or type(publication_review) is not bool
             or type(raw_fields) is not dict):
@@ -193,8 +201,14 @@ def review_parse_witness(
     if not misses:
         return ParseWitnessReview("source_changed" if changed_input else
                                   "unchanged" if complete else "unverified", ())
+    implementation_changed = (
+        baseline.parser_implementation_sha256 is not None
+        and parser_implementation_sha256 is not None
+        and baseline.parser_implementation_sha256 != parser_implementation_sha256
+    )
     status = ("parser_regression_confirmed"
-              if not changed_input and parser_version != baseline.parser_version
+              if not changed_input and (
+                  parser_version != baseline.parser_version or implementation_changed)
               else "parser_drift_suspected")
     return ParseWitnessReview(status, tuple(misses))
 
@@ -224,6 +238,7 @@ def review_admitted_source_parse_witness(
     baseline: ParseWitness, *, observation: NoticeSourceObservation,
     input_sha256: str | None,
     publication_review: bool = False,
+    parser_implementation_sha256: str | None = None,
 ) -> ParseWitnessReview:
     """Review one typed Core admission, not caller-provided loose coordinates.
 
@@ -264,6 +279,7 @@ def review_admitted_source_parse_witness(
         raw_fields=fields,
         complete=observation.status == "complete",
         publication_review=publication_review,
+        parser_implementation_sha256=parser_implementation_sha256,
     )
 
 

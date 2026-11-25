@@ -369,7 +369,9 @@ def test_declared_replay_lease_busy_is_nonblocking(monkeypatch):
 
 @pytest.mark.parametrize("configured", (False, True))
 @pytest.mark.parametrize("capacity_refused", (False, True))
-def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured, capacity_refused):
+@pytest.mark.parametrize("implementation_changed", (False, True))
+def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, configured, capacity_refused,
+                                                      implementation_changed):
     from types import SimpleNamespace
     from cifereca.core.notice_parse_witness import CriticalParseField, field_digest
     from cifereca.core.notice_parse_witness_store import publish_approved_parse_witness
@@ -400,7 +402,9 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
                 ("search_result", "public_bibliography", "title"), "string",
                 expected_sha256=field_digest(title),
             ),), expected_generation=0,
+            parser_implementation_sha256=response.notice_parser_implementation,
         )
+        assert response.notice_parser_implementation is not None
         if capacity_refused:
             from cifereca.core import notice_regression_capture_intent as capture
             from cifereca.core.notice_parse_witness import ParseWitnessReview
@@ -420,6 +424,10 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
                                              for item in page.items))
 
         monkeypatch.setattr(client, "parse_public_search", drift)
+        if implementation_changed:
+            old_digest = response.notice_parser_implementation
+            monkeypatch.setattr(client, "_PARSER_IMPLEMENTATION_DIGEST",
+                                "1"*64 if old_digest != "1"*64 else "2"*64)
         # Expire the normal cache so the next ordinary Search parses the
         # same recorded transport bytes, not an old cached parsed DTO.
         cache_clock[0] += 61.
@@ -433,7 +441,9 @@ def test_normal_search_regression_capture_destination(tmp_path, monkeypatch, con
         diagnostic = read_parse_witness_diagnostic(
             db, key=source.observation.key, parser_id=source.observation.parser_id,
         )
-        assert diagnostic["status"] == "parser_drift_suspected"
+        assert (changed.notice_parser_implementation != response.notice_parser_implementation) is implementation_changed
+        assert diagnostic["status"] == ("parser_regression_confirmed" if implementation_changed
+                                        else "parser_drift_suspected")
         expected_state = "capacity_refused" if capacity_refused else "partial"
         assert diagnostic["capture_state"] == expected_state
         entries = [event for event in diagnostics.snapshot()
