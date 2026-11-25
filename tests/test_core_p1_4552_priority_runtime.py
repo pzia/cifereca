@@ -120,3 +120,38 @@ def test_desktop_context_resolves_exact_ready_generation_without_extra_scan(tmp_
         finally:
             owner.close()
             broker.close()
+
+
+def test_visible_priority_snapshot_ignores_clipped_and_retired_cells():
+    from types import SimpleNamespace as NS
+    from cifereca.gui.master_detail import MasterDetailPage
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+
+    class Cell:
+        def __init__(self, y, mapped=True):
+            self.y, self.mapped = y, mapped
+        def get_mapped(self):
+            return self.mapped
+        def compute_bounds(self, _viewport):
+            return True, NS(get_x=lambda: 0, get_y=lambda: self.y,
+                            get_width=lambda: 100, get_height=lambda: 30)
+
+    docs = [canonical_cover_document_ref("edition:visible-" + str(i)) for i in range(5)]
+    rows = [NS(document=doc) for doc in docs]
+    cells = [Cell(5), Cell(98), Cell(100), Cell(-30), Cell(30, False)]
+    current = {row.document for row in rows}
+    page = NS(get_mapped=lambda: True, selection=NS(get_selected_item=lambda: rows[0]),
+              scroll=NS(get_mapped=lambda: True, get_width=lambda: 200, get_height=lambda: 100),
+              priority_public_document=lambda row: (
+                  row.document if row is not None and row.document in current else None),
+              _notice_priority_cells={
+                  cell: NS(get_item=lambda row=row: row) for cell, row in zip(cells, rows)
+              })
+    snapshot = MasterDetailPage.visible_notice_priority_documents
+    assert snapshot(page) == (docs[0], docs[1])
+    current.remove(docs[1])
+    assert snapshot(page) == (docs[0],)
+    current.remove(docs[0])
+    assert snapshot(page) == ()
+    page.get_mapped = lambda: False
+    assert snapshot(page) == ()
