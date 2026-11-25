@@ -132,6 +132,16 @@ def known_rows(page):
         ("Page", str(page.page)),
         ("Résultats connus", str(page.known_matches)),
     ]
+    if page.metadata_evidence == "verified_epub_opf_description":
+        for label, values in (
+            ("ISBN déclarés dans l’OPF", page.local_isbns),
+            ("Langues déclarées dans l’OPF", page.local_languages),
+            ("Dates déclarées dans l’OPF (nature non attestée)", page.local_dates),
+        ):
+            if (type(values) is tuple and 0 < len(values) <= 32
+                    and all(type(value) is str and 0 < len(value) <= 48
+                            and _displayable_c_docbase(value) for value in values)):
+                lines.append((label, " · ".join(values)))
     for hit in page.matches:
         observed = "Dernière observation C : date indisponible"
         if type(hit.observed_at) is int and 0 <= hit.observed_at <= 253402300799:

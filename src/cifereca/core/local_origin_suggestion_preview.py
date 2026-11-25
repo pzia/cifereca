@@ -349,7 +349,7 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     from .local_origin_documentary_suggestions import suggest_known_public_documents
 
     def result(reason, suggestions=None, *, metadata="local_catalogue_only", next_page=None,
-               local_isbns=(), public_evidence=None):
+               local_isbns=(), public_evidence=None, local_languages=(), local_dates=()):
         return {
             "status": "partial" if suggestions is not None else "excluded",
             "reason": reason,
@@ -358,6 +358,8 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             "public_comparison_evidence": public_evidence if suggestions is not None else None,
             "metadata_evidence": metadata if suggestions is not None else "not_checked",
             "local_isbns": local_isbns if suggestions is not None else (),
+            "local_languages": local_languages if suggestions is not None else (),
+            "local_dates": local_dates if suggestions is not None else (),
             "isbn_catalogue_comparison_performed": False,
             "association_authorized": False,
             "may_write_origin_or_right": False,
@@ -386,14 +388,15 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             local, path, signature = candidate
             title, author = local[-2:]
             metadata = "local_catalogue_only"
-            local_isbns = ()
+            local_isbns = local_languages = local_dates = ()
             source_urls = frozenset()
             if local[6] in ("epub", "kepub"):
                 from .local_origin_epub_evidence import read_verified_epub_details
-                observation = read_verified_epub_details(path, signature, include_source_claims=True)
+                observation = read_verified_epub_details(
+                    path, signature, include_source_claims=True, include_context_claims=True)
                 if observation is None:
                     raise _CandidateRejected("epub_description_unverified")
-                title, authors, local_isbns, _, source_urls = observation
+                title, authors, local_isbns, _, source_urls, local_languages, local_dates = observation
                 author = authors[0] if len(authors) == 1 else None
                 metadata = "verified_epub_opf_description"
             # Fresh SHA, inode and descriptive evidence must match the
@@ -424,7 +427,8 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
             ) if page == 0 and metadata == "verified_epub_opf_description" and not local[7] else None)
         return result("declared_unverified_comparison" if local[7] else "documentary_comparison_only", suggestions,
                       metadata=metadata, next_page=following, local_isbns=local_isbns,
-                      public_evidence=public_evidence)
+                      public_evidence=public_evidence, local_languages=local_languages,
+                      local_dates=local_dates)
     except _CandidateRejected as exc:
         return result(str(exc))
     except (DerivedPublicationConflict, sqlite3.Error, OSError, RuntimeError,

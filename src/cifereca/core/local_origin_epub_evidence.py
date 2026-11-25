@@ -5,7 +5,9 @@ This conservative port accepts a single unambiguous OPF package.
 """
 from __future__ import annotations
 
+from datetime import date
 import os
+import re
 from pathlib import Path
 import zipfile
 import zlib
@@ -140,7 +142,42 @@ def _source_url_claims(metadata, dc):
     )
 
 
-def _read_epub_details(stream, *, include_source_claims=False):
+def _context_claims(metadata, dc):
+    """Bounded literal OPF language/date claims, not edition or source proof.
+
+    Accept conservative language tag shapes and calendar dates with year,
+    month or day precision. Refuse malformed/overflow fields independently.
+    Do not interpret an untyped dc:date as a publication date.
+    """
+    def language(value):
+        return re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,8}", value) is not None
+
+    def calendar_date(value):
+        if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?", value) is None:
+            return False
+        try:
+            date.fromisoformat(value + {4: "-01-01", 7: "-01", 10: ""}[len(value)])
+            return True
+        except ValueError:
+            return False
+
+    def field(name, valid):
+        nodes = metadata.findall(dc + name)
+        if len(nodes) > 8:
+            return ()
+        values = []
+        for node in nodes:
+            value = node.text or ""
+            if len(node) or not 0 < len(value) <= 48 or not valid(value):
+                return ()
+            if value not in values:
+                values.append(value)
+        return tuple(values)
+
+    return field("language", language), field("date", calendar_date)
+
+
+def _read_epub_details(stream, *, include_source_claims=False, include_context_claims=False):
     """Pure bounded metadata read; restore caller position, do not close.
 
     ISBN is a descriptive claim in this file, not verified external origin.
@@ -197,7 +234,9 @@ def _read_epub_details(stream, *, include_source_claims=False):
             isbns = _explicit_isbns(package, metadata[0], opf, dc, allow_refinements=allow_refinements)
             details = title, authors, isbns, _documentary_nature(metadata[0], dc)
             if include_source_claims:
-                return (*details, _source_url_claims(metadata[0], dc))
+                details = (*details, _source_url_claims(metadata[0], dc))
+            if include_context_claims:
+                details = (*details, *_context_claims(metadata[0], dc))
             return details
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
@@ -222,7 +261,8 @@ def read_epub_description(stream):
     return value[:2] if value is not None else None
 
 
-def read_verified_epub_details(path: Path, expected_signature, *, include_source_claims=False):
+def read_verified_epub_details(path: Path, expected_signature, *, include_source_claims=False,
+                               include_context_claims=False):
     """Open only the inode already hashed by the outer candidate review.
 
     The original pinned file and outer name recheck remain live until
@@ -237,7 +277,8 @@ def read_verified_epub_details(path: Path, expected_signature, *, include_source
             return None
         with os.fdopen(file_fd, "rb") as stream:
             file_fd = None
-            value = _read_epub_details(stream, include_source_claims=include_source_claims)
+            value = _read_epub_details(stream, include_source_claims=include_source_claims,
+                                       include_context_claims=include_context_claims)
             if _file_signature(os.fstat(stream.fileno())) != expected_signature:
                 return None
             return value

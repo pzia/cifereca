@@ -143,6 +143,12 @@ class LocalOriginDetailReadBrokerImpl:
                                          for choice in available_remote_purchase_catalogues(
                                              self._service, request,
                                              evidence=result.get("public_comparison_evidence")))
+            local_claims = {name: result.get(name, ()) for name in (
+                "local_isbns", "local_languages", "local_dates")}
+            if any(type(values) is not tuple or len(values) > (32 if name == "local_isbns" else 8)
+                   or any(type(value) is not str or not 0 < len(value) <= 48
+                          for value in values) for name, values in local_claims.items()):
+                return None
             page = LocalOriginDetailPage(
                 token_hex(32), known.page + 1,
                 tuple(LocalOriginDetailMatch(
@@ -162,6 +168,7 @@ class LocalOriginDetailReadBrokerImpl:
                     token, choice.scope.provider_id, choice.scope.credential_id,
                     choice.scope.account_id,
                 ) for token, choice in remote_loans),
+                **local_claims,
                 remote_purchase_choices=tuple(LocalOriginRemotePurchaseChoice(
                     token, choice.scope.provider_id, choice.scope.credential_id,
                     choice.scope.account_id,

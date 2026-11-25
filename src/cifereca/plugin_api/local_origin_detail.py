@@ -173,6 +173,10 @@ class LocalOriginDetailPage:
     private_choices: tuple[LocalOriginPrivateChoice, ...] = ()
     remote_loan_choices: tuple[LocalOriginRemoteLoanChoice, ...] = ()
     remote_purchase_choices: tuple[LocalOriginRemotePurchaseChoice, ...] = ()
+    # Literal local OPF claims only, never a provider edition assertion.
+    local_isbns: tuple[str, ...] = ()
+    local_languages: tuple[str, ...] = ()
+    local_dates: tuple[str, ...] = ()
 
 
 @runtime_checkable
