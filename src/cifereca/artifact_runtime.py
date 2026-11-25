@@ -2176,7 +2176,8 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.relocate_local_path(
                     old, new,
                     identity_id=str(row.get("identity_id") or ""),
-                    provider_id=str(row.get("provider_id") or "local"),
+                    provider_id=(row.get("provider_id") if classified_target is not None
+                                 else str(row.get("provider_id") or "local")),
                     **({"classification_root": classification_root}
                        if classified_target is not None else {}),
                 )
