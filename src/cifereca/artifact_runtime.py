@@ -2128,6 +2128,13 @@ class LibraryMaintenanceBrokerImpl:
                     raise _LibraryFilenameConflict("Collision de classement")
                 expected_old = os.stat(old, follow_symlinks=False)
                 expected_new = os.stat(new, follow_symlinks=False)
+                if classified_target is not None and (
+                        not stat.S_ISREG(expected_old.st_mode)
+                        or not stat.S_ISREG(expected_new.st_mode)
+                        or any(getattr(expected_old, key) != getattr(before, key)
+                               or getattr(expected_new, key) != getattr(before, key)
+                               for key in attrs[:-1])):
+                    raise _LibraryFilenameConflict("Source de classement modifiée")
                 # Persist the destination bytes and directory entry
                 # before SQLite can make it the authoritative pathname.
                 with ExitStack() as descriptors:
@@ -2179,7 +2186,9 @@ class LibraryMaintenanceBrokerImpl:
                         original = before.st_dev, before.st_ino
                         if (current_placement and current_placement.get("path") == str(old)
                                 and original == (old_stat.st_dev, old_stat.st_ino)
-                                == (new_stat.st_dev, new_stat.st_ino)):
+                                == (new_stat.st_dev, new_stat.st_ino)
+                                and (classified_target is None or
+                                     (old.resolve() == old and new.resolve() == new))):
                             new.unlink()
                     except (OSError, sqlite3.Error, RuntimeError):
                         pass
