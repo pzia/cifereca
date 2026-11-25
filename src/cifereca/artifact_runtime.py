@@ -2003,16 +2003,15 @@ class LibraryMaintenanceBrokerImpl:
         if classified_target is not None:
             classification_root = _canonical_maintenance_root(self.service)
             # Private organizer path only. No new public mutation operation.
-            # This first receipt handles an existing canonical directory
-            # and independent classification, not renaming or mkdir.
+            # Classification is independent of naming; only the reviewed
+            # Type/Author destination may require directory provisioning.
             if (control is None or type(classified_target) is not type(old)
                     or not classified_target.is_absolute()
                     or not old.is_relative_to(classification_root)
                     or not classified_target.is_relative_to(classification_root)
                     or ".." in classified_target.parts
-                    or classified_target.name != old.name or new != old
+                    or classified_target.name != old.name
                     or classified_target.parent == old.parent
-                    or not classified_target.parent.is_dir()
                     or classified_target.parent.resolve() != classified_target.parent
                     or classified_target.exists() or classified_target.is_symlink()
                     or self.service.storage.placement_for_path(classified_target) is not None):
@@ -2114,8 +2113,47 @@ class LibraryMaintenanceBrokerImpl:
                         with ExitStack() as parents:
                             source_dir = _open_root(old.parent)
                             parents.callback(os.close, source_dir)
-                            target_dir = _open_root(new.parent)
-                            parents.callback(os.close, target_dir)
+                            try:
+                                target_dir = _open_root(new.parent)
+                            except FileNotFoundError:
+                                # Provision only the two reviewed category/author
+                                # components, never a missing profile or library root.
+                                directory, unique = self.service.storage.exact_profile_directory_binding(
+                                    row.get("identity_id"))
+                                if (unique is not True or type(directory) is not str
+                                        or directory in ("", ".", "..")
+                                        or Path(directory).name != directory or chr(92) in directory):
+                                    raise _LibraryFilenameConflict("Profil de classement non vérifié")
+                                owner = classification_root / directory
+                                if not old.is_relative_to(owner) or not new.is_relative_to(owner):
+                                    raise _LibraryFilenameConflict("Classement hors profil")
+                                components = new.parent.relative_to(owner).parts
+                                if (len(components) != 2 or components[0] not in
+                                        ("Livres", "BD-Manga", "Documents")
+                                        or any(part.startswith(".") or chr(92) in part for part in components)):
+                                    raise _LibraryFilenameConflict("Dossier de classement non admissible")
+                                from .core.loan_direct_publication import _current_directory
+                                target_dir = _open_root(owner)
+                                parents.callback(os.close, target_dir)
+                                current_parent = owner
+                                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+                                for component in components:
+                                    require_current_plan()
+                                    if not _current_directory(current_parent, target_dir):
+                                        raise _LibraryFilenameConflict("Dossier de classement modifié")
+                                    try:
+                                        os.mkdir(component, mode=0o700, dir_fd=target_dir)
+                                    except FileExistsError:
+                                        pass
+                                    os.fsync(target_dir)
+                                    target_dir = os.open(component, flags, dir_fd=target_dir)
+                                    parents.callback(os.close, target_dir)
+                                    current_parent /= component
+                                if not _current_directory(new.parent, target_dir):
+                                    raise _LibraryFilenameConflict("Dossier de classement modifié")
+                                require_current_plan()
+                            else:
+                                parents.callback(os.close, target_dir)
                             pinned = os.stat(old.name, dir_fd=source_dir, follow_symlinks=False)
                             if (any(getattr(pinned, key) != getattr(before, key) for key in attrs)
                                     or os.fstat(source_dir).st_dev != os.fstat(target_dir).st_dev):
@@ -2176,7 +2214,8 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.relocate_local_path(
                     old, new,
                     identity_id=str(row.get("identity_id") or ""),
-                    provider_id=str(row.get("provider_id") or "local"),
+                    provider_id=(row.get("provider_id") if classified_target is not None
+                                 else str(row.get("provider_id") or "local")),
                     **({"classification_root": classification_root}
                        if classified_target is not None else {}),
                 )

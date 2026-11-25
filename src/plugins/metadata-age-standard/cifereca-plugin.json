@@ -1,0 +1,35 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "metadata.age.standard",
+    "version": "1.0.0",
+    "name": "Consolidateur âge standard",
+    "plugin_api": ">=1,<2"
+  },
+  "plugins": [
+    {
+      "id": "metadata.age.standard",
+      "type": "meta.bundle",
+      "version": "1.0.0",
+      "name": "Consolidateur âge standard",
+      "capabilities": [
+        "metadata.consolidator"
+      ],
+      "enabled_by_default": true
+    }
+  ],
+  "notice_text_consolidators": [
+    {
+      "plugin_id": "metadata.age.standard",
+      "version": "1.0.0",
+      "canonical_type": "age",
+      "scope": "public:editions",
+      "schema_id": "schema.age.v1",
+      "source_member": "consolidators/age.py",
+      "source_sha256": "c232ab83926139d684c8dd5f87dac48790f1d94843b8be8155a0511aa53bb716",
+      "max_bytes": 2048,
+      "inherited_allowed": true,
+      "allowed_values": []
+    }
+  ]
+}

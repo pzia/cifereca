@@ -138,7 +138,9 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
     assert store.entitlements() == []
 
 
-@pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure"])
+@pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure",
+                                  "acsm_success", "acsm_staged", "missing_directory", "missing_directory_hold",
+                                  "acsm_reconstruct"])
 def test_native_classification_uses_the_common_writer_and_keeps_authority(
     store, tmp_path, monkeypatch, case,
 ):
@@ -157,11 +159,45 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     from tests.test_library_declaration_actions import Widget, Dialog, Runner
 
     root = tmp_path / "library"
-    register(store, "A", "seller", "card-A")
-    old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
-                         metadata=TYPED, provider_id="local")
-    target = root / "A/Livres/Autrice" / old.name
-    target.parent.mkdir(parents=True)
+    lock_path = tmp_path / "acquisition.lock"
+    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
+    with InterProcessLock(lock_path):
+        pass
+    acsm = case.startswith("acsm_")
+    if acsm:
+        import hashlib
+        from cifereca.core.canonical_publication import publish_completed_acquisition
+        from cifereca.core.convergence_execution import CompletedDelivery
+        from tests.test_core_p0_3171_atomic_publication_v14 import new_source
+        register(store, "A", "numilog", "card-A")
+        source, snapshot = new_source(provider="numilog")
+        old, pid = _put_epub(store, root, "numilog/acsm-" + "a"*64 + "/legacy.epub",
+                             metadata=TYPED)
+        digest = hashlib.sha256(old.read_bytes()).hexdigest()
+        offer = "synthetic-offer"
+        with InterProcessLock(lock_path) as lock:
+            receipt = canonical_recovery.record_completed_delivery_for_recovery(
+                store, source=source, offer_id=offer,
+                completed=CompletedDelivery(source, offer, old, digest, "synthetic-receipt",
+                                            adept_receipt_ref="synthetic-adept"),
+                library_root=root, shared_lock=lock)
+            published = publish_completed_acquisition(
+                store, library_root=root, path=old, source=source, snapshot=snapshot,
+                final_sha256=digest, delivery_receipt_ref="synthetic-receipt",
+                adept_receipt_ref="synthetic-adept")
+            assert published.placement_id == pid
+            if case in ("acsm_success", "acsm_reconstruct"):
+                canonical_recovery.mark_completed_delivery_published(
+                    store, source=source, offer_id=offer, artifact_id=published.artifact_id,
+                    shared_lock=lock)
+        target = root / "A/numilog" / old.name
+    else:
+        register(store, "A", "seller", "card-A")
+        old, pid = _put_epub(store, root, "Acquisitions/Autrice - Roman commun.epub",
+                             metadata=TYPED, provider_id="local")
+        target = root / "A/Livres/Autrice" / old.name
+        if case not in ("missing_directory", "missing_directory_hold"):
+            target.parent.mkdir(parents=True)
     with store._lock, store._connect() as db:
         db.execute("UPDATE placements SET metadata_json=? WHERE placement_id=?",
                    (json.dumps({"relative_path": str(old.relative_to(root)),
@@ -176,6 +212,13 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     baseline, data, history = store.placement_get(pid), old.read_bytes(), store.acquisitions()
     before = rows(store)
     service = _service(store, root)
+    if case == "acsm_staged":
+        _, review = _run(service)
+        file, = review["groups"][0]["files"]
+        assert file["classified_path_advice"] is None
+        assert old.read_bytes() == data and not target.exists()
+        assert store.placement_get(pid) == baseline and store.acquisitions() == history
+        return
     key = "library.organizer.read"
     resolver = ActivationBrokerResolver(lambda _: None, maintenance_read_ports(service).get,
                                         "organizer", (key,))
@@ -197,11 +240,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     entry, = page.dry_run_entries
     assert entry.operation == "classify" and entry.state == "relocation_held"
     assert entry.proposed == str(target.relative_to(root / "A"))
-    lock_path = tmp_path / "acquisition.lock"
-    monkeypatch.setattr(canonical_recovery, "acquisition_lock_file", lambda **_kw: lock_path)
-    with InterProcessLock(lock_path):
-        pass
-    if case != "production_hold":
+    if case not in ("production_hold", "missing_directory_hold"):
         monkeypatch.setattr(library_organizer_execution, "_execution_fence_current",
                             lambda scope, lock: scope.root == root and scope.storage is store)
     if case == "collision":
@@ -228,7 +267,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     assert len(runner.queue) == 1
     runner.run()
     assert not ui.open(NS(MessageDialog=Dialog))
-    if case == "success":
+    if case in ("success", "acsm_success", "missing_directory", "acsm_reconstruct"):
         assert messages == ["Rangement confirmé. Relancez la revue locale."]
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
@@ -247,6 +286,127 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
             assert target.read_bytes() == b"foreign"
         else:
             assert not target.exists()
-    assert rows(store) == before and store.acquisitions() == history
+        if case == "missing_directory_hold":
+            assert not target.parent.exists()
+    assert rows(store) == before
+    if case in ("acsm_success", "acsm_reconstruct"):
+        from dataclasses import replace
+        from cifereca.models import Account
+        from tests.test_core_p0_3171_convergence_execution import FakeService, run
+        with InterProcessLock(lock_path) as lock:
+            recovered = canonical_recovery.recover_completed_delivery(
+                store, source=source, offer_id=offer, library_root=root, shared_lock=lock)
+            assert recovered is not None and recovered.path == target
+            assert recovered.final_sha256 == digest and recovered.adept_receipt_ref == "synthetic-adept"
+        account = Account(identity_id="A", provider_id="numilog", credential_id="card-A",
+                          unique_id="buyer-A")
+        sync = FakeService(store, [account])
+        offered = replace(snapshot, rights=(replace(snapshot.rights[0],
+                          delivery="available", delivery_offer_id=offer),))
+        monkeypatch.setattr("cifereca.core.convergence_execution.acquisition_lock_file",
+                            lambda: lock_path)
+        results = run(sync, account, offered, root, lock_path, {source},
+                      lambda *_: pytest.fail("relocated attested EPUB must avoid GET"))
+        assert results[0].status == "present_attested"
+        assert not old.exists() and target.read_bytes() == data
+        assert rows(store) == before and sync.calls == 0
+        if case == "acsm_reconstruct":
+            _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
+                                          source, snapshot, account, sync, pid, target, data, digest)
+    else:
+        assert store.acquisitions() == history
     assert store.entitlements() == []
     resolver.close()
+
+
+def _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
+                                 source, snapshot, account, sync, keeper, target, data, digest):
+    """Owner #3176: qualify recovery of a deliberately lost reproducible link.
+
+    The only injected defect is removal of the exact synthetic provider link.
+    No production guard or deletion policy is changed. A fresh provider offer
+    returns identical bytes and the same reproducible receipt; the old ADEPT
+    proof and the old completed journal are retained.
+    """
+    from dataclasses import replace
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from cifereca.core.convergence_verified_presence import plan_existing_verified_presence
+    from cifereca.core.library_inventory import scan_identity_roots
+    from cifereca.core.library_reconciliation import read_library_snapshot, reconcile
+    from cifereca.locking import InterProcessLock
+    from tests.test_core_p0_3171_convergence_execution import run
+
+    def inventory_report(expected_paths):
+        inventory = scan_identity_roots({"A": (root / "A",)})
+        assert not inventory.reasons
+        assert {f.path for f in inventory.files} == {str(p) for p in expected_paths}
+        assert all(f.sha256 == digest for f in inventory.files)
+        assert {p["path"] for p in store.placements() if p["state"] == "present"} == {
+            f.path for f in inventory.files}
+        report = reconcile(inventory, read_library_snapshot(tmp_path / "state.sqlite",
+                                                            identity_id="A"))
+        assert not report.reasons and not report.missing_placements
+        return report
+
+    assert "confirmed_link" in inventory_report([target]).files[0]
+    with store._lock, store._connect() as db:
+        original = db.execute("SELECT * FROM origin_links ORDER BY origin_link_id").fetchall()
+        removed = db.execute(
+            "DELETE FROM origin_links WHERE origin_kind='provider' AND identity_id=? "
+            "AND artifact_id=? AND evidence_ref=?",
+            ("A", "sha256:" + digest, "synthetic-receipt"))
+        assert removed.rowcount == 1
+    assert "present_unlinked" in inventory_report([target]).files[0]
+    assert target.read_bytes() == data
+    offered = replace(snapshot, rights=(replace(snapshot.rights[0],
+                      delivery="available", delivery_offer_id="fresh-recovery-offer"),))
+    assert not plan_existing_verified_presence(store, offered, library_root=root).decisions[0].provider_satisfied
+    download = root / "A/numilog/reacquired.epub"
+
+    def deliver(key, right):
+        assert key == source and right.delivery_offer_id == "fresh-recovery-offer"
+        assert not download.exists()
+        sync.calls += 1
+        download.write_bytes(data)
+        return CompletedDelivery(key, right.delivery_offer_id, download, digest,
+                                 "synthetic-receipt", adept_receipt_ref="synthetic-adept")
+
+    outcome, = run(sync, account, offered, root, lock_path, {source}, deliver)
+    assert outcome.status == "downloaded" and sync.calls == 1
+    assert outcome.artifact_id == "sha256:" + digest
+    candidate = outcome.placement_id
+    assert candidate != keeper and target.read_bytes() == download.read_bytes() == data
+    assert store.placement_get(candidate)["path"] == str(download)
+    inventory_report([target, download])
+    with store._lock, store._connect() as db:
+        # Reproducing the exact receipt restores the original origin IDs.
+        # Timestamps are not evidence; compare the immutable coordinates.
+        columns = "origin_link_id,origin_kind,identity_id,artifact_id,source_reference_id,evidence_ref"
+        restored = db.execute("SELECT " + columns + " FROM origin_links ORDER BY origin_link_id").fetchall()
+        assert len(restored) == len(original) == 2
+        assert {r[1] for r in restored} == {"provider", "adept"}
+    with InterProcessLock(lock_path) as lock:
+        kwargs = dict(library_root=root, candidate_placement_id=candidate,
+                      keeper_placement_id=keeper, action="commit", confirmed=True,
+                      shared_lock=lock)
+        held = supervisor.supervise_canonical_duplicate(store, **kwargs)
+        assert held.reason == "ordinary_cleanup_suspended"
+        assert target.read_bytes() == download.read_bytes() == data
+        # Reuse the existing supervisor test admission, confined to this
+        # temporary library. Never enable production ordinary cleanup.
+        with monkeypatch.context() as patch:
+            patch.setattr(supervisor, "_ordinary_cleanup_enabled", lambda: True)
+            done = supervisor.supervise_canonical_duplicate(store, **kwargs)
+        assert done.finished and done.removed_file, done.reason
+        assert done.receipt_relinked == 1
+    assert not download.exists() and target.read_bytes() == data
+    assert store.placement_get(candidate) is None
+    assert "confirmed_link" in inventory_report([target]).files[0]
+    assert all(e["placement_id"] == keeper for e in store.catalog_entries())
+    with store._lock, store._connect() as db:
+        assert db.execute("SELECT " + columns + " FROM origin_links ORDER BY origin_link_id").fetchall() == restored
+    result, = run(sync, account, offered, root, lock_path, {source},
+                  lambda *_: pytest.fail("reconciled keeper must prevent another GET"))
+    assert result.status == "present_attested" and sync.calls == 1
+    assert not download.exists() and target.read_bytes() == data
