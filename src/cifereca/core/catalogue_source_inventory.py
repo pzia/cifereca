@@ -59,7 +59,7 @@ def catalogue_source_capabilities(
         provider_id = registered_public_provider_id(registry, getattr(descriptor, "id", None))
         if provider_id == UNKNOWN_PROVIDER or getattr(descriptor, "state", None) != "ready":
             continue
-        if not callable(enabled) or not enabled(provider_id, identity_id):
+        if not callable(enabled) or enabled(provider_id, identity_id) is not True:
             continue
         caps = getattr(descriptor, "capabilities", None)
         search = getattr(caps, "search", None) is True
@@ -85,6 +85,11 @@ def catalogue_source_capabilities(
             # A private session for the same plugin is not an anonymous
             # catalogue session and must not imply public availability.
             connected = connected_exact(provider_id, "__public__")
+        # The registry may have replaced/retired a virtual provider while
+        # this read was projecting its descriptor and account association.
+        # A matching slug is not evidence that the old object is still live.
+        if registry.maybe_get(provider_id) is not plugin:
+            continue
         result.append(CatalogueSourceCapability(
             provider_id=provider_id,
             identity_scope="authenticated" if authenticated else "public",
