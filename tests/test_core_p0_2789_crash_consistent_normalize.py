@@ -237,3 +237,48 @@ def test_symlink_destination_is_never_followed_or_committed(tmp_path):
     assert old.read_bytes() == b"book-data"
     assert new.is_symlink() and outside.read_bytes() == before
     assert service.storage.placement_get(old_id)["path"] == str(old)
+
+
+@pytest.mark.parametrize("drift", ["replacement", "symlink", "same_inode_bytes"])
+def test_fsync_time_file_drift_is_refused_before_sqlite_commit(tmp_path, monkeypatch, drift):
+    from cifereca.plugin_api import Conflict
+
+    service, old_id, broker, plan, old, new, _ = _case(tmp_path)
+    before = service.storage.placement_get(old_id)
+    outside = tmp_path / "outside.epub"
+    outside.write_bytes(b"foreign")
+    original = os.fsync
+    injected = []
+
+    def sync(fd):
+        original(fd)
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and not injected:
+            assert old.samefile(new)
+            injected.append(True)
+            if drift == "same_inode_bytes":
+                new.write_bytes(b"BOOK-DATA")
+            else:
+                new.unlink()
+                if drift == "replacement":
+                    new.write_bytes(b"foreign")
+                else:
+                    new.symlink_to(outside)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("drifted file reached SQLite relocation")
+
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(service.storage, "relocate_local_path", forbidden)
+    with pytest.raises(Conflict):
+        broker.run(plan, Control())
+    assert injected == [True]
+    assert service.storage.placement_get(old_id) == before
+    assert service.storage.placement_for_path(new) is None
+    assert outside.read_bytes() == b"foreign"
+    if drift == "same_inode_bytes":
+        # External modification is not repaired by a second writer.
+        assert old.read_bytes() == b"BOOK-DATA" and not new.exists()
+    else:
+        assert old.read_bytes() == b"book-data"
+        assert new.read_bytes() == b"foreign"
+        assert new.is_symlink() is (drift == "symlink")
