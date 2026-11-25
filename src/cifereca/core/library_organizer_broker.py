@@ -203,11 +203,15 @@ class LibraryOrganizerReadBrokerImpl:
             self._dry_run = None
 
         def current():
+            # The consumed native handoff tracks the lifetime of the exact
+            # review, not the pre-mutation SQLite image. Execution checks the
+            # original stamp through the last precommit guard and verifies
+            # the new stamp separately after the writer commits. Public
+            # review operations still use _current() and its original stamp.
             with self._lock:
                 return (self._active is not None
                         and self._active[3] is page
-                        and scope.bound()
-                        and sqlite_source_stamp(scope.database) == stamp)
+                        and scope.bound())
 
         return scope, report, plan, current
 
