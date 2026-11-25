@@ -139,7 +139,8 @@ def test_classified_target_existing_sqlite_relocation_boundary_isolated(
 
 
 @pytest.mark.parametrize("case", ["success", "production_hold", "checkpoint", "collision", "sql_failure",
-                                  "acsm_success", "acsm_staged", "missing_directory", "missing_directory_hold"])
+                                  "acsm_success", "acsm_staged", "missing_directory", "missing_directory_hold",
+                                  "acsm_reconstruct"])
 def test_native_classification_uses_the_common_writer_and_keeps_authority(
     store, tmp_path, monkeypatch, case,
 ):
@@ -185,7 +186,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
                 final_sha256=digest, delivery_receipt_ref="synthetic-receipt",
                 adept_receipt_ref="synthetic-adept")
             assert published.placement_id == pid
-            if case == "acsm_success":
+            if case in ("acsm_success", "acsm_reconstruct"):
                 canonical_recovery.mark_completed_delivery_published(
                     store, source=source, offer_id=offer, artifact_id=published.artifact_id,
                     shared_lock=lock)
@@ -266,7 +267,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
     assert len(runner.queue) == 1
     runner.run()
     assert not ui.open(NS(MessageDialog=Dialog))
-    if case in ("success", "acsm_success", "missing_directory"):
+    if case in ("success", "acsm_success", "missing_directory", "acsm_reconstruct"):
         assert messages == ["Rangement confirmé. Relancez la revue locale."]
         assert not old.exists() and target.read_bytes() == data
         current = store.placement_get(pid)
@@ -288,7 +289,7 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         if case == "missing_directory_hold":
             assert not target.parent.exists()
     assert rows(store) == before
-    if case == "acsm_success":
+    if case in ("acsm_success", "acsm_reconstruct"):
         from dataclasses import replace
         from cifereca.models import Account
         from tests.test_core_p0_3171_convergence_execution import FakeService, run
@@ -309,7 +310,103 @@ def test_native_classification_uses_the_common_writer_and_keeps_authority(
         assert results[0].status == "present_attested"
         assert not old.exists() and target.read_bytes() == data
         assert rows(store) == before and sync.calls == 0
+        if case == "acsm_reconstruct":
+            _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
+                                          source, snapshot, account, sync, pid, target, data, digest)
     else:
         assert store.acquisitions() == history
     assert store.entitlements() == []
     resolver.close()
+
+
+def _receive_reconstructible_link(store, tmp_path, root, lock_path, monkeypatch,
+                                 source, snapshot, account, sync, keeper, target, data, digest):
+    """Owner #3176: qualify recovery of a deliberately lost reproducible link.
+
+    The only injected defect is removal of the exact synthetic provider link.
+    No production guard or deletion policy is changed. A fresh provider offer
+    returns identical bytes and the same reproducible receipt; the old ADEPT
+    proof and the old completed journal are retained.
+    """
+    from dataclasses import replace
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+    from cifereca.core.convergence_execution import CompletedDelivery
+    from cifereca.core.convergence_verified_presence import plan_existing_verified_presence
+    from cifereca.core.library_inventory import scan_identity_roots
+    from cifereca.core.library_reconciliation import read_library_snapshot, reconcile
+    from cifereca.locking import InterProcessLock
+    from tests.test_core_p0_3171_convergence_execution import run
+
+    def inventory_report(expected_paths):
+        inventory = scan_identity_roots({"A": (root / "A",)})
+        assert not inventory.reasons
+        assert {f.path for f in inventory.files} == {str(p) for p in expected_paths}
+        assert all(f.sha256 == digest for f in inventory.files)
+        assert {p["path"] for p in store.placements() if p["state"] == "present"} == {
+            f.path for f in inventory.files}
+        report = reconcile(inventory, read_library_snapshot(tmp_path / "state.sqlite",
+                                                            identity_id="A"))
+        assert not report.reasons and not report.missing_placements
+        return report
+
+    assert "confirmed_link" in inventory_report([target]).files[0]
+    with store._lock, store._connect() as db:
+        original = db.execute("SELECT * FROM origin_links ORDER BY origin_link_id").fetchall()
+        removed = db.execute(
+            "DELETE FROM origin_links WHERE origin_kind='provider' AND identity_id=? "
+            "AND artifact_id=? AND evidence_ref=?",
+            ("A", "sha256:" + digest, "synthetic-receipt"))
+        assert removed.rowcount == 1
+    assert "present_unlinked" in inventory_report([target]).files[0]
+    assert target.read_bytes() == data
+    offered = replace(snapshot, rights=(replace(snapshot.rights[0],
+                      delivery="available", delivery_offer_id="fresh-recovery-offer"),))
+    assert not plan_existing_verified_presence(store, offered, library_root=root).decisions[0].provider_satisfied
+    download = root / "A/numilog/reacquired.epub"
+
+    def deliver(key, right):
+        assert key == source and right.delivery_offer_id == "fresh-recovery-offer"
+        assert not download.exists()
+        sync.calls += 1
+        download.write_bytes(data)
+        return CompletedDelivery(key, right.delivery_offer_id, download, digest,
+                                 "synthetic-receipt", adept_receipt_ref="synthetic-adept")
+
+    outcome, = run(sync, account, offered, root, lock_path, {source}, deliver)
+    assert outcome.status == "downloaded" and sync.calls == 1
+    assert outcome.artifact_id == "sha256:" + digest
+    candidate = outcome.placement_id
+    assert candidate != keeper and target.read_bytes() == download.read_bytes() == data
+    assert store.placement_get(candidate)["path"] == str(download)
+    inventory_report([target, download])
+    with store._lock, store._connect() as db:
+        # Reproducing the exact receipt restores the original origin IDs.
+        # Timestamps are not evidence; compare the immutable coordinates.
+        columns = "origin_link_id,origin_kind,identity_id,artifact_id,source_reference_id,evidence_ref"
+        restored = db.execute("SELECT " + columns + " FROM origin_links ORDER BY origin_link_id").fetchall()
+        assert len(restored) == len(original) == 2
+        assert {r[1] for r in restored} == {"provider", "adept"}
+    with InterProcessLock(lock_path) as lock:
+        kwargs = dict(library_root=root, candidate_placement_id=candidate,
+                      keeper_placement_id=keeper, action="commit", confirmed=True,
+                      shared_lock=lock)
+        held = supervisor.supervise_canonical_duplicate(store, **kwargs)
+        assert held.reason == "ordinary_cleanup_suspended"
+        assert target.read_bytes() == download.read_bytes() == data
+        # Reuse the existing supervisor test admission, confined to this
+        # temporary library. Never enable production ordinary cleanup.
+        with monkeypatch.context() as patch:
+            patch.setattr(supervisor, "_ordinary_cleanup_enabled", lambda: True)
+            done = supervisor.supervise_canonical_duplicate(store, **kwargs)
+        assert done.finished and done.removed_file, done.reason
+        assert done.receipt_relinked == 1
+    assert not download.exists() and target.read_bytes() == data
+    assert store.placement_get(candidate) is None
+    assert "confirmed_link" in inventory_report([target]).files[0]
+    assert all(e["placement_id"] == keeper for e in store.catalog_entries())
+    with store._lock, store._connect() as db:
+        assert db.execute("SELECT " + columns + " FROM origin_links ORDER BY origin_link_id").fetchall() == restored
+    result, = run(sync, account, offered, root, lock_path, {source},
+                  lambda *_: pytest.fail("reconciled keeper must prevent another GET"))
+    assert result.status == "present_attested" and sync.calls == 1
+    assert not download.exists() and target.read_bytes() == data
