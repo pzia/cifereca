@@ -282,3 +282,47 @@ def test_earlier_copy_change_after_pair_read_revokes_entire_keeper_advice(store,
     assert len(seen) == 2 and not result.executable
     assert not result.keeper_placement_id and not result.candidate_placement_ids
     assert rows(store) == before
+
+
+@pytest.mark.parametrize("dependency", ["metadata", "catalogue"])
+def test_keeper_refuses_dependency_committed_after_last_pair_review(
+    store, tmp_path, monkeypatch, dependency,
+):
+    from cifereca.core import canonical_keeper_review as module
+
+    root, pair = setup_copies(store, tmp_path, (
+        "Acquisitions/first.pdf", "Acquisitions/second.pdf",
+        "Livres/Auteur/Autrice - Roman.pdf",
+    ))
+    original = module.preview_canonical_duplicate
+    seen = []
+    paths = tuple(store.placement_get(p.placement_id)["path"] for p in pair)
+
+    def preview(*args, **kwargs):
+        result = original(*args, **kwargs)
+        assert result.status == "unreferenced"
+        seen.append(kwargs["candidate_placement_id"])
+        if len(seen) == 2:
+            # Introduce a dependency for the earlier candidate only after
+            # both pair-specific checks have finished.
+            victim = store.placement_get(seen[0])
+            if dependency == "metadata":
+                store.metadata_set("synthetic.keeper.checkpoint", victim["path"])
+            else:
+                store.catalog_entry_put({
+                    "catalog_entry_id": "late-dependency",
+                    "placement_id": victim["placement_id"],
+                    "artifact_id": victim["artifact_id"],
+                    "identity_id": "A", "title": "Late dependency",
+                    "metadata": {"path": victim["path"]},
+                })
+        return result
+
+    monkeypatch.setattr(module, "preview_canonical_duplicate", preview)
+    result = check(store, root)
+    assert (result.status, result.reason) == ("blocked", "snapshot_changed")
+    assert len(seen) == 2 and not result.executable
+    assert not result.keeper_placement_id and not result.candidate_placement_ids
+    from pathlib import Path
+    assert all(Path(p).read_bytes() == BYTES for p in paths)
+    assert all(store.placement_get(p.placement_id)["state"] == "present" for p in pair)
