@@ -57,6 +57,14 @@ class TrustedConsolidatorRegistry:
             entries.append(_Entry(payload, digest, inventory))
         self._entries = tuple(entries)
 
+    def public_age_digests(self):
+        """Only trusted declarations for the currently supported worker type."""
+        return tuple(sorted({
+            candidate.installed.source_sha256
+            for entry in self._entries for candidate in entry.inventory.candidates
+            if candidate.declaration.canonical_type == "age"
+        }))
+
     @contextmanager
     def hold_selected(self, manager, pin):
         """Select under managed package lease; never trust a stale snapshot.
