@@ -148,7 +148,7 @@ class PublicNoticeWorkPump:
         control.check_cancelled()
         return PreparedAggregate(publish)
 
-    def tick(self, *, control=None):
+    def tick(self, *, control=None, priority_hints=()):
         """Scan bounded class slices and submit hints without waiting.
 
         Reentry is rejected immediately. A refusal leaves the cursor at
@@ -188,6 +188,7 @@ class PublicNoticeWorkPump:
 
             tick = self._rotation.tick(
                 read, self._bridge.offer, offer_lane=offer_lane,
+                priority_hints=priority_hints,
                 check_cancelled=control.check_cancelled if control is not None else None,
             )
             return DispatchTick(tick.handles, tick.examined, tick.corrupt, tick.deferred)
