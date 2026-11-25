@@ -37,7 +37,7 @@ from .search import filter_loaded_results, local_search_evidence
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
 _STALE_AFTER = 86400
-_FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "language"))
+_FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "collection", "language"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
 from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
 
@@ -257,8 +257,8 @@ def _public_text_score(query, field, title, author, publisher, description,
             "metadata": metadata,
         }, query)
         return score
-    if field in {"subject", "series", "language"}:
-        if {"subject": classification, "series": series, "language": language}[field] is None:
+    if field in {"subject", "series", "collection", "language"}:
+        if {"subject": classification, "series": series, "collection": classification, "language": language}[field] is None:
             return 0
         return int(bool(filter_loaded_results(
             [{"source": "notice_c_public", "metadata": metadata}], query, field=field,
