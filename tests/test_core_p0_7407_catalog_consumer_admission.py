@@ -7,10 +7,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.config import Config
 from cifereca.core.runtime import CiferecaCore
 from cifereca.locking import InterProcessLock, LockBusyError
 from cifereca.paths import acquisition_lock_file
+from cifereca.plugin_api import Conflict, LibraryMutationRequest
 from tests.test_core_p0_2835_epub_layout import _book
 from tests.test_core_p0_4030_epub_evidence import META
 
@@ -65,6 +67,17 @@ def test_real_core_catalogue_writers_refuse_concurrent_maintenance(tmp_path, mon
                 assert maintenance.strict_current()
                 with pytest.raises(LockBusyError):
                     pool.submit(scan).result(timeout=5)
+                placement = core.storage.placement_for_path(path)
+                broker = LibraryMaintenanceBrokerImpl(service)
+                plan = broker.plan(LibraryMutationRequest(
+                    "normalize_filename", placement_id=placement["placement_id"],
+                ))
+                assert plan.facts["new_filename"] != path.name
+                with pytest.raises(Conflict, match="Bibliothèque occupée"):
+                    pool.submit(broker.run, plan).result(timeout=5)
+                assert maintenance.strict_current()
+                assert path.read_bytes() == data
+                assert not path.with_name(plan.facts["new_filename"]).exists()
             placement = core.storage.placement_for_path(path)
             assert placement and placement["identity_id"] == owner.identity_id
             assert path.read_bytes() == data
