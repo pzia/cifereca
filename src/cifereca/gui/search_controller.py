@@ -379,7 +379,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             callable(c_reader)
             and type(state.text) is str
             and 2 <= len(state.text.strip()) <= 160
-            and state.field in ("all", "title", "author", "publisher", "subject", "series", "language")
+            and state.field in ("all", "title", "author", "publisher", "subject", "series", "collection", "language")
             and state.scope in ("all", "digital", "physical", "unknown")
             and (not state.providers or selected)
         ):
