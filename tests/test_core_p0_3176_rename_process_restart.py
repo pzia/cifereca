@@ -296,3 +296,62 @@ def test_restart_classification_preserves_checkpoint_and_zero_get(tmp_path, monk
                    lambda *_: pytest.fail("reconciled interruption must not GET"))[0].status == "present_attested"
         assert service.calls == 0
         assert physical_paths() == present_paths() == {str(new)}
+
+
+@pytest.mark.parametrize("ingest", ["targeted", "scan", "publication"])
+def test_reused_old_path_never_overwrites_relocated_occurrence(tmp_path, ingest):
+    """Path reuse is not a transfer of the already relocated Placement ID."""
+    from cifereca.catalog import LocalCatalog
+    from cifereca.core.canonical_publication import publish_completed_acquisition
+    from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register, rows
+    from tests.test_core_p0_2835_epub_layout import _book
+    from tests.test_core_p0_3176_classified_path import TYPED
+
+    root = tmp_path / "library"
+    old = root / "A" / "old.epub"
+    new = old.with_name("classified.epub")
+    old.parent.mkdir(parents=True)
+    original = _book(TYPED).getvalue()
+    different = _book(TYPED.replace("https://schema.org/Book", "https://schema.org/CreativeWork")).getvalue()
+    assert original != different
+    old.write_bytes(original)
+    with closing(Storage(tmp_path / "state.sqlite")) as storage:
+        register(storage, "A", "numilog", "card-A")
+        source, snapshot = new_source(provider="numilog")
+        catalogue = LocalCatalog(storage, root)
+        if ingest == "publication":
+            first = publish_completed_acquisition(
+                storage, library_root=root, path=old, source=source, snapshot=snapshot,
+                final_sha256=sha256(original).hexdigest(), delivery_receipt_ref="original-delivery")
+            keeper = first.placement_id
+        else:
+            assert catalogue.index_path(old, identity_id="A")["status"] == "indexed"
+            keeper = storage.placement_for_path(old)["placement_id"]
+
+        # Fixture models the already received writer's postcommit path/ID
+        # contract; the actual relocation/crash is exercised above.
+        old.rename(new)
+        with storage._lock, storage._connect() as db:
+            db.execute("UPDATE placements SET path=? WHERE placement_id=?", (str(new), keeper))
+        old.write_bytes(different)
+        if ingest == "publication":
+            second, second_snapshot = new_source(provider="numilog", edition="other", right="other")
+            published = publish_completed_acquisition(
+                storage, library_root=root, path=old, source=second, snapshot=second_snapshot,
+                final_sha256=sha256(different).hexdigest(), delivery_receipt_ref="other-delivery")
+            assert published.placement_id != keeper
+            assert rows(storage) == (2, 2, 2, 2)
+        elif ingest == "scan":
+            catalogue.scan()
+        else:
+            assert catalogue.index_path(old, identity_id="A")["status"] == "indexed"
+        old_row, new_row = storage.placement_for_path(old), storage.placement_for_path(new)
+        assert old_row["placement_id"] != keeper == new_row["placement_id"]
+        assert old_row["artifact_id"] == "sha256:" + sha256(different).hexdigest()
+        assert new_row["artifact_id"] == "sha256:" + sha256(original).hexdigest()
+        assert old.read_bytes() == different and new.read_bytes() == original
+        assert len(storage.placements()) == 2
+        if ingest != "publication":
+            assert any(e["placement_id"] == old_row["placement_id"]
+                       and e["metadata"]["path"] == str(old) for e in storage.catalog_entries())
+            assert rows(storage) == (2, 2, 0, 0)
