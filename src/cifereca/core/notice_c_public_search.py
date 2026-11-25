@@ -263,7 +263,14 @@ def _public_text_score(query, field, title, author, publisher, description,
         return int(bool(filter_loaded_results(
             [{"source": "notice_c_public", "metadata": metadata}], query, field=field,
         )))
-    selected = {"title": title, "author": author, "publisher": publisher}[field]
+    if field == "author":
+        # Use the same strict per-name matching as the loaded C projection.
+        # Never concatenate separate names into a fictitious author.
+        return int(bool(filter_loaded_results(
+            [{"source": "notice_c_public", "author": author,
+              "metadata": metadata}], query, field=field,
+        )))
+    selected = {"title": title, "publisher": publisher}[field]
     return int(bool(selected) and _fold(query) in _fold(selected))
 
 
