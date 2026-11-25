@@ -202,16 +202,16 @@ class LibraryOrganizerReadBrokerImpl:
             # read-only and may still be cancelled or revised.
             self._dry_run = None
 
-        def current():
-            # The consumed native handoff tracks the lifetime of the exact
-            # review, not the pre-mutation SQLite image. Execution checks the
-            # original stamp through the last precommit guard and verifies
-            # the new stamp separately after the writer commits. Public
-            # review operations still use _current() and its original stamp.
+        def current(*, receipt_stamp=None):
+            # The default private handoff retains exact precommit freshness.
+            # Only the native postcommit receipt supplies its independently
+            # captured new stamp; the lifetime and binding remain mandatory.
+            expected = stamp if receipt_stamp is None else receipt_stamp
             with self._lock:
                 return (self._active is not None
                         and self._active[3] is page
-                        and scope.bound())
+                        and scope.bound()
+                        and sqlite_source_stamp(scope.database) == expected)
 
         return scope, report, plan, current
 
@@ -286,9 +286,10 @@ def take_native_organizer_rename(manager, resolved, page, *, service, identity_i
             return None
         scope, report, plan, current = result
 
-        def still_current():
+        def still_current(*, receipt_stamp=None):
             try:
-                return live() and resolver.current() is True and current() is True
+                return (live() and resolver.current() is True
+                        and current(receipt_stamp=receipt_stamp) is True)
             except Exception:
                 return False
 
