@@ -38,7 +38,7 @@ class NativeOrganizerConfirmation:
         self._page = self._used = self._dialog = None
         self._review_witness = None
         self._disposed = False
-        self.button = Gtk.Button(label="Confirmer le renommage…")
+        self.button = Gtk.Button(label="Confirmer l’opération…")
         self.button.set_visible(False)
         self.button.set_sensitive(False)
         self.button.connect("clicked", self._clicked)
@@ -122,10 +122,6 @@ class NativeOrganizerConfirmation:
                 old_dialog.close()
             except Exception:
                 pass
-        if valid and entries[0].operation == "classify":
-            self.button.set_label("Confirmer le rangement…")
-        elif valid:
-            self.button.set_label("Confirmer le renommage…")
         self.button.set_visible(valid)
         self.button.set_sensitive(valid and value is not self._used and self._dialog is None)
 
