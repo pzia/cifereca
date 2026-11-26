@@ -735,8 +735,8 @@ class CoverLoader:
                 except Exception as exc:
                     self._record_preview_worker("fallback", started)
                     _TRACE_LOG.debug(
-                        'TRACE cover preview fallback error=%s',
-                        type(exc).__name__,
+                        'TRACE cover preview fallback reason=%s',
+                        _cover_failure_code(exc),
                     )
                     return source
 
