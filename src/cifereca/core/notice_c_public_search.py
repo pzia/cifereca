@@ -270,11 +270,12 @@ def _public_text_score(query, field, title, author, publisher, description,
     if any(value is not None and (type(value) is not str or len(value) > limit)
            for value, limit in zip(texts, (512, 512, 512, 4000))):
         return 0
+    key = _record_isbn_key(query) if field in ("all", "isbn") else ""
+    isbn_match = bool(key) and isbn_observation is not None and any(
+        _record_isbn_key(value) == key for value in isbn_observation.isbns
+    )
     if field == "isbn":
-        key = _record_isbn_key(query)
-        return int(bool(key) and isbn_observation is not None
-                   and any(_record_isbn_key(value) == key
-                           for value in isbn_observation.isbns))
+        return int(isbn_match)
     metadata = classification.wire() if classification is not None else {}
     if series is not None:
         metadata["series"] = [series.label]
@@ -286,7 +287,7 @@ def _public_text_score(query, field, title, author, publisher, description,
             "description": description,
             "metadata": metadata,
         }, query)
-        return score
+        return max(score, 10 if isbn_match else 0)
     if field in {"subject", "series", "collection", "language"}:
         if {"subject": classification, "series": series, "collection": classification, "language": language}[field] is None:
             return 0
@@ -411,7 +412,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
             else:
                 language = fact
         isbns = None
-        if field == "isbn":
+        if field == "isbn" or (field == "all" and raw_isbns is not None):
             if type(raw_isbns) is not str or len(raw_isbns) > _MAX_BIBLIOGRAPHY_BYTES:
                 return 0
             try:
