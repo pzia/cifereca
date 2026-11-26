@@ -61,3 +61,48 @@ def test_isbn_observation_survives_eviction_and_restart_without_join(tmp_path):
         page = search_public_notice_c(db, "même titre", now=100,
                                       group_by_document=True)
         assert "edition-a" not in {hit.record_id for hit in page.hits}
+
+
+def test_strict_isbn_cursor_matches_only_attested_records_before_pagination(tmp_path):
+    path = tmp_path / "isbn-search.sqlite"
+    with closing(Storage(path)) as db:
+        rows = (
+            _row("edition-a", ["9780306406157"]),
+            _row("edition-b", ["0306406152"]),
+            _row("foreign-proof", ["9780306406157"], record_id="other"),
+            _row("other-isbn", ["9780140328721"]),
+            verified_public(record_id="9780306406157", title="Même titre"),
+        )
+        saved = [persist(db, row) for row in rows]
+        for source in saved:
+            index.persist_exact_public_search_cover(db, source)
+
+        def check(storage):
+            for query in ("9780306406157", "978-0-306-40615-7",
+                          "0306406152", "0-306-40615-2"):
+                page = search_public_notice_c(storage, query, field="isbn",
+                                              page_size=1, now=100,
+                                              group_by_document=True)
+                assert page.status == "partial" and page.has_more
+                assert page.known_matches == page.known_documents == 2
+                next_page = search_public_notice_c(storage, query, field="isbn",
+                                                   page_size=1, page=1, now=100,
+                                                   group_by_document=True)
+                assert not next_page.has_more
+                assert {page.hits[0].record_id, next_page.hits[0].record_id} == {
+                    "edition-a", "edition-b",
+                }
+                assert page.hits[0].document != next_page.hits[0].document
+            for query in ("978030", "9780306406158", "4006381333931"):
+                assert not search_public_notice_c(storage, query, field="isbn",
+                                                  now=100).hits
+            assert not search_public_notice_c(storage, "9780306406157",
+                                              field="isbn", provider_ids=("other",),
+                                              now=100).hits
+            assert storage.entitlements() == [] and storage.acquisitions() == []
+
+        check(db)
+        for source in saved:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    with closing(Storage(path)) as db:
+        check(db)
