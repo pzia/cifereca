@@ -44,6 +44,13 @@ _ROW_FIELDS = frozenset((
 # Optional watermark allows readers to replay pre-upgrade schema-1 records.
 # This tracks source freshness, NOT a second documentary revision or N2 epoch.
 _LAST_SEEN = "last_seen_at"
+# Private documentary bytes shared ONLY by independently admitted native
+# resource observations. Owner/account scopes and revision fences stay exact.
+_SHARED_PREFIX = "notice.c.private-documentary.v1:"
+_SHARED_FIELD = "documentary_payload"
+_SHARED_ROW_FIELDS = (_ROW_FIELDS - {"raw_json"}) | {_SHARED_FIELD}
+_SHARED_EDITION = re.compile(r"edition:[0-9a-f]{64}\Z")
+_SHARED_HASH = re.compile(r"[0-9a-f]{64}\Z")
 _EXACT_SOURCE = re.compile(r"notice-c:v1:[0-9a-f]{64}\Z")
 
 
@@ -117,7 +124,139 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
+def _documentary_key(provider, edition, body):
+    payload = json.dumps([provider, edition, body], ensure_ascii=True,
+                         separators=(",", ":"))
+    return _SHARED_PREFIX + sha256(payload.encode("ascii")).hexdigest()
+
+
+def _shared_pointer(row):
+    pointer = row.get(_SHARED_FIELD)
+    if (type(pointer) is not dict or set(pointer) != {"edition", "digest", "connection_epoch"}
+            or type(pointer["edition"]) is not str
+            or _SHARED_EDITION.fullmatch(pointer["edition"]) is None
+            or type(pointer["digest"]) is not str
+            or _SHARED_HASH.fullmatch(pointer["digest"]) is None
+            or type(pointer["connection_epoch"]) is not int
+            or not 1 <= pointer["connection_epoch"] <= _MAX_EPOCH):
+        raise ValueError("notice_private_documentary_pointer_invalid")
+    return pointer
+
+
+def _shared_payload(db, row):
+    pointer = _shared_pointer(row)
+    if db is None:
+        raise ValueError("notice_private_documentary_snapshot_required")
+    provider = row["key"]["provider_id"]
+    key = _SHARED_PREFIX + pointer["digest"]
+    saved = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+    if saved is None or type(saved[0]) is not str or len(saved[0].encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("notice_private_documentary_missing")
+    payload = json.loads(saved[0], object_pairs_hook=_unique_object)
+    if (type(payload) is not dict or set(payload) != {"body", "refs"}
+            or type(payload["body"]) is not str
+            or len(payload["body"].encode("utf-8")) > 65536
+            or type(payload["refs"]) is not int or not 1 <= payload["refs"] <= _MAX_EPOCH
+            or _documentary_key(provider, pointer["edition"], payload["body"]) != key):
+        raise ValueError("notice_private_documentary_corrupt")
+    return key, payload
+
+
+def _shared_raw_json(db, row, key):
+    # No public reader or arbitrary private parser may consume this pointer.
+    if (key.visibility != "private" or key.branch_id != "search.authenticated.catalogue"
+            or row["parser_id"] != "core.search.authenticated-web"
+            or row["parser_version"] != "1" or row["status"] != "complete"
+            or row["field_path"] != ["cover"] or row["cover_inventory_complete"] is not False):
+        raise ValueError("notice_private_documentary_scope_invalid")
+    from .notice_c_authenticated_web_retention import FIELD, validated_private_web_field
+    _, payload = _shared_payload(db, row)
+    fields = json.loads(payload["body"], object_pairs_hook=_unique_object)
+    if (type(fields) is not dict or set(fields) != {
+            "cover", "source_field", "source_record", "private_bibliography", FIELD,
+        } or type(fields[FIELD]) is not dict or "connection_epoch" in fields[FIELD]):
+        raise ValueError("notice_private_documentary_body_invalid")
+    fields[FIELD]["connection_epoch"] = _shared_pointer(row)["connection_epoch"]
+    if validated_private_web_field(fields[FIELD], key.provider_id) is None:
+        raise ValueError("notice_private_documentary_web_invalid")
+    # The normal admission replay below MUST reproduce the original
+    # per-source revision including its owner, credential and access epoch.
+    return json.dumps(fields, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False)
+
+
+def _release_shared_payload_txn(db, raw):
+    row = json.loads(raw, object_pairs_hook=_unique_object)
+    if _SHARED_FIELD not in row:
+        return
+    key, payload = _shared_payload(db, row)
+    if payload["refs"] == 1:
+        # Ordinary exact-source retention, not deletion of C or its private
+        # retained web sidecar. Last reference releases only the shared bytes.
+        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+    else:
+        payload["refs"] -= 1
+        db.execute("UPDATE metadata SET value=? WHERE key=?", (
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")), key,
+        ))
+
+
+def share_native_private_documentary_txn(db, source, *, edition):
+    """Factor identical native parsed document bytes inside the existing writer.
+
+    The caller has qualified the actual same-call parse and native edition
+    relation. Each independently observed source keeps its own observation
+    revision, source epoch, owner, connection epoch and retention sidecar.
+    This is documentary equivalence only: never remote-account equivalence.
+    """
+    if not db.in_transaction or type(edition) is not str or _SHARED_EDITION.fullmatch(edition) is None:
+        raise ValueError("notice_private_documentary_relation_invalid")
+    obs, doc = source.observation, source.document
+    raw, current, fence = _checked_source_state(db, doc, _opaque_key(doc))
+    if current != source or fence is None:
+        raise ValueError("notice_private_documentary_stale")
+    row = json.loads(raw[0], object_pairs_hook=_unique_object)
+    if _SHARED_FIELD in row:
+        if _shared_pointer(row)["edition"] != edition:
+            raise ValueError("notice_private_documentary_relation_changed")
+        return
+    from .notice_c_authenticated_web_retention import FIELD, validated_private_web_field
+    fields = obs.fields_copy()
+    if (obs.key.visibility != "private" or obs.key.branch_id != "search.authenticated.catalogue"
+            or obs.parser_id != "core.search.authenticated-web" or obs.parser_version != "1"
+            or obs.status != "complete" or row["field_path"] != ["cover"]
+            or row["cover_inventory_complete"] is not False
+            or set(fields) != {"cover", "source_field", "source_record", "private_bibliography", FIELD}
+            or type(fields["private_bibliography"]) is not dict
+            or validated_private_web_field(fields[FIELD], doc.provider_id) is None):
+        return
+    epoch = fields[FIELD].pop("connection_epoch")
+    body = json.dumps(fields, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False)
+    key = _documentary_key(doc.provider_id, edition, body)
+    row.pop("raw_json")
+    row[_SHARED_FIELD] = {"edition": edition, "digest": key[len(_SHARED_PREFIX):],
+                          "connection_epoch": epoch}
+    existing = db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone()
+    if existing is None:
+        payload = {"body": body, "refs": 1}
+    else:
+        _, payload = _shared_payload(db, row)
+        if payload["body"] != body or payload["refs"] >= _MAX_EPOCH:
+            raise ValueError("notice_private_documentary_conflict")
+        payload["refs"] += 1
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    compact = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > _MAX_BYTES or len(compact.encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("notice_private_documentary_too_large")
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) "
+               "DO UPDATE SET value=excluded.value", (key, encoded))
+    if _decode(compact, doc, db=db) != source:
+        raise ValueError("notice_private_documentary_replay_changed")
+    db.execute("UPDATE metadata SET value=? WHERE key=?", (compact, _opaque_key(doc)))
+
+
+def _decode(raw: object, document: CoverDocumentScope, *, db=None) -> PersistedNoticeCover:
     """Fail closed on tampered DB bytes; never interpret them as 'no cover'."""
     if (type(raw) is not str or len(raw.encode("utf-8")) > _MAX_BYTES
             or not raw):
@@ -125,7 +264,8 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
     try:
         row = json.loads(raw, object_pairs_hook=_unique_object)
         if (type(row) is not dict
-                or set(row) not in (_ROW_FIELDS, _ROW_FIELDS | {_LAST_SEEN})
+                or set(row) not in (_ROW_FIELDS, _ROW_FIELDS | {_LAST_SEEN},
+                                   _SHARED_ROW_FIELDS, _SHARED_ROW_FIELDS | {_LAST_SEEN})
                 or type(row["schema"]) is not int or row["schema"] != 1):
             raise ValueError
         key_values = row["key"]
@@ -135,7 +275,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
         if (type(row["epoch"]) is not int
                 or not 1 <= row["epoch"] <= _MAX_EPOCH
                 or type(row["source_revision"]) is not str
-                or type(row["raw_json"]) is not str
+                or ("raw_json" in row and type(row["raw_json"]) is not str)
                 or type(row["field_path"]) is not list
                 or type(row["cover_inventory_complete"]) is not bool
                 or type(row.get(_LAST_SEEN, row["observed_at"])) is not int
@@ -145,7 +285,8 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
             key=key, parser_id=row["parser_id"],
             parser_version=row["parser_version"],
             observed_at=row["observed_at"], status=row["status"],
-            source_revision=row["source_revision"], raw_json=row["raw_json"],
+            source_revision=row["source_revision"], raw_json=(
+                _shared_raw_json(db, row, key) if _SHARED_FIELD in row else row["raw_json"]),
         )
         attribute = project_notice_cover_attribute(
             observation, field_path=tuple(row["field_path"]),
@@ -191,8 +332,9 @@ def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNo
     if key is None:
         return None
     with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
         row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
-    return _decode(row[0], document) if row is not None else None
+        return _decode(row[0], document, db=db) if row is not None else None
 
 
 
@@ -300,7 +442,7 @@ def _check_live_source_fence(previous, old_row, fence):
 
 def _checked_source_state(db, document, key):
     row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
-    previous = _decode(row[0], document) if row is not None else None
+    previous = _decode(row[0], document, db=db) if row is not None else None
     fence = _read_source_fence(db, key)
     if previous is not None:
         _check_live_source_fence(previous, json.loads(row[0]), fence)
@@ -383,6 +525,7 @@ def evict_notice_cover(
             ),
             evicted=True, public_search_v2=_is_public_search_v2(previous.observation),
         )
+        _release_shared_payload_txn(db, row[0])
         db.execute("DELETE FROM metadata WHERE key=?", (key,))
         return True
 
@@ -534,6 +677,8 @@ def _persist_notice_cover_txn(
         raise ValueError("notice_c_persisted_epoch_overflow")
     epoch = previous_epoch + 1
     encoded = _encode_source_row(observation, field_path, cover_inventory_complete, epoch)
+    if existing is not None:
+        _release_shared_payload_txn(db, existing[0])
     db.execute(
         "INSERT INTO metadata(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

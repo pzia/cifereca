@@ -701,6 +701,28 @@ def test_native_resource_namespace_groups_edition_not_accounts(harness, other_re
     assert all(m.visibility == "private" and m.public_bibliography is None
                for m in c.sources)
     assert c.catalogue_web_references == () and c.candidates == ()
+    # One physical documentary body for the exact same native resource
+    # and parsed content; original source observations/authorities stay distinct.
+    import json
+    from cifereca.core.notice_cover_repository import (
+        _SHARED_PREFIX, _opaque_key, read_current_notice_cover, evict_notice_cover,
+    )
+    docs = (notice_cover_document_ref(_source_key(first, "alice")),
+            notice_cover_document_ref(_source_key(second, "bob")))
+    with db._lock, db._connect() as sql:
+        shared = sql.execute("SELECT value FROM metadata WHERE key LIKE ?",
+                             (_SHARED_PREFIX + "%",)).fetchall()
+        scoped = [json.loads(sql.execute("SELECT value FROM metadata WHERE key=?",
+                                         (_opaque_key(doc),)).fetchone()[0]) for doc in docs]
+    assert len(shared) == (1 if other_record == "record-a" else 2)
+    assert sorted(json.loads(row[0])["refs"] for row in shared) == (
+        [2] if other_record == "record-a" else [1, 1])
+    assert all("raw_json" not in row for row in scoped)
+    assert (scoped[0]["documentary_payload"]["digest"] == scoped[1]["documentary_payload"]["digest"]) is (
+        other_record == "record-a")
+    observations = [read_current_notice_cover(db, doc) for doc in docs]
+    assert all(obs is not None for obs in observations)
+    assert observations[0].observation.source_revision != observations[1].observation.source_revision
     assert notice_cover_document_ref(_source_key(first, "alice")) != (
         notice_cover_document_ref(_source_key(second, "bob")))
     assert private_search_c_binding_facts(second, "bob") == (c.document, c.epoch)
@@ -727,4 +749,18 @@ def test_native_resource_namespace_groups_edition_not_accounts(harness, other_re
     assert resolve_authenticated_web_choice(
         service, menu_a, choice_id=menu_a.choices[0].choice_id,
     ) == ORIGIN + "/resources/record-a"
+    # Exact retention of B must not evict A's body or lend A's session.
+    assert evict_notice_cover(db, docs[1], expected_epoch=observations[1].epoch)
+    assert read_current_notice_cover(db, docs[1]) is None
+    assert read_current_notice_cover(db, docs[0]) == observations[0]
+    with db._lock, db._connect() as sql:
+        remaining_bodies = sql.execute("SELECT value FROM metadata WHERE key LIKE ?",
+                                       (_SHARED_PREFIX + "%",)).fetchall()
+    assert len(remaining_bodies) == 1 and json.loads(remaining_bodies[0][0])["refs"] == 1
+    assert resolve_authenticated_web_choice(
+        service, menu_a, choice_id=menu_a.choices[0].choice_id,
+    ) == ORIGIN + "/resources/record-a"
+    assert resolve_authenticated_web_choice(
+        service, menu_b, choice_id=menu_b.choices[0].choice_id,
+    ) is None
     assert db.entitlements() == db.acquisitions() == db.placements() == []
