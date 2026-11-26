@@ -80,8 +80,10 @@ def admit_borrower_public_c_cell(host: Any, row: Any, document: object) -> bool:
             or context[2] != getattr(service, "_source_context_epoch", None)):
         return False
     if type(source) is Loan:
+        from .loan_cover_decision_bridge import current_loan_embedded_conflict
         return (getattr(row, "key", None) == loan_source_key(source)
-                and exact_loan_public_c(host, source) is receipt)
+                and exact_loan_public_c(host, source) is receipt
+                and not current_loan_embedded_conflict(host, source))
     if type(source) is HistoryItem:
         return (getattr(row, "key", None) == source.id
                 and getattr(row, "_history_cover_revision", None) ==
@@ -94,6 +96,9 @@ def show_public_loan_c(
     host: Any, loan: Loan, display: Callable[[], Loan],
 ) -> bool:
     """Fallback ONLY after attested EPUB and direct supplier cover fail."""
+    from .loan_cover_decision_bridge import current_loan_embedded_conflict
+    if current_loan_embedded_conflict(host, loan):
+        return False
     receipt = exact_loan_public_c(host, loan)
     if receipt is None:
         return False
@@ -213,7 +218,9 @@ def bind_borrower_public_c_detail(
                 or receipt.document != document):
             return False
         if is_loan:
-            return exact_loan_public_c(host, source) is receipt
+            from .loan_cover_decision_bridge import current_loan_embedded_conflict
+            return (exact_loan_public_c(host, source) is receipt
+                    and not current_loan_embedded_conflict(host, source))
         if is_history:
             return exact_history_public_c(host, source) is receipt
         return False
