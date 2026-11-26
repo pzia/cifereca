@@ -11,6 +11,7 @@ repaint. This is synthetic context substitution, not a live profile switch.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from time import monotonic
 from unittest.mock import patch
 
@@ -34,7 +35,7 @@ def audit_guard(service, check):
     assert owner != foreign
     # Isolate the account epoch from source changes: A -> B -> A must not
     # be accepted merely because the public document and N3 bytes still match.
-    with patch.object(identity, "identity_id", foreign), patch.object(
+    with patch.object(service, "current_identity", replace(identity, identity_id=foreign)), patch.object(
             service, "_account_context_epoch", account_epoch + 1):
         assert check() is False
     with patch.object(service, "_account_context_epoch", account_epoch + 2):
@@ -167,7 +168,7 @@ class NativeLeaseAudit:
                     before = loader.stats()
                     # Do not process any other GTK event with simulated
                     # context. B and the returning A' are distinct epochs.
-                    with patch.object(identity, "identity_id", foreign), patch.object(
+                    with patch.object(service, "current_identity", replace(identity, identity_id=foreign)), patch.object(
                             service, "_account_context_epoch", account + 1):
                         assert check() is False
                     with patch.object(service, "_account_context_epoch", account + 2):

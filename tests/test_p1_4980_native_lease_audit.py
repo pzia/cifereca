@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+from cifereca.identities.models import Identity
+
 import pytest
 
 PATH = Path(__file__).resolve().parents[1] / "e2e/notice_c_native_lease_audit.py"
@@ -12,12 +14,13 @@ SPEC.loader.exec_module(audit)
 
 
 def context():
-    return SimpleNamespace(current_identity=SimpleNamespace(identity_id="A"),
+    return SimpleNamespace(current_identity=Identity(identity_id="A", label="Fixture A"),
                            _account_context_epoch=10, _source_context_epoch=20)
 
 
 def test_exact_guard_rejects_account_aba_and_source_change_without_mutating_fixture():
     service = context()
+    original_identity = service.current_identity
     calls = []
 
     def check():
@@ -31,6 +34,7 @@ def test_exact_guard_rejects_account_aba_and_source_change_without_mutating_fixt
         ("A", 10, 20), ("fixture-4980-foreign-profile", 11, 20),
         ("A", 12, 20), ("A", 10, 21), ("A", 10, 20),
     ]
+    assert service.current_identity is original_identity
     assert service.current_identity.identity_id == "A"
     assert service._account_context_epoch == 10 and service._source_context_epoch == 20
 
