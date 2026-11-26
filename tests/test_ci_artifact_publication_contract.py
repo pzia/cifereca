@@ -51,6 +51,7 @@ PUBLIC_ARTIFACT_PATHS = {
     ),
     "e2e-smoke.yml": (
         "${{ runner.temp }}/cifereca-e2e-public/summary.json",
+        "${{ runner.temp }}/notice-matrix-receipt.json",
     ),
     "gtk-smoke.yml": (
         "${{ runner.temp }}/gtk-smoke-public/result.json",
@@ -96,15 +97,17 @@ def test_exact_public_artifact_allowlist_and_two_day_retention():
             workflow.name, "v6" if workflow.name in NODE24_ARTIFACT_WORKFLOWS else "v4"
         )
         action = f"uses: actions/upload-artifact@{version}"
-        assert data.count("uses: actions/upload-artifact@") == 1, workflow.name
-        assert data.count(action) == 1, workflow.name
-        block = data.split(action, 1)[1].split(
-            "\n      - ", 1,
-        )[0]
-        actual_publishers[workflow.name] = _published_paths(block)
-        assert re.search(r"(?m)^          retention-days: 2$", block), workflow.name
-        assert "          if-no-files-found: " in block, workflow.name
-        assert "include-hidden-files: true" not in block, workflow.name
+        expected_count = 2 if workflow.name == "e2e-smoke.yml" else 1
+        assert data.count("uses: actions/upload-artifact@") == expected_count, workflow.name
+        assert data.count(action) == expected_count, workflow.name
+        paths = []
+        for tail in data.split(action)[1:]:
+            block = tail.split("\n      - ", 1)[0]
+            paths.extend(_published_paths(block))
+            assert re.search(r"(?m)^          retention-days: 2$", block), workflow.name
+            assert "          if-no-files-found: " in block, workflow.name
+            assert "include-hidden-files: true" not in block, workflow.name
+        actual_publishers[workflow.name] = tuple(paths)
     assert actual_publishers == PUBLIC_ARTIFACT_PATHS
 
 
