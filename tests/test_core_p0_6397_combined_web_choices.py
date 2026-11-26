@@ -88,3 +88,43 @@ def test_mixed_gtk_has_one_action_and_no_private_url_in_label(tmp_path):
         deliver(pending)
         assert launches == [URL, PUBLIC]
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+@pytest.mark.parametrize("change", ["disconnect", "session", "generation"])
+def test_mixed_private_worker_delivery_does_not_launch_revoked_session(tmp_path, change):
+    with closing(Storage(tmp_path / "delivery.sqlite")) as db:
+        core, alice, _, c = setup(db)
+        scope = capture_search_read_scope(core, "alice")
+        pending, actions, launches, toasts = [], [], [], []
+        host = NS(service=core, _closed=False,
+                  runner=NS(submit=lambda _label, work, done, fail, **kw:
+                            pending.append((work, done, fail))),
+                  toast=toasts.append)
+        panel = NS(add_actions=actions.extend)
+        gio = NS(AppInfo=NS(launch_default_for_uri=lambda uri, _: launches.append(uri)))
+        assert request_public_web_actions(
+            host, panel, c.document, expected_epoch=c.epoch, current=lambda: True,
+            Gtk=GTK, Gio=gio, reader_scope=scope,
+        )
+        deliver(pending)
+        public, private = actions[0].popover.child.child.children
+        private.callback(private)
+        work, done, _ = pending.pop(0)
+        uri = work()
+        assert uri == URL
+        session_key = (alice.provider_id, alice.credential_id)
+        session = core._sessions[session_key]
+        if change == "disconnect":
+            session.connected = False
+        elif change == "session":
+            core._sessions[session_key] = type(session)(alice)
+        else:
+            session._epoch += 1
+        done(uri)
+        assert launches == [] and toasts
+        done(uri)
+        assert launches == []
+        public.callback(public)
+        deliver(pending)
+        assert launches == [PUBLIC]
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
