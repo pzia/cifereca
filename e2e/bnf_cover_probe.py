@@ -99,10 +99,14 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
     parser.add_argument("--appearance", choices=("light", "dark"))
+    parser.add_argument("--synthetic-matrix", action="store_true")
     args = parser.parse_args()
     if args.width != 1366 and args.appearance is None:
         parser.error("private alternative width requires explicit appearance")
-    if (args.width != 1366 or args.appearance is not None) and (
+    if args.synthetic_matrix and (args.appearance is None
+            or args.out.resolve().is_relative_to(ROOT.resolve())):
+        parser.error("synthetic matrix requires explicit appearance and external output")
+    if not args.synthetic_matrix and (args.width != 1366 or args.appearance is not None) and (
             os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
         parser.error("alternative BnF review is local only")
     size = (args.width, 1000 if args.width == 1600 else 900)
