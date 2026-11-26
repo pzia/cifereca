@@ -214,13 +214,13 @@ def test_opaque_bibliographic_objects_do_not_create_false_search_hits():
         "typed-1", "Anthologie",
         subjects=["Astronomie", {"raw": "marker-secret-nested"}],
         series=["Carnets du ciel"], collection="Bibliothèque de Paris",
-        isbn=["9780000000001"],
+        isbn=["9780306406157"],
     )
     for field, term in (
         ("subject", "Astronomie"),
         ("series", "Carnets"),
         ("collection", "Paris"),
-        ("isbn", "9780000000001"),
+        ("isbn", "9780306406157"),
     ):
         assert filter_loaded_results([verified], term, field=field) == [verified]
         assert filter_loaded_results([verified], term, field="all") == [verified]
