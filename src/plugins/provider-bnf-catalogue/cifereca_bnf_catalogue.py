@@ -417,12 +417,24 @@ class BnfCatalogueSession(ProviderSession):
             support = "digital" if digital else "physical" if physical else "unknown"
             # Technical format is left unknown unless a MIME type says otherwise.
             fmt = next(({"application/epub+zip": "EPUB", "application/pdf": "PDF"}[f.lower().split(";", 1)[0].strip()] for f in formats if f.lower().split(";", 1)[0].strip() in {"application/epub+zip", "application/pdf"}), None)
+            # Only literal identifiers of this record, never dc.relation,
+            # nested markup or the search query. Keep the declared ISBN form.
             isbns = []
-            for identifier in identifiers:
-                candidate = re.sub(r"^(?:urn:isbn:|isbn\s*:?)\s*", "", identifier, flags=re.I)
-                candidate = re.sub(r"[\s-]", "", candidate)
-                if re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", candidate):
-                    isbns.append(candidate.upper())
+            for node in data.iter(f"{{{DC}}}identifier"):
+                if len(node) or node.attrib or not node.text or len(node.text) > 128:
+                    continue
+                candidate = re.sub(r"^(?:urn:isbn:|isbn\s*:?)\s*", "", node.text.strip(), flags=re.I)
+                candidate = re.sub(r"[\s-]", "", candidate).upper()
+                if re.fullmatch(r"[0-9]{9}[0-9X]", candidate):
+                    valid = sum((10 - i) * (10 if c == "X" else int(c))
+                                for i, c in enumerate(candidate)) % 11 == 0
+                elif re.fullmatch(r"97[89][0-9]{10}", candidate):
+                    valid = sum(int(c) * (1 if i % 2 == 0 else 3)
+                                for i, c in enumerate(candidate)) % 10 == 0
+                else:
+                    valid = False
+                if valid and candidate not in isbns:
+                    isbns.append(candidate)
             languages = list(dict.fromkeys(
                 canonical for raw in values.get("language", [])
                 if (canonical := normalize_language_tag(raw)) is not None
