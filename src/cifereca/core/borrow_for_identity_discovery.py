@@ -103,7 +103,7 @@ class PossibleBorrowLender:
 
 
 
-def possible_lender_matches(candidate, notice, *, requesting_identity_id):
+def possible_lender_matches(candidate, notice, *, requesting_identity_id, include_requester=False):
     """Pure check of an already captured inert lender, never permission.
 
     A notice or account can change in place while a discovery task is queued,
@@ -123,7 +123,7 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
     account = candidate._account
     if (type(account) is not Account or account.is_primary is not True
             or type(candidate.lender_identity_id) is not str
-            or candidate.lender_identity_id == requesting_identity_id
+            or (candidate.lender_identity_id == requesting_identity_id and include_requester is not True)
             or type(candidate._captured_fields) is not tuple
             or not _valid_fields(candidate._captured_fields)):
         return False
@@ -183,14 +183,14 @@ def possible_lender_session_matches(candidate, session):
             and expected == generation)
 
 
-def _unique_lender_account(accounts, provider, credential, requester):
+def _unique_lender_account(accounts, provider, credential, requester, *, include_requester=False):
     """Reapply the same inert inventory rule at admission and publication."""
     if type(accounts) not in (list, tuple) or len(accounts) > 512:
         return None
     matching = [
         a for a in accounts
         if (type(a) is Account and a.is_primary is True
-            and a.identity_id != requester
+            and (a.identity_id != requester or include_requester is True)
             and a.provider_id == provider
             and a.credential_id == credential)
     ]
@@ -211,7 +211,7 @@ def _unique_lender_account(accounts, provider, credential, requester):
 
 def discover_possible_borrow_lenders(
     service: Any, *, requesting_identity_id: str,
-    notices: tuple[SearchResult, ...],
+    notices: tuple[SearchResult, ...], include_requester: bool = False,
 ) -> tuple[PossibleBorrowLender, ...]:
     """Enumerate 0/1/N *local* lender choices without provider IO or claims.
 
@@ -259,9 +259,16 @@ def discover_possible_borrow_lenders(
             provider, credential = item.source_provider, item.source_credential
             account = _unique_lender_account(
                 accounts, provider, credential, requesting_identity_id,
+                include_requester=include_requester,
             )
             if account is None:
                 continue
+            # A native C roster includes its reader only through the ordinary
+            # direct action policy. Legacy cross-profile callers remain unchanged.
+            if account.identity_id == requesting_identity_id:
+                from .manual_borrow_contract import manual_borrow_action_available
+                if not manual_borrow_action_available(service, item, identity_id=requesting_identity_id):
+                    continue
             route = (
                 account.identity_id, provider, credential, account.unique_id,
                 item.docbase, item.record_id, item.source_collection or "",
@@ -386,7 +393,8 @@ def discover_possible_borrow_lenders(
             account, notice = row._account, row._notice
             state = _inert_session_state(session)
             registered = _inert_session_accounts(session)
-            if (not possible_lender_matches(row, notice, requesting_identity_id=requesting_identity_id)
+            if (not possible_lender_matches(row, notice, requesting_identity_id=requesting_identity_id,
+                                               include_requester=include_requester)
                     or service.identity_by_id(row.lender_identity_id) is not lender
                     or service._sessions.get(service._session_key(
                         account.provider_id, account.credential_id)) is not session
@@ -400,7 +408,7 @@ def discover_possible_borrow_lenders(
                     or sum(a is account for a in registered) != 1
                     or _unique_lender_account(
                         final_accounts, account.provider_id, account.credential_id,
-                        requesting_identity_id) is not account):
+                        requesting_identity_id, include_requester=include_requester) is not account):
                 return ()
         visible = _label_lenders([row for row in result.values() if row is not None])
         # Label composition can rebuild a frozen DTO. Never re-admit mutated
@@ -409,6 +417,7 @@ def discover_possible_borrow_lenders(
             not possible_lender_matches(
                 row, row._notice,
                 requesting_identity_id=requesting_identity_id,
+                include_requester=include_requester,
             ) or not possible_lender_session_matches(row, row._session)
             for row in visible
         ):

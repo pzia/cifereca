@@ -102,6 +102,7 @@ def capture_native_lender_roster(service, *, document, expected_epoch,
             return None
         rows = discover_possible_borrow_lenders(
             service, requesting_identity_id=requesting_identity_id, notices=occurrences,
+            include_requester=True,
         )
         if not rows:
             return None
@@ -161,12 +162,22 @@ def native_lender_roster_current(service, roster):
         for row in roster.rows:
             notice, account = row._notice, row._account
             if not possible_lender_matches(
-                    row, notice, requesting_identity_id=roster._reader_id):
+                    row, notice, requesting_identity_id=roster._reader_id, include_requester=True):
                 return False
             if not possible_lender_session_matches(
                     row, service._sessions.get(service._session_key(
                         account.provider_id, account.credential_id))):
                 return False
+            if account.identity_id == roster._reader_id:
+                from .manual_borrow_contract import (
+                    resolved_manual_borrow_policy, _selected_primary_source_current,
+                )
+                policy = resolved_manual_borrow_policy(service, notice)
+                if (policy is None
+                        or (policy.primary_borrower_id is not None
+                            and policy.primary_borrower_id != account.unique_id)
+                        or not _selected_primary_source_current(service, notice, roster._reader_id, policy)):
+                    return False
             claim = borrow_claim_key(account, notice)
             if claim is None or claim in claims:
                 return False
@@ -290,6 +301,7 @@ def native_roster_matches_document(service, roster, document, *, expected_epoch,
         return (type(roster._seal) is tuple and roster._seal == seal
                 and all(possible_lender_matches(
                     row, row._notice, requesting_identity_id=requesting_identity_id,
+                    include_requester=True,
                 ) and possible_lender_session_matches(
                     row, service._sessions.get(service._session_key(
                         row._account.provider_id, row._account.credential_id)),

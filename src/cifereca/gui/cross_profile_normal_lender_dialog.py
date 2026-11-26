@@ -23,6 +23,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         return (possible_lender_matches(
             row, row._notice if native_roster is not None else item,
             requesting_identity_id=identity_id,
+            **({"include_requester": True} if native_roster is not None else {}),
         ) and (row._session is None or possible_lender_session_matches(
             row, row._session,
         )))
@@ -254,6 +255,7 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
             or any(not possible_lender_matches(
                 row, row._notice if native_roster is not None else item,
                 requesting_identity_id=identity_id,
+                **({"include_requester": True} if native_roster is not None else {}),
             ) or (row._session is not None and not possible_lender_session_matches(
                 row, row._session,
             )) for row in rows)):

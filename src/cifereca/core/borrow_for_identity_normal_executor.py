@@ -90,6 +90,28 @@ def execute_normal_lender_borrow(
                 or type(source_epoch) is not int or source_epoch < 0):
             return revoked
         account = captured_candidate._account
+        if (type(account) is Account and account.identity_id == requesting_identity_id
+                and native is not None):
+            # The active reader uses the established direct manual executor,
+            # not a cross-profile lease with weakened ownership constraints.
+            # Keep the whole native C roster current through CAS and dispatch.
+            from .manual_borrow_contract import manual_borrow_action
+            def direct_current():
+                return (scope_current() is True and roster_current()
+                        and possible_lender_matches(captured_candidate, exact_notice,
+                            requesting_identity_id=requesting_identity_id, include_requester=True)
+                        and possible_lender_session_matches(captured_candidate, service._sessions.get(
+                            service._session_key(account.provider_id, account.credential_id))))
+            if not direct_current():
+                return revoked
+            result = manual_borrow_action(service, exact_notice,
+                expected_identity_id=requesting_identity_id, confirmed=True,
+                expected_context_epoch=context_epoch, expected_account=account,
+                additional_scope_current=direct_current)
+            status = result.get("status")
+            if status == "confirmed" and result.get("provider_verified") is not True:
+                return _result("verification_unavailable", "borrow_result_unverified")
+            return _result(status, result.get("reason_code"))
         if (type(account) is not Account
                 or account.identity_id == requesting_identity_id
                 or not possible_lender_matches(
