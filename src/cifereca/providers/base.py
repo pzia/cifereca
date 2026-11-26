@@ -360,6 +360,12 @@ class ProviderDescriptor:
     # edition in these two APIs. None matches ONLY an unrevisioned public
     # source. No right, public disclosure, GET or mutation is authorized.
     borrower_public_edition_branches_v1: tuple[tuple[str, str, str, str | None], ...] = ()
+    # Optional descriptive contract: the authenticated Search parser uses
+    # the exact same record/edition namespace as its anonymous catalogue
+    # parser. (docbase, scenario, medium, exact revision). This is not a
+    # claim about a supplier offer, loan or another account.
+    authenticated_search_public_edition_branches_v1: tuple[tuple[str, str, str, str | None], ...] = ()
+
     # Optional documentary-only authenticated catalogue namespace, not an
     # account identity or a lending capability. Each exact tuple declares
     # (scenario, docbase, medium, source_collection, revision, source_field).

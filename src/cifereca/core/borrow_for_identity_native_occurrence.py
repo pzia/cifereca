@@ -124,6 +124,10 @@ def native_borrow_occurrence_document(service, row, *, owner):
     A separate admitted canonical membership must still bind this source
     to the reader's visible C before it can enter a multi-source roster.
     """
+    from .borrow_for_identity_public_branch import public_branch_occurrence_document
+    public = public_branch_occurrence_document(service, row, owner=owner)
+    if public is not None:
+        return public
     from .notice_c_private_search_web import _source_key, _read_source_key
     from .notice_cover_projection import notice_cover_document_ref
     from .notice_source_observation import NoticeSourceKey, _valid_key
@@ -151,6 +155,13 @@ def native_borrow_occurrence_document(service, row, *, owner):
                 or borrow_claim_key(account, row) is None
                 or not receipt.call.binding.current(service, receipt.call.scope)):
             return None
+        # Supersession/eviction must revoke a held private roster exactly
+        # as for the public-branch path. A still-connected session alone
+        # is not evidence that this row remains the retained occurrence.
+        with source_context_mutation(service):
+            inventory = getattr(service, "_native_borrow_occurrences", None)
+            if type(inventory) is not dict or inventory.get(key) is not row:
+                return None
         return notice_cover_document_ref(key)
     except (AttributeError, TypeError, ValueError, LookupError, RuntimeError):
         return None
@@ -173,13 +184,21 @@ def retained_native_borrow_occurrences(service, *, source_refs):
                 if type(inventory) is not dict or len(inventory) > _MAX_RETAINED:
                     return ()
                 snapshot = tuple(inventory.items())
+            from .borrow_for_identity_public_branch import PublicBranchOccurrenceKey
             rows = []
             for key, row in snapshot:
-                if (type(key) is not NoticeSourceKey or not _valid_key(key)
-                        or type(row) is not SearchResult
-                        or notice_cover_document_ref(key).source_key not in source_refs):
+                if type(row) is not SearchResult:
                     continue
-                if native_borrow_occurrence_document(service, row, owner=key.identity_id) is not None:
+                if type(key) is NoticeSourceKey and _valid_key(key):
+                    source, owner = key, key.identity_id
+                elif type(key) is PublicBranchOccurrenceKey and _valid_key(key.source):
+                    source, owner = key.source, key.owner
+                else:
+                    continue
+                doc = notice_cover_document_ref(source)
+                if doc.source_key not in source_refs:
+                    continue
+                if native_borrow_occurrence_document(service, row, owner=owner) == doc:
                     rows.append(row)
                 if len(rows) > 64:
                     return ()

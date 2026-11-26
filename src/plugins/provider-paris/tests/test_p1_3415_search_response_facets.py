@@ -792,3 +792,102 @@ def test_exact_anonymous_subject_reaches_durable_c(tmp_path, subject, expected):
         assert len(calls) == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("mode", ["sync", "progressive", "foreign"])
+def test_declared_dilicom_branch_retains_actual_native_empty_primary_for_c(
+    tmp_path, monkeypatch, mode,
+):
+    """Real Paris parser and ordinary Search -> original row -> exact public C.
+
+    HTTP is controlled; this proves the installed parser's shared record
+    namespace, not live supplier eligibility or the right to borrow.
+    """
+    from types import SimpleNamespace
+    from cifereca.config import Config
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.models import Account
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+    from cifereca.core.borrow_for_identity_native_occurrence import retained_native_borrow_occurrences
+    from cifereca.core.borrow_for_identity_public_branch import public_branch_occurrence_document
+    from cifereca.core.search_orchestration import _public_rows_from_response, _mirror_remote_results
+
+    calls = []
+
+    def respond(request):
+        scenario = json.loads(request.content)["query"]["ScenarioCode"]
+        calls.append(scenario)
+        return httpx.Response(200, json=_response(scenario, _facet()))
+
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("library.directory", str(tmp_path / "library"))
+    cfg.set("identities", [{"id": "alice", "label": "Alice"}, {"id": "bob", "label": "Bob"}])
+    cfg.set("providers.accounts", [])
+    service = LibraryService(cfg, Storage(tmp_path / "native-branch.sqlite"), Diagnostics())
+    anonymous = ParisProviderSession(
+        credential_id="__public__", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    native = ParisProviderSession(
+        credential_id="card-alice", label="Paris",
+        credentials={"username": "fixture", "password": "fixture"},
+        options={}, config={}, diagnostics=None,
+    )
+    for session in (anonymous, native):
+        session.client.close()
+        session.client = _client(respond)
+    account = Account(identity_id="alice", provider_id=native.provider_id,
+                      credential_id=native.credential_id, unique_id="", is_primary=True)
+    native._accounts = [account]
+    native.connected = True
+    service.accounts = [account]
+    service._sessions = {service._session_key(native.provider_id, native.credential_id): native}
+    monkeypatch.setattr(service, "_provider_enabled_for_identity", lambda *_: True)
+    connection = service.storage.provider_connection_put({
+        "identity_id": "alice", "provider_id": native.provider_id,
+        "credential_id": native.credential_id, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection, "identity_id": "alice", "provider_id": native.provider_id,
+        "credential_id": native.credential_id, "account_id": "", "is_primary": True,
+    })
+    try:
+        envelope = anonymous.search_with_response_facets("Synthetic book", "digital")
+        public, = _public_rows_from_response(envelope, anonymous)
+        assert _mirror_remote_results(
+            SimpleNamespace(storage=service.storage), [public], identity_id="alice",
+            require_public_cover_witness=True,
+        ) == 1
+        exact = public._core_notice_cover_document_ref
+        refs = frozenset((exact.source_key,))
+        assert retained_native_borrow_occurrences(service, source_refs=refs) == ()
+        if mode == "foreign":
+            service.select_identity("bob")
+        if mode == "progressive":
+            batches = []
+            summary = service.search_progressive(
+                "Synthetic book", scope="digital", provider_id="paris", force=True,
+                on_batch=lambda batch: batches.extend(batch.results),
+            )
+            assert not summary.cancelled
+            rows = batches
+        else:
+            rows = service.search("Synthetic book", scope="digital", provider_id="paris", force=True)
+        visible, = [r for r in rows if r.record_id == "synthetic-EBOOKS"]
+        count = len(calls)
+        original, = retained_native_borrow_occurrences(service, source_refs=refs)
+        assert original.source_account_id is None and account.unique_id == ""
+        assert public_branch_occurrence_document(service, original, owner="alice") == exact
+        assert public_branch_occurrence_document(service, original, owner="bob") is None
+        if mode == "foreign":
+            assert original is not visible
+            assert visible.metadata["catalogue_access"] == "shared_read_only"
+            assert public_branch_occurrence_document(service, visible, owner="alice") is None
+        else:
+            assert original is visible
+        assert len(calls) == count
+        assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+    finally:
+        anonymous.close()
+        service.close()

@@ -64,14 +64,21 @@ def _membership(service, document, sources):
         result = []
         for source in sources:
             member = members.get(source.source_key)
-            if (member is None or member.visibility != "private"
-                    or member.provider_id != source.provider_id):
+            visibility = "public" if source.kind == "public_catalogue" else "private"
+            if (member is None or member.visibility != visibility
+                    or member.provider_id != source.provider_id
+                    or (visibility == "public" and member.public_bibliography is None)):
                 return None
             _, live, fence = _checked_source_state(db, source, _opaque_key(source))
             if (live is None or fence is None
                     or live.epoch != member.source_epoch
                     or live.observation.source_revision != member.source_revision
-                    or live.observation.status != "complete"):
+                    or (visibility == "private" and live.observation.status != "complete")
+                    or (visibility == "public" and (
+                        live.observation.key.visibility != "public"
+                        or live.observation.key.branch_id != "search.public.catalogue"
+                        or live.observation.parser_id != "core.search.public-cover"
+                        or live.observation.status not in ("complete", "partial")))):
                 return None
             result.append((source.source_key, member.source_epoch,
                            member.source_revision, member.relation_proof_id))
@@ -106,7 +113,8 @@ def capture_native_lender_roster(service, *, document, expected_epoch,
             if source is None:
                 return None
             sources.append(source)
-        if len(set(sources)) != len(sources):
+        private_sources = tuple(d for d in sources if d.kind == "catalogue")
+        if len(set(private_sources)) != len(private_sources):
             return None
         proof = _membership(service, document, tuple(sources))
         if proof is None or proof[0] != expected_epoch:
@@ -169,7 +177,8 @@ def native_lender_roster_current(service, roster):
             if source is None:
                 return False
             sources.append(source)
-        if len(set(sources)) != len(sources):
+        private_sources = tuple(d for d in sources if d.kind == "catalogue")
+        if len(set(private_sources)) != len(private_sources):
             return False
         return (_membership(service, roster.document, tuple(sources))
                 == (roster.epoch, roster._sources)
@@ -233,7 +242,7 @@ def native_lender_roster_for_c(service, document, *, expected_epoch, requesting_
         c = read_consolidated_notice_cover(service.storage, document)
         if c is None or c.epoch != expected_epoch:
             return None
-        refs = frozenset(m.source_ref for m in c.sources if m.visibility == "private")
+        refs = frozenset(m.source_ref for m in c.sources if m.visibility in ("private", "public"))
         rows = retained_native_borrow_occurrences(service, source_refs=refs)
         if not rows:
             return None

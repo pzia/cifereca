@@ -28,6 +28,7 @@ def original(account):
 
 def setup(db):
     host = Host(db)
+    host._native_borrow_occurrences = {}
     account = host.account("alice")
     session = host._sessions[(account.provider_id, account.credential_id)]
     call = capture_authenticated_search_call(host, session, "alice")
@@ -86,5 +87,25 @@ def test_native_occurrence_revokes_without_rebinding(tmp_path, change):
             stamp_native_borrow_occurrences(host, call, [row, replace(row)])
         else:
             stamp_native_borrow_occurrences(host, call, (row,))
+        assert document(host, row) is None
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+@pytest.mark.parametrize("change", ["new_row", "duplicate_new_rows", "eviction"])
+def test_private_original_row_cannot_survive_inventory_supersession(tmp_path, change):
+    with closing(Storage(tmp_path / "superseded.sqlite")) as db:
+        host, account, _, call = setup(db)
+        row = original(account)
+        stamp_native_borrow_occurrences(host, call, [row])
+        assert document(host, row) is not None
+        new = replace(row)
+        if change == "new_row":
+            stamp_native_borrow_occurrences(host, call, [new])
+            assert document(host, new) is not None
+        elif change == "duplicate_new_rows":
+            stamp_native_borrow_occurrences(host, call, [new, replace(new)])
+            assert document(host, new) is None
+        else:
+            host._native_borrow_occurrences.clear()
         assert document(host, row) is None
         assert db.entitlements() == db.acquisitions() == db.placements() == []
