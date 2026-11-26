@@ -41,6 +41,16 @@ def test_offline_c_explicit_fields_after_eviction_restart(tmp_path):
             subject = page("subject", "astronomie", identity_id=viewer)
             assert subject.matched_count == 1 and not subject.has_more
             assert subject.results[0].record_id == "subject-a"
+            # The actual GTK remote DTO projection and QueryState filter
+            # must retain the same results, rather than lose them on render.
+            from cifereca.gui.query_model import QueryState, result_row
+            isbn_rows = [result_row(row) for row in (*first.results, *second.results)]
+            for query in ("9780306406157", "0306406152", "0-306-40615-2"):
+                assert len(QueryState(text=query, field="isbn").filter(isbn_rows)) == 2
+            assert not QueryState(text="9780306406158", field="isbn").filter(isbn_rows)
+            subject_rows = [result_row(row) for row in subject.results]
+            assert len(QueryState(text="astronomie", field="subject").filter(subject_rows)) == 1
+            assert not QueryState(text="cuisine", field="subject").filter(subject_rows)
             for result in (*first.results, *second.results, *subject.results):
                 assert result.metadata["notice_c_query_status"] == "partial"
                 assert result.metadata["search_provenance"] == "known_catalog_stale"
