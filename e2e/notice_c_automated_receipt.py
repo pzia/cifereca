@@ -67,11 +67,17 @@ def verify_theme_pairs(rows, root, family):
         raise CaptureError("missing or identical theme pair")
 
 
+def route_title_keys():
+    return tuple(f"synthetic_title_00-notice-c-{route}-{variant}-{phase}"
+                 for phase in ("cold", "offline") for route in generic.ROUTES
+                 for variant in ("list", "detail"))
+
+
 def verify_native_titles(root, sha):
     for theme, width in MATRIX:
         for folder, reader, keys in (
             (root / "generic" / theme / f"book-detail-{width}", generic.read_regular,
-             ("synthetic_native_title_readable",)),
+             ("synthetic_native_title_readable", *route_title_keys())),
             (bnf.capture_folder(root / "bnf", theme, width), bnf.read_regular,
              ("synthetic_native_title_0", "synthetic_native_title_1")),
         ):

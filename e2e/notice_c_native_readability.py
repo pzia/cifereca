@@ -44,18 +44,19 @@ def check_pixels(crop, foreground):
         raise AssertionError("native title contrast or paint missing")
 
 
-def native_title_witness(window, panel, screenshot, expected_title):
+def walk(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from walk(child)
+        child = child.get_next_sibling()
+
+
+def native_label_witness(window, label, screenshot):
     from gi.repository import Gtk
     import gi
     gi.require_version("GdkX11", "4.0")
     from gi.repository import GdkX11
-
-    def walk(widget):
-        yield widget
-        child = widget.get_first_child()
-        while child is not None:
-            yield from walk(child)
-            child = child.get_next_sibling()
 
     def bounds(widget):
         ok, rect = widget.compute_bounds(window)
@@ -63,12 +64,8 @@ def native_title_witness(window, panel, screenshot, expected_title):
             raise AssertionError("native title coordinates unavailable")
         return (rect.get_x(), rect.get_y(), rect.get_width(), rect.get_height())
 
-    titles = [node for node in walk(panel.content)
-              if isinstance(node, Gtk.Label) and node.get_mapped()
-              and node.has_css_class("detail-title")]
-    if len(titles) != 1 or titles[0].get_text() != expected_title:
-        raise AssertionError("exact synthetic native title absent")
-    label = titles[0]
+    if not isinstance(label, Gtk.Label) or not label.get_mapped():
+        raise AssertionError("native label not mapped")
     layout = label.get_layout()
     if layout.is_ellipsized():
         raise AssertionError("native title ellipsized")
@@ -78,7 +75,14 @@ def native_title_witness(window, panel, screenshot, expected_title):
     require_inside(local, (0, 0, label.get_width(), label.get_height()))
     lx, ly, _, _ = bounds(label)
     rect = (lx + local[0], ly + local[1], local[2], local[3])
-    require_inside(rect, bounds(panel.body_scroll))
+    ancestor = label.get_parent()
+    while ancestor is not None and ancestor is not window:
+        if (isinstance(ancestor, (Gtk.ScrolledWindow, Gtk.Viewport))
+                or ancestor.get_overflow() == Gtk.Overflow.HIDDEN):
+            require_inside(rect, bounds(ancestor))
+        ancestor = ancestor.get_parent()
+    if ancestor is not window:
+        raise AssertionError("native title outside window hierarchy")
     require_inside(rect, (0, 0, window.get_width(), window.get_height()))
     surface = window.get_surface()
     if not isinstance(surface, GdkX11.X11Surface) or surface.get_scale_factor() != 1:
@@ -103,3 +107,32 @@ def native_title_witness(window, panel, screenshot, expected_title):
     foreground = tuple(round(v * 255) for v in (color.red, color.green, color.blue))
     check_pixels(screenshot.crop((left, top, right, bottom)), foreground)
     return True
+
+
+def native_title_witness(window, panel, screenshot, expected_title):
+    from gi.repository import Gtk
+    titles = [node for node in walk(panel.content)
+              if isinstance(node, Gtk.Label) and node.get_mapped()
+              and node.has_css_class("detail-title")]
+    if len(titles) != 1 or titles[0].get_text() != expected_title:
+        raise AssertionError("exact synthetic native title absent")
+    return native_label_witness(window, titles[0], screenshot)
+
+
+def native_route_title_witness(window, screenshot, route, variant, expected_title):
+    from cifereca.gui.book_widgets import BookListCell
+    from cifereca.gui.detail_panel import DetailPanel
+    from notice_c_native_lease_audit import mapped_cover
+
+    cover = mapped_cover(window, route, variant)
+    ancestor = cover.get_parent()
+    expected_type = BookListCell if variant == "list" else DetailPanel
+    while ancestor is not None and not isinstance(ancestor, expected_type):
+        ancestor = ancestor.get_parent()
+    if ancestor is None:
+        raise AssertionError("native title owner absent")
+    if variant == "detail":
+        return native_title_witness(window, ancestor, screenshot, expected_title)
+    if ancestor.title_label.get_text() != expected_title:
+        raise AssertionError("exact synthetic list title absent")
+    return native_label_witness(window, ancestor.title_label, screenshot)

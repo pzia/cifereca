@@ -92,7 +92,8 @@ def test_png_metadata_cannot_fake_distinct_theme_pixels(tmp_path, monkeypatch):
 
     light = png("white", "light")
     dark = png("white", "dark")
-    sha = lambda raw: hashlib.sha256(raw).hexdigest()
+    def sha(raw):
+        return hashlib.sha256(raw).hexdigest()
     assert sha(light) != sha(dark)
     captures = [
         dict(width="1366", stage="test", appearance=mode, sha256=sha(raw))
@@ -142,10 +143,36 @@ def test_native_title_receipt_refuses_missing_or_nonboolean(tmp_path, monkeypatc
         "synthetic_native_title_0": True,
         "synthetic_native_title_1": bad,
     })
-    read = lambda *args: json.dumps(payload).encode()
+    payload["checks"].update(dict.fromkeys(receipt.route_title_keys(), True))
+    def read(*args):
+        return json.dumps(payload).encode()
     monkeypatch.setattr(receipt.generic, "read_regular", read)
     monkeypatch.setattr(receipt.bnf, "read_regular", read)
     with pytest.raises(receipt.CaptureError, match="missing native title witness"):
         receipt.verify_native_titles(tmp_path, SHA)
     payload["checks"]["synthetic_native_title_1"] = True
     receipt.verify_native_titles(tmp_path, SHA)
+
+
+def test_every_native_route_title_is_required(tmp_path, monkeypatch):
+    import json
+    keys = receipt.route_title_keys()
+    assert len(keys) == len(set(keys)) == 24
+    payload = dict(git_sha=SHA, status="PASS", checks={
+        "synthetic_native_title_readable": True,
+        "synthetic_native_title_0": True,
+        "synthetic_native_title_1": True,
+        **dict.fromkeys(keys, True),
+    })
+
+    def read(*args):
+        return json.dumps(payload).encode()
+
+    monkeypatch.setattr(receipt.generic, "read_regular", read)
+    monkeypatch.setattr(receipt.bnf, "read_regular", read)
+    receipt.verify_native_titles(tmp_path, SHA)
+    for key in keys:
+        del payload["checks"][key]
+        with pytest.raises(receipt.CaptureError, match="missing native title witness"):
+            receipt.verify_native_titles(tmp_path, SHA)
+        payload["checks"][key] = True
