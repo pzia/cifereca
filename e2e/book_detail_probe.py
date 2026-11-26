@@ -159,19 +159,27 @@ def main():
                 args.geometry_1300 and picture.height != 768):
             report.setdefault("capture_failure_phase", "display_geometry")
             raise AssertionError(picture.size)
-        if args.synthetic_matrix and name == "00-search-detail-closed":
-            from notice_c_native_readability import native_title_witness
-            report["checks"]["synthetic_native_title_readable"] = native_title_witness(
-                window, window.search_page.detail, picture, TITLE)
         if args.synthetic_matrix:
-            from notice_c_native_readability import native_route_title_witness
+            from notice_c_native_readability import (
+                failure_code, native_title_witness, native_route_title_witness,
+            )
             from notice_c_private_review import ROUTES
-            for phase in ("cold", "offline"):
-                for route in ROUTES:
-                    for variant in ("list", "detail"):
-                        if name == f"00-notice-c-{route}-{variant}-{phase}":
-                            report["checks"]["synthetic_title_" + name] = native_route_title_witness(
-                                window, picture, route, variant, "Les Enfants du Pas du Loup")
+            try:
+                if name == "00-search-detail-closed":
+                    report["checks"]["synthetic_native_title_readable"] = native_title_witness(
+                        window, window.search_page.detail, picture, TITLE)
+                for phase in ("cold", "offline"):
+                    for route in ROUTES:
+                        for variant in ("list", "detail"):
+                            if name == f"00-notice-c-{route}-{variant}-{phase}":
+                                report["checks"]["synthetic_title_" + name] = native_route_title_witness(
+                                    window, picture, route, variant, "Les Enfants du Pas du Loup")
+            except Exception as exc:
+                # Only the orchestrator's fixed stage/code whitelist is public.
+                report["synthetic_title_failure"] = {
+                    "stage": name, "code": failure_code(exc),
+                }
+                raise
         filename = out / f"{name}.png"
         try:
             picture.save(filename)

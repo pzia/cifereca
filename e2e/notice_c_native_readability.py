@@ -5,6 +5,32 @@ import re
 import subprocess
 
 MIN_CONTRAST = 4.5
+FAILURE_CODES = {
+    "native title clipped": "geometry",
+    "empty native title crop": "empty_crop",
+    "unresolved native title background": "background",
+    "native title contrast or paint missing": "contrast_or_paint",
+    "native title coordinates unavailable": "coordinates",
+    "native label not mapped": "unmapped",
+    "native title ellipsized": "ellipsized",
+    "native title outside window hierarchy": "hierarchy",
+    "native title requires unscaled X11 surface": "surface",
+    "native title X11 origin unavailable": "origin",
+    "unresolved native title alpha": "alpha",
+    "exact synthetic native title absent": "detail_title",
+    "native title owner absent": "owner",
+    "native cover witness unavailable": "cover",
+    "exact synthetic list title absent": "list_title",
+}
+
+
+def failure_code(exc):
+    if type(exc) is AssertionError and len(exc.args) == 1 and type(exc.args[0]) is str:
+        return FAILURE_CODES.get(exc.args[0], "other_assertion")
+    if type(exc) is AssertionError:
+        return "other_assertion"
+    return "runtime"
+
 
 
 def require_inside(inner, outer):
@@ -124,7 +150,10 @@ def native_route_title_witness(window, screenshot, route, variant, expected_titl
     from cifereca.gui.detail_panel import DetailPanel
     from notice_c_native_lease_audit import mapped_cover
 
-    cover = mapped_cover(window, route, variant)
+    try:
+        cover = mapped_cover(window, route, variant)
+    except AssertionError:
+        raise AssertionError("native cover witness unavailable") from None
     ancestor = cover.get_parent()
     expected_type = BookListCell if variant == "list" else DetailPanel
     while ancestor is not None and not isinstance(ancestor, expected_type):

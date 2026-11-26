@@ -176,3 +176,26 @@ def test_every_native_route_title_is_required(tmp_path, monkeypatch):
         with pytest.raises(receipt.CaptureError, match="missing native title witness"):
             receipt.verify_native_titles(tmp_path, SHA)
         payload["checks"][key] = True
+
+
+def test_closed_title_failure_does_not_export_report_content():
+    from notice_c_native_readability import failure_code
+    stage = "00-notice-c-library-list-cold"
+    report = dict(git_sha=SHA, status="FAIL",
+                  synthetic_title_failure={"stage": stage, "code": "geometry"},
+                  error="PRIVATE_TOKEN")
+    assert receipt.closed_title_failure(report, SHA) == {
+        "failed_title_stage": stage, "failed_title_code": "geometry",
+    }
+    assert failure_code(AssertionError("native title clipped")) == "geometry"
+    assert failure_code(AssertionError("PRIVATE_TOKEN")) == "other_assertion"
+    assert failure_code(RuntimeError("PRIVATE_TOKEN")) == "runtime"
+    assert receipt.closed_title_failure(report, "f" * 40) == {}
+    for invalid in (
+        {"stage": "PRIVATE_TOKEN", "code": "geometry"},
+        {"stage": stage, "code": "PRIVATE_TOKEN"},
+        {"stage": stage, "code": []},
+        {"stage": stage, "code": "geometry", "private": "PRIVATE_TOKEN"},
+    ):
+        report["synthetic_title_failure"] = invalid
+        assert receipt.closed_title_failure(report, SHA) == {}

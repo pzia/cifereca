@@ -15,10 +15,15 @@ import bnf_private_review as bnf
 import notice_c_private_review as generic
 from notice_c_private_capture import CaptureError, MATRIX, ROOT, clean_head
 from notice_c_private_final_receipt import native_aba_report
+from notice_c_native_readability import FAILURE_CODES
 
 
 class MatrixFailure(CaptureError):
     """Only internal fixed matrix labels may be exposed."""
+
+    def __init__(self, case, diagnostic=None):
+        super().__init__(case)
+        self.diagnostic = diagnostic or {}
 
 
 def pixel_digest(raw, expected_sha):
@@ -71,6 +76,31 @@ def route_title_keys():
     return tuple(f"synthetic_title_00-notice-c-{route}-{variant}-{phase}"
                  for phase in ("cold", "offline") for route in generic.ROUTES
                  for variant in ("list", "detail"))
+
+
+def closed_title_failure(report, sha):
+    """Never relay arbitrary report text, exception text, or paths."""
+    if (type(report) is not dict or report.get("git_sha") != sha
+            or report.get("status") != "FAIL"):
+        return {}
+    failure = report.get("synthetic_title_failure")
+    if type(failure) is not dict or set(failure) != {"stage", "code"}:
+        return {}
+    stage, code = failure["stage"], failure["code"]
+    stages = {"00-search-detail-closed", *(
+        key.removeprefix("synthetic_title_") for key in route_title_keys())}
+    codes = {*FAILURE_CODES.values(), "other_assertion", "runtime"}
+    if type(stage) is not str or type(code) is not str or stage not in stages or code not in codes:
+        return {}
+    return {"failed_title_stage": stage, "failed_title_code": code}
+
+
+def read_title_failure(target, scenario, sha):
+    try:
+        report = json.loads(generic.read_regular(target / scenario / "screen.json", 8 * 1024 * 1024))
+        return closed_title_failure(report, sha)
+    except (generic.ReviewError, OSError, ValueError):
+        return {}
 
 
 def verify_native_titles(root, sha):
@@ -134,7 +164,8 @@ def run(python, expected_sha):
                         cwd=ROOT, stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, timeout=180, check=False)
                     if result.returncode:
-                        raise MatrixFailure(f"{family}_{theme}_{width}")
+                        raise MatrixFailure(f"{family}_{theme}_{width}",
+                                            read_title_failure(target, scenario, sha) if family == "generic" else {})
             return verify(root, sha)
     finally:
         os.umask(old)
@@ -151,7 +182,8 @@ def main():
         allowed = {f"{family}_{theme}_{width}" for theme, width in MATRIX
                    for family in ("generic", "bnf")}
         code = str(exc) if str(exc) in allowed else "unknown"
-        print(json.dumps(dict(status="SYNTHETIC_GTK_MATRIX_REFUSED", failed_case=code)))
+        print(json.dumps(dict(status="SYNTHETIC_GTK_MATRIX_REFUSED", failed_case=code,
+                              **exc.diagnostic)))
         return 1
     except (CaptureError, generic.ReviewError, OSError, ValueError,
             subprocess.SubprocessError):
