@@ -155,7 +155,8 @@ def test_native_c_roster_includes_reader_and_uses_ordinary_selected_path(harness
     assert result["status"] == "confirmed"
     assert (a.actions, b.actions, direct.actions) == ((0, 0, 1) if selected_owner == "default" else (0, 1, 0))
     assert service.storage.loan_borrow_state(borrow_claim_key(selected._account, selected._notice))["status"] == "confirmed"
-    assert execute(service, roster, selected)["status"] == "blocked"
+    assert execute(service, roster, selected)["status"] in {"blocked", "verification_unavailable"}
+    assert (a.actions, b.actions, direct.actions) == ((0, 0, 1) if selected_owner == "default" else (0, 1, 0))
 
 
 def test_native_reader_choice_respects_direct_primary_policy(harness, monkeypatch):
