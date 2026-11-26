@@ -155,6 +155,13 @@ def native_borrow_occurrence_document(service, row, *, owner):
                 or borrow_claim_key(account, row) is None
                 or not receipt.call.binding.current(service, receipt.call.scope)):
             return None
+        # Supersession/eviction must revoke a held private roster exactly
+        # as for the public-branch path. A still-connected session alone
+        # is not evidence that this row remains the retained occurrence.
+        with source_context_mutation(service):
+            inventory = getattr(service, "_native_borrow_occurrences", None)
+            if type(inventory) is not dict or inventory.get(key) is not row:
+                return None
         return notice_cover_document_ref(key)
     except (AttributeError, TypeError, ValueError, LookupError, RuntimeError):
         return None
