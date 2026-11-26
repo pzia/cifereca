@@ -103,6 +103,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                 expected_requesting_identity=identity,
                 expected_context_epoch=account_epoch,
                 expected_source_epoch=source_epoch, confirmed=True,
+                captured_roster=rows,
             )
 
         def done(result):
