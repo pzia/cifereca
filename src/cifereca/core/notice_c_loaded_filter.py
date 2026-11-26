@@ -244,7 +244,7 @@ def matches_known_public_c_filters(item, *, query, field, scope, providers,
     if (type(item) is not SearchResult or type(item.scenario) is not str
             or item.scenario != "notice_c_public"):
         return None
-    if (type(query) is not str or len(query) > 2048 or (query != "" and not query.isprintable())
+    if (type(query) is not str or len(query) > 2048 or not query.isprintable()
             or type(field) is not str or field not in (
                 "all", "title", "author", "isbn", "subject", "series", "collection", "language")
             or type(scope) is not str or scope not in (
