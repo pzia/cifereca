@@ -1034,6 +1034,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 private_call = (None if foreign_owner else capture_authenticated_search_call(
                     self, session, getattr(identity, "identity_id", None),
                 ))
+                from .borrow_for_identity_public_branch import (
+                    capture_public_branch_borrow_call, stamp_public_branch_borrow_occurrences,
+                    stamp_public_branch_borrow_response,
+                )
+                public_branch_call = capture_public_branch_borrow_call(
+                    self, session, None if foreign_owner else getattr(identity, "identity_id", None),
+                )
                 from .notice_c_private_series import capture_series_call, stamp_series_rows
                 series_call = (None if foreign_owner else capture_series_call(
                     self, session, getattr(identity, "identity_id", None),
@@ -1052,6 +1059,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                             content_types=tuple(content_types or ()),
                         )
                         session_rows = _public_rows_from_response(response, session)
+                        if request_current():
+                            stamp_public_branch_borrow_response(self, public_branch_call, response)
                         response_partial = response.partial is True
                         terminal_empty = _terminal_anonymous_empty(response, session)
                         if response.catalogue_complete is False:
@@ -1070,6 +1079,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         session_rows = session.search(variant, effective_search_scope)
                 from .borrow_for_identity_native_occurrence import stamp_native_borrow_occurrences
                 stamp_native_borrow_occurrences(self, private_call, session_rows)
+            if not public_only and (request_cancelled is None or not request_cancelled()):
+                stamp_public_branch_borrow_occurrences(self, public_branch_call, session_rows)
+                if not foreign_owner and request_current():
+                    stamp_public_branch_borrow_occurrences(self, public_branch_call, session_rows)
                 stamp_authenticated_search_rows(self, private_call, session_rows)
                 stamp_series_rows(self, series_call, session_rows)
                 for raw_row in session_rows:
@@ -1434,6 +1447,13 @@ def _search_provider_session(
             private_call = (None if public_only else capture_authenticated_search_call(
                 self, session, getattr(identity, "identity_id", None),
             ))
+            from .borrow_for_identity_public_branch import (
+                capture_public_branch_borrow_call, stamp_public_branch_borrow_occurrences,
+                stamp_public_branch_borrow_response,
+            )
+            public_branch_call = capture_public_branch_borrow_call(
+                self, session, None if public_only else getattr(identity, "identity_id", None),
+            )
             from .notice_c_private_series import capture_series_call, stamp_series_rows
             series_call = (None if public_only else capture_series_call(
                 self, session, getattr(identity, "identity_id", None),
@@ -1451,6 +1471,8 @@ def _search_provider_session(
                     if type(response) is not ProviderSearchResponse:
                         raise TypeError("Invalid provider search response")
                     session_rows = _public_rows_from_response(response, session)
+                    if (request_cancelled is None or not request_cancelled()):
+                        stamp_public_branch_borrow_response(self, public_branch_call, response)
                     partial_failure = response.partial is True
                     terminal_empty = _terminal_anonymous_empty(response, session)
                     if response_windows is not None and response.catalogue_complete is False:
