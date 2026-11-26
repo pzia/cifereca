@@ -12,10 +12,17 @@ import notice_c_automated_receipt as receipt
 SHA = "a" * 40
 
 
+def rows(count):
+    return [dict(width="1366", stage=str(i), appearance=mode,
+                 sha256=digest * 64)
+            for i in range(count // 2)
+            for mode, digest in (("light", "b"), ("dark", "c"))]
+
+
 @pytest.fixture
 def matrix(monkeypatch):
-    generic = Mock(return_value=([{}] * 128, "b" * 64))
-    bnf = Mock(return_value=([{}] * 96, "c" * 64))
+    generic = Mock(return_value=(rows(128), "b" * 64))
+    bnf = Mock(return_value=(rows(96), "c" * 64))
     aba = Mock()
     monkeypatch.setattr(receipt.generic, "verify_captures", generic)
     monkeypatch.setattr(receipt.bnf, "inventory", bnf)
@@ -53,3 +60,17 @@ def test_head_changed_refused(tmp_path, matrix, monkeypatch):
         receipt.verify(tmp_path, SHA)
     with pytest.raises(receipt.CaptureError):
         receipt.run(sys.executable, SHA)
+
+
+def test_identical_theme_refused(tmp_path, matrix):
+    captures = rows(128)
+    captures[1]["sha256"] = captures[0]["sha256"]
+    matrix.generic.return_value = (captures, "b" * 64)
+    with pytest.raises(receipt.CaptureError):
+        receipt.verify(tmp_path, SHA)
+
+
+def test_invalid_fingerprint_refused(tmp_path, matrix):
+    matrix.bnf.return_value = (rows(96), "not-a-digest")
+    with pytest.raises(receipt.CaptureError):
+        receipt.verify(tmp_path, SHA)
