@@ -1,4 +1,4 @@
-"""Synchronous context audit unit tests; native integration is the E2E probe."""
+"""Context audit and closed receipt tests; native integration is the E2E probe."""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +56,30 @@ def test_incomplete_matrix_cannot_emit_receipt():
     with pytest.raises(AssertionError):
         native.complete()
     native.seen = set(audit.STAGES)
+    with pytest.raises(AssertionError):
+        native.complete()
+    native.rejected = set(audit.STAGES)
+    with pytest.raises(AssertionError):
+        native.complete()
+    native.rebound = set(audit.STAGES)
     native.complete()
     assert report["checks"][audit.MARKER] is True
+    assert report["checks"][audit.LATE_MARKER] is True
     assert report["notice_c_native_lease_audit_count"] == 12
+    assert report["notice_c_native_late_aba_count"] == 12
+
+
+def test_restored_requires_new_current_request_and_rejected_stage():
+    native = audit.NativeLeaseAudit(None, lambda _: None, {"checks": {}})
+    old = SimpleNamespace(active=False)
+    new = SimpleNamespace(still_current=True)
+    cover = SimpleNamespace(_request=new, _document_check=lambda: True)
+    with pytest.raises(AssertionError):
+        native.restored("library", "list", cover, old)
+    native.rejected.add("00-notice-c-library-list-offline")
+    with pytest.raises(AssertionError):
+        native.restored("library", "list",
+                        SimpleNamespace(_request=old), old)
+    native.restored("library", "list", cover, old)
+    with pytest.raises(AssertionError):
+        native.restored("library", "list", cover, old)

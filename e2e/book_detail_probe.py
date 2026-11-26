@@ -1201,6 +1201,7 @@ def main():
 
                 verify_local_notice_c_views(
                     window, later, audit.capture, report, audited_complete,
+                    late_audit=audit,
                 )
 
             verify_notice_c_cover(window, later, capture, report, notice_c_complete)
