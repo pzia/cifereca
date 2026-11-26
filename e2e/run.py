@@ -525,7 +525,7 @@ def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
     )
 
 
-def bnf_capture_command(xvfb, python, out, *, width=1366, appearance=None):
+def bnf_capture_command(xvfb, python, out, *, width=1366, appearance=None, synthetic_matrix=False):
     """Same fixture/probe; alternative geometry is a private local review."""
     if width not in (1366, 1600) or appearance not in (None, "light", "dark"):
         raise ValueError("invalid BnF capture geometry or appearance")
@@ -537,6 +537,7 @@ def bnf_capture_command(xvfb, python, out, *, width=1366, appearance=None):
         python, str(ROOT / "e2e/bnf_cover_probe.py"),
         "--out", str(out), "--width", str(width),
         *([] if appearance is None else ["--appearance", appearance]),
+        *(["--synthetic-matrix"] if synthetic_matrix else []),
     ]
 
 
@@ -548,6 +549,8 @@ def main() -> int:
     parser.add_argument("--appearance", choices=("light", "dark"))
     parser.add_argument("--bnf-width", type=int, choices=(1366, 1600),
                         help="Private local BnF cover review geometry")
+    parser.add_argument("--synthetic-matrix", action="store_true",
+                        help="Explicit synthetic BnF fixture, temporary output only")
     parser.add_argument("--plugin", help="Ne lancer que les scénarios associés à ce plugin/domaine")
     parser.add_argument("--out", type=Path, default=ROOT / "e2e-artifacts")
     parser.add_argument("--python", default=os.environ.get("CIFERECA_E2E_PYTHON", sys.executable))
@@ -562,7 +565,11 @@ def main() -> int:
     if args.bnf_width is not None and (
             args.scenario != "bnf-covers-1366" or args.appearance is None):
         parser.error("--bnf-width requires the BnF scenario and explicit appearance")
-    if args.scenario == "bnf-covers-1366" and args.appearance is not None and (
+    if args.synthetic_matrix and (args.scenario != "bnf-covers-1366"
+            or args.appearance is None or args.bnf_width is None
+            or args.plugin is not None or args.out.resolve().is_relative_to(ROOT.resolve())):
+        parser.error("synthetic matrix requires explicit BnF fixture and external output")
+    if not args.synthetic_matrix and args.scenario == "bnf-covers-1366" and args.appearance is not None and (
             os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
         parser.error("alternative BnF review is local only")
 
@@ -726,7 +733,7 @@ def main() -> int:
                 command = bnf_capture_command(
                     xvfb, args.python, scenario_dir,
                     width=args.bnf_width or scenario["width"],
-                    appearance=args.appearance,
+                    appearance=args.appearance, synthetic_matrix=args.synthetic_matrix,
                 )
             elif scenario.get("runner") == "gtk-public-fault":
                 command = [
