@@ -190,6 +190,10 @@ def native_lender_roster_current(service, roster):
 
 def _detail_binding(item, identity_id):
     """Recognize only existing native C receipts, never metadata hints."""
+    from .notice_c_private_search_web import private_search_c_binding_facts
+    private = private_search_c_binding_facts(item, identity_id)
+    if private is not None:
+        return private
     from .notice_c_recommendation_known import known_public_c_binding_facts
     from .notice_c_known_projection import matching_live_public_canonical_ref
     from .notice_c_cached_revision import matching_cached_public_canonical_ref
