@@ -155,6 +155,8 @@ class LibraryService:
         # and disconnect revoke their admission independently of UI searches.
         self._source_context_lock = RLock()
         self._source_context_epoch = 0
+        # Original live native Search rows only; not a serialized catalogue cache.
+        self._native_borrow_occurrences = {}
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
         # Baseline by identity and run ID avoids same-second restart ambiguity.
@@ -432,11 +434,33 @@ class LibraryService:
         requesting_id, scope_current = _capture_cross_profile_read_scope(self)
         if not scope_current():
             return ()
+        from .core.borrow_for_identity_native_roster import (
+            native_lender_roster_for_detail,
+        )
+        has_c, roster = native_lender_roster_for_detail(
+            self, exact_notice, requesting_identity_id=requesting_id,
+        )
+        if has_c:
+            return roster if roster is not None and scope_current() else ()
         result = discover_possible_borrow_lenders(
             self, requesting_identity_id=requesting_id,
             notices=(exact_notice,),
         )
         return result if scope_current() else ()
+
+    def possible_borrow_lenders_for_c_for_current_identity(
+        self, *, document, expected_epoch: int,
+    ):
+        """#4988: common read-only roster port for an already pinned C."""
+        from .core.borrow_for_identity_native_roster import native_lender_roster_for_c
+        requesting_id, scope_current = _capture_cross_profile_read_scope(self)
+        if not scope_current():
+            return None
+        result = native_lender_roster_for_c(
+            self, document, expected_epoch=expected_epoch,
+            requesting_identity_id=requesting_id,
+        )
+        return result if scope_current() else None
 
     def preview_borrow_for_current_identity(
         self, *, expected_edition_id: str, observations: object,

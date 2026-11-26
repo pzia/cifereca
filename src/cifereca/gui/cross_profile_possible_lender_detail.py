@@ -13,15 +13,33 @@ from ..core.borrow_for_identity_discovery import (
 from ..task_queue import TaskPriority
 
 
-def append_possible_lender_summary(panel, item: SearchResult) -> bool:
+def append_possible_lender_summary(panel, item: SearchResult, *,
+                                   canonical_binding=None, selection_current=None) -> bool:
     """Schedule a neutral discovery for the exact visible detail."""
-    if type(item) is not SearchResult:
+    if canonical_binding is None and type(item) is not SearchResult:
         return False
     try:
-        visible = panel._rendered_search_detail
-        if (type(visible) is not tuple or len(visible) != 2
-                or visible[0] is not item):
-            return False
+        if canonical_binding is not None:
+            from ..core.notice_c_cover_index import is_canonical_cover_document
+            if (type(canonical_binding) is not tuple or len(canonical_binding) != 2
+                    or not is_canonical_cover_document(canonical_binding[0])
+                    or type(canonical_binding[1]) is not int or canonical_binding[1] < 1
+                    or not callable(selection_current) or not selection_current()):
+                return False
+            visible = getattr(panel, "_action_buttons", None)
+            if type(visible) is not list:
+                return False
+        else:
+            visible = panel._rendered_search_detail
+            if (type(visible) is not tuple or len(visible) != 2
+                    or visible[0] is not item):
+                return False
+
+        def render_current():
+            if canonical_binding is not None:
+                return (getattr(panel, "_action_buttons", None) is visible
+                        and selection_current())
+            return panel._rendered_search_detail is visible
         window = panel.window
         service = window.service
         identity = service.current_identity
@@ -31,7 +49,9 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
         route = getattr(window, "_route_display_token", None)
         ui_identity = getattr(window, "_identity_context_generation", None)
         ui_account = getattr(window, "_account_context_generation", None)
-        reader = service.possible_borrow_lenders_for_current_identity
+        reader = (getattr(service, "possible_borrow_lenders_for_c_for_current_identity", None)
+                  if canonical_binding is not None else
+                  service.possible_borrow_lenders_for_current_identity)
         submit = window.runner.submit
         if (type(identity_id) is not str or not identity_id
                 or type(account_epoch) is not int or account_epoch < 0
@@ -54,6 +74,10 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
         def work():
             if not scope_current():
                 return ()
+            if canonical_binding is not None:
+                if getattr(panel, "_action_buttons", None) is not visible:
+                    return ()
+                return reader(document=canonical_binding[0], expected_epoch=canonical_binding[1])
             return reader(exact_notice=item) if scope_current() else ()
 
         pending = True
@@ -65,31 +89,48 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
             pending = False
             return True
 
-        def lender_current(row):
+        from ..core.borrow_for_identity_native_roster import (
+            NativeLenderRoster, native_roster_matches_detail, native_roster_matches_document,
+        )
+
+        def lender_current(row, native):
             # Revoke a real Core lender whose original session disconnected
             # or changed account without bumping the UI navigation epoch.
             # Legacy sessionless UI-only descriptors are non-executable;
             # Core's borrow executor still requires a live session receipt.
             return (possible_lender_matches(
-                row, item, requesting_identity_id=identity_id,
+                row, row._notice if native is not None else item,
+                requesting_identity_id=identity_id,
             ) and (row._session is None or possible_lender_session_matches(
                 row, row._session,
             )))
 
-        def delivered(rows):
+        def delivered(result):
             if not consume():
                 return
             try:
+                native = result if type(result) is NativeLenderRoster else None
+                rows = native.rows if native is not None else result
+                def roster_current():
+                    if canonical_binding is not None:
+                        return native_roster_matches_document(
+                            service, native, canonical_binding[0],
+                            expected_epoch=canonical_binding[1], requesting_identity_id=identity_id,
+                        )
+                    return (native_roster_matches_detail(
+                        service, native, item, requesting_identity_id=identity_id,
+                    ) if native is not None else possible_lender_claims_distinct(
+                        rows, item, requesting_identity_id=identity_id,
+                    ))
                 mapped = getattr(panel, "get_mapped", None)
-                if (not scope_current() or panel._rendered_search_detail is not visible
+                if (not scope_current() or not render_current()
                         or (callable(mapped) and not mapped())
                         or type(rows) is not tuple or not 1 <= len(rows) <= 64
                         # Repeated references to the same lender receipt are
                         # not distinct accounts. Refuse ambiguous N-way UI.
                         or len({id(row) for row in rows}) != len(rows)
-                        or not possible_lender_claims_distinct(
-                            rows, item, requesting_identity_id=identity_id)
-                        or any(not lender_current(row) for row in rows)):
+                        or not roster_current()
+                        or any(not lender_current(row, native) for row in rows)):
                     return
                 details = [
                     (
@@ -103,9 +144,10 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 panel._group("Emprunt avec un autre profil · information", details)
                 # GTK may synchronously notify and navigate during the group
                 # append. Never install a choice under a new route.
-                if (not scope_current() or panel._rendered_search_detail is not visible
+                if (not scope_current() or not render_current()
                         or (callable(mapped) and not mapped())
-                        or any(not lender_current(row) for row in rows)):
+                        or not roster_current()
+                        or any(not lender_current(row, native) for row in rows)):
                     # The group call may synchronously change the native
                     # source, account or edition without rotating GUI epochs.
                     # Never add a stale lender action after that reentrancy.
@@ -115,6 +157,9 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                     panel, item=item, rows=rows, visible=visible, service=service,
                     identity=identity, identity_id=identity_id, account_epoch=account_epoch,
                     source_epoch=source_epoch, route=route,
+                    **({"native_roster": native} if native is not None else {}),
+                    **({"canonical_binding": canonical_binding, "selection_current": selection_current}
+                       if canonical_binding is not None else {}),
                 )
             except Exception:
                 return
@@ -133,4 +178,11 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
         return False
 
 
-__all__ = ["append_possible_lender_summary"]
+def append_c_possible_lender_summary(panel, document, *, expected_epoch, current):
+    """C-first Search and Recommendations use the same native roster controller."""
+    return append_possible_lender_summary(
+        panel, None, canonical_binding=(document, expected_epoch), selection_current=current,
+    )
+
+
+__all__ = ["append_possible_lender_summary", "append_c_possible_lender_summary"]

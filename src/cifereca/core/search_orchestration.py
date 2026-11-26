@@ -1068,6 +1068,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                             raise
                         session_rows = session.search(variant, effective_search_scope)
+                from .borrow_for_identity_native_occurrence import stamp_native_borrow_occurrences
+                stamp_native_borrow_occurrences(self, private_call, session_rows)
                 stamp_authenticated_search_rows(self, private_call, session_rows)
                 stamp_series_rows(self, series_call, session_rows)
                 for raw_row in session_rows:
@@ -1482,6 +1484,8 @@ def _search_provider_session(
                     bool(getattr(source, "last_search_warnings", None))
                     for source in (session, concrete)
                 )
+            from .borrow_for_identity_native_occurrence import stamp_native_borrow_occurrences
+            stamp_native_borrow_occurrences(self, private_call, session_rows)
             stamp_authenticated_search_rows(self, private_call, session_rows)
             stamp_series_rows(self, series_call, session_rows)
             for raw_row in session_rows:
