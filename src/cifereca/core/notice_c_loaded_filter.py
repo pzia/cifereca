@@ -14,6 +14,7 @@ from .notice_cover_repository import is_notice_cover_document
 _TOKEN = object()
 _MARKER = object()
 _MATCH_HIT = object()
+_ISBN_SOURCE = object()
 _MATCH_FIELD = "_core_notice_c_match_source"
 _FIELD = "_core_notice_c_filter_sources"
 
@@ -168,10 +169,62 @@ def _filter_source_row(hit, *, marker=None):
         "medium": hit.medium, "media_format": hit.media_format,
         "metadata": _series_metadata(hit),
     }
+    # This transient row is built only from an independently admitted
+    # primary/alternative hit. Do not authorize ISBN matches from its mutable
+    # display metadata; retain the existing native source evidence and scalars.
+    if hit.isbn_observation is not None:
+        from .notice_c_known_projection import _source_evidence_snapshot
+        row[_ISBN_SOURCE] = (
+            _TOKEN, hit, _source_evidence_snapshot(hit), _source_scalar_snapshot(hit),
+        )
     if marker is not None:
         row[_MARKER] = marker
         row[_MATCH_HIT] = hit
     return row
+
+
+def matches_loaded_public_isbn(row, isbn):
+    """Exact ISBN on a sealed public C contribution, not a displayed claim."""
+    from .notice_c_known_projection import (
+        known_public_primary_facts, _source_evidence_snapshot,
+        _same_source_evidence_snapshot,
+    )
+    from .public_search_projection import decode_public_isbn_observation, PublicIsbnObservation
+    from .search import _local_isbn
+
+    if type(row) is not dict or row.get("source") != "notice_c_public":
+        return False
+    if _ISBN_SOURCE in row:
+        packet = row[_ISBN_SOURCE]
+        if (type(packet) is not tuple or len(packet) != 4
+                or packet[0] is not _TOKEN or type(packet[1]) is not PublicNoticeCHit):
+            return False
+        hit = packet[1]
+        if (packet[2] is None or packet[3] is None
+                or not _same_source_evidence_snapshot(_source_evidence_snapshot(hit), packet[2])
+                or not _same_source_evidence_snapshot(_source_scalar_snapshot(hit), packet[3])):
+            return False
+        for supplied, expected in (
+            (row.get("provider_id"), hit.provider_id),
+            (row.get("item_id"), hit.record_id),
+            (row.get("title"), hit.title),
+            (row.get("author"), hit.author),
+            (row.get("medium"), hit.medium),
+            (row.get("media_format"), hit.media_format),
+        ):
+            if type(supplied) is not type(expected) or supplied != expected:
+                return False
+    else:
+        hit = known_public_primary_facts(row)
+    if hit is None or type(hit.isbn_observation) is not PublicIsbnObservation:
+        return False
+    observation = hit.isbn_observation
+    if decode_public_isbn_observation(
+        observation.wire(), provider_id=hit.provider_id,
+        scenario=observation.scope, record_id=hit.record_id,
+    ) != observation:
+        return False
+    return any(_local_isbn(value) == isbn for value in observation.isbns)
 
 
 def matches_known_public_c_filters(item, *, query, field, scope, providers,
