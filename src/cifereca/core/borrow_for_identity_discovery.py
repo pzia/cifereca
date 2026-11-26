@@ -29,9 +29,15 @@ def _notice_binding(account: Account, notice: SearchResult):
     # Keep the same distinction as manual_borrow_contract, including on
     # the held candidate at click time. No extra eligibility requirement.
     metadata = notice.metadata
-    if (type(metadata) is not dict
-            or metadata.get("catalogue_access") == "shared_read_only"
-            or metadata.get("search_provenance") == "known_catalog_stale"):
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(key) is not str for key in metadata)):
+        return None
+    access = metadata.get("catalogue_access")
+    provenance = metadata.get("search_provenance")
+    if (type(access) not in (str, type(None))
+            or type(provenance) not in (str, type(None))
+            or access == "shared_read_only"
+            or provenance == "known_catalog_stale"):
         return None
     scenario, revision, source_account = (
         notice.scenario, notice.revision_id, notice.source_account_id,
