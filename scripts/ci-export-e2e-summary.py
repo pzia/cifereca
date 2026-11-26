@@ -303,6 +303,12 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
                            "history_route", "history_list", "history_detail",
                            "recommendations_route", "recommendations_list", "recommendations_detail")
         }
+        # The six-view ABA probe uses exactly these synthetic phases.
+        local_stages |= {
+            f"offline_{route}_{variant}_late_aba"
+            for route in ("library", "recent", "search", "loans", "history", "recommendations")
+            for variant in ("list", "detail")
+        }
         if type(stage) is str and stage in local_stages:
             result["book_detail_local_c_stage"] = stage
         # #3684: numerical-only native allocation diagnostics for the

@@ -1206,6 +1206,36 @@ def test_book_detail_960_local_c_checkpoint_exports_only_closed_phase():
 
 
 
+def test_book_detail_late_aba_checkpoints_are_closed_and_failure_only():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        allowed = {
+            f"offline_{route}_{variant}_late_aba"
+            for route in ("library", "recent", "search", "loans", "history", "recommendations")
+            for variant in ("list", "detail")
+        }
+        for value in (*sorted(allowed), "cold_library_list_late_aba",
+                      "offline_PRIVATE_list_late_aba",
+                      "offline_library_list_late_aba_PRIVATE", True, None, {}):
+            report.write_text(json.dumps({"local_c_stage": value,
+                                          "error": "PRIVATE_PATH"}))
+            row = module.safe_summary(source)["results"][0]
+            if type(value) is str and value in allowed:
+                assert row["book_detail_local_c_stage"] == value
+            else:
+                assert "book_detail_local_c_stage" not in row
+            assert "PRIVATE" not in repr(row)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"local_c_stage": "offline_library_list_late_aba"}))
+        assert "book_detail_local_c_stage" not in module.safe_summary(source)["results"][0]
+
+
 def test_bnf_borrower_c_checkpoints_are_closed_and_failure_only():
     module = _module()
     with tempfile.TemporaryDirectory() as tmp:
