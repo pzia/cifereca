@@ -926,9 +926,131 @@ def main() -> int:
                 result["checks"]["P0_1023_native_loaded_search_3000"] = True
                 window.search_controls.set_state(original_state, notify=False)
                 window._populate_local_search(original_rows)
-                begin_response_facets()
+                begin_c_isbn()
             later(120, verify_filter)
         later(120, verify_volume)
+
+    def begin_c_isbn():
+        # #1023 C1/C7: real GTK Search worker + retained SQLite C, not a
+        # mocked cursor or a provider capture. Seed only a synthetic public
+        # fixture with the Core's same-call receipt shape. No image URL.
+        from dataclasses import replace
+        from time import time
+        from cifereca.core.notice_search_cover_producer import (
+            _CORE_PUBLIC_C_WITNESS, admit_public_search_catalogue,
+        )
+        from cifereca.core.search_orchestration import (
+            _CORE_PUBLIC_COVER_WITNESS, _public_cover_witness_coordinates,
+        )
+        from cifereca.core.notice_cover_repository import (
+            persist_notice_cover, evict_notice_cover,
+        )
+        from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+
+        storage = core.storage
+        identity = core.library.current_identity.identity_id
+        expected = {}
+        for record, isbn in (
+            ("e2e-isbn-a", "9780140328721"),
+            ("e2e-isbn-b", "0140328726"),
+            ("9780140328721", None),
+        ):
+            metadata = {}
+            if isbn is not None:
+                metadata = {"isbns": [isbn], "bibliography_evidence": {"isbns": {
+                    "source": "bnf.sru", "source_field": "dc.identifier",
+                    "scope": "search", "record_id": record,
+                    "confidence": "explicit_record_field", "freshness": "search_response",
+                    "relationship": "record_identifier",
+                }}}
+            row = SearchResult(
+                id=record, record_id=record, docbase="digital-books",
+                medium="digital", title="Notice ISBN E2E", author="Auteur fictif",
+                type="book", format="EPUB", publisher=None, published_at=None,
+                description=None, thumbnail_url=None, friendly_url=None,
+                scenario="search", source_provider="bnf", source_credential="__public__",
+                source_collection="public_catalog", source_account_id=None,
+                owned=False, downloadable=False, download_url=None, metadata=metadata,
+            )
+            row._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
+            row._core_same_call_public_cover_witness = (
+                _CORE_PUBLIC_COVER_WITNESS, _public_cover_witness_coordinates(row),
+            )
+            observation = admit_public_search_catalogue(
+                row, identity_id=identity, observed_at=int(time()), public_cover_url=None,
+            )
+            assert observation is not None and observation.parser_version == "2"
+            source = persist_notice_cover(
+                storage, observation, field_path=("search_result", "thumbnail_url"),
+                cover_inventory_complete=False,
+            )
+            canonical = persist_exact_public_search_cover(storage, source)
+            assert evict_notice_cover(storage, source.document, expected_epoch=source.epoch)
+            if isbn is not None:
+                expected[record] = canonical.document
+        assert len(set(expected.values())) == 2
+        before = search_requests[0]
+        state = window.search_controls.state()
+        window.search_controls.set_state(
+            replace(state, text="0-140-32872-6", field="isbn", scope="all",
+                    providers=(), types=(), languages=()), notify=False,
+        )
+        device.click_widget(window.search_button)
+        deadline = monotonic() + 5
+
+        def visible_rows():
+            page = window.search_page
+            return [window._search_local_objects[page.store.get_item(i).key]
+                    for i in range(page.store.get_n_items())]
+
+        def check_known():
+            if not window.search_button.get_sensitive() or search_requests[0] == before:
+                assert monotonic() < deadline, "ISBN known worker did not finish"
+                later(70, check_known)
+                return
+            rows = visible_rows()
+            assert {row["item_id"]: row["_cover_document_ref"] for row in rows} == expected
+            assert all(row["source"] == "notice_c_public" and row["identity_id"] == identity
+                       for row in rows)
+            assert window.search_page.listview.get_mapped()
+            assert "2 résultats" in window.search_page.count_label.get_text()
+            assert "Connu" in window.search_page.count_label.get_text()
+            assert search_requests[0] == before + 1
+            window.search_controls.entry.set_text("9780140328722")
+            edit_deadline[0] = monotonic() + 5
+            later(70, check_invalid)
+
+        edit_deadline = [0.0]
+
+        def check_invalid():
+            assert search_requests[0] == before + 1
+            # GtkSearchEntry emits search-changed after a debounce, not
+            # synchronously on set_text. Await the actual rendered state.
+            if window.search_page.store.get_n_items() != 0:
+                assert monotonic() < edit_deadline[0], "Invalid ISBN filter did not settle"
+                later(70, check_invalid)
+                return
+            assert "incomplet" in window.search_page.count_label.get_tooltip_text()
+            window.search_controls.entry.set_text("9780140328721")
+            edit_deadline[0] = monotonic() + 5
+            later(70, check_alias)
+
+        def check_alias():
+            assert search_requests[0] == before + 1
+            if window.search_page.store.get_n_items() != 2:
+                assert monotonic() < edit_deadline[0], "ISBN alias filter did not settle"
+                later(70, check_alias)
+                return
+            assert {row["item_id"]: row["_cover_document_ref"] for row in visible_rows()} == expected
+            assert search_requests[0] == before + 1
+            result["checks"]["P0_1023_native_retained_c_isbn"] = True
+            result["retained_c_isbn"] = {
+                "visible_editions": 2, "known_searches": 1, "implicit_searches": 0,
+                "invalid_checksum_rows": 0, "fixture": "synthetic-public",
+            }
+            begin_response_facets()
+
+        later(100, check_known)
 
     facet_queries = []
 
