@@ -1206,6 +1206,36 @@ def test_book_detail_960_local_c_checkpoint_exports_only_closed_phase():
 
 
 
+def test_book_detail_late_aba_checkpoints_are_closed_and_failure_only():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        allowed = {
+            f"offline_{route}_{variant}_late_aba"
+            for route in ("library", "recent", "search", "loans", "history", "recommendations")
+            for variant in ("list", "detail")
+        }
+        for value in (*sorted(allowed), "cold_library_list_late_aba",
+                      "offline_PRIVATE_list_late_aba",
+                      "offline_library_list_late_aba_PRIVATE", True, None, {}):
+            report.write_text(json.dumps({"local_c_stage": value,
+                                          "error": "PRIVATE_PATH"}))
+            row = module.safe_summary(source)["results"][0]
+            if type(value) is str and value in allowed:
+                assert row["book_detail_local_c_stage"] == value
+            else:
+                assert "book_detail_local_c_stage" not in row
+            assert "PRIVATE" not in repr(row)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"local_c_stage": "offline_library_list_late_aba"}))
+        assert "book_detail_local_c_stage" not in module.safe_summary(source)["results"][0]
+
+
 def test_bnf_borrower_c_checkpoints_are_closed_and_failure_only():
     module = _module()
     with tempfile.TemporaryDirectory() as tmp:
@@ -1348,6 +1378,56 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
             bad = copy.deepcopy(data)
             del bad["checks"][stage]
             assert "notice_c_4980_local_gtk_matrix" not in read(bad)
+        repair_marker = "P0_4980_native_preview_decode_repair_redacted"
+        postcommit_marker = "P0_6168_postcommit_rebind_real_gtk"
+        repair_receipt = "notice_c_4980_native_preview_repair"
+        assert repair_receipt not in read(data)
+        data["checks"][repair_marker] = True
+        assert repair_receipt not in read(data)
+        data["checks"][postcommit_marker] = True
+        assert read(data)[repair_receipt] is True
+        for key in (repair_marker, postcommit_marker, *stages):
+            for value in (False, 1, None, "PRIVATE", {}):
+                bad = copy.deepcopy(data)
+                bad["checks"][key] = value
+                assert repair_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad["checks"][key]
+            assert repair_receipt not in read(bad)
+        aba_markers = ("P0_4980_six_view_native_paint_lease_aba_audit",
+                       "P0_4980_six_view_native_late_n3_aba_rejected")
+        aba_counts = ("notice_c_native_lease_audit_count",
+                      "notice_c_native_late_aba_count")
+        aba_receipt = "notice_c_4980_six_view_native_late_aba"
+        assert aba_receipt not in read(data)
+        for key in aba_markers:
+            data["checks"][key] = True
+        for key in aba_counts:
+            data[key] = 12
+        data["notice_c_cover_metrics_offline"]["n4"]["ui_stale"] = 12
+        assert read(data)[aba_receipt] is True
+        for key in (*aba_markers, *stages):
+            for value in (False, 1, "PRIVATE", None, {}):
+                bad = copy.deepcopy(data)
+                bad["checks"][key] = value
+                assert aba_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad["checks"][key]
+            assert aba_receipt not in read(bad)
+        for key in aba_counts:
+            for value in (True, 11, 13, 12.0, "12", "PRIVATE", None):
+                bad = copy.deepcopy(data)
+                bad[key] = value
+                assert aba_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad[key]
+            assert aba_receipt not in read(bad)
+        bad = copy.deepcopy(data)
+        bad["notice_c_cover_metrics_offline"]["n4"]["ui_stale"] = 11
+        assert aba_receipt not in read(bad)
         safe = result["notice_c_cover_metrics"]
         assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
         assert safe["cold"]["n3"]["download_ok"] == 1
