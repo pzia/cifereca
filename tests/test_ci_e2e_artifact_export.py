@@ -1348,6 +1348,23 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
             bad = copy.deepcopy(data)
             del bad["checks"][stage]
             assert "notice_c_4980_local_gtk_matrix" not in read(bad)
+        repair_marker = "P0_4980_native_preview_decode_repair_redacted"
+        postcommit_marker = "P0_6168_postcommit_rebind_real_gtk"
+        repair_receipt = "notice_c_4980_native_preview_repair"
+        assert repair_receipt not in read(data)
+        data["checks"][repair_marker] = True
+        assert repair_receipt not in read(data)
+        data["checks"][postcommit_marker] = True
+        assert read(data)[repair_receipt] is True
+        for key in (repair_marker, postcommit_marker, *stages):
+            for value in (False, 1, None, "PRIVATE", {}):
+                bad = copy.deepcopy(data)
+                bad["checks"][key] = value
+                assert repair_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad["checks"][key]
+            assert repair_receipt not in read(bad)
         safe = result["notice_c_cover_metrics"]
         assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
         assert safe["cold"]["n3"]["download_ok"] == 1

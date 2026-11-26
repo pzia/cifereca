@@ -820,6 +820,10 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
             evidence["notice_c_4980_local_gtk_matrix"] = True
             if data["checks"].get("P0_4980_epub_interrupted_publish_recovery_real_gtk") is True:
                 evidence["notice_c_4980_epub_crash_recovery"] = True
+            # The native preview repair must be asserted after postcommit rebind.
+            if (data["checks"].get("P0_6168_postcommit_rebind_real_gtk") is True
+                    and data["checks"].get("P0_4980_native_preview_decode_repair_redacted") is True):
+                evidence["notice_c_4980_native_preview_repair"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
