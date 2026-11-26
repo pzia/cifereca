@@ -1318,6 +1318,18 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
         for stage in stages:
             data["checks"][stage] = True
         assert read(data)["notice_c_4980_local_gtk_matrix"] is True
+        marker = "P0_4980_epub_interrupted_publish_recovery_real_gtk"
+        receipt = "notice_c_4980_epub_crash_recovery"
+        assert receipt not in read(data)
+        for invalid in (False, 1, None, "PRIVATE", {}):
+            bad = copy.deepcopy(data)
+            bad["checks"][marker] = invalid
+            assert receipt not in read(bad)
+        data["checks"][marker] = True
+        assert read(data)[receipt] is True
+        bad = copy.deepcopy(data)
+        del bad["checks"][stages[1]]
+        assert receipt not in read(bad)
         for stage in stages:
             for invalid in (False, 1, None, "PRIVATE", {}):
                 bad = copy.deepcopy(data)
