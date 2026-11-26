@@ -19,6 +19,7 @@ from .notice_c_authenticated_web_choices import (
 )
 from .notice_c_cover_index import (
     canonical_cover_document_ref, _persist_consolidated_cover_source_txn,
+    read_consolidated_notice_cover,
 )
 from .notice_cover_projection import notice_cover_document_ref, project_notice_cover_attribute
 from .notice_cover_repository import _opaque_key, _persist_notice_cover_txn
@@ -32,6 +33,7 @@ _COORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}\Z")
 _PARSE_SHA = re.compile(r"[0-9a-f]{64}\Z")
 _PARSE_FIELDS = ("title", "author", "publisher")
 _PARSE_MARKER = "_core_private_notice_parse_input"
+_C_MARKER = "_core_private_catalogue_c_membership"
 
 
 def _coordinate(value):
@@ -63,6 +65,64 @@ def _source_key(row, identity):
         ),
         manifestation_role="digital" if row.medium == "digital" else "print",
     )
+
+
+def _native_catalogue_edition(row, descriptor, *, source_field=None):
+    """Only a declared supplier resource namespace, not title/URL equivalence.
+
+    The writer calls this after qualifying the original complete native card
+    and its exact field. Readers use the same declaration and must still find
+    their own independently admitted source in the persisted C.
+    """
+    if (type(descriptor) is not ProviderDescriptor or descriptor.state != "ready"
+            or descriptor.id != row.source_provider
+            or descriptor.capabilities.authentication is not True):
+        return None
+    branches = descriptor.authenticated_catalogue_edition_branches_v1
+    if type(branches) is not tuple or not 1 <= len(branches) <= 64:
+        return None
+    if any(type(b) is not tuple or len(b) != 6
+           or not all(_coordinate(v) for v in (*b[:3], b[5]))
+           or b[2] not in ("digital", "physical")
+           or any(v is not None and not _coordinate(v) for v in b[3:5])
+           for b in branches):
+        return None
+    if len({b[:5] for b in branches}) != len(branches):
+        return None
+    coords = (row.scenario, row.docbase, row.medium, row.source_collection, row.revision_id)
+    if (any(type(v) not in (str, type(None)) for v in coords)
+            or not _coordinate(row.record_id)):
+        return None
+    found = [b for b in branches if b[:5] == coords]
+    if len(found) != 1 or (source_field is not None and found[0][5] != source_field):
+        return None
+    digest = _coordinate_digest(
+        "authenticated-catalogue-edition.v1", descriptor.id, *coords, found[0][5], row.record_id,
+    )
+    return "edition:" + digest, "private-catalogue:" + digest
+
+
+def private_search_c_binding_facts(row, identity_id):
+    """Pure original-row C receipt; the worker still verifies source fences."""
+    try:
+        if type(row) is not SearchResult or type(identity_id) is not str:
+            return None
+        proof = row.__dict__.get(_C_MARKER)
+        if (type(proof) is not tuple or len(proof) != 6
+                or proof[0] is not _WITNESS or type(proof[1]) is not int
+                or proof[1] != id(row) or type(proof[2]) is not str
+                or proof[2] != identity_id or type(proof[3]) is not str
+                or type(proof[5]) is not int or not 1 <= proof[5] < 2**63):
+            return None
+        key = _read_source_key(row, identity_id)
+        if key is None or notice_cover_document_ref(key).source_key != proof[3]:
+            return None
+        from .notice_c_live_revision import _native_canonical_ref
+        if not _native_canonical_ref(proof[4]):
+            return None
+        return proof[4], proof[5]
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -215,6 +275,7 @@ def stamp_authenticated_search_rows(service, call, rows):
         if type(row) is SearchResult:
             row.__dict__.pop(_MARKER, None)
             row.__dict__.pop(_PARSE_MARKER, None)
+            row.__dict__.pop(_C_MARKER, None)
     if type(rows) is not list or len(rows) > 10000:
         return
     calls = (call,) if type(call) is _Call else call.calls if type(call) is _BatchCall else ()
@@ -350,6 +411,7 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                 )
                 storage = service.storage
                 row.__dict__.pop(_PARSE_MARKER, None)
+                row.__dict__.pop(_C_MARKER, None)
                 packet = row.__dict__[_MARKER].parse_input
                 diagnostic = None
                 rejected = False
@@ -385,11 +447,19 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                         )
                         if source is None or source.observation.source_revision != obs.source_revision:
                             continue
-                        # Only exact private self identity: no link to public C or
-                        # another credential is fabricated by the URL or title.
-                        _persist_consolidated_cover_source_txn(
-                            db, canonical_edition_id=obs.key.edition_id, source=source,
-                            relation_proof_id="private-self:" + _coordinate_digest(doc.source_key),
+                        # Same supplier resource only when the installed
+                        # descriptor attests this exact native parser branch.
+                        # This consolidates the edition, NOT the reader/account;
+                        # each source and its access sidecar stay independent.
+                        relation = _native_catalogue_edition(
+                            row, call.binding.descriptor, source_field=row.__dict__[_MARKER].proof[2],
+                        )
+                        target, proof_id = (relation if relation is not None else (
+                            obs.key.edition_id, "private-self:" + _coordinate_digest(doc.source_key),
+                        ))
+                        canonical = _persist_consolidated_cover_source_txn(
+                            db, canonical_edition_id=target, source=source,
+                            relation_proof_id=proof_id,
                         )
             if packet is not None and source is not None:
                 row.__dict__[_PARSE_MARKER] = (
@@ -400,6 +470,9 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                 # sanitized technical metadata is queued by the shared gate.
                 _export_private_witness_capture(service, diagnostic)
                 continue
+            row.__dict__[_C_MARKER] = (
+                _WITNESS, id(row), identity_id, doc.source_key, canonical.document, canonical.epoch,
+            )
             # Account only after both the SQLite transaction and Core's
             # mutation context completed. A failed commit must never be
             # reported as one durable private C publication.
@@ -460,11 +533,33 @@ def read_authenticated_web_for_search(service, row, *, reader_scope):
     key = _read_source_key(row, reader_scope.identity_id)
     if key is None:
         return None
-    return read_authenticated_web_choices_for_c(
-        service, canonical_cover_document_ref(key.edition_id),
-        reader_scope=reader_scope, required_source=notice_cover_document_ref(key),
-    )
+    source = notice_cover_document_ref(key)
+    binding = _capture(service, reader_scope, source)
+    if binding is None:
+        return None
+    try:
+        relation = _native_catalogue_edition(row, binding.descriptor)
+        if relation is not None:
+            document = canonical_cover_document_ref(relation[0])
+            canonical = read_consolidated_notice_cover(service.storage, document)
+            if canonical is not None and any(
+                    m.visibility == "private" and m.source_ref == source.source_key
+                    and m.provider_id == source.provider_id for m in canonical.sources):
+                # A revoked or stale grouped source must NOT fall back to
+                # an earlier self-C merely because it is still on disk.
+                return read_authenticated_web_choices_for_c(
+                    service, document, reader_scope=reader_scope, required_source=source,
+                )
+        # Legacy self-C observations remain readable until a fresh admitted
+        # native Search writes the stronger group. No migration or deletion.
+        return read_authenticated_web_choices_for_c(
+            service, canonical_cover_document_ref(key.edition_id),
+            reader_scope=reader_scope, required_source=source,
+        )
+    except (AttributeError, TypeError, ValueError, SQLiteError):
+        return None
 
 
 __all__ = ["capture_authenticated_search_call", "stamp_authenticated_search_rows",
-           "persist_authenticated_search_rows", "read_authenticated_web_for_search"]
+           "persist_authenticated_search_rows", "read_authenticated_web_for_search",
+           "private_search_c_binding_facts"]
