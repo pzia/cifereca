@@ -421,3 +421,38 @@ def test_lender_generation_change_during_claim_prevents_dispatch(harness, monkey
     assert execute(service, option, item, scope)["status"] == "blocked"
     assert session.actions == 0
     assert service.storage.loan_borrow_state(key)["status"] == "blocked"
+
+
+@pytest.mark.parametrize("variant", ["single", "duplicate", "empty", "foreign_notice", "missing_selected"])
+def test_facade_checks_entire_original_lender_roster(harness, variant):
+    service, account, session, item, option, _scope = setup(harness)
+    roster = (option,)
+    if variant == "duplicate":
+        roster = (option, option)
+    elif variant == "empty":
+        roster = ()
+    elif variant == "foreign_notice":
+        other = replace(item, record_id="unrelated-edition")
+        alternative, = discover_possible_borrow_lenders(
+            service, requesting_identity_id="default", notices=(other,),
+        )
+        roster = (option, alternative)
+    elif variant == "missing_selected":
+        roster = (replace(option),)
+    result = service.execute_normal_lender_borrow_for_current_identity(
+        captured_candidate=option, exact_notice=item, captured_roster=roster,
+        expected_requesting_identity_id="default",
+        expected_requesting_identity=service.current_identity,
+        expected_context_epoch=service._account_context_epoch,
+        expected_source_epoch=service._source_context_epoch,
+        confirmed=True,
+    )
+    key = borrow_claim_key(account, item)
+    if variant == "single":
+        assert result["status"] == "confirmed"
+        assert session.actions == 1
+        assert service.storage.loan_borrow_state(key)["status"] == "confirmed"
+    else:
+        assert result["status"] == "blocked"
+        assert session.actions == 0
+        assert service.storage.loan_borrow_state(key) is None

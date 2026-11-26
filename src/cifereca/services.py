@@ -576,7 +576,7 @@ class LibraryService:
         expected_requesting_identity_id: str,
         expected_requesting_identity: object,
         expected_context_epoch: int, expected_source_epoch: int,
-        confirmed: bool = False,
+        confirmed: bool = False, captured_roster=None,
     ) -> dict[str, object]:
         """#4988: manually confirmed one-shot lender A while reader B stays active.
 
@@ -620,7 +620,7 @@ class LibraryService:
             self, captured_candidate=captured_candidate,
             exact_notice=exact_notice,
             requesting_identity_id=expected_requesting_identity_id,
-            scope_current=current, confirmed=confirmed,
+            scope_current=current, confirmed=confirmed, captured_roster=captured_roster,
         )
 
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:

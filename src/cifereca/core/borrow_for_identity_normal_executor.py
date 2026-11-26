@@ -17,7 +17,7 @@ from ..plugin_api.loan_scope import loan_matches_account
 from .borrow_for_identity_action_scope import capture_cross_profile_borrow_scope
 from .borrow_for_identity_discovery import (
     PossibleBorrowLender, discover_possible_borrow_lenders, possible_lender_matches,
-    possible_lender_session_matches,
+    possible_lender_session_matches, possible_lender_claims_distinct,
 )
 from .borrow_for_identity_executor import _result
 
@@ -25,7 +25,7 @@ from .borrow_for_identity_executor import _result
 def execute_normal_lender_borrow(
     service, *, captured_candidate: PossibleBorrowLender,
     exact_notice: SearchResult, requesting_identity_id: str,
-    scope_current, confirmed: bool = False,
+    scope_current, confirmed: bool = False, captured_roster=None,
 ) -> dict[str, object]:
     """Try exactly one normal supplier borrow, keeping B as active requester.
 
@@ -38,6 +38,29 @@ def execute_normal_lender_borrow(
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
     revoked = _result("blocked", "lender_scope_revoked")
+    # A single direct caller keeps its original contract. The shared detail
+    # supplies the entire confirmed chooser, not only its selected member.
+    roster = (captured_candidate,) if captured_roster is None else captured_roster
+
+    def roster_current():
+        try:
+            return (
+                possible_lender_claims_distinct(
+                    roster, exact_notice, requesting_identity_id=requesting_identity_id,
+                )
+                and sum(row is captured_candidate for row in roster) == 1
+                and all(
+                    possible_lender_session_matches(
+                        row, service._sessions.get(service._session_key(
+                            row._account.provider_id, row._account.credential_id,
+                        )),
+                    ) and service.identity_by_id(row.lender_identity_id) is not None
+                    for row in roster
+                )
+            )
+        except Exception:
+            return False
+
     try:
         if (type(captured_candidate) is not PossibleBorrowLender
                 or captured_candidate.executable is not False
@@ -47,7 +70,7 @@ def execute_normal_lender_borrow(
                 or type(requesting_identity_id) is not str
                 or not requesting_identity_id
                 or not callable(scope_current)
-                or scope_current() is not True):
+                or scope_current() is not True or not roster_current()):
             return revoked
         requester = service.identity_by_id(requesting_identity_id)
         context_epoch = service._account_context_epoch
@@ -125,6 +148,7 @@ def execute_normal_lender_borrow(
                     and service._account_context_epoch == context_epoch
                     and service._source_context_epoch == source_epoch
                     and scope_current() is True
+                    and roster_current()
                     and possible_lender_matches(
                         captured_candidate, exact_notice,
                         requesting_identity_id=requesting_identity_id,
