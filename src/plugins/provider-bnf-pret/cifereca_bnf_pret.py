@@ -29,6 +29,13 @@ DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
     # active-loans.resource_id == public Search resource_id on BNF_PRET.
     borrower_public_edition_branches_v1=(("BNF_PRET", "digital", "BNF_PRET", None),),
+    # Full HTML Book cards identify a resource in the same /resources/{id}
+    # catalogue namespace, not in a reader-specific inventory. The native
+    # parser requires the exact resource link; suggestions/partial cards
+    # never carry this evidence. Account/session remain separately scoped.
+    authenticated_catalogue_edition_branches_v1=(
+        ("BNF_PRET", "BNF_PRET", "digital", None, None, "results.Book.resource_link"),
+    ),
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="BNF_PRET", verification="active_only",
         reborrow_inventory_branch="bnf_html",
