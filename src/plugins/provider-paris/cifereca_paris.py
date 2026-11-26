@@ -193,6 +193,9 @@ DESCRIPTOR = ProviderDescriptor(
     existing_primary_loan_account_alias="primary",
     # Loan/Handing RecordId == Search RscId only in the digital DILICOM branch.
     borrower_public_edition_branches_v1=(("DILICOM", "digital", "DILICOM", None),),
+    # Both Search entry points use the same anonymous SearchService
+    # RscBase/RscId parser; restrict this documentary join to DILICOM EBOOKS.
+    authenticated_search_public_edition_branches_v1=(("DILICOM", "EBOOKS", "digital", None),),
     # Navigation only: the provider, never Core, declares which configured
     # public portal option takes precedence over catalogue_url/homepage.
     public_catalogue_base_option_key="base_url",
