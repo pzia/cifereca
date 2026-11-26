@@ -12,6 +12,7 @@ from ..core.notice_c_web_choices import (
     PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
 )
 from ..storage import Storage
+from ..core.notice_c_authenticated_web_choices import AuthenticatedWebChoice
 from ..core.notice_c_private_search_web import _read_source_key
 from ..core.loan_action_scope import _inert_session_state, _inert_session_accounts
 from ..core.search_orchestration import SearchReadScope, capture_search_read_scope
@@ -79,7 +80,7 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
                 core, menu, choice_id=choice.choice_id,
             ),
             choice_current=lambda menu, choice: (
-                getattr(choice, "access_mode", None) != "authenticated"
+                type(choice) is not AuthenticatedWebChoice
                 or _authenticated_display_current(core, menu._authenticated)
             ),
         )
@@ -122,7 +123,7 @@ def request_authenticated_search_web_actions(host, panel, row, *, reader_scope, 
         # A private choice still requires the exact fresh selected source
         # and complete original private choice inventory. Public authority
         # is independent of the lender/reader's authenticated session.
-        if choice.access_mode == "authenticated":
+        if type(choice) is AuthenticatedWebChoice:
             fresh = read_c_web_choices_for_search(core, row, reader_scope=reader_scope)
             if (type(fresh) is not CWebChoices or fresh.document != menu.document
                     or fresh.epoch != menu.epoch
@@ -138,7 +139,7 @@ def request_authenticated_search_web_actions(host, panel, row, *, reader_scope, 
         accept=lambda menu: (type(menu) is CWebChoices and menu._scope is reader_scope),
         resolve=resolve,
         choice_current=lambda menu, choice: (
-            choice.access_mode != "authenticated"
+            type(choice) is not AuthenticatedWebChoice
             or _authenticated_display_current(core, menu._authenticated)
         ),
     )
@@ -360,12 +361,12 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
                 failed(None)
 
         if len(choices) == 1:
-            requires_login = getattr(choices[0], "access_mode", None) == "authenticated"
+            requires_login = type(choices[0]) is AuthenticatedWebChoice
             root = Gtk.Button(label=("Ouvrir la fiche web · Connexion requise"
                                      if requires_login else "Ouvrir la fiche web"))
             root.connect("clicked", lambda button: choose(button, choices[0]))
         else:
-            only_authenticated = all(c.access_mode == "authenticated" for c in choices)
+            only_authenticated = all(type(c) is AuthenticatedWebChoice for c in choices)
             root = Gtk.MenuButton(label=("Fiches web · Connexion requise…"
                                          if authenticated and only_authenticated
                                          else "Ouvrir la fiche sur…"))
