@@ -199,3 +199,46 @@ def test_closed_title_failure_does_not_export_report_content():
     ):
         report["synthetic_title_failure"] = invalid
         assert receipt.closed_title_failure(report, SHA) == {}
+
+
+def test_native_stack_wait_checks_nested_and_outer_crossfades():
+    from notice_c_native_readability import stack_transition_running
+
+    class Node:
+        def __init__(self, parent=None):
+            self.parent = parent
+
+        def get_parent(self):
+            return self.parent
+
+    class Stack(Node):
+        running = False
+
+        def get_transition_running(self):
+            return self.running
+
+    window = Node()
+    outer = Stack(window)
+    inner = Stack(Node(outer))
+    cover = Node(inner)
+    assert not stack_transition_running(cover, window, Stack)
+    outer.running = True
+    assert stack_transition_running(cover, window, Stack)
+    outer.running = False
+    inner.running = True
+    assert stack_transition_running(cover, window, Stack)
+    inner.running = False
+    assert not stack_transition_running(cover, window, Stack)
+    with pytest.raises(AssertionError, match="hierarchy"):
+        stack_transition_running(cover, Node(), Stack)
+
+
+def test_native_pixel_failure_distinguishes_low_contrast_and_unpainted():
+    from PIL import Image
+    from notice_c_native_readability import check_pixels, failure_code
+
+    crop = Image.new("RGB", (12, 12), "white")
+    for foreground, code in (((0, 0, 0), "paint"), ((190, 190, 190), "contrast")):
+        with pytest.raises(AssertionError) as error:
+            check_pixels(crop, foreground)
+        assert failure_code(error.value) == code

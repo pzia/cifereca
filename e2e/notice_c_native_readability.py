@@ -10,6 +10,8 @@ FAILURE_CODES = {
     "empty native title crop": "empty_crop",
     "unresolved native title background": "background",
     "native title contrast or paint missing": "contrast_or_paint",
+    "native title contrast or paint: insufficient contrast": "contrast",
+    "native title contrast or paint: foreground missing": "paint",
     "native title coordinates unavailable": "coordinates",
     "native label not mapped": "unmapped",
     "native title ellipsized": "ellipsized",
@@ -66,8 +68,22 @@ def check_pixels(crop, foreground):
     matching = sum(count for rgb, count in pixels.items()
                    if max(abs(a - b) for a, b in zip(rgb, foreground)) <= 24
                    and contrast(rgb, background) >= MIN_CONTRAST)
-    if contrast(foreground, background) < MIN_CONTRAST or matching < 3:
-        raise AssertionError("native title contrast or paint missing")
+    if contrast(foreground, background) < MIN_CONTRAST:
+        raise AssertionError("native title contrast or paint: insufficient contrast")
+    if matching < 3:
+        raise AssertionError("native title contrast or paint: foreground missing")
+
+
+def stack_transition_running(widget, window, stack_type):
+    """A mapped texture can precede the final pixels of an ancestor crossfade."""
+    running = False
+    while widget is not None and widget is not window:
+        if isinstance(widget, stack_type) and widget.get_transition_running():
+            running = True
+        widget = widget.get_parent()
+    if widget is not window:
+        raise AssertionError("native title outside window hierarchy")
+    return running
 
 
 def walk(widget):
