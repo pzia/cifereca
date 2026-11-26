@@ -75,15 +75,15 @@ def _durable_public_c_fallback(
 ):
     """Installation-wide C is independently public, not a relabelled mirror.
 
-    The current C cursor supports only these fields. On a bounded source
-    budget failure or an incomplete type-filtered cohort, report an
+    Use the same explicit fields as the retained C cursor. On a bounded
+    source budget failure or an incomplete type-filtered cohort, report an
     unavailable inventory rather than fabricate a filtered total.
     """
-    if field not in {"all", "title", "author", "publisher"}:
+    from .notice_c_public_search import _FIELDS, search_public_notice_c
+    if type(field) is not str or field not in _FIELDS:
         return empty("no_known_results")
     if scope not in {"all", "digital", "physical", "unknown", "catalog"}:
         return empty("no_known_results")
-    from .notice_c_public_search import search_public_notice_c
     try:
         first = search_public_notice_c(
             storage, query, provider_ids=(provider_id,),
@@ -131,6 +131,17 @@ def _durable_public_c_fallback(
     results = []
     for candidate in matched[start:start + page_size]:
         hit = by_key[candidate["key"]]
+        # Only the decoded public C source contributes descriptive fields.
+        # The stale DTO is re-filtered by GTK; omitting these fields would
+        # turn an admitted subject/series/language/ISBN hit into a false zero.
+        # No source receipt, URL, authority or action is exported.
+        metadata = hit.classification.wire() if hit.classification is not None else {}
+        if hit.series_relation is not None:
+            metadata["series"] = [hit.series_relation.label]
+        if hit.language_observation is not None:
+            metadata["languages"] = list(hit.language_observation.languages)
+        if hit.isbn_observation is not None:
+            metadata["isbns"] = list(hit.isbn_observation.isbns)
         results.append(SearchResult(
             id=candidate["key"], record_id=hit.record_id, docbase=hit.docbase,
             medium=hit.medium, title=hit.title, author=hit.author, type=None,
@@ -141,6 +152,7 @@ def _durable_public_c_fallback(
             revision_id=hit.source_revision,
             thumbnail_url=None, friendly_url=None, owned=False, downloadable=False,
             metadata={
+                **metadata,
                 "search_provenance": "known_catalog_stale",
                 "mirrored_at": hit.last_seen_at,
                 "notice_c_query_status": first.status,

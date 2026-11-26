@@ -137,9 +137,8 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
         return (_values(row.get("publisher")) + _values(meta.get("publisher"))
                 + _purchase_catalogue_values(row, field))
     if field == "isbn":
-        # A retained public C source has no admitted ISBN in this cursor.
-        # The opaque supplier record coordinate is not an ISBN, even when
-        # its digits happen to pass an ISBN checksum.
+        # Public C ISBN matching uses the sealed source receipt, not these
+        # loose field values or the opaque supplier record coordinate.
         if row.get("source") == "notice_c_public":
             return []
         # A supplier ID is searchable as an identifier in All, not as an ISBN.
@@ -262,6 +261,21 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
     scored = [(name, weight, tuple(" ".join(_words(value)) for value in values
                                      if type(value) is str and value))
               for name, weight, values in groups]
+    isbn_score = 0
+    isbn = _local_isbn(query)
+    if isbn:
+        if row.get("source") == "notice_c_public":
+            from .notice_c_loaded_filter import matches_loaded_public_isbn
+            if matches_loaded_public_isbn(row, isbn):
+                isbn_score = 10
+        elif (meta.get("search_provenance") == "known_catalog_stale"
+              and meta.get("notice_c_query_status") in ("partial", "budget_exceeded")
+              and isbn in _field_values(row, "isbn")):
+            # A retained C fallback has already projected its descriptive
+            # ISBN values into a stale SearchResult. Its loaded All filter
+            # must keep the exact ISBN10/13 alias accepted by the C cursor.
+            # No claim about manifestation, ownership or delivery follows.
+            isbn_score = 10
     total = 0
     matched_fields: list[str] = []
     for token in [*terms, *phrases]:
@@ -270,11 +284,13 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
         matches = [(weight, name) for name, weight, values in scored
                    if any(token in value for value in values)]
         if not matches:
-            return 0, ()
+            return (isbn_score, ("identifier",)) if isbn_score else (0, ())
         weight, name = max(matches)
         total += weight
         if name not in matched_fields:
             matched_fields.append(name)
+    if isbn_score > total:
+        return isbn_score, ("identifier",)
     return total, tuple(matched_fields)
 
 
