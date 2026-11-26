@@ -155,3 +155,22 @@ def test_nested_or_attributed_identifier_is_not_literal_isbn_evidence():
         '<dc:title>Titre</dc:title></dc:dc>'
     )
     assert row.metadata["isbns"] == []
+
+
+def test_identifier_inside_relation_or_embedded_record_is_not_own_isbn():
+    row, = _parse(
+        '<dc:dc><dc:identifier>ark:/12148/cb100000009i</dc:identifier>'
+        '<dc:relation><dc:identifier>9780306406157</dc:identifier></dc:relation>'
+        '<dc:dc><dc:identifier>9780140328721</dc:identifier></dc:dc>'
+        '<dc:title>Titre</dc:title></dc:dc>'
+    )
+    assert row.metadata["isbns"] == []
+
+
+def test_isbn_requires_exact_ark_in_same_dc_envelope():
+    row, = _parse(
+        '<dc:relation><dc:identifier>ark:/12148/cb100000009i</dc:identifier></dc:relation>'
+        '<dc:dc><dc:identifier>9780306406157</dc:identifier>'
+        '<dc:title>Titre</dc:title></dc:dc>'
+    )
+    assert row.metadata["isbns"] == []
