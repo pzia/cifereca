@@ -40,14 +40,23 @@ def execute_normal_lender_borrow(
     revoked = _result("blocked", "lender_scope_revoked")
     # A single direct caller keeps its original contract. The shared detail
     # supplies the entire confirmed chooser, not only its selected member.
-    roster = (captured_candidate,) if captured_roster is None else captured_roster
+    from .borrow_for_identity_native_roster import (
+        NativeLenderRoster, native_lender_roster_current,
+    )
+    native = captured_roster if type(captured_roster) is NativeLenderRoster else None
+    roster = (native.rows if native is not None else
+              (captured_candidate,) if captured_roster is None else captured_roster)
 
     def roster_current():
         try:
             return (
-                possible_lender_claims_distinct(
-                    roster, exact_notice, requesting_identity_id=requesting_identity_id,
-                )
+                (native_lender_roster_current(service, native)
+                 and native._reader_id == requesting_identity_id
+                 and native.rows is roster
+                 if native is not None else
+                 possible_lender_claims_distinct(
+                     roster, exact_notice, requesting_identity_id=requesting_identity_id,
+                 ))
                 and sum(row is captured_candidate for row in roster) == 1
                 and all(
                     possible_lender_session_matches(

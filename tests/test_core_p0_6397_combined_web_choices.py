@@ -90,6 +90,61 @@ def test_mixed_gtk_has_one_action_and_no_private_url_in_label(tmp_path):
         assert db.entitlements() == db.acquisitions() == db.placements() == []
 
 
+@pytest.mark.parametrize("phase", ["publication", "browser"])
+@pytest.mark.parametrize("revoke", ["disconnect", "epoch", "replacement"])
+def test_mixed_private_completion_rechecks_session_but_public_remains_usable(tmp_path, phase, revoke):
+    with closing(Storage(tmp_path / "mixed-fence.sqlite")) as db:
+        core, alice, _, c = setup(db)
+        scope = capture_search_read_scope(core, "alice")
+        pending, actions, launches, toasts = [], [], [], []
+        host = NS(service=core, _closed=False,
+                  runner=NS(submit=lambda _label, work, done, fail, **kw:
+                            pending.append((work, done, fail))),
+                  toast=toasts.append)
+        panel = NS(add_actions=actions.extend)
+        gio = NS(AppInfo=NS(launch_default_for_uri=lambda uri, _: launches.append(uri)))
+        assert request_public_web_actions(
+            host, panel, c.document, expected_epoch=c.epoch, current=lambda: True,
+            Gtk=GTK, Gio=gio, reader_scope=scope,
+        )
+        key = (alice.provider_id, alice.credential_id)
+        session = core._sessions[key]
+
+        def revoke_session():
+            if revoke == "disconnect":
+                session.connected = False
+            elif revoke == "epoch":
+                session._epoch += 1
+            else:
+                from tests.test_core_p0_6397_authenticated_web_choices import Offline
+                core._sessions[key] = Offline(alice)
+
+        if phase == "publication":
+            work, done, _ = pending.pop(0)
+            receipt = work()
+            assert len(receipt.choices) == 2
+            revoke_session()
+            done(receipt)
+            public, = actions
+            assert public.label == "Ouvrir la fiche web"
+        else:
+            deliver(pending)
+            root, = actions
+            public, private = root.popover.child.child.children
+            private.callback(private)
+            work, done, _ = pending.pop(0)
+            uri = work()
+            assert uri == URL
+            revoke_session()
+            done(uri)
+            assert not launches and toasts
+
+        public.callback(public)
+        deliver(pending)
+        assert launches == [PUBLIC]
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
 @pytest.mark.parametrize("change", ["disconnect", "session", "generation"])
 def test_mixed_private_worker_delivery_does_not_launch_revoked_session(tmp_path, change):
     with closing(Storage(tmp_path / "delivery.sqlite")) as db:
