@@ -619,3 +619,22 @@ def test_private_parse_witness_actual_http_search_approval_and_guard(harness, mo
         assert not fresh_client.calls
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("catalogue_access", "shared_read_only"),
+    ("search_provenance", "known_catalog_stale"),
+])
+def test_inert_catalogue_projection_cannot_rebind_private_web_read(harness, flag, value):
+    service, session, _, client = harness
+    row, = service.search("fiction", provider_id=session.provider_id, force=True)
+    scope = capture_search_read_scope(service, "alice")
+    menu = read_authenticated_web_for_search(service, row, reader_scope=scope)
+    assert menu is not None and len(menu.choices) == 1
+    # Same exact coordinates are insufficient: the inert projection
+    # must remain non-actionable even in its source owner's scope.
+    inert = replace(row, metadata={**row.metadata, flag: value})
+    assert read_authenticated_web_for_search(service, inert, reader_scope=scope) is None
+    assert read_authenticated_web_for_search(service, row, reader_scope=scope).choices == menu.choices
+    assert len(client.calls) == 1
+    assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
