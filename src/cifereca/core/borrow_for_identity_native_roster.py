@@ -204,7 +204,6 @@ def native_lender_roster_for_detail(service, item, *, requesting_identity_id):
     from a legacy exact-source detail. Never fall back to a reconstructed
     public row as an executable loan occurrence.
     """
-    from .borrow_for_identity_native_occurrence import retained_native_borrow_occurrences
     if type(item) is not SearchResult:
         return False, None
     try:
@@ -212,23 +211,51 @@ def native_lender_roster_for_detail(service, item, *, requesting_identity_id):
         if binding is None:
             return False, None
         document, epoch = binding
-        c = read_consolidated_notice_cover(service.storage, document)
-        if c is None or c.epoch != epoch:
-            return True, None
-        refs = frozenset(m.source_ref for m in c.sources if m.visibility == "private")
-        rows = retained_native_borrow_occurrences(service, source_refs=refs)
-        if not rows:
-            return True, None
-        return True, capture_native_lender_roster(
-            service, document=document, expected_epoch=epoch,
-            requesting_identity_id=requesting_identity_id, occurrences=rows,
+        return True, native_lender_roster_for_c(
+            service, document, expected_epoch=epoch,
+            requesting_identity_id=requesting_identity_id,
         )
     except Exception:
         return True, None
 
 
+def native_lender_roster_for_c(service, document, *, expected_epoch, requesting_identity_id):
+    """Worker port for a C-first detail whose original UI receipt is pinned."""
+    from .borrow_for_identity_native_occurrence import retained_native_borrow_occurrences
+    if (not is_canonical_cover_document(document)
+            or type(expected_epoch) is not int or not 1 <= expected_epoch < 2**63):
+        return None
+    try:
+        c = read_consolidated_notice_cover(service.storage, document)
+        if c is None or c.epoch != expected_epoch:
+            return None
+        refs = frozenset(m.source_ref for m in c.sources if m.visibility == "private")
+        rows = retained_native_borrow_occurrences(service, source_refs=refs)
+        if not rows:
+            return None
+        return capture_native_lender_roster(
+            service, document=document, expected_epoch=expected_epoch,
+            requesting_identity_id=requesting_identity_id, occurrences=rows,
+        )
+    except Exception:
+        return None
+
+
 def native_roster_matches_detail(service, roster, item, *, requesting_identity_id):
-    """Pure GTK delivery/consent check. The worker rechecks SQLite at dispatch."""
+    """Pure GTK check of an original SearchResult's own C receipt."""
+    try:
+        binding = _detail_binding(item, requesting_identity_id)
+        return (binding is not None and native_roster_matches_document(
+            service, roster, binding[0], expected_epoch=binding[1],
+            requesting_identity_id=requesting_identity_id,
+        ))
+    except Exception:
+        return False
+
+
+def native_roster_matches_document(service, roster, document, *, expected_epoch,
+                                   requesting_identity_id):
+    """Pure GTK check; original view receipt and SQLite worker remain mandatory."""
     try:
         if (type(roster) is not NativeLenderRoster or roster._token is not _TOKEN
                 or roster._service is not service
@@ -237,7 +264,9 @@ def native_roster_matches_detail(service, roster, item, *, requesting_identity_i
                 or not _reader_current(service, roster._reader, roster._reader_id,
                                        roster._account_epoch, roster._source_epoch)
                 or not is_canonical_cover_document(roster.document)
-                or _detail_binding(item, requesting_identity_id) != (roster.document, roster.epoch)
+                or not is_canonical_cover_document(document)
+                or type(expected_epoch) is not int or roster.epoch != expected_epoch
+                or roster.document != document
                 or type(roster.rows) is not tuple or not 1 <= len(roster.rows) <= 64
                 or any(type(row) is not PossibleBorrowLender for row in roster.rows)
                 or len({id(row) for row in roster.rows}) != len(roster.rows)):
@@ -258,4 +287,5 @@ def native_roster_matches_detail(service, roster, item, *, requesting_identity_i
 
 __all__ = ["NativeLenderRoster", "capture_native_lender_roster",
            "native_lender_roster_current", "native_lender_roster_for_detail",
-           "native_roster_matches_detail"]
+           "native_roster_matches_detail", "native_lender_roster_for_c",
+           "native_roster_matches_document"]
