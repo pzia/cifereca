@@ -1517,10 +1517,22 @@ epub_metadata._publish_cover(data, "png")
                             assert window.service._account_context_epoch == account_epoch
                             assert window.service._source_context_epoch == source_epoch
                             report["checks"]["P0_6168_postcommit_rebind_real_gtk"] = True
-                            report["local_c_stage"] = "complete"
-                            cleanup()
-                            window.present()
-                            complete()
+                            def finish_matrix():
+                                report["local_c_stage"] = "complete"
+                                cleanup()
+                                window.present()
+                                complete()
+
+                            from notice_c_preview_repair_contract import verify_preview_repair
+                            report["local_c_stage"] = "preview_decode_repair"
+                            verify_preview_repair(
+                                list_cover, detail_cover, n2=n2, loader=loader,
+                                document=updated.document, revision=updated.epoch,
+                                url=fallback_images[-1], pixels=pixels,
+                                counters=lambda: (tuple(reads), tuple(gets), tuple(fallback_gets)),
+                                later=later, guard=guard, capture=capture,
+                                report=report, complete=finish_matrix,
+                            )
 
                         later(40, guard(lambda: repainted(monotonic() + 8)))
 
