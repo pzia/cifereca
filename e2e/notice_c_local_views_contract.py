@@ -20,7 +20,8 @@ def walk(widget):
         child = child.get_next_sibling()
 
 
-def verify_local_notice_c_views(window, later, capture, report, complete, *, late_audit=None):
+def verify_local_notice_c_views(window, later, capture, report, complete, *, late_audit=None,
+                                settled_capture=False):
     """One retained C, three completed test Origins, six real GTK list/detail views.
 
     One source is the unmodified recorded Numilog HTML through its actual
@@ -697,7 +698,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete, *, lat
             deadline = monotonic() + 8
             later(40, guard(lambda: wait_texture(route, page, row, "list", deadline)))
 
-        def wait_texture(route, page, row, variant, deadline, revoked=None):
+        def wait_texture(route, page, row, variant, deadline, revoked=None, settled=False):
             assert window.view_stack.get_visible_child_name() == (
                 recommendation_route if route == "recommendations" else route
             )
@@ -718,6 +719,19 @@ def verify_local_notice_c_views(window, later, capture, report, complete, *, lat
                 later(40, guard(lambda: wait_texture(route, page, row, variant, deadline, revoked)))
                 return
             cover = covers[0]
+            if settled_capture and revoked is None:
+                from notice_c_native_readability import stack_transition_running
+                running = stack_transition_running(cover, window, Gtk.Stack)
+                # Native Stack CROSSFADE keeps the destination mapped before
+                # it is fully composited. Wait for idle and another event-loop
+                # interval, then revalidate the same row/texture. Never change
+                # production animations or accept an unpainted screenshot.
+                if running or not settled:
+                    assert monotonic() < deadline, "native capture transition timeout"
+                    later(40, guard(lambda: wait_texture(
+                        route, page, row, variant, deadline, settled=not running,
+                    )))
+                    return
             assert cover._loader is loader
             assert cover._request.source_uri == url and cover._request.still_current
             texture = cover.picture.get_paintable()

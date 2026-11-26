@@ -99,10 +99,14 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
     parser.add_argument("--appearance", choices=("light", "dark"))
+    parser.add_argument("--synthetic-matrix", action="store_true")
     args = parser.parse_args()
     if args.width != 1366 and args.appearance is None:
         parser.error("private alternative width requires explicit appearance")
-    if (args.width != 1366 or args.appearance is not None) and (
+    if args.synthetic_matrix and (args.appearance is None
+            or args.out.resolve().is_relative_to(ROOT.resolve())):
+        parser.error("synthetic matrix requires explicit appearance and external output")
+    if not args.synthetic_matrix and (args.width != 1366 or args.appearance is not None) and (
             os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
         parser.error("alternative BnF review is local only")
     size = (args.width, 1000 if args.width == 1600 else 900)
@@ -244,7 +248,7 @@ def main() -> int:
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
         )
 
-    def capture(stage):
+    def capture(stage, *, title_witness=None):
         screenshot = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
         assert screenshot.size == size, "Unexpected Xvfb geometry"
         appearance = "dark" if Adw.StyleManager.get_default().get_dark() else "light"
@@ -253,6 +257,22 @@ def main() -> int:
             assert report["appearance"] == appearance
         report["appearance"] = appearance
         assert screenshot.getbbox() is not None, "Blank GTK surface"
+        if args.synthetic_matrix and stage in ("02-bnf-first-detail", "03-bnf-second-detail"):
+            from notice_c_native_readability import native_title_witness
+            index = 0 if stage == "02-bnf-first-detail" else 1
+            window = app_window[0]
+            report["checks"]["synthetic_native_title_" + str(index)] = native_title_witness(
+                window, window.search_page.detail, screenshot, "Synthetic " + RESOURCES[index])
+        if title_witness is not None:
+            assert args.synthetic_matrix
+            from notice_c_native_readability import native_route_title_witness, failure_code
+            route, variant, expected_title = title_witness
+            try:
+                report["checks"]["synthetic_title_" + stage] = native_route_title_witness(
+                    app_window[0], screenshot, route, variant, expected_title)
+            except Exception as exc:
+                report["synthetic_title_failure"] = {"stage": stage, "code": failure_code(exc)}
+                raise
         filename = out / (stage + ".png")
         screenshot.save(filename)
         shutil.copyfile(filename, out / "screen.png")
@@ -985,7 +1005,7 @@ def main() -> int:
         verify_borrower_c_views(
             window, loan, stable_record, bnf.DESCRIPTOR,
             later=later, capture=capture, report=report, complete=complete,
-            checkpoint=checkpoint,
+            checkpoint=checkpoint, settled_capture=args.synthetic_matrix,
         )
 
     def complete():
