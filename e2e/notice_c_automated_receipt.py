@@ -15,6 +15,10 @@ from notice_c_private_capture import CaptureError, MATRIX, ROOT, clean_head
 from notice_c_private_final_receipt import native_aba_report
 
 
+class MatrixFailure(CaptureError):
+    """Only internal fixed matrix labels may be exposed."""
+
+
 def verify_theme_pairs(rows):
     """Reject identical light/dark pixels for the same stage and geometry."""
     pairs = {}
@@ -64,7 +68,7 @@ def run(python, expected_sha):
                 for family, scenario, extra, target in (
                     ("generic", f"book-detail-{width}", [],
                      root / "generic" / theme),
-                    ("bnf", "bnf-covers-1366", ["--bnf-width", str(width)],
+                    ("bnf", "bnf-covers-1366", ["--bnf-width", str(width), "--synthetic-matrix"],
                      root / "bnf" / theme / str(width)),
                 ):
                     target.mkdir(parents=True, exist_ok=True)
@@ -77,7 +81,7 @@ def run(python, expected_sha):
                         cwd=ROOT, stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, timeout=180, check=False)
                     if result.returncode:
-                        raise CaptureError("synthetic GTK execution failed")
+                        raise MatrixFailure(f"{family}_{theme}_{width}")
             return verify(root, sha)
     finally:
         os.umask(old)
@@ -90,6 +94,12 @@ def main():
     args = parser.parse_args()
     try:
         print(json.dumps(run(args.python, args.expected_sha)))
+    except MatrixFailure as exc:
+        allowed = {f"{family}_{theme}_{width}" for theme, width in MATRIX
+                   for family in ("generic", "bnf")}
+        code = str(exc) if str(exc) in allowed else "unknown"
+        print(json.dumps(dict(status="SYNTHETIC_GTK_MATRIX_REFUSED", failed_case=code)))
+        return 1
     except (CaptureError, generic.ReviewError, OSError, ValueError,
             subprocess.SubprocessError):
         print('{"status":"SYNTHETIC_GTK_MATRIX_REFUSED"}')
