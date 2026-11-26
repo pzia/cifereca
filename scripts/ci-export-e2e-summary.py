@@ -814,6 +814,8 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
         )
         if all(data["checks"].get(stage) is True for stage in local_matrix_stages):
             evidence["notice_c_4980_local_gtk_matrix"] = True
+            if data["checks"].get("P0_4980_epub_interrupted_publish_recovery_real_gtk") is True:
+                evidence["notice_c_4980_epub_crash_recovery"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}
