@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from ..models import Account, SearchResult
 from .borrow_action_scope import _fields, _valid_fields, borrow_claim_key
 from .borrow_for_identity_discovery import _notice_binding
+from .source_context import source_context_mutation
 
 _TOKEN = object()
 _MARKER = "_core_native_borrow_occurrence"
+_MAX_RETAINED = 2048
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -96,6 +98,18 @@ def stamp_native_borrow_occurrences(service, call, rows):
         for receipt in pending.values():
             if receipt is not None:
                 receipt.row.__dict__[_MARKER] = receipt
+        # Production service owns this bounded, nonserialized inventory.
+        # A provider result is not durable authority, and a later Search
+        # must not expose credentials or copy a foreign raw result into GTK.
+        with source_context_mutation(service):
+            inventory = getattr(service, "_native_borrow_occurrences", None)
+            if type(inventory) is dict:
+                for key, receipt in pending.items():
+                    inventory.pop(key, None)
+                    if receipt is not None:
+                        inventory[key] = receipt.row
+                while len(inventory) > _MAX_RETAINED:
+                    inventory.pop(next(iter(inventory)))
     except (AttributeError, TypeError, ValueError, LookupError, RuntimeError):
         # This additional passive witness cannot abort ordinary Search.
         for row in rows:
@@ -142,4 +156,38 @@ def native_borrow_occurrence_document(service, row, *, owner):
         return None
 
 
-__all__ = ["stamp_native_borrow_occurrences", "native_borrow_occurrence_document"]
+def retained_native_borrow_occurrences(service, *, source_refs):
+    """Bounded snapshot of original rows matching already admitted C refs.
+
+    No new GET, serialization, login or navigation. The caller must still
+    validate each row's original session, exact source and C membership.
+    """
+    if (type(source_refs) is frozenset
+            and 0 < len(source_refs) <= 64
+            and all(type(v) is str for v in source_refs)):
+        from .notice_cover_projection import notice_cover_document_ref
+        from .notice_source_observation import NoticeSourceKey, _valid_key
+        try:
+            with source_context_mutation(service):
+                inventory = getattr(service, "_native_borrow_occurrences", None)
+                if type(inventory) is not dict or len(inventory) > _MAX_RETAINED:
+                    return ()
+                snapshot = tuple(inventory.items())
+            rows = []
+            for key, row in snapshot:
+                if (type(key) is not NoticeSourceKey or not _valid_key(key)
+                        or type(row) is not SearchResult
+                        or notice_cover_document_ref(key).source_key not in source_refs):
+                    continue
+                if native_borrow_occurrence_document(service, row, owner=key.identity_id) is not None:
+                    rows.append(row)
+                if len(rows) > 64:
+                    return ()
+            return tuple(rows)
+        except Exception:
+            return ()
+    return ()
+
+
+__all__ = ["stamp_native_borrow_occurrences", "native_borrow_occurrence_document",
+           "retained_native_borrow_occurrences"]
