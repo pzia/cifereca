@@ -1192,8 +1192,15 @@ def main():
                             ) is True, "missing narrow six-view receipt: " + phase
                     later(450, search_initial)
 
+                from notice_c_native_lease_audit import NativeLeaseAudit
+                audit = NativeLeaseAudit(window, capture, report)
+
+                def audited_complete():
+                    audit.complete()
+                    local_views_complete()
+
                 verify_local_notice_c_views(
-                    window, later, capture, report, local_views_complete,
+                    window, later, audit.capture, report, audited_complete,
                 )
 
             verify_notice_c_cover(window, later, capture, report, notice_c_complete)
