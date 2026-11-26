@@ -119,3 +119,48 @@ def test_cover_failure_classification_does_not_read_exception_text():
     assert _cover_failure_code(ValueError(SECRET)) == "invalid_image"
     assert _cover_failure_code(httpx.ConnectError(SECRET)) == "request_failed"
     assert _cover_failure_code(httpx.TimeoutException(SECRET)) == "timeout"
+
+
+@pytest.mark.parametrize(("base_error", "reason"), [
+    (RuntimeError, "unexpected"),
+    (OSError, "storage_failed"),
+    (ValueError, "invalid_image"),
+])
+def test_preview_fallback_never_logs_untrusted_exception_class_or_message(
+    tmp_path, monkeypatch, caplog, base_error, reason,
+):
+    from cifereca.gui import cover_loader
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    diagnostics = Diagnostics(level="detailed")
+    loader = CoverLoader(diagnostics=diagnostics, max_workers=2)
+    original = loader.client
+    error_class = type("PRIVATE_PREVIEW_CLASS_" + SECRET, (base_error,), {})
+
+    def broken_preview(*args):
+        raise error_class(URL)
+
+    monkeypatch.setattr(cover_loader, "create_preview", broken_preview)
+    loader.client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, content=VALID_IMAGE,
+                                       headers={"content-type": "image/png"},
+                                       request=request)
+    ))
+    original.close()
+    got, done = [], threading.Event()
+    try:
+        with caplog.at_level(logging.DEBUG, logger="cifereca"):
+            loader.load_preview(URL, lambda value: (got.append(value), done.set()),
+                                width=180, height=270)
+            assert done.wait(3.0)
+            loader._queue.join()
+        assert len(got) == 1 and got[0] == loader._path(URL)
+        assert got[0].read_bytes() == VALID_IMAGE
+        assert loader.stats()["preview_fallback"] == 1
+        assert loader.stats()["download_ok"] == 1
+        assert f"TRACE cover preview fallback reason={reason}" in caplog.text
+        exported = caplog.text + diagnostics.text("test") + json.dumps(diagnostics.snapshot())
+        for value in (SECRET, "PRIVATE_PREVIEW_CLASS_", "private-host.invalid", "/LOAN/"):
+            assert value not in exported
+    finally:
+        loader.close()
