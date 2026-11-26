@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -38,7 +39,8 @@ def require_receipt(receipt, *, status, sha, count):
 
 
 def native_aba_report(path, *, sha):
-    data = json.loads(bnf.read_regular(path, 8 * 1024 * 1024))
+    raw = bnf.read_regular(path, 8 * 1024 * 1024)
+    data = json.loads(raw)
     if (type(data) is not dict or data.get("status") != "PASS"
             or data.get("git_sha") != sha
             or data.get("local_c_stage") != "complete"):
@@ -57,7 +59,7 @@ def native_aba_report(path, *, sha):
             or type(n4.get("ui_failed")) is not int or n4["ui_failed"] != 0
             or type(n4.get("ui_applied")) is not int or n4["ui_applied"] < 24):
         raise CaptureError("invalid native ABA counters")
-    return bnf.digest(bnf.read_regular(path, 8 * 1024 * 1024))
+    return bnf.digest(raw)
 
 
 def verify_matrix(generic_root, generic_review, bnf_root, bnf_review):
@@ -71,11 +73,7 @@ def verify_matrix(generic_root, generic_review, bnf_root, bnf_review):
         # its basename. The existing individual validators still own the
         # stage inventory and per-image integrity checks.
         fd = bnf.directory_fd(path)
-        try:
-            pass
-        finally:
-            import os
-            os.close(fd)
+        os.close(fd)
     for i, left in enumerate(paths):
         for right in paths[i + 1:]:
             if left.is_relative_to(right) or right.is_relative_to(left):
