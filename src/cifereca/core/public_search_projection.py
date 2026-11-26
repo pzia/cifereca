@@ -96,6 +96,20 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
         for part in parts:
             if type(part) is not str or not _public_bibliographic_text(part, limit=limit):
                 return None
+        if name in ("isbn", "isbns"):
+            from ..plugin_api.book_references import _isbn
+            # Only a checksum-valid book identifier is descriptive ISBN data.
+            # Keep the literal source value (including ISBN-10); this is not
+            # a proof of own manifestation or a cross-source edition join.
+            # Refuse the entire identifier field on mixed invalid values,
+            # but retain independently admitted title and other bibliography.
+            if not parts or any(
+                len(part) > 64
+                or not (checked := _isbn(part))
+                or (len(checked) == 13 and not checked.startswith(("978", "979")))
+                for part in parts
+            ):
+                continue
         copied = value if type(value) is str else list(parts)
         # Count the actual bounded UTF-8 JSON, including escaping and keys.
         # No untrusted/unselected metadata is serialized or traversed.
