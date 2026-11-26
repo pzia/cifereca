@@ -23,6 +23,8 @@ _MAX = 50
 _PRIMARY_FACT_TOKEN = object()
 _PRIMARY_FACT_FIELD = "_core_notice_c_primary_facts"
 _PRIMARY_HIT_SEAL_FIELD = "_core_notice_c_primary_hit_seal"
+_QUERY_COVERAGE_FIELD = "_core_notice_c_query_coverage"
+_QUERY_COVERAGE_TOKEN = object()
 # This owner-only snapshot records the original hit, independently of the
 # mutable view mapping and its field-by-field presentation provenance.
 _PRIMARY_HIT_SEAL_NAMES = (
@@ -435,12 +437,53 @@ def merge_public_notice_c_known_rows(
     for key, group in source_groups.items():
         if len(group) > 1:
             attach_filter_sources(by_document[key], tuple(group))
+    if page.known_documents is not None and rows:
+        # One descriptive receipt for the initial C query cohort, not
+        # a provider total or a count for a later loaded-filter edit.
+        coverage = (_QUERY_COVERAGE_TOKEN, identity_id, page.known_documents,
+                    page.status, page.has_more)
+        for row in rows:
+            row[_QUERY_COVERAGE_FIELD] = coverage
     for row in known:
         # Do not replace local placements, verified rights, private sources,
         # different revisions or medium with public descriptive metadata.
         if _public_mirror_key(row, identity_id=identity_id) not in admitted:
             rows.append(row)
     return rows
+
+
+def known_public_c_loaded_coverage(rows, *, identity_id):
+    """Describe one already loaded C cohort, not current filter coverage.
+
+    Keep document counts distinct from source occurrences and suppress mixed
+    or ungrouped cohorts. No SQLite, supplier request, action or new proof.
+    """
+    if type(identity_id) is not str or not identity_id:
+        return None
+    cohort = None
+    documents = set()
+    for row in rows:
+        if type(row) is not dict or row.get("source") != "notice_c_public":
+            continue
+        packet = row.get(_QUERY_COVERAGE_FIELD)
+        if (type(packet) is not tuple or len(packet) != 5
+                or packet[0] is not _QUERY_COVERAGE_TOKEN
+                or type(packet[1]) is not str or packet[1] != identity_id
+                or type(packet[2]) is not int or not 0 < packet[2] < 2**63
+                or type(packet[3]) is not str or packet[3] not in ("partial", "budget_exceeded")
+                or type(packet[4]) is not bool
+                or (cohort is not None and cohort is not packet)):
+            return None
+        hit = known_public_primary_facts(row)
+        if hit is None or row["identity_id"] != identity_id:
+            return None
+        cohort = packet
+        documents.add(hit.document.source_key)
+        if len(documents) > _MAX:
+            return None
+    if cohort is None or len(documents) > cohort[2]:
+        return None
+    return len(documents), cohort[2], cohort[3], cohort[4]
 
 
 def matching_live_public_canonical_ref(row: object, *, identity_id: str):
