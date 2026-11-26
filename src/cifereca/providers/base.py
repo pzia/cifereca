@@ -360,6 +360,14 @@ class ProviderDescriptor:
     # edition in these two APIs. None matches ONLY an unrevisioned public
     # source. No right, public disclosure, GET or mutation is authorized.
     borrower_public_edition_branches_v1: tuple[tuple[str, str, str, str | None], ...] = ()
+    # Optional documentary-only authenticated catalogue namespace, not an
+    # account identity or a lending capability. Each exact tuple declares
+    # (scenario, docbase, medium, source_collection, revision, source_field).
+    # A complete native card identifies the same supplier resource across
+    # credentials for this branch. Private observations keep separate scopes.
+    authenticated_catalogue_edition_branches_v1: tuple[
+        tuple[str, str, str, str | None, str | None, str], ...
+    ] = ()
 
 
 class ProviderSession(ABC):
