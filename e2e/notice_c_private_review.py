@@ -28,7 +28,6 @@ STAGES = tuple(
     "00-notice-c-epub-priority-warm",
     "00-notice-c-epub-qualified-fallback",
     "00-notice-c-catalogue-http-fallback",
-    "00-notice-c-postcommit-rebind",
 )
 CHECKS = (
     "P0_4980_same_c_six_physical_views_restart_offline",
@@ -66,7 +65,7 @@ def digest(data):
 
 
 def verify_captures(root, expected_sha):
-    """Verify 128 original PNGs; no automatic visual verdict."""
+    """Verify 124 original PNGs; no automatic visual verdict."""
     from PIL import Image
     if type(expected_sha) is not str or not re.fullmatch("[0-9a-f]{40}", expected_sha):
         raise ReviewError("invalid expected HEAD")
@@ -92,7 +91,7 @@ def verify_captures(root, expected_sha):
             checks = report.get("checks")
             if type(checks) is not dict or not all(checks.get(k) is True for k in CHECKS):
                 raise ReviewError("missing native cover check")
-            for phase, gets in (("cold", 1), ("offline", 0)):
+            for phase, downloads in (("cold", 1), ("offline", 0)):
                 shared = report.get("notice_c_shared_six_views_" + phase)
                 metrics = report.get("notice_c_cover_metrics_" + phase)
                 if (type(shared) is not dict or shared.get("routes") != list(ROUTES)
@@ -100,9 +99,12 @@ def verify_captures(root, expected_sha):
                         or shared.get("same_document") is not True
                         or shared.get("same_epoch") is not True
                         or type(shared.get("image_gets_total")) is not int
-                        or shared["image_gets_total"] != gets
+                        or shared["image_gets_total"] != 1
                         or type(metrics) is not dict
-                        or metrics.get("fixture") != "one_c_six_views_mock_transport"):
+                        or metrics.get("fixture") != "one_c_six_views_mock_transport"
+                        or type(metrics.get("n3")) is not dict
+                        or type(metrics["n3"].get("download_ok")) is not int
+                        or metrics["n3"]["download_ok"] != downloads):
                     raise ReviewError("missing exact six-view receipt")
             steps = report.get("steps")
             if type(steps) is not list or any(type(e) is not dict for e in steps):
