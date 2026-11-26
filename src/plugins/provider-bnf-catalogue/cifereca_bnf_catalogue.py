@@ -478,6 +478,13 @@ class BnfCatalogueSession(ProviderSession):
                     "source_field": "dc.language", "scope": "SRU-DUBLINCORE",
                     "confidence": "explicit_record_field", "freshness": "search_response",
                 }}}
+            if 1 <= len(isbns) <= 32:
+                language_proof.setdefault("bibliography_evidence", {})["isbns"] = {
+                    "source": self.provider_id + ".sru",
+                    "source_field": "dc.identifier", "scope": "SRU-DUBLINCORE",
+                    "record_id": ark, "confidence": "explicit_record_field",
+                    "freshness": "search_response", "relationship": "record_identifier",
+                }
             series, collections = _structured_group_values(values)
             first = lambda key: (values.get(key) or [None])[0]
             rows[ark] = SearchResult(
