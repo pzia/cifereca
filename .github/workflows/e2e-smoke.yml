@@ -268,8 +268,11 @@ jobs:
         run: |
           set -euo pipefail
           PY="$RUNNER_TEMP/notice-matrix-venv/bin/python"
-          dbus-run-session -- "$PY" e2e/notice_c_automated_receipt.py --python "$PY" --expected-sha "$EXPECTED_SHA" > "$RUNNER_TEMP/notice-matrix-receipt.json"
+          status=0
+          dbus-run-session -- "$PY" e2e/notice_c_automated_receipt.py --python "$PY" --expected-sha "$EXPECTED_SHA" > "$RUNNER_TEMP/notice-matrix-receipt.json" || status=$?
           cat "$RUNNER_TEMP/notice-matrix-receipt.json" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/notice-matrix-receipt.json"
+          exit "$status"
       - name: Upload closed synthetic receipt only
         uses: actions/upload-artifact@v7.0.2
         with:
