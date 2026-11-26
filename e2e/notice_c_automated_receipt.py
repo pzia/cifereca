@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Synthetic-only GTK evidence. Never generates a human review verdict."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+import bnf_private_review as bnf
+import notice_c_private_review as generic
+from notice_c_private_capture import CaptureError, MATRIX, ROOT, clean_head
+from notice_c_private_final_receipt import native_aba_report
+
+
+def verify(root, sha):
+    first, gf = generic.verify_captures(root / "generic", sha)
+    second, bf = bnf.inventory(root / "bnf", sha)
+    for theme, width in MATRIX:
+        native_aba_report(root / "generic" / theme /
+                          f"book-detail-{width}" / "screen.json", sha=sha)
+    if len(first) != 128 or len(second) != 96 or clean_head() != sha:
+        raise CaptureError("incomplete synthetic matrix")
+    return dict(status="SYNTHETIC_GTK_MATRIX_VERIFIED", git_sha=sha,
+                capture_count=224, native_aba_surfaces_per_configuration=12,
+                generic_fingerprint=gf, bnf_fingerprint=bf,
+                human_visual_review=False)
+
+
+def run(python, expected_sha):
+    sha = clean_head()
+    if sha != expected_sha:
+        raise CaptureError("wrong expected checkout")
+    old = os.umask(0o077)
+    try:
+        with tempfile.TemporaryDirectory(prefix="synthetic-4980-") as tmp:
+            root = Path(tmp)
+            for theme, width in MATRIX:
+                for family, scenario, extra, target in (
+                    ("generic", f"book-detail-{width}", [],
+                     root / "generic" / theme),
+                    ("bnf", "bnf-covers-1366", ["--bnf-width", str(width)],
+                     root / "bnf" / theme / str(width)),
+                ):
+                    target.mkdir(parents=True, exist_ok=True)
+                    if clean_head() != sha:
+                        raise CaptureError("checkout changed")
+                    result = subprocess.run(
+                        [python, str(ROOT / "e2e/run.py"), "--scenario", scenario,
+                         "--appearance", theme, "--out", str(target),
+                         "--python", python, *extra],
+                        cwd=ROOT, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=180, check=False)
+                    if result.returncode:
+                        raise CaptureError("synthetic GTK execution failed")
+            return verify(root, sha)
+    finally:
+        os.umask(old)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--expected-sha", required=True)
+    args = parser.parse_args()
+    try:
+        print(json.dumps(run(args.python, args.expected_sha)))
+    except (CaptureError, generic.ReviewError, OSError, ValueError,
+            subprocess.SubprocessError):
+        print('{"status":"SYNTHETIC_GTK_MATRIX_REFUSED"}')
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
