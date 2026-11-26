@@ -420,9 +420,29 @@ class BnfCatalogueSession(ProviderSession):
             # Only literal identifiers of this record, never dc.relation,
             # nested markup or the search query. Keep the declared ISBN form.
             isbns = []
-            for node in data.iter(f"{{{DC}}}identifier"):
-                if len(node) or node.attrib or not node.text or len(node.text) > 128:
-                    continue
+            # The DC record envelope may use the DC, OAI-DC or SRU-DC
+            # namespace. Only its immediate fields belong to this record;
+            # an identifier inside a relation or another embedded record
+            # cannot attest the manifestation described here.
+            dc_records = [node for node in data if node.tag in {
+                f"{{{DC}}}dc", "{http://www.openarchives.org/OAI/2.0/oai_dc/}dc",
+                "{http://www.loc.gov/zing/srw/dcschema/v1.0/}dc",
+            }]
+            literal_nodes = (dc_records[0].findall(f"{{{DC}}}identifier")
+                             if len(dc_records) == 1 else [])
+            # Require the same exact ARK in this envelope, not an ARK
+            # found elsewhere by the legacy descriptive extraction.
+            literal_nodes = [
+                node for node in literal_nodes
+                if not len(node) and not node.attrib and node.text
+                and len(node.text) <= 128
+            ]
+            if not any(
+                (match := ARK.fullmatch(node.text.strip())) is not None
+                and match.group(1).lower() == ark for node in literal_nodes
+            ):
+                literal_nodes = []
+            for node in literal_nodes:
                 candidate = re.sub(r"^(?:urn:isbn:|isbn\s*:?)\s*", "", node.text.strip(), flags=re.I)
                 candidate = re.sub(r"[\s-]", "", candidate).upper()
                 if re.fullmatch(r"[0-9]{9}[0-9X]", candidate):
