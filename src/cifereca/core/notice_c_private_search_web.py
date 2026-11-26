@@ -452,17 +452,17 @@ def _read_source_key(row, identity_id):
 
 
 def read_authenticated_web_for_search(service, row, *, reader_scope):
-    """Exact private self-C lookup, including cached rows; never trust row URL."""
-    from .notice_c_authenticated_web_choices import read_authenticated_web_choices
+    """Exact private C lookup, including retained authorized C contributions."""
+    from .notice_c_authenticated_web_choices import read_authenticated_web_choices_for_c
     from .search_orchestration import SearchReadScope
     if type(reader_scope) is not SearchReadScope or not reader_scope.current(service):
         return None
     key = _read_source_key(row, reader_scope.identity_id)
     if key is None:
         return None
-    return read_authenticated_web_choices(
+    return read_authenticated_web_choices_for_c(
         service, canonical_cover_document_ref(key.edition_id),
-        reader_scope=reader_scope, source_documents=(notice_cover_document_ref(key),),
+        reader_scope=reader_scope, required_source=notice_cover_document_ref(key),
     )
 
 

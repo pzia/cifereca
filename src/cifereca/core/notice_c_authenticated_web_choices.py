@@ -301,6 +301,100 @@ def read_authenticated_web_choices(service, document, *, reader_scope, source_do
                                    reader_scope, bindings, _TOKEN)
 
 
+def read_authenticated_web_choices_for_c(service, document, *, reader_scope,
+                                         required_source=None):
+    """Discover authorized exact source locators from the retained C itself.
+
+    The canonical member only names an opaque source; it does not authorize
+    its account. Match the existing private sidecar's scoped digest against
+    the reader's actual registered accounts, then reuse the ordinary binding
+    and click resolver. No new relation, provider access or writer.
+    """
+    from .notice_c_authenticated_web_retention import _key, _scope_digest
+    from .notice_cover_repository import _unique_object
+
+    if (not is_canonical_cover_document(document)
+            or not _native_reader_scope(reader_scope, service)
+            or not reader_scope.current(service)
+            or (required_source is not None
+                and (not _native_source_document(required_source)
+                     or required_source.identity_id != reader_scope.identity_id
+                     or _capture(service, reader_scope, required_source) is None))):
+        return None
+    try:
+        accounts = service.accounts_for_identity(reader_scope.identity_id)
+        if type(accounts) not in (list, tuple) or len(accounts) > 512:
+            return None
+        coordinates = set()
+        for account in accounts:
+            if type(account) is not Account:
+                continue
+            values = (account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+            if (all(type(v) is str and 0 < len(v) <= 512 and v.isprintable()
+                    for v in values)
+                    and values[0] == reader_scope.identity_id
+                    and values[2] != "__public__"):
+                coordinates.add(values)
+        storage = service.storage
+        docs = []
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            row = db.execute("SELECT value FROM metadata WHERE key=?",
+                             (_db_key(document),)).fetchone()
+            if row is None:
+                return None
+            canonical = _decode(row[0], document)
+            if required_source is not None:
+                if not any(m.visibility == "private"
+                           and m.source_ref == required_source.source_key
+                           and m.provider_id == required_source.provider_id
+                           for m in canonical.sources):
+                    return None
+                # Retain the existing zero-choice self-C behavior and
+                # require the original selection's authority as before.
+                docs.append(required_source)
+            for member in canonical.sources:
+                if member.visibility != "private" or member.private_web_digest is None:
+                    continue
+                candidates = [
+                    CoverDocumentScope(kind="catalogue", identity_id=owner,
+                                       provider_id=provider, credential_id=credential,
+                                       account_id=account, source_key=member.source_ref)
+                    for owner, provider, credential, account in sorted(coordinates)
+                    if provider == member.provider_id
+                ]
+                if not candidates:
+                    continue
+                raw = db.execute("SELECT value FROM metadata WHERE key=?",
+                                 (_key(candidates[0]),)).fetchone()
+                if (raw is None or type(raw[0]) is not str or len(raw[0]) > 16384
+                        or sha256(raw[0].encode("ascii")).hexdigest()
+                        != member.private_web_digest):
+                    continue
+                sidecar = json.loads(raw[0], object_pairs_hook=_unique_object)
+                if type(sidecar) is not dict or type(sidecar.get("scope")) is not str:
+                    continue
+                matches = [doc for doc in candidates
+                           if _opaque_key(doc) is not None
+                           and _scope_digest(doc) == sidecar["scope"]]
+                if len(matches) == 1 and matches[0] not in docs:
+                    docs.append(matches[0])
+        if not docs or len(docs) > 32 or not reader_scope.current(service):
+            return None
+        menu = read_authenticated_web_choices(
+            service, document, reader_scope=reader_scope, source_documents=tuple(docs),
+        )
+        if (menu is None or menu.epoch != canonical.epoch
+                or (required_source is not None
+                    and not any(b.document == required_source for b in menu._bindings))):
+            return None
+        return menu
+    except (SQLiteError, AttributeError, TypeError, ValueError, KeyError,
+            UnicodeError, RecursionError):
+        return None
+
+
 def resolve_authenticated_web_choice(service, menu, *, choice_id):
     """Explicit click revalidates the original scope, account, session and C."""
     # The GTK-held menu may have been copied/mutated after Core issued it.
@@ -347,4 +441,5 @@ def resolve_authenticated_web_choice(service, menu, *, choice_id):
 
 
 __all__ = ["AuthenticatedWebChoice", "AuthenticatedWebChoices",
-           "read_authenticated_web_choices", "resolve_authenticated_web_choice"]
+           "read_authenticated_web_choices", "read_authenticated_web_choices_for_c",
+           "resolve_authenticated_web_choice"]

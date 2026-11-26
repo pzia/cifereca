@@ -22,13 +22,40 @@ from ..models import SearchResult
 
 
 def request_public_web_actions(host, panel, document, *, expected_epoch, current,
-                               Gtk=None, Gio=None):
+                               Gtk=None, Gio=None, reader_scope=None):
     # Match the exact integer epoch contract of the Core click resolver.
     # Python bool and float equality must not authorize a stale menu.
     if (not is_canonical_cover_document(document)
             or type(expected_epoch) is not int or not 1 <= expected_epoch < 2**63
             or not current()):
         return False
+    # Capture the reader only on the UI thread. Older public-only hosts
+    # deliberately lack an identity resolver; retain their original port.
+    core = getattr(host, "service", None)
+    if reader_scope is None and callable(getattr(core, "identity_by_id", None)):
+        try:
+            identity_id = getattr(core.current_identity, "identity_id", None)
+            reader_scope = capture_search_read_scope(core, identity_id)
+        except (AttributeError, TypeError, ValueError):
+            reader_scope = None
+    if reader_scope is not None:
+        from ..core.notice_c_combined_web_choices import (
+            CWebChoices, read_c_web_choices, resolve_c_web_choice,
+        )
+        if type(reader_scope) is not SearchReadScope or not reader_scope.current(core):
+            return False
+        return _request_web_actions(
+            host, panel, current=current, Gtk=Gtk, Gio=Gio,
+            worker_guard=lambda: reader_scope.current(core),
+            load=lambda core, storage: read_c_web_choices(
+                core, document, reader_scope=reader_scope, expected_epoch=expected_epoch,
+            ),
+            accept=lambda menu: (type(menu) is CWebChoices and menu.document == document
+                                 and menu.epoch == expected_epoch and menu._scope is reader_scope),
+            resolve=lambda core, storage, menu, choice: resolve_c_web_choice(
+                core, menu, choice_id=choice.choice_id,
+            ),
+        )
     return _request_web_actions(
         host, panel, current=current, Gtk=Gtk, Gio=Gio,
         load=lambda core, storage: read_public_web_choices(storage, document),
@@ -316,8 +343,10 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
                 failed(None)
 
         if len(menu.choices) == 1:
+            requires_login = (authenticated or
+                              getattr(menu.choices[0], "access_mode", None) == "authenticated")
             root = Gtk.Button(label=("Ouvrir la fiche web · Connexion requise"
-                                     if authenticated else "Ouvrir la fiche web"))
+                                     if requires_login else "Ouvrir la fiche web"))
             root.connect("clicked", lambda button: choose(button, menu.choices[0]))
         else:
             root = Gtk.MenuButton(label=("Fiches web · Connexion requise…"

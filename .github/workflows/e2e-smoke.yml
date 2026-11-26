@@ -14,6 +14,19 @@ on:
     paths:
       - 'e2e/notice_c_automated_receipt.py'
       - '.github/workflows/e2e-smoke.yml'
+      # Focus #7812: exact integrated main replay for C actions and parity.
+      - 'src/cifereca/core/notice_c_loaded_filter.py'
+      - 'src/cifereca/core/notice_c_authenticated_web_choices.py'
+      - 'src/cifereca/core/notice_c_private_search_web.py'
+      - 'src/cifereca/core/notice_c_web_choices.py'
+      - 'src/cifereca/core/notice_c_combined_web_choices.py'
+      - 'src/cifereca/core/borrow_for_identity_native_*.py'
+      - 'src/cifereca/core/borrow_for_identity_normal_executor.py'
+      - 'src/cifereca/gui/notice_c_web_action_controller.py'
+      - 'src/cifereca/gui/cross_profile_possible_lender_detail.py'
+      - 'src/cifereca/gui/cross_profile_normal_lender_dialog.py'
+      - 'src/cifereca/gui/query_controls.py'
+      - 'src/plugins/recommendations/**'
   pull_request:
     paths:
       - 'e2e/**'
@@ -22,6 +35,13 @@ on:
       - 'src/cifereca/brokers.py'
       - 'src/cifereca/core/source_materialization.py'
       - 'src/cifereca/core/search_orchestration.py'
+      - 'src/cifereca/core/notice_c_loaded_filter.py'
+      - 'src/cifereca/core/notice_c_authenticated_web_choices.py'
+      - 'src/cifereca/core/notice_c_private_search_web.py'
+      - 'src/cifereca/core/notice_c_web_choices.py'
+      - 'src/cifereca/core/notice_c_combined_web_choices.py'
+      - 'src/cifereca/core/borrow_for_identity_native_*.py'
+      - 'src/cifereca/core/borrow_for_identity_normal_executor.py'
       - 'src/cifereca/core/numilog_materialization_startup.py'
       - 'src/cifereca/core/numilog_materialization_checkpoint.py'
       - 'src/cifereca/core/selected_owned_search.py'
