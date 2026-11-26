@@ -144,6 +144,12 @@ def test_isbn_metadata_only_retains_valid_literal_record_identifiers():
         relations=("urn:isbn:9780140328721",),
     ))
     assert row.metadata["isbns"] == ["9780306406157", "0306406152"]
+    assert row.metadata["bibliography_evidence"]["isbns"] == {
+        "source": mod.DESCRIPTOR.id + ".sru", "source_field": "dc.identifier",
+        "scope": "SRU-DUBLINCORE", "record_id": row.record_id,
+        "confidence": "explicit_record_field", "freshness": "search_response",
+        "relationship": "record_identifier",
+    }
     assert row.owned is False and row.downloadable is False
 
 

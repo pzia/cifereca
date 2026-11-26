@@ -18,7 +18,7 @@ from .notice_c_known_projection import _series_metadata, _source_alternative
 from .public_search_projection import (
     PublicClassification, PublicLanguageObservation, PublicSeriesRelation,
     decode_public_classification, decode_public_language_observation,
-    decode_public_series_relation,
+    decode_public_series_relation, PublicIsbnObservation, decode_public_isbn_observation,
 )
 from .notice_c_public_age import (
     PublicAgeObservation, PublicAgeRange, decode_public_age_observation,
@@ -102,6 +102,19 @@ def _native_hit(hit, binding):
                 or decode_public_language_observation(
                     language.wire(), provider_id=hit.provider_id,
                 ) != language):
+            return False
+    isbns = hit.isbn_observation
+    if isbns is not None:
+        if (type(isbns) is not PublicIsbnObservation
+                or type(isbns.isbns) is not tuple
+                or not 1 <= len(isbns.isbns) <= 32
+                or any(type(v) is not str for v in isbns.isbns)
+                or any(type(getattr(isbns, field.name)) is not str
+                       for field in fields(PublicIsbnObservation) if field.name != "isbns")
+                or decode_public_isbn_observation(
+                    isbns.wire(), provider_id=hit.provider_id,
+                    scenario=isbns.scope, record_id=hit.record_id,
+                ) != isbns):
             return False
     classification = hit.classification
     if classification is not None:
