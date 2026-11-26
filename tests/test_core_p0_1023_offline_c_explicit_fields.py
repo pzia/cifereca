@@ -48,6 +48,17 @@ def test_offline_c_explicit_fields_after_eviction_restart(tmp_path):
             for query in ("9780306406157", "0306406152", "0-306-40615-2"):
                 assert len(QueryState(text=query, field="isbn").filter(isbn_rows)) == 2
             assert not QueryState(text="9780306406158", field="isbn").filter(isbn_rows)
+            # The same cursor and actual GTK loaded filter must also agree
+            # on exact aliases in All, independently of display punctuation.
+            for query in ("9780306406157", "0306406152", "0-306-40615-2"):
+                all_page = page("all", query, identity_id=viewer)
+                assert all_page.matched_count == 2
+                all_rows = [result_row(row) for row in all_page.results]
+                assert {row["item_id"] for row in QueryState(text=query).filter(all_rows)} == {
+                    "isbn-a", "isbn-b",
+                }
+            assert not QueryState(text="9780306406158").filter(isbn_rows)
+            assert not page("all", "9780306406158").results
             subject_rows = [result_row(row) for row in subject.results]
             assert len(QueryState(text="astronomie", field="subject").filter(subject_rows)) == 1
             assert not QueryState(text="cuisine", field="subject").filter(subject_rows)

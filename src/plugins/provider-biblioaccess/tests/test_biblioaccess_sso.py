@@ -1518,3 +1518,91 @@ def test_canonical_biblioaccess_loan_without_offer_is_observable_not_downloadabl
                 branch="biblioaccess", explicit_user_action=True)
     finally:
         session.close()
+
+
+def test_3104_myloans_parsed_cover_reaches_exact_core_decision():
+    """Offline parser -> actual session inventory -> Core N1; no GTK or terrain."""
+    import sys
+
+    from cifereca.core.book_cover_diagnostics import diagnose_exact_loan_cover
+    from cifereca.plugin_api import read_loan_inventory
+
+    root = MODULE.parent
+    for name in ("biblioaccess_observations", "biblioaccess_delivery_url",
+                 "biblioaccess_loans_page"):
+        if name not in sys.modules:
+            loader = importlib.util.spec_from_file_location(name, root / (name + ".py"))
+            module = importlib.util.module_from_spec(loader)
+            sys.modules[name] = module
+            loader.loader.exec_module(module)
+    from biblioaccess_loans_page import inspect_myloans_html
+
+    def row(product, book, image):
+        return (
+            f'<div class="JSProductRow-{product}">'
+            f'<a href="/1409/Catalog/Book/{book}/notice">'
+            f'<img src="{image}"></a>'
+            '<p class="titleLoans">SYNTHETIC-SAME-TITLE</p>'
+            '<span class="jsDateEnd">08/11/2026 12:30:00</span></div>'
+        )
+
+    url = "https://www.biblioaccess.com/1409/Covers/first.png"
+    parsed = inspect_myloans_html(
+        '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'
+        + row("10001", "20002", "/1409/Covers/first.png")
+        + row("10002", "20003", "/1409/Covers/second.png?token=PRIVATE")
+    )
+    assert parsed.page_loan_row_count == 2
+    assert parsed.page_loan_row_partial_count == 0
+    assert parsed.logout_form_observed
+    session, _client, calls = _synced_session(rows=parsed._loan_rows)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        inventory = read_loan_inventory(session, account)
+        assert inventory.status == "success"
+        first, second = sorted(inventory.loans, key=lambda loan: loan.record_id)
+        assert first.title == second.title == "SYNTHETIC-SAME-TITLE"
+        assert (first.record_id, second.record_id) == ("20002", "20003")
+        assert (first.thumbnail_url, second.thumbnail_url) == (url, None)
+        for loan in (first, second):
+            assert loan.identity_id == "identity-a"
+            assert loan.source_provider == mod.PROVIDER_ID
+            assert loan.source_credential == "cred-a"
+            assert loan.source_account_id == "primary"
+            assert loan.raw == {} and loan.ebook_url is None
+            assert not loan.can_return and not loan.renewable
+        # An unlinked Library image of the other edition cannot rescue a
+        # missing loan image, even when the titles are identical.
+        library_row = {
+            "identity_id": "identity-a",
+            "provider_id": mod.PROVIDER_ID,
+            "item_id": first.record_id,
+            "title": first.title,
+            "thumbnail_url": url,
+            "metadata": {"cover_resolution": {
+                "status": "selected", "tier": "catalog", "url": url,
+            }},
+        }
+        selected, report_a = diagnose_exact_loan_cover(
+            first, (library_row,), revision=1, snapshot_complete=True,
+        )
+        missing, report_b = diagnose_exact_loan_cover(
+            second, (library_row,), revision=1, snapshot_complete=True,
+        )
+        assert selected.status == "selected" and selected.uri == url
+        assert report_a.reason == "supplier_catalogue_only"
+        assert missing.status == "missing" and missing.uri == ""
+        assert report_b.reason == "no_admissible_evidence"
+        assert selected.scope != missing.scope
+        for loan in (first, second):
+            pending, report = diagnose_exact_loan_cover(
+                loan, (), revision=2, snapshot_complete=False,
+            )
+            assert pending.status == "pending" and pending.uri == ""
+            assert report.reason == "partial_snapshot"
+            assert not report.exact_loan_proof_selected
+        assert calls.count("post") == calls.count("live_loans") == 1
+        assert "PRIVATE" not in repr(inventory)
+    finally:
+        session.close()
