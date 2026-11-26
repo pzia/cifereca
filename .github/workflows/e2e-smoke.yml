@@ -9,6 +9,11 @@ on:
         type: string
   # P1 #6041: Core USB discovery, exact mount qualification and declarative
   # bindings must trigger the real reader-pairing GTK/XTEST E2E acceptance.
+  push:
+    branches: [main]
+    paths:
+      - 'e2e/notice_c_automated_receipt.py'
+      - '.github/workflows/e2e-smoke.yml'
   pull_request:
     paths:
       - 'e2e/**'
@@ -64,7 +69,7 @@ jobs:
   # shards cannot be disguised by a successful sibling.
   startup:
     name: E2E GTK · core
-    needs: gtk_shards
+    needs: [gtk_shards, synthetic_notice_matrix]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -73,9 +78,11 @@ jobs:
         shell: bash
         env:
           SHARDS_RESULT: ${{ needs.gtk_shards.result }}
+          MATRIX_RESULT: ${{ needs.synthetic_notice_matrix.result }}
         run: |
           set -euo pipefail
           test "$SHARDS_RESULT" = "success"
+          test "$MATRIX_RESULT" = "success"
 
   gtk_shards:
     name: E2E GTK · shard ${{ matrix.shard }}
@@ -103,7 +110,7 @@ jobs:
           E2E_SHARD_INDEX: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             if [[ -n "$MANUAL_SCENARIO" ]]; then
               /usr/bin/python3 scripts/ci-select-e2e.py --scenario "$MANUAL_SCENARIO" --github-output "$GITHUB_OUTPUT" --shard-count 3 --shard-index "$E2E_SHARD_INDEX"
             else
@@ -237,4 +244,36 @@ jobs:
           name: e2e-core-summary-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/cifereca-e2e-public/summary.json
           if-no-files-found: ignore
+          retention-days: 2
+
+  synthetic_notice_matrix:
+    name: GTK synthetic notice matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install GTK E2E runtime
+        run: bash scripts/ci-install-gtk-e2e-runtime.sh
+      - name: Prepare synthetic runtime
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/notice-matrix-venv"
+          "$RUNNER_TEMP/notice-matrix-venv/bin/python" -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12"
+      - name: Verify synthetic matrix at exact SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/notice-matrix-venv/bin/python"
+          dbus-run-session -- "$PY" e2e/notice_c_automated_receipt.py --python "$PY" --expected-sha "$EXPECTED_SHA" > "$RUNNER_TEMP/notice-matrix-receipt.json"
+          cat "$RUNNER_TEMP/notice-matrix-receipt.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload closed synthetic receipt only
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: notice-matrix-receipt
+          path: ${{ runner.temp }}/notice-matrix-receipt.json
+          if-no-files-found: error
           retention-days: 2
