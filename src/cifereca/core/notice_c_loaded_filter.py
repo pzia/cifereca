@@ -227,6 +227,57 @@ def matches_loaded_public_isbn(row, isbn):
     return any(_local_isbn(value) == isbn for value in observation.isbns)
 
 
+def known_public_facet_sources(item):
+    """Exact retained contributions for facet inventories in both views.
+
+    None denotes an ordinary row; an empty tuple denotes a known C whose
+    primary receipt is invalid. Alternatives cannot survive primary loss.
+    No storage, rights, mutable alternative metadata or new receipt.
+    """
+    from ..models import SearchResult
+    from .notice_c_recommendation_known import (
+        known_public_c_primary_hit, known_public_c_alternative_hits,
+    )
+    from .notice_c_known_projection import known_public_primary_facts
+
+    if type(item) is SearchResult:
+        if type(item.scenario) is not str or item.scenario != "notice_c_public":
+            return None
+        primary = known_public_c_primary_hit(item)
+        if primary is None:
+            return ()
+        return (primary, *(known_public_c_alternative_hits(item) or ()))
+    if (type(item) is dict and type(item.get("source")) is str
+            and item["source"] == "notice_c_public"):
+        primary = known_public_primary_facts(item)
+        if primary is None:
+            return ()
+        return _sources(item) or (primary,)
+    return None
+
+
+def known_public_document_facets(item, formats):
+    """Inventory only: keep separate support/format pairs per contribution."""
+    from .document_filter import loaded_document_facets
+
+    sources = known_public_facet_sources(item)
+    if sources is None:
+        return None
+    return tuple(loaded_document_facets(_filter_source_row(hit), formats)
+                 for hit in sources)
+
+
+def known_public_language_facets(item):
+    """Advertise languages only from independently admitted C sources."""
+    sources = known_public_facet_sources(item)
+    if sources is None:
+        return None
+    return tuple(dict.fromkeys(
+        language for hit in sources if hit.language_observation is not None
+        for language in hit.language_observation.languages
+    ))
+
+
 def matches_known_public_c_filters(item, *, query, field, scope, providers,
                                    content_types, languages):
     """Filter a known recommendation with the same per-source Search rules.
@@ -236,9 +287,6 @@ def matches_known_public_c_filters(item, *, query, field, scope, providers,
     No storage access, provider action, rank change or new receipt.
     """
     from ..models import SearchResult
-    from .notice_c_recommendation_known import (
-        known_public_c_primary_hit, known_public_c_alternative_hits,
-    )
     from .document_filter import filter_loaded_with_documentary_proofs
 
     if (type(item) is not SearchResult or type(item.scenario) is not str
@@ -256,15 +304,10 @@ def matches_known_public_c_filters(item, *, query, field, scope, providers,
                        or value != value.strip() or not value.isprintable()
                        for value in values)):
             return False
-    primary = known_public_c_primary_hit(item)
-    alternatives = known_public_c_alternative_hits(item)
-    if primary is None:
+    sources = known_public_facet_sources(item)
+    if not sources:
         return False
-    # A revoked or malformed alternative packet cannot grant a match, but
-    # must not remove the independently verified primary. Search keeps the
-    # same primary-only fallback. A mutated/copied DTO still has no primary.
-    if alternatives is None:
-        alternatives = ()
+    primary, *alternatives = sources
     # An expanded group has exactly the same medium prefilter and typed
     # classification handling as the Search list. Do not mix metadata
     # from one source with the selected catalogue of another.
