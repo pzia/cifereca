@@ -406,10 +406,15 @@ class LocalQueryControls(QueryControls):
         This method never creates a provider scope, right or remote query.
         """
         media, formats = set(), set()
+        from ..core.notice_c_loaded_filter import known_public_document_facets
+
         for item in items:
-            medium, offered = self._document_facets(item)
-            media.add(medium)
-            formats.update(offered)
+            contributions = known_public_document_facets(item, tuple(self._format_labels))
+            if contributions is None:
+                contributions = (self._document_facets(item),)
+            for medium, offered in contributions:
+                media.add(medium)
+                formats.update(offered)
         known_medium = bool(media - {'unknown'})
         selected_index = self.scope.get_selected()
         selected_scope = (
@@ -488,6 +493,11 @@ class LocalQueryControls(QueryControls):
             return tuple(labels)
         except (AttributeError, IndexError, KeyError, TypeError, ValueError):
             return ()
+
+    def known_public_language_choices(self, item):
+        from ..core.notice_c_loaded_filter import known_public_language_facets
+
+        return known_public_language_facets(item)
 
     def matches_known_public_notice(self, item):
         """Optional local-filter extension for exact retained public C.
