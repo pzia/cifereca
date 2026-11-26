@@ -143,7 +143,8 @@ def test_selected_row_replacement_revokes_pending_private_menu(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("phase", ["menu", "click"])
-@pytest.mark.parametrize("change", ["record", "scenario", "revision", "session", "generation", "account"])
+@pytest.mark.parametrize("change", ["record", "scenario", "revision", "session", "generation", "account",
+                                    "shared", "stale", "foreign_metadata"])
 def test_private_worker_completion_cannot_outlive_exact_coordinates(tmp_path, phase, change):
     with closing(Storage(tmp_path / "late.sqlite")) as db:
         core, row = setup(db, 1)
@@ -170,6 +171,15 @@ def test_private_worker_completion_cannot_outlive_exact_coordinates(tmp_path, ph
             session.connected = False
         elif change == "generation":
             session._epoch = "replacement-generation"
+        elif change == "shared":
+            row.metadata = {"catalogue_access": "shared_read_only"}
+        elif change == "stale":
+            row.metadata = {"search_provenance": "known_catalog_stale"}
+        elif change == "foreign_metadata":
+            class Foreign:
+                def __eq__(self, other):
+                    pytest.fail("foreign metadata equality")
+            row.metadata = {"catalogue_access": Foreign()}
         else:
             core.account("alice").unique_id = "replacement-account"
         # A valid worker response became obsolete before GLib delivery.
