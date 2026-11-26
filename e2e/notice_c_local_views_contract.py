@@ -1128,6 +1128,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert after_n3["download_ok"] == before_n3["download_ok"]
                 assert after_n3["preview_created"] == before_n3["preview_created"]
                 assert after_n3["ui_failed"] == before_n3["ui_failed"]
+                capture("00-notice-c-invalidated-n2-warm-n3")
                 report["checks"]["P0_4980_invalidated_n2_warm_n3_real_gtk"] = True
                 verify_epub_priority(list_cover, detail_cover)
 
@@ -1517,10 +1518,22 @@ epub_metadata._publish_cover(data, "png")
                             assert window.service._account_context_epoch == account_epoch
                             assert window.service._source_context_epoch == source_epoch
                             report["checks"]["P0_6168_postcommit_rebind_real_gtk"] = True
-                            report["local_c_stage"] = "complete"
-                            cleanup()
-                            window.present()
-                            complete()
+                            def finish_matrix():
+                                report["local_c_stage"] = "complete"
+                                cleanup()
+                                window.present()
+                                complete()
+
+                            from notice_c_preview_repair_contract import verify_preview_repair
+                            report["local_c_stage"] = "preview_decode_repair"
+                            verify_preview_repair(
+                                list_cover, detail_cover, n2=n2, loader=loader,
+                                document=updated.document, revision=updated.epoch,
+                                url=fallback_images[-1], pixels=pixels,
+                                counters=lambda: (tuple(reads), tuple(gets), tuple(fallback_gets)),
+                                later=later, guard=guard, capture=capture,
+                                report=report, complete=finish_matrix,
+                            )
 
                         later(40, guard(lambda: repainted(monotonic() + 8)))
 
