@@ -75,15 +75,15 @@ def _durable_public_c_fallback(
 ):
     """Installation-wide C is independently public, not a relabelled mirror.
 
-    The current C cursor supports only these fields. On a bounded source
-    budget failure or an incomplete type-filtered cohort, report an
+    Use the same explicit fields as the retained C cursor. On a bounded
+    source budget failure or an incomplete type-filtered cohort, report an
     unavailable inventory rather than fabricate a filtered total.
     """
-    if field not in {"all", "title", "author", "publisher"}:
+    from .notice_c_public_search import _FIELDS, search_public_notice_c
+    if type(field) is not str or field not in _FIELDS:
         return empty("no_known_results")
     if scope not in {"all", "digital", "physical", "unknown", "catalog"}:
         return empty("no_known_results")
-    from .notice_c_public_search import search_public_notice_c
     try:
         first = search_public_notice_c(
             storage, query, provider_ids=(provider_id,),
