@@ -64,7 +64,8 @@ Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Wid
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
 tree=ast.parse(source.read_text())
 classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in {'MultiSelect','QueryControls','LocalQueryControls'}]
-ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:'',
+ns={'__name__': 'cifereca.gui.query_controls', '__package__': 'cifereca.gui',
+    'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:'',
     'loaded_document_facets': loaded_document_facets}
 exec(compile(ast.fix_missing_locations(ast.Module(body=classes,type_ignores=[])),str(source),'exec'),ns)
 MultiSelect=ns['MultiSelect']; QueryControls=ns['QueryControls']
@@ -505,3 +506,31 @@ def test_p1_4761_invalid_shared_field_and_scope_are_not_negative_indexed():
     assert control.state().scope == '\x00'
     control.reset_filters()
     assert control.state() == control._initial_filter_state
+
+
+def test_4761_native_grouped_document_choices_after_restart(tmp_path):
+    """The isolated GTK harness exercises the real Core receipt reader."""
+    from contextlib import closing
+    from cifereca.storage import Storage
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+    from cifereca.core.notice_c_recommendation_known import known_public_notice_candidates
+    from tests.test_core_p0_1023_grouped_c_source_filters import make, shared
+
+    path = tmp_path / "grouped-controls.sqlite"
+    with closing(Storage(path)) as db:
+        a = make(db, "bnf", "a", "Deux sources A", "Astronomie", "fr", "EPUB")
+        b = make(db, "numilog-catalog", "b", "Deux sources B", "Cuisine", "en", "PDF")
+        shared(db, a, b)
+    with closing(Storage(path)) as db:
+        page = search_public_notice_c(db, "deux sources", group_by_document=True)
+        row, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        candidate, = known_public_notice_candidates(db, "deux sources")
+        for item in (row, candidate):
+            control = LocalQueryControls(lambda: None, "Filtre")
+            control.set_document_choices((item,))
+            assert set(control.types.buttons) == {"epub", "pdf"}
+            assert set(control.known_public_language_choices(item)) == {"fr", "en"}
+            control.types.set_values(("pdf",))
+            assert control.state().types == ("pdf",)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
