@@ -1194,6 +1194,41 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert physical.read_bytes() == png_bytes
                 physical.unlink()
                 assert not physical.exists()
+
+                # Kill a separate publisher before atomic rename. Its cache
+                # override is confined to this synthetic fixture, not the app.
+                import subprocess
+                script = """
+import os
+import sys
+from pathlib import Path
+from cifereca import epub_metadata
+
+root, image_path, epub_path = map(Path, sys.argv[1:])
+epub_metadata.cache_dir = lambda **kwargs: root
+from zipfile import ZipFile
+with ZipFile(epub_path) as archive:
+    data = archive.read("OPS/cover.png")
+
+def interrupted(source, target):
+    assert Path(target) == image_path
+    assert Path(source).read_bytes() == data
+    assert not image_path.exists()
+    os._exit(73)
+
+epub_metadata.os.replace = interrupted
+epub_metadata._publish_cover(data, "png")
+"""
+                child = subprocess.run(
+                    [sys.executable, "-c", script, str(cache_root),
+                     str(physical), str(epub)],
+                    capture_output=True, timeout=20,
+                )
+                assert child.returncode == 73, child.stderr.decode(errors="replace")
+                assert not physical.exists()
+                leftovers = list(physical.parent.glob(".cover-*"))
+                assert len(leftovers) == 1
+                assert not epub_metadata.valid_cached_cover_path(leftovers[0])
                 catalogue = candidate(url, tier="catalog", source="fixture",
                                       evidence_id="fixture:epub-priority")
                 assert catalogue is not None
@@ -1252,6 +1287,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     if not warm:
                         capture("00-notice-c-epub-priority-cold")
                         report["checks"]["P0_4980_epub_priority_cold_real_gtk"] = True
+                        report["checks"]["P0_4980_epub_interrupted_publish_recovery_real_gtk"] = True
                         report["local_c_stage"] = "epub_priority_warm"
                         bind()
                         later(40, guard(lambda: wait_embedded(
