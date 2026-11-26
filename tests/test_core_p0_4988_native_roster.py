@@ -111,3 +111,57 @@ def test_native_roster_rejects_changed_unselected_source(harness, monkeypatch, c
     assert execute(service, roster, selected)["status"] == "blocked"
     assert session.actions == 0
     assert service.storage.loan_borrow_state(borrow_claim_key(account, second)) is None
+
+
+@pytest.mark.parametrize("replace_detail", [False, True])
+def test_c_first_facade_and_dialog_use_original_occurrence(harness, monkeypatch, replace_detail):
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    from cifereca.gui.cross_profile_normal_lender_dialog import present_normal_lender_choice
+    from tests.test_core_ui_p0_4988_normal_lender_dialog import Dialog
+
+    service, account, session, first, second, c, _ = setup(harness, monkeypatch)
+    roster = service.possible_borrow_lenders_for_c_for_current_identity(
+        document=c.document, expected_epoch=c.epoch,
+    )
+    assert roster is not None
+    assert {id(row._notice) for row in roster.rows} == {id(first), id(second)}
+    assert service.possible_borrow_lenders_for_c_for_current_identity(
+        document=c.document, expected_epoch=c.epoch + 1,
+    ) is None
+    dialogs = []
+    def new(*args):
+        dialog = Dialog(*args)
+        dialogs.append(dialog)
+        return dialog
+    window = NS(service=service, runner=NS(submit=Mock()),
+                _activity_result=Mock(), show_error=Mock())
+    panel = NS(window=window, _action_buttons=[])
+    assert present_normal_lender_choice(
+        panel, item=None, rows=roster.rows, current=lambda: True,
+        service=service, identity=service.current_identity, identity_id="default",
+        account_epoch=service._account_context_epoch,
+        source_epoch=service._source_context_epoch,
+        Adw=NS(MessageDialog=NS(new=new)), TaskPriority=NS(USER_ACTION="user"),
+        native_roster=roster, canonical_binding=(c.document, c.epoch),
+    )
+    selected = next(i for i, row in enumerate(roster.rows) if row._notice is second)
+    dialogs[0].respond(f"choice-{selected}")
+    assert len(dialogs) == 2 and session.actions == 0
+    window.runner.submit.assert_not_called()
+    dialogs[1].respond("borrow")
+    window.runner.submit.assert_called_once()
+    _, work, done, _ = window.runner.submit.call_args.args
+    if replace_detail:
+        panel._action_buttons = []
+    result = work()
+    assert result["status"] == ("blocked" if replace_detail else "confirmed")
+    assert session.actions == (0 if replace_detail else 1)
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, first)) is None
+    state = service.storage.loan_borrow_state(borrow_claim_key(account, second))
+    if replace_detail:
+        assert state is None
+    else:
+        assert state["status"] == "confirmed"
+    done(result)
+    assert work() == {"status": "blocked"}
