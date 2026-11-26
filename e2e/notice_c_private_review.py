@@ -28,6 +28,7 @@ STAGES = tuple(
     "00-notice-c-epub-priority-warm",
     "00-notice-c-epub-qualified-fallback",
     "00-notice-c-catalogue-http-fallback",
+    "00-notice-c-native-preview-repair",
 )
 CHECKS = (
     "P0_4980_same_c_six_physical_views_restart_offline",
@@ -40,6 +41,7 @@ CHECKS = (
     "P0_4980_catalogue_http_fallback_real_gtk",
     "P0_4980_epub_interrupted_publish_recovery_real_gtk",
     "P0_6168_postcommit_rebind_real_gtk",
+    "P0_4980_native_preview_decode_repair_redacted",
 )
 FIELDS = ("appearance", "width", "stage", "sha256", "verdict", "notes")
 
@@ -65,7 +67,7 @@ def digest(data):
 
 
 def verify_captures(root, expected_sha):
-    """Verify 124 original PNGs; no automatic visual verdict."""
+    """Verify 128 original PNGs; no automatic visual verdict."""
     from PIL import Image
     if type(expected_sha) is not str or not re.fullmatch("[0-9a-f]{40}", expected_sha):
         raise ReviewError("invalid expected HEAD")

@@ -44,7 +44,7 @@ def fixture(tmp_path):
 
 def test_receipt_requires_complete_independent_checklist_and_rechecks_bytes(fixture):
     root, output = fixture
-    assert review.build(root, output, HEAD) == 124
+    assert review.build(root, output, HEAD) == 128
     with pytest.raises(review.ReviewError):
         review.verify_review(root, output, HEAD)
     path = output / "review.csv"
@@ -57,7 +57,7 @@ def test_receipt_requires_complete_independent_checklist_and_rechecks_bytes(fixt
         writer.writeheader()
         writer.writerows(rows)
     result = review.verify_review(root, output, HEAD)
-    assert result["capture_count"] == 124
+    assert result["capture_count"] == 128
     assert "PRIVATE_NOTE" not in repr(result)
     png = root / "light/book-detail-1366" / (review.STAGES[0] + ".png")
     png.write_bytes(png.read_bytes() + b"changed")
@@ -66,7 +66,7 @@ def test_receipt_requires_complete_independent_checklist_and_rechecks_bytes(fixt
 
 
 @pytest.mark.parametrize("change", ["wrong_head", "wrong_theme", "duplicate", "false_check",
-                                    "false_epoch", "private_path"])
+                                    "false_epoch", "private_path", "missing_repair"])
 def test_refuses_unqualified_capture(fixture, change):
     root, _ = fixture
     path = root / "light/book-detail-1366/screen.json"
@@ -81,6 +81,8 @@ def test_refuses_unqualified_capture(fixture, change):
         report["checks"][review.CHECKS[0]] = 1
     elif change == "false_epoch":
         report["notice_c_shared_six_views_cold"]["same_epoch"] = False
+    elif change == "missing_repair":
+        report["checks"].pop("P0_4980_native_preview_decode_repair_redacted")
     else:
         report["steps"][0]["file"] = "../private.png"
     path.write_text(json.dumps(report))
