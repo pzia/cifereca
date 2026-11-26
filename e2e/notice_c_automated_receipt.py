@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,24 @@ from notice_c_private_capture import CaptureError, MATRIX, ROOT, clean_head
 from notice_c_private_final_receipt import native_aba_report
 
 
+def verify_theme_pairs(rows):
+    """Reject identical light/dark pixels for the same stage and geometry."""
+    pairs = {}
+    for row in rows:
+        key = (row["width"], row["stage"])
+        mode = row["appearance"]
+        digest = row["sha256"]
+        if mode not in ("light", "dark") or not re.fullmatch("[0-9a-f]{64}", digest):
+            raise CaptureError("invalid capture identity")
+        pair = pairs.setdefault(key, {})
+        if mode in pair:
+            raise CaptureError("duplicate capture identity")
+        pair[mode] = digest
+    if not pairs or any(set(pair) != {"light", "dark"} or
+                        pair["light"] == pair["dark"] for pair in pairs.values()):
+        raise CaptureError("missing or identical theme pair")
+
+
 def verify(root, sha):
     first, gf = generic.verify_captures(root / "generic", sha)
     second, bf = bnf.inventory(root / "bnf", sha)
@@ -22,6 +41,11 @@ def verify(root, sha):
                           f"book-detail-{width}" / "screen.json", sha=sha)
     if len(first) != 128 or len(second) != 96 or clean_head() != sha:
         raise CaptureError("incomplete synthetic matrix")
+    if not all(type(value) is str and re.fullmatch("[0-9a-f]{64}", value)
+               for value in (gf, bf)):
+        raise CaptureError("invalid matrix fingerprint")
+    verify_theme_pairs(first)
+    verify_theme_pairs(second)
     return dict(status="SYNTHETIC_GTK_MATRIX_VERIFIED", git_sha=sha,
                 capture_count=224, native_aba_surfaces_per_configuration=12,
                 generic_fingerprint=gf, bnf_fingerprint=bf,
