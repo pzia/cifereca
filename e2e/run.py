@@ -525,12 +525,29 @@ def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
     )
 
 
+def bnf_capture_command(xvfb, python, out, *, width=1366, appearance=None):
+    """Same fixture/probe; alternative geometry is a private local review."""
+    if width not in (1366, 1600) or appearance not in (None, "light", "dark"):
+        raise ValueError("invalid BnF capture geometry or appearance")
+    if width != 1366 and appearance is None:
+        raise ValueError("alternative width requires explicit appearance")
+    height = 1000 if width == 1600 else 900
+    return [
+        xvfb, "-a", "-s", f"-screen 0 {width}x{height}x24",
+        python, str(ROOT / "e2e/bnf_cover_probe.py"),
+        "--out", str(out), "--width", str(width),
+        *([] if appearance is None else ["--appearance", appearance]),
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Runner E2E GTK reproductible CIFERECA")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS))
     # Private #774/#4980 reviews can select a GTK appearance without
     # changing CI's default mode.
     parser.add_argument("--appearance", choices=("light", "dark"))
+    parser.add_argument("--bnf-width", type=int, choices=(1366, 1600),
+                        help="Private local BnF cover review geometry")
     parser.add_argument("--plugin", help="Ne lancer que les scénarios associés à ce plugin/domaine")
     parser.add_argument("--out", type=Path, default=ROOT / "e2e-artifacts")
     parser.add_argument("--python", default=os.environ.get("CIFERECA_E2E_PYTHON", sys.executable))
@@ -539,9 +556,15 @@ def main() -> int:
 
     if args.appearance is not None and (
         args.scenario is None
-        or SCENARIOS[args.scenario]["runner"] not in ("gtk-probe", "gtk-recommendations", "gtk-detail")
+        or SCENARIOS[args.scenario]["runner"] not in ("gtk-probe", "gtk-recommendations", "gtk-detail", "gtk-bnf-covers")
     ):
-        parser.error("--appearance requires a Search, Recommendations or Book Detail GTK scenario")
+        parser.error("--appearance requires a Search, Recommendations, Book Detail or BnF GTK scenario")
+    if args.bnf_width is not None and (
+            args.scenario != "bnf-covers-1366" or args.appearance is None):
+        parser.error("--bnf-width requires the BnF scenario and explicit appearance")
+    if args.scenario == "bnf-covers-1366" and args.appearance is not None and (
+            os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
+        parser.error("alternative BnF review is local only")
 
     xvfb = shutil.which("xvfb-run")
     if not xvfb:
@@ -700,11 +723,11 @@ def main() -> int:
                     "--out", str(scenario_dir), "--width", "1366",
                 ]
             elif scenario.get("runner") == "gtk-bnf-covers":
-                command = [
-                    xvfb, "-a", "-s", "-screen 0 1366x900x24",
-                    args.python, str(ROOT / "e2e/bnf_cover_probe.py"),
-                    "--out", str(scenario_dir),
-                ]
+                command = bnf_capture_command(
+                    xvfb, args.python, scenario_dir,
+                    width=args.bnf_width or scenario["width"],
+                    appearance=args.appearance,
+                )
             elif scenario.get("runner") == "gtk-public-fault":
                 command = [
                     xvfb, "-a", "-s", "-screen 0 1366x900x24",
