@@ -638,3 +638,81 @@ def test_inert_catalogue_projection_cannot_rebind_private_web_read(harness, flag
     assert read_authenticated_web_for_search(service, row, reader_scope=scope).choices == menu.choices
     assert len(client.calls) == 1
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
+
+
+@pytest.mark.parametrize("other_record", ["record-a", "record-b"])
+def test_native_resource_namespace_groups_edition_not_accounts(harness, other_record):
+    from cifereca_bnf_pret import BnfProviderSession
+    from cifereca.plugin_api import Account
+    from cifereca.core.notice_c_private_search_web import private_search_c_binding_facts
+    from cifereca.core.notice_cover_projection import notice_cover_document_ref
+    from cifereca.core.notice_c_private_search_web import _source_key
+    from test_p0_6397_authenticated_web_proof import Client
+
+    service, alice_session, alice, client = harness
+    first, = service.search("fiction", provider_id=alice_session.provider_id, force=True)
+    scope_a = capture_search_read_scope(service, "alice")
+    first_menu = read_authenticated_web_for_search(service, first, reader_scope=scope_a)
+    assert first_menu is not None and len(first_menu.choices) == 1
+
+    bob_client = Client(results(card(other_record)))
+    bob_session = BnfProviderSession(
+        client=bob_client, credential_id="fixture-bob-card", label="Bob",
+        credentials={}, options={},
+    )
+    bob = Account(identity_id="bob", provider_id=bob_session.provider_id,
+                  credential_id=bob_session.credential_id,
+                  unique_id=bob_session.credential_id, display_name="Bob")
+    bob_session._accounts = [bob]
+    bob_session.connected = True
+    service.accounts.append(bob)
+    service._sessions[service._session_key(bob.provider_id, bob.credential_id)] = bob_session
+    db = service.storage
+    connection = db.provider_connection_put({
+        "identity_id": "bob", "provider_id": bob.provider_id,
+        "credential_id": bob.credential_id, "enabled": True,
+    })
+    db.provider_account_put({
+        "identity_id": "bob", "provider_id": bob.provider_id,
+        "credential_id": bob.credential_id, "connection_id": connection,
+        "account_id": bob.unique_id, "is_primary": True,
+    })
+    scope_b = capture_search_read_scope(service, "bob")
+    # Use the real scoped Search entry point, not a fabricated relation ID.
+    summary, rows = service.search_progressive_result_for_scope(
+        scope_b, "fiction", provider_id=bob_session.provider_id, force=True,
+    )
+    assert not summary.cancelled
+    second, = rows
+    menu_b = read_authenticated_web_for_search(service, second, reader_scope=scope_b)
+    menu_a = read_authenticated_web_for_search(service, first, reader_scope=scope_a)
+    assert menu_a is not None and menu_b is not None
+    assert len(menu_a.choices) == len(menu_b.choices) == 1
+    assert (menu_a.document == menu_b.document) is (other_record == "record-a")
+    assert menu_a.choices[0].choice_id != menu_b.choices[0].choice_id
+    assert resolve_authenticated_web_choice(
+        service, menu_a, choice_id=menu_a.choices[0].choice_id,
+    ) == ORIGIN + "/resources/record-a"
+    assert resolve_authenticated_web_choice(
+        service, menu_a, choice_id=menu_b.choices[0].choice_id,
+    ) is None
+    c = read_consolidated_notice_cover(db, menu_b.document)
+    assert len(c.sources) == (2 if other_record == "record-a" else 1)
+    assert all(m.visibility == "private" and m.public_bibliography is None
+               for m in c.sources)
+    assert c.catalogue_web_references == () and c.candidates == ()
+    assert notice_cover_document_ref(_source_key(first, "alice")) != (
+        notice_cover_document_ref(_source_key(second, "bob")))
+    assert private_search_c_binding_facts(second, "bob") == (c.document, c.epoch)
+    assert private_search_c_binding_facts(second, "alice") is None
+    assert private_search_c_binding_facts(replace(second), "bob") is None
+    assert search_public_notice_c(db, "fiction").hits == ()
+    assert len(client.calls) == len(bob_client.calls) == 1
+    bob_session.connected = False
+    assert resolve_authenticated_web_choice(
+        service, menu_b, choice_id=menu_b.choices[0].choice_id,
+    ) is None
+    assert resolve_authenticated_web_choice(
+        service, menu_a, choice_id=menu_a.choices[0].choice_id,
+    ) == ORIGIN + "/resources/record-a"
+    assert db.entitlements() == db.acquisitions() == db.placements() == []
