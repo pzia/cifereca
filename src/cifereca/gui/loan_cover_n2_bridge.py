@@ -28,6 +28,9 @@ def loan_embedded_cover_for_host(host: Any, loan: Loan):
             or projection[1] != active
             or type(projection[2]) is not tuple or not projection[2]):
         return None
+    from .loan_cover_decision_bridge import current_loan_embedded_conflict
+    if current_loan_embedded_conflict(host, loan):
+        return None
     return exact_attested_loan_epub_cover(loan, projection[2])
 
 

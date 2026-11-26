@@ -136,8 +136,9 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     """Display-only image fallback; retain the original loan for every action.
 
     The library's already materialized read-only snapshot is reused. If the
-    exact loan + Placement proof is absent, ambiguous, stale or from another
-    profile, keep the supplier's thumbnail unchanged (including None).
+    exact loan + Placement proof is absent or stale, keep the safe supplier
+    image. An admitted current N2 embedded conflict requires a placeholder;
+    the historical compatibility path without N2 remains unchanged.
     """
     # Trust only a URI admitted by the shared Core cover resolver.
     # The supplier's original Loan remains untouched for all actions.
@@ -176,6 +177,11 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     if trusted_snapshot:
         from cifereca.gui.loan_cover_decision_bridge import loan_cover_decision
         decision = loan_cover_decision(self, loan, cover_rows)
+    if (decision is not None and decision.status == "ambiguous"
+            and decision.tier == "embedded"):
+        neutral = copy(loan)
+        neutral.thumbnail_url = None
+        return neutral
     resolved = (
         decision if decision is not None
         else loan_local_cover(loan, cover_rows)
@@ -187,7 +193,7 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
         return safe_preview
     # A distinct catalog cover never replaces an already validated exact
     # supplier thumbnail. Only a verified stronger tier may supersede it.
-    # Ambiguous/stale/foreign proofs leave the source thumbnail untouched.
+    # Legacy ambiguous/stale/foreign proofs leave the source thumbnail untouched.
     if safe_source and resolved.tier not in ("embedded", "origin"):
         return loan
     if safe_source and selected_url == original_url:
@@ -239,6 +245,7 @@ def _render_loans(self) -> None:
             self.service.storage.catalog_entries(),
         )
     from cifereca.gui.loan_cover_n2_bridge import loan_embedded_cover_for_host
+    from cifereca.gui.loan_cover_decision_bridge import current_loan_embedded_conflict
     for loan in display_loans:
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
@@ -269,7 +276,8 @@ def _render_loans(self) -> None:
                 item._cover_document_ref = supplier.document
                 item._cover_loan_supplier_evidence = supplier
                 item._loan_source_item = loan
-            elif display.thumbnail_url is None:
+            elif (display.thumbnail_url is None
+                  and not current_loan_embedded_conflict(self, loan)):
                 # Canonical C never creates a loan/borrower entitlement.
                 # Exact provider-issued book record match was admitted on
                 # the already completed refresh worker.
