@@ -57,6 +57,7 @@ EXPECTED = {
     ),
     "e2e-smoke.yml": (
         ("${{ runner.temp }}/cifereca-e2e-public/summary.json",),
+        ("${{ runner.temp }}/notice-matrix-receipt.json",),
     ),
     "gtk-smoke.yml": (
         ("${{ runner.temp }}/gtk-smoke-public/result.json",),
