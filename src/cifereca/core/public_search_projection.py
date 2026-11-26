@@ -300,6 +300,79 @@ def declared_public_language_observation(
     )
 
 
+
+@dataclass(frozen=True, slots=True)
+class PublicIsbnObservation:
+    """Exact source-record identifiers, not qualified own-manifestation claims."""
+
+    isbns: tuple[str, ...]
+    source: str
+    source_field: str
+    scope: str
+    record_id: str
+    confidence: str
+    freshness: str
+    relationship: str
+
+    def wire(self) -> dict:
+        return {**asdict(self), "isbns": list(self.isbns)}
+
+
+def decode_public_isbn_observation(
+    raw: object, *, provider_id: str, scenario: str, record_id: str,
+) -> PublicIsbnObservation | None:
+    fields = {"source", "source_field", "scope", "record_id",
+              "confidence", "freshness", "relationship"}
+    if (type(raw) is not dict or any(type(k) is not str for k in raw)
+            or set(raw) != fields | {"isbns"}):
+        return None
+    if (type(provider_id) is not str or not provider_id
+            or type(scenario) is not str or type(record_id) is not str
+            or any(type(raw[k]) is not str for k in fields)
+            or any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", raw[k]) is None
+                   for k in ("source", "source_field", "scope"))
+            or not raw["source"].startswith(provider_id + ".")
+            or raw["scope"] != scenario or raw["record_id"] != record_id
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", record_id) is None
+            or "://" in record_id or ".." in record_id
+            or raw["confidence"] != "explicit_record_field"
+            or raw["freshness"] != "search_response"
+            or raw["relationship"] != "record_identifier"):
+        return None
+    from ..plugin_api.book_references import _isbn
+    values = raw["isbns"]
+    if (type(values) is not list or not 1 <= len(values) <= 32
+            or any(type(v) is not str or not 1 <= len(v) <= 64
+                   or not _public_bibliographic_text(v)
+                   or not (checked := _isbn(v))
+                   or (len(checked) == 13 and not checked.startswith(("978", "979")))
+                   for v in values)
+            or len(set(values)) != len(values)):
+        return None
+    return PublicIsbnObservation(tuple(values), **{k: raw[k] for k in fields})
+
+
+def declared_public_isbn_observation(
+    metadata: object, *, provider_id: str, scenario: str, record_id: str,
+) -> PublicIsbnObservation | None:
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(k) is not str for k in metadata)):
+        return None
+    evidence = metadata.get("bibliography_evidence")
+    if (type(evidence) is not dict or len(evidence) > 32
+            or any(type(k) is not str for k in evidence)):
+        return None
+    proof = evidence.get("isbns")
+    if (type(proof) is not dict or any(type(k) is not str for k in proof)
+            or set(proof) != {"source", "source_field", "scope", "record_id",
+                              "confidence", "freshness", "relationship"}):
+        return None
+    return decode_public_isbn_observation(
+        {**proof, "isbns": metadata.get("isbns")},
+        provider_id=provider_id, scenario=scenario, record_id=record_id,
+    )
+
+
 def _key(row: object) -> tuple | None:
     if type(row) is not SearchResult:
         return None
@@ -423,6 +496,14 @@ def _project_public_notice(
         proof = language.wire()
         proof.pop("languages")
         proofs["languages"] = proof
+    isbns = declared_public_isbn_observation(
+        public.metadata, provider_id=public.source_provider,
+        scenario=public.scenario, record_id=public.record_id,
+    )
+    if isbns is not None:
+        proof = isbns.wire()
+        proof.pop("isbns")
+        proofs["isbns"] = proof
     if proofs:
         extension = {"bibliography_evidence": proofs}
         candidate = {**bibliography, **extension}

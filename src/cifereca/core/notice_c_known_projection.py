@@ -46,12 +46,12 @@ def _source_evidence_snapshot(hit):
     provider callback, source join, rights inference or serialization is used.
     """
     from .public_search_projection import (
-        PublicClassification, PublicSeriesRelation, PublicLanguageObservation,
+        PublicClassification, PublicSeriesRelation, PublicLanguageObservation, PublicIsbnObservation,
     )
     from .notice_c_public_age import PublicAgeObservation, PublicAgeRange
 
     known = (
-        PublicClassification, PublicSeriesRelation, PublicLanguageObservation,
+        PublicClassification, PublicSeriesRelation, PublicLanguageObservation, PublicIsbnObservation,
         PublicAgeObservation, PublicAgeRange,
     )
     remaining = [512]
@@ -81,7 +81,7 @@ def _source_evidence_snapshot(hit):
     try:
         return tuple(freeze(getattr(hit, name)) for name in (
             "classification", "language_observation", "series_relation",
-            "age_observation",
+            "age_observation", "isbn_observation",
         ))
     except (AttributeError, ValueError, TypeError, RecursionError):
         return None

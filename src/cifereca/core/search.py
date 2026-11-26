@@ -108,6 +108,22 @@ def _purchase_catalogue_values(row: Mapping[str, Any], field: str) -> list[str]:
     return _attested_author_names(values) if field == "author" else values
 
 
+def _local_isbn(value: object) -> str:
+    """Canonical book ISBN for exact descriptive matching, never an edition join."""
+    if type(value) is not str or not 10 <= len(value) <= 64:
+        return ""
+    if re.fullmatch(r"[0-9Xx -]+", value) is None:
+        return ""
+    from ..plugin_api.book_references import _isbn
+    from .notice_strong_isbn_candidates import _isbn13
+    checked = _isbn(value)
+    if len(checked) == 13:
+        return checked if checked.startswith(("978", "979")) else ""
+    if len(checked) == 10:
+        return _isbn13("isbn10", checked)
+    return ""
+
+
 def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     field = str(field or "all").casefold()
     meta = _metadata(row)
@@ -126,7 +142,18 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
         # its digits happen to pass an ISBN checksum.
         if row.get("source") == "notice_c_public":
             return []
-        return _values(row.get("isbn")) + _values(row.get("item_id")) + _values(meta.get("isbn")) + _values(meta.get("isbns"))
+        # A supplier ID is searchable as an identifier in All, not as an ISBN.
+        # Only flat, explicitly named bibliographic fields are candidates.
+        # These legacy declarations do not attest their manifestation role.
+        values = []
+        for raw in (row.get("isbn"), meta.get("isbn"), meta.get("isbns")):
+            parts = (raw,) if type(raw) is str else raw
+            if type(parts) not in (tuple, list) or len(parts) > 64:
+                continue
+            checked = [_local_isbn(value) for value in parts]
+            if all(checked):
+                values.extend(checked)
+        return values
     if field == "subject":
         # The explicit Sujet filter must cover the same known, already
         # indexed bibliographic classifications as the all-fields search.
@@ -295,6 +322,16 @@ def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
     field = str(field or "all").casefold()
     if field == "all":
         return local_search_evidence(row, query)[0] > 0 if query.strip() else True
+    if field == "isbn":
+        if not query.strip():
+            return True
+        isbn = _local_isbn(query)
+        if not isbn:
+            return False
+        if row.get("source") == "notice_c_public":
+            from .notice_c_loaded_filter import matches_loaded_public_isbn
+            return matches_loaded_public_isbn(row, isbn)
+        return isbn in _field_values(row, field)
     if row.get("source") == "notice_c_public" and field in {"title", "author", "publisher"}:
         # The retained C cursor deliberately keeps literal substring
         # semantics for these explicit fields. Do not reinterpret a C hit
