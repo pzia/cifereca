@@ -65,21 +65,34 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
             pending = False
             return True
 
-        def lender_current(row):
+        from ..core.borrow_for_identity_native_roster import (
+            NativeLenderRoster, native_roster_matches_detail,
+        )
+
+        def lender_current(row, native):
             # Revoke a real Core lender whose original session disconnected
             # or changed account without bumping the UI navigation epoch.
             # Legacy sessionless UI-only descriptors are non-executable;
             # Core's borrow executor still requires a live session receipt.
             return (possible_lender_matches(
-                row, item, requesting_identity_id=identity_id,
+                row, row._notice if native is not None else item,
+                requesting_identity_id=identity_id,
             ) and (row._session is None or possible_lender_session_matches(
                 row, row._session,
             )))
 
-        def delivered(rows):
+        def delivered(result):
             if not consume():
                 return
             try:
+                native = result if type(result) is NativeLenderRoster else None
+                rows = native.rows if native is not None else result
+                def roster_current():
+                    return (native_roster_matches_detail(
+                        service, native, item, requesting_identity_id=identity_id,
+                    ) if native is not None else possible_lender_claims_distinct(
+                        rows, item, requesting_identity_id=identity_id,
+                    ))
                 mapped = getattr(panel, "get_mapped", None)
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
@@ -87,9 +100,8 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                         # Repeated references to the same lender receipt are
                         # not distinct accounts. Refuse ambiguous N-way UI.
                         or len({id(row) for row in rows}) != len(rows)
-                        or not possible_lender_claims_distinct(
-                            rows, item, requesting_identity_id=identity_id)
-                        or any(not lender_current(row) for row in rows)):
+                        or not roster_current()
+                        or any(not lender_current(row, native) for row in rows)):
                     return
                 details = [
                     (
@@ -105,7 +117,8 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                 # append. Never install a choice under a new route.
                 if (not scope_current() or panel._rendered_search_detail is not visible
                         or (callable(mapped) and not mapped())
-                        or any(not lender_current(row) for row in rows)):
+                        or not roster_current()
+                        or any(not lender_current(row, native) for row in rows)):
                     # The group call may synchronously change the native
                     # source, account or edition without rotating GUI epochs.
                     # Never add a stale lender action after that reentrancy.
@@ -115,6 +128,7 @@ def append_possible_lender_summary(panel, item: SearchResult) -> bool:
                     panel, item=item, rows=rows, visible=visible, service=service,
                     identity=identity, identity_id=identity_id, account_epoch=account_epoch,
                     source_epoch=source_epoch, route=route,
+                    **({"native_roster": native} if native is not None else {}),
                 )
             except Exception:
                 return
