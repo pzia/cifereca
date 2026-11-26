@@ -455,3 +455,20 @@ def test_original_lender_session_receipt_rejects_live_revocation_without_epoch(
     assert not possible_lender_session_matches(choice, object())
     assert session.calls == 0
     assert service.current_identity.identity_id == "default"
+
+
+@pytest.mark.parametrize("flag", ["catalogue_access", "search_provenance"])
+def test_non_native_lender_metadata_revokes_without_foreign_equality(harness, flag):
+    from cifereca.core.borrow_for_identity_discovery import possible_lender_matches
+
+    class Foreign:
+        def __eq__(self, other):
+            pytest.fail("foreign equality executed at lender receipt boundary")
+
+    service, _account, session = harness
+    notice = _candidate().notice
+    candidate, = _discover(service, notice)
+    notice.metadata = {**notice.metadata, flag: Foreign()}
+    assert not possible_lender_matches(candidate, notice, requesting_identity_id="default")
+    assert _discover(service, notice) == ()
+    assert session.calls == 0
