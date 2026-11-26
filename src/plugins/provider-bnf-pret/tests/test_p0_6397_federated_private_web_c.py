@@ -640,22 +640,35 @@ def test_inert_catalogue_projection_cannot_rebind_private_web_read(harness, flag
     assert service.storage.entitlements() == service.storage.acquisitions() == service.storage.placements() == []
 
 
-@pytest.mark.parametrize("other_record", ["record-a", "record-b"])
-def test_native_resource_namespace_groups_edition_not_accounts(harness, other_record):
+@pytest.mark.parametrize("other_record,other_title", [
+    ("record-a", "Fiction"), ("record-b", "Fiction"), ("record-a", "Autre titre"),
+])
+def test_native_resource_namespace_groups_edition_not_accounts(harness, other_record, other_title):
     from cifereca_bnf_pret import BnfProviderSession
     from cifereca.plugin_api import Account
     from cifereca.core.notice_c_private_search_web import private_search_c_binding_facts
     from cifereca.core.notice_cover_projection import notice_cover_document_ref
     from cifereca.core.notice_c_private_search_web import _source_key
-    from test_p0_6397_authenticated_web_proof import Client
+    import httpx
+    from cifereca_bnf_pret_http import ReaderHTTPClient
 
-    service, alice_session, alice, client = harness
+    def transport(body, calls):
+        def handler(request):
+            calls.append(request)
+            assert request.method == "GET" and request.url.path == "/resources"
+            return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                                  content=body.encode("utf-8"))
+        return ReaderHTTPClient(transport=httpx.MockTransport(handler))
+
+    service, alice_session, alice, _ = harness
+    alice_calls, bob_calls = [], []
+    alice_session.client = transport(results(card()), alice_calls)
     first, = service.search("fiction", provider_id=alice_session.provider_id, force=True)
     scope_a = capture_search_read_scope(service, "alice")
     first_menu = read_authenticated_web_for_search(service, first, reader_scope=scope_a)
     assert first_menu is not None and len(first_menu.choices) == 1
 
-    bob_client = Client(results(card(other_record)))
+    bob_client = transport(results(card(other_record, title=other_title)), bob_calls)
     bob_session = BnfProviderSession(
         client=bob_client, credential_id="fixture-bob-card", label="Bob",
         credentials={}, options={},
@@ -714,15 +727,21 @@ def test_native_resource_namespace_groups_edition_not_accounts(harness, other_re
                              (_SHARED_PREFIX + "%",)).fetchall()
         scoped = [json.loads(sql.execute("SELECT value FROM metadata WHERE key=?",
                                          (_opaque_key(doc),)).fetchone()[0]) for doc in docs]
-    assert len(shared) == (1 if other_record == "record-a" else 2)
+    same_body = other_record == "record-a" and other_title == "Fiction"
+    assert len(shared) == (1 if same_body else 2)
     assert sorted(json.loads(row[0])["refs"] for row in shared) == (
-        [2] if other_record == "record-a" else [1, 1])
+        [2] if same_body else [1, 1])
     assert all("raw_json" not in row for row in scoped)
     assert (scoped[0]["documentary_payload"]["digest"] == scoped[1]["documentary_payload"]["digest"]) is (
-        other_record == "record-a")
+        same_body)
     observations = [read_current_notice_cover(db, doc) for doc in docs]
     assert all(obs is not None for obs in observations)
     assert observations[0].observation.source_revision != observations[1].observation.source_revision
+    reopened = Storage(db.path)
+    try:
+        assert [read_current_notice_cover(reopened, doc) for doc in docs] == observations
+    finally:
+        reopened.close()
     assert notice_cover_document_ref(_source_key(first, "alice")) != (
         notice_cover_document_ref(_source_key(second, "bob")))
     assert private_search_c_binding_facts(second, "bob") == (c.document, c.epoch)
@@ -739,7 +758,7 @@ def test_native_resource_namespace_groups_edition_not_accounts(harness, other_re
     expected = {id(first), id(second)} if other_record == "record-a" else {id(second)}
     assert {id(row) for row in native} == expected
     assert search_public_notice_c(db, "fiction").hits == ()
-    assert len(client.calls) == len(bob_client.calls) == 1
+    assert len(alice_calls) == len(bob_calls) == 1
     bob_session.connected = False
     remaining = retained_native_borrow_occurrences(service, source_refs=refs)
     assert {id(row) for row in remaining} == ({id(first)} if other_record == "record-a" else set())
