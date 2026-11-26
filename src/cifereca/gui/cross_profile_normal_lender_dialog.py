@@ -11,20 +11,29 @@ from ..core.borrow_for_identity_discovery import (
 
 def present_normal_lender_choice(panel, *, item, rows, current, service,
                                  identity, identity_id, account_epoch,
-                                 source_epoch, Adw, TaskPriority, control=None):
+                                 source_epoch, Adw, TaskPriority, control=None,
+                                 native_roster=None):
     """Choose among multiple candidates, then require explicit confirmation."""
     window = panel.window
     execute = getattr(service, "execute_normal_lender_borrow_for_current_identity", None)
 
     def lender_current(row):
+        if native_roster is not None and row is None:
+            return False
         return (possible_lender_matches(
-            row, item, requesting_identity_id=identity_id,
+            row, row._notice if native_roster is not None else item,
+            requesting_identity_id=identity_id,
         ) and (row._session is None or possible_lender_session_matches(
             row, row._session,
         )))
     def roster_current():
         # The original N-way receipt remains indivisible through consent
         # and a queued worker, not only while the chooser is displayed.
+        if native_roster is not None:
+            from ..core.borrow_for_identity_native_roster import native_roster_matches_detail
+            return (native_roster.rows is rows and native_roster_matches_detail(
+                service, native_roster, item, requesting_identity_id=identity_id,
+            ) and all(lender_current(row) for row in rows))
         return (possible_lender_claims_distinct(
                     rows, item, requesting_identity_id=identity_id)
                 and all(lender_current(row) for row in rows))
@@ -98,12 +107,13 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                     or not roster_current()):
                 return {"status": "blocked"}
             return execute(
-                captured_candidate=candidate, exact_notice=item,
+                captured_candidate=candidate,
+                exact_notice=candidate._notice if native_roster is not None else item,
                 expected_requesting_identity_id=identity_id,
                 expected_requesting_identity=identity,
                 expected_context_epoch=account_epoch,
                 expected_source_epoch=source_epoch, confirmed=True,
-                captured_roster=rows,
+                captured_roster=native_roster if native_roster is not None else rows,
             )
 
         def done(result):
@@ -206,18 +216,28 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
 
 
 def append_normal_lender_action(panel, *, item, rows, visible, service,
-                                identity, identity_id, account_epoch, source_epoch, route):
+                                identity, identity_id, account_epoch, source_epoch, route,
+                                native_roster=None):
     """Attach an optional consent entry to the existing shared detail action bar."""
     window = panel.window
+
+    def roster_current():
+        if native_roster is not None:
+            from ..core.borrow_for_identity_native_roster import native_roster_matches_detail
+            return native_roster.rows is rows and native_roster_matches_detail(
+                service, native_roster, item, requesting_identity_id=identity_id,
+            )
+        return possible_lender_claims_distinct(rows, item, requesting_identity_id=identity_id)
+
     if (getattr(window, "_route_display_token", None) is not route
             or type(rows) is not tuple or not 1 <= len(rows) <= 64
             or len({id(row) for row in rows}) != len(rows)
-            or not possible_lender_claims_distinct(
-                rows, item, requesting_identity_id=identity_id)
+            or not roster_current()
             or not callable(getattr(panel, "_actions", None))
             or not callable(getattr(service, "execute_normal_lender_borrow_for_current_identity", None))
             or any(not possible_lender_matches(
-                row, item, requesting_identity_id=identity_id,
+                row, row._notice if native_roster is not None else item,
+                requesting_identity_id=identity_id,
             ) or (row._session is not None and not possible_lender_session_matches(
                 row, row._session,
             )) for row in rows)):
@@ -251,16 +271,55 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
     label = f"Emprunter avec {rows[0].label}…" if len(rows) == 1 else "Emprunter sur et avec…"
     button = action_button(label, "system-users-symbolic")
     button._cifereca_action_id = "choose-normal-lender"
-    button.connect("clicked", lambda control: present_normal_lender_choice(
-        panel, item=item, rows=rows, current=current, service=service,
-        identity=identity, identity_id=identity_id, account_epoch=account_epoch,
-        source_epoch=source_epoch, Adw=Adw, TaskPriority=TaskPriority, control=control,
-    ))
+    pending = False
+
+    def clicked(control):
+        nonlocal pending
+
+        def present():
+            return present_normal_lender_choice(
+                panel, item=item, rows=rows, current=current, service=service,
+                identity=identity, identity_id=identity_id, account_epoch=account_epoch,
+                source_epoch=source_epoch, Adw=Adw, TaskPriority=TaskPriority, control=control,
+                **({"native_roster": native_roster} if native_roster is not None else {}),
+            )
+
+        if native_roster is None:
+            return present()
+        if (pending or not current() or not roster_current()
+                or getattr(window, "_cross_profile_borrow_pending", None) is not None):
+            return False
+        from ..core.borrow_for_identity_native_roster import native_lender_roster_current
+        pending = True
+
+        def work():
+            return roster_current() and native_lender_roster_current(service, native_roster)
+
+        def delivered(valid):
+            nonlocal pending
+            if not pending:
+                return
+            pending = False
+            if valid is True and current() and roster_current():
+                present()
+
+        def failed(_error):
+            delivered(False)
+
+        try:
+            window.runner.submit("Vérification des sources prêteuses…", work, delivered, failed,
+                                 priority=TaskPriority.USER_ACTION, kind="detail-cache",
+                                 origin="user")
+            return True
+        except Exception:
+            failed(None)
+            return False
+
+    button.connect("clicked", clicked)
     # Creating a GTK control can re-enter navigation or change a live
     # lender/notice before the action is attached. Reject a stale widget
     # BEFORE painting it, not only when the user eventually clicks.
-    if (not current() or not possible_lender_claims_distinct(
-            rows, item, requesting_identity_id=identity_id)
+    if (not current() or not roster_current()
             or any(row._session is not None and not possible_lender_session_matches(
                 row, row._session) for row in rows)):
         return False
