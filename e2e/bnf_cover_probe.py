@@ -248,7 +248,7 @@ def main() -> int:
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
         )
 
-    def capture(stage):
+    def capture(stage, *, title_witness=None):
         screenshot = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
         assert screenshot.size == size, "Unexpected Xvfb geometry"
         appearance = "dark" if Adw.StyleManager.get_default().get_dark() else "light"
@@ -263,6 +263,16 @@ def main() -> int:
             window = app_window[0]
             report["checks"]["synthetic_native_title_" + str(index)] = native_title_witness(
                 window, window.search_page.detail, screenshot, "Synthetic " + RESOURCES[index])
+        if title_witness is not None:
+            assert args.synthetic_matrix
+            from notice_c_native_readability import native_route_title_witness, failure_code
+            route, variant, expected_title = title_witness
+            try:
+                report["checks"]["synthetic_title_" + stage] = native_route_title_witness(
+                    app_window[0], screenshot, route, variant, expected_title)
+            except Exception as exc:
+                report["synthetic_title_failure"] = {"stage": stage, "code": failure_code(exc)}
+                raise
         filename = out / (stage + ".png")
         screenshot.save(filename)
         shutil.copyfile(filename, out / "screen.png")
@@ -995,7 +1005,7 @@ def main() -> int:
         verify_borrower_c_views(
             window, loan, stable_record, bnf.DESCRIPTOR,
             later=later, capture=capture, report=report, complete=complete,
-            checkpoint=checkpoint,
+            checkpoint=checkpoint, settled_capture=args.synthetic_matrix,
         )
 
     def complete():

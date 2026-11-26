@@ -78,6 +78,12 @@ def route_title_keys():
                  for variant in ("list", "detail"))
 
 
+def borrower_title_keys():
+    return tuple(f"synthetic_title_12-c-{route}-{variant}-{phase}"
+                 for phase in ("cold", "offline") for route in ("loans", "history")
+                 for variant in ("list", "detail"))
+
+
 def closed_title_failure(report, sha):
     """Never relay arbitrary report text, exception text, or paths."""
     if (type(report) is not dict or report.get("git_sha") != sha
@@ -88,7 +94,7 @@ def closed_title_failure(report, sha):
         return {}
     stage, code = failure["stage"], failure["code"]
     stages = {"00-search-detail-closed", *(
-        key.removeprefix("synthetic_title_") for key in route_title_keys())}
+        key.removeprefix("synthetic_title_") for key in (*route_title_keys(), *borrower_title_keys()))}
     codes = {*FAILURE_CODES.values(), "other_assertion", "runtime"}
     if type(stage) is not str or type(code) is not str or stage not in stages or code not in codes:
         return {}
@@ -109,7 +115,7 @@ def verify_native_titles(root, sha):
             (root / "generic" / theme / f"book-detail-{width}", generic.read_regular,
              ("synthetic_native_title_readable", *route_title_keys())),
             (bnf.capture_folder(root / "bnf", theme, width), bnf.read_regular,
-             ("synthetic_native_title_0", "synthetic_native_title_1")),
+             ("synthetic_native_title_0", "synthetic_native_title_1", *borrower_title_keys())),
         ):
             report = json.loads(reader(folder / "screen.json", 8 * 1024 * 1024))
             if (type(report) is not dict or report.get("git_sha") != sha
@@ -165,7 +171,7 @@ def run(python, expected_sha):
                         stderr=subprocess.DEVNULL, timeout=180, check=False)
                     if result.returncode:
                         raise MatrixFailure(f"{family}_{theme}_{width}",
-                                            read_title_failure(target, scenario, sha) if family == "generic" else {})
+                                            read_title_failure(target, scenario, sha))
             return verify(root, sha)
     finally:
         os.umask(old)

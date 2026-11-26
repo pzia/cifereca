@@ -143,7 +143,7 @@ def test_native_title_receipt_refuses_missing_or_nonboolean(tmp_path, monkeypatc
         "synthetic_native_title_0": True,
         "synthetic_native_title_1": bad,
     })
-    payload["checks"].update(dict.fromkeys(receipt.route_title_keys(), True))
+    payload["checks"].update(dict.fromkeys((*receipt.route_title_keys(), *receipt.borrower_title_keys()), True))
     def read(*args):
         return json.dumps(payload).encode()
     monkeypatch.setattr(receipt.generic, "read_regular", read)
@@ -156,8 +156,8 @@ def test_native_title_receipt_refuses_missing_or_nonboolean(tmp_path, monkeypatc
 
 def test_every_native_route_title_is_required(tmp_path, monkeypatch):
     import json
-    keys = receipt.route_title_keys()
-    assert len(keys) == len(set(keys)) == 24
+    keys = (*receipt.route_title_keys(), *receipt.borrower_title_keys())
+    assert len(keys) == len(set(keys)) == 32
     payload = dict(git_sha=SHA, status="PASS", checks={
         "synthetic_native_title_readable": True,
         "synthetic_native_title_0": True,
