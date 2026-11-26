@@ -31,7 +31,8 @@ def test_exact_guard_rejects_account_aba_and_source_change_without_mutating_fixt
 
     audit.audit_guard(service, check)
     assert calls == [
-        ("A", 10, 20), ("fixture-4980-foreign-profile", 11, 20),
+        ("A", 10, 20), ("fixture-4980-foreign-profile", 10, 20),
+        ("fixture-4980-foreign-profile", 11, 20),
         ("A", 12, 20), ("A", 10, 21), ("A", 10, 20),
     ]
     assert service.current_identity is original_identity
@@ -42,6 +43,8 @@ def test_exact_guard_rejects_account_aba_and_source_change_without_mutating_fixt
 @pytest.mark.parametrize("guard", [
     lambda service: service.current_identity.identity_id == "A",
     lambda service: service._account_context_epoch == 10,
+    lambda service: service._account_context_epoch == 10
+        and service._source_context_epoch == 20,
     lambda service: service._account_context_epoch == 10
         and service.current_identity.identity_id == "A",
     lambda service: True,

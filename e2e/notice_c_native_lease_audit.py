@@ -33,6 +33,9 @@ def audit_guard(service, check):
     assert callable(check) and check() is True
     foreign = "fixture-4980-foreign-profile"
     assert owner != foreign
+    # Independently reject a foreign owner even if both epochs match.
+    with patch.object(service, "current_identity", replace(identity, identity_id=foreign)):
+        assert check() is False
     # Isolate the account epoch from source changes: A -> B -> A must not
     # be accepted merely because the public document and N3 bytes still match.
     with patch.object(service, "current_identity", replace(identity, identity_id=foreign)), patch.object(
