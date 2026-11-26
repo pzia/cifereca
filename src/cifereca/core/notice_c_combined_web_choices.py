@@ -67,6 +67,42 @@ def read_c_web_choices(service, document, *, reader_scope, expected_epoch,
         return None
 
 
+def read_c_web_choices_for_search(service, row, *, reader_scope):
+    """Use the same C inventory for an exact authenticated Search selection.
+
+    The existing private reader establishes the required source and epoch;
+    the combined reader then admits only that same C snapshot. No DTO URL,
+    account transfer, or public relation is inferred from this selection.
+    """
+    from .notice_c_private_search_web import (
+        _read_source_key, read_authenticated_web_for_search,
+    )
+    from .notice_cover_projection import notice_cover_document_ref
+
+    if not _native_reader_scope(reader_scope, service):
+        return None
+    try:
+        key = _read_source_key(row, reader_scope.identity_id)
+        if key is None:
+            return None
+        private = read_authenticated_web_for_search(
+            service, row, reader_scope=reader_scope,
+        )
+        if type(private) is not AuthenticatedWebChoices:
+            return None
+        menu = read_c_web_choices(
+            service, private.document, reader_scope=reader_scope,
+            expected_epoch=private.epoch, required_source=notice_cover_document_ref(key),
+        )
+        if (menu is None or menu._authenticated != private
+                or _read_source_key(row, reader_scope.identity_id) != key
+                or not reader_scope.current(service)):
+            return None
+        return menu
+    except Exception:
+        return None
+
+
 def resolve_c_web_choice(service, menu, *, choice_id):
     """Resolve only the selected access mode through its original Core guard."""
     if (type(menu) is not CWebChoices or menu._token is not _TOKEN
@@ -106,4 +142,5 @@ def resolve_c_web_choice(service, menu, *, choice_id):
         return None
 
 
-__all__ = ["CWebChoices", "read_c_web_choices", "resolve_c_web_choice"]
+__all__ = ["CWebChoices", "read_c_web_choices", "read_c_web_choices_for_search",
+           "resolve_c_web_choice"]
