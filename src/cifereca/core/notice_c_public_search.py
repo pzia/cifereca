@@ -38,7 +38,7 @@ from .search import filter_loaded_results, local_search_evidence
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
 _STALE_AFTER = 86400
-_FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "collection", "language"))
+_FIELDS = frozenset(("all", "title", "author", "publisher", "subject", "series", "collection", "language", "isbn"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
 from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
 
@@ -247,8 +247,22 @@ def _public_observation(
         return None
 
 
+def _record_isbn_key(value):
+    """Canonical comparison key, never an edition link or access fact."""
+    if (type(value) is not str or not 10 <= len(value) <= 64
+            or re.fullmatch(r"[0-9Xx -]+", value) is None):
+        return ""
+    from ..plugin_api.book_references import _isbn
+    from .notice_strong_isbn_candidates import _isbn13
+    checked = _isbn(value)
+    if len(checked) == 13:
+        return checked if checked.startswith(("978", "979")) else ""
+    return _isbn13("isbn10", checked) if len(checked) == 10 else ""
+
+
 def _public_text_score(query, field, title, author, publisher, description,
-                       classification=None, series=None, language=None):
+                       classification=None, series=None, language=None,
+                       isbn_observation=None):
     """Same local relevance for C fields and source labels, without joins."""
     texts = (title, author, publisher, description)
     # SQLite prefilter may see corrupt unadmitted JSON. Bound text before
@@ -256,6 +270,11 @@ def _public_text_score(query, field, title, author, publisher, description,
     if any(value is not None and (type(value) is not str or len(value) > limit)
            for value, limit in zip(texts, (512, 512, 512, 4000))):
         return 0
+    if field == "isbn":
+        key = _record_isbn_key(query)
+        return int(bool(key) and isbn_observation is not None
+                   and any(_record_isbn_key(value) == key
+                           for value in isbn_observation.isbns))
     metadata = classification.wire() if classification is not None else {}
     if series is not None:
         metadata["series"] = [series.label]
@@ -288,7 +307,7 @@ def _public_text_score(query, field, title, author, publisher, description,
 def _hit_score(record, *, field, query):
     return _public_text_score(query, field, record.title, record.author,
                               record.publisher, record.description, record.classification,
-                              record.series_relation, record.language_observation)
+                              record.series_relation, record.language_observation, record.isbn_observation)
 
 
 def _matches_c_format(medium, media_format, content_types):
@@ -343,11 +362,12 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
         f"json_extract({raw}, '$.public_bibliography.{name}')"
         for name in ("title", "author", "publisher", "description",
                      "medium", "media_format", "classification", "series_relation",
-                     "language_observation", "age_observation", "record_id", "docbase", "source_revision")
+                     "language_observation", "age_observation", "record_id", "docbase", "source_revision",
+                     "isbn_observation")
     ) + f", json_extract({raw}, '$.provider')"
     def score(title, author, publisher, description, medium, media_format,
               raw_classification, raw_series, raw_language, raw_age, record_id,
-              docbase, revision, provider):
+              docbase, revision, raw_isbns, provider):
         if age is not None:
             if type(raw_age) is not str or len(raw_age) > _MAX_BIBLIOGRAPHY_BYTES:
                 return 0
@@ -390,9 +410,23 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
                 series = fact
             else:
                 language = fact
+        isbns = None
+        if field == "isbn":
+            if type(raw_isbns) is not str or len(raw_isbns) > _MAX_BIBLIOGRAPHY_BYTES:
+                return 0
+            try:
+                proof = json.loads(raw_isbns)
+                isbns = decode_public_isbn_observation(
+                    proof, provider_id=provider, record_id=record_id,
+                    scenario=proof.get("scope") if type(proof) is dict else None,
+                )
+            except (ValueError, TypeError, RecursionError):
+                return 0
+            if isbns is None:
+                return 0
         return _public_text_score(needle, field, title, author, publisher, description,
-                                  classification, series, language)
-    db.create_function("cifereca_c_search_match", 14, score, deterministic=True)
+                                  classification, series, language, isbns)
+    db.create_function("cifereca_c_search_match", 15, score, deterministic=True)
     try:
         rows = db.execute(
             "SELECT DISTINCT src.key FROM metadata AS m, "
@@ -409,7 +443,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
              json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        db.create_function("cifereca_c_search_match", 14, None)
+        db.create_function("cifereca_c_search_match", 15, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
 
 
