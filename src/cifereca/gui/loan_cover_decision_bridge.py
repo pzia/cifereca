@@ -113,4 +113,21 @@ def _report_missing_cover(host, loan, rows, decision):
         pass
 
 
-__all__ = ["loan_cover_decision"]
+def current_loan_embedded_conflict(host: Any, loan: Loan) -> bool:
+    """An admitted current N2 conflict forbids every weaker cover route.
+
+    Do not infer a conflict from a missing/legacy snapshot or mint a new
+    association. The existing scoped N2 producer owns the decision.
+    """
+    projection = getattr(host, "_loan_cover_projection", None)
+    if type(projection) is not tuple or len(projection) != 3:
+        return False
+    rows = projection[2]
+    if type(rows) is not tuple or not rows:
+        return False
+    decision = loan_cover_decision(host, loan, rows)
+    return (decision is not None and decision.status == "ambiguous"
+            and decision.tier == "embedded")
+
+
+__all__ = ["loan_cover_decision", "current_loan_embedded_conflict"]
