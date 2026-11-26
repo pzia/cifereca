@@ -108,11 +108,14 @@ def private_search_c_binding_facts(row, identity_id):
         if type(row) is not SearchResult or type(identity_id) is not str:
             return None
         proof = row.__dict__.get(_C_MARKER)
-        if (type(proof) is not tuple or len(proof) != 6
+        if (type(proof) is not tuple or len(proof) != 8
                 or proof[0] is not _WITNESS or type(proof[1]) is not int
                 or proof[1] != id(row) or type(proof[2]) is not str
                 or proof[2] != identity_id or type(proof[3]) is not str
-                or type(proof[5]) is not int or not 1 <= proof[5] < 2**63):
+                or type(proof[5]) is not int or not 1 <= proof[5] < 2**63
+                or type(proof[6]) is not str or type(row.id) is not str
+                or proof[6] != row.id or type(proof[7]) is not str
+                or type(row.scenario) is not str or proof[7] != row.scenario):
             return None
         key = _read_source_key(row, identity_id)
         if key is None or notice_cover_document_ref(key).source_key != proof[3]:
@@ -472,6 +475,7 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                 continue
             row.__dict__[_C_MARKER] = (
                 _WITNESS, id(row), identity_id, doc.source_key, canonical.document, canonical.epoch,
+                row.id, row.scenario,
             )
             # Account only after both the SQLite transaction and Core's
             # mutation context completed. A failed commit must never be
