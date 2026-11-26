@@ -35,16 +35,16 @@ def fixture(tmp_path):
             for phase, gets in (("cold", 1), ("offline", 0)):
                 report["notice_c_shared_six_views_" + phase] = dict(
                     routes=list(review.ROUTES), views=12, same_document=True,
-                    same_epoch=True, image_gets_total=gets)
+                    same_epoch=True, image_gets_total=1)
                 report["notice_c_cover_metrics_" + phase] = dict(
-                    fixture="one_c_six_views_mock_transport")
+                    fixture="one_c_six_views_mock_transport", n3={"download_ok": gets})
             (folder / "screen.json").write_text(json.dumps(report))
     return root, tmp_path / "review"
 
 
 def test_receipt_requires_complete_independent_checklist_and_rechecks_bytes(fixture):
     root, output = fixture
-    assert review.build(root, output, HEAD) == 128
+    assert review.build(root, output, HEAD) == 124
     with pytest.raises(review.ReviewError):
         review.verify_review(root, output, HEAD)
     path = output / "review.csv"
@@ -57,7 +57,7 @@ def test_receipt_requires_complete_independent_checklist_and_rechecks_bytes(fixt
         writer.writeheader()
         writer.writerows(rows)
     result = review.verify_review(root, output, HEAD)
-    assert result["capture_count"] == 128
+    assert result["capture_count"] == 124
     assert "PRIVATE_NOTE" not in repr(result)
     png = root / "light/book-detail-1366" / (review.STAGES[0] + ".png")
     png.write_bytes(png.read_bytes() + b"changed")
