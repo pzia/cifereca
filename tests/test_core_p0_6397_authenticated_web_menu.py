@@ -188,3 +188,38 @@ def test_private_worker_completion_cannot_outlive_exact_coordinates(tmp_path, ph
         assert not launches
         if phase == "menu":
             assert not actions
+
+
+def test_authenticated_search_selection_exposes_one_mixed_c_menu(tmp_path):
+    """Use the exact original private source, then the common C inventory."""
+    from tests.test_core_p0_6397_c_web_reference_persistence import (
+        source as public_source, link, publish,
+    )
+    public_url = "https://books.example.org/title/mixed-private-selection"
+    with closing(Storage(tmp_path / "private-mixed.sqlite")) as db:
+        core, row = setup(db, 1)
+        key = _source_key(row, "alice")
+        source = public_source(db, "seller-a", "a", [link("seller-a", public_url)])
+        publish(db, key.edition_id, source)
+        host, panel, gio, pending, actions, launches, toasts = ui(core)
+        assert controller.request_authenticated_search_web_actions(
+            host, panel, row, reader_scope=capture_search_read_scope(core, "alice"),
+            current=lambda: True, Gtk=GTK, Gio=gio,
+        )
+        deliver(pending)
+        root, = actions
+        assert root.label == "Ouvrir la fiche sur…"
+        public, private = root.popover.child.child.children
+        assert "Connexion requise" not in public.label
+        assert "Connexion requise" in private.label
+        private.callback(private)
+        deliver(pending)
+        assert launches == [URL]
+        core._sessions[(row.source_provider, row.source_credential)].connected = False
+        private.callback(private)
+        deliver(pending)
+        assert launches == [URL] and toasts
+        public.callback(public)
+        deliver(pending)
+        assert launches == [URL, public_url]
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
