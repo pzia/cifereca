@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import sys
 from time import monotonic
 from unittest.mock import patch
@@ -96,7 +97,18 @@ def walk(widget: Gtk.Widget):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
+    parser.add_argument("--appearance", choices=("light", "dark"))
     args = parser.parse_args()
+    if args.width != 1366 and args.appearance is None:
+        parser.error("private alternative width requires explicit appearance")
+    if (args.width != 1366 or args.appearance is not None) and (
+            os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
+        parser.error("alternative BnF review is local only")
+    size = (args.width, 1000 if args.width == 1600 else 900)
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+    ).strip()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("GTK4/X11/Xvfb required")
 
@@ -212,7 +224,8 @@ def main() -> int:
 
     core.library.holdings_for_scope = holdings_for_scope
     report = {
-        "scenario": "bnf-covers-1366", "status": "RUNNING",
+        "scenario": f"bnf-covers-{args.width}", "status": "RUNNING",
+        "git_sha": sha, "width": args.width, "height": size[1],
         "backend": "GTK4/X11, BnF HTML parser + provider adapter, HTTPX MockTransport",
         "checks": {}, "snapshots": [],
     }
@@ -233,13 +246,19 @@ def main() -> int:
 
     def capture(stage):
         screenshot = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert screenshot.size == (1366, 900), "Unexpected Xvfb geometry"
+        assert screenshot.size == size, "Unexpected Xvfb geometry"
+        appearance = "dark" if Adw.StyleManager.get_default().get_dark() else "light"
+        assert args.appearance is None or appearance == args.appearance
+        if "appearance" in report:
+            assert report["appearance"] == appearance
+        report["appearance"] = appearance
         assert screenshot.getbbox() is not None, "Blank GTK surface"
         filename = out / (stage + ".png")
         screenshot.save(filename)
         shutil.copyfile(filename, out / "screen.png")
         report["snapshots"].append({
             "stage": stage, "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
+            "appearance": appearance, "file": filename.name,
         })
 
     def fail():
@@ -1024,6 +1043,11 @@ def main() -> int:
             super().__init__(application_id="org.cifereca.BnfCovers4118")
 
         def do_activate(self):
+            if args.appearance is not None:
+                Adw.StyleManager.get_default().set_color_scheme(
+                    Adw.ColorScheme.FORCE_DARK if args.appearance == "dark"
+                    else Adw.ColorScheme.FORCE_LIGHT
+                )
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             app_window[0] = window
             # Do not accept an initial search thumbnail as proof that the
@@ -1037,7 +1061,7 @@ def main() -> int:
                     applied_details.append(args[1].record_id)
 
             window._apply_search_detail = traced_apply
-            window.set_default_size(1326, 780)
+            window.set_default_size(args.width - 40, size[1] - 120)
             # Install the test transport before the first GTK frame can bind
             # a list cell: even initial fixtures cannot start a real cover GET.
             original_client[0] = window.covers.client
