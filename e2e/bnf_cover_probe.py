@@ -883,6 +883,46 @@ def main() -> int:
         capture("11-bnf-late-library-loan-list-and-detail")
         assert len(image_gets) == 2, "Late local cover must not initiate GET"
         report["checks"]["late_library_repaints_real_gtk_loan_list"] = True
+        # The historical #3104 report concerned two distinct loans and
+        # reopening a selection. Keep the local proof on the first exact
+        # loan and the independent supplier cover on the second.
+        reselect_exact_loan(1, COVERS[1], reopen_first_local_loan)
+
+    def reselect_exact_loan(resource_index, expected_uri, continuation):
+        from cifereca.core.loan_source_identity import loan_source_key
+        window = app_window[0]
+        current = next(loan for loan in window.service.last_loans
+                       if loan.record_id == RESOURCES[resource_index])
+        exact_key = loan_source_key(current)
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        index, = (i for i, row in enumerate(rows) if row.key == exact_key)
+        assert rows[index].thumbnail_url == expected_uri
+        window.loan_page.selection.set_selected(index)
+
+        def ready():
+            selected = window.loan_page.selection.get_selected_item()
+            covers = selected_loan_cover()
+            return (selected is not None and selected.key == exact_key
+                    and bool(covers) and covers[0].get_mapped()
+                    and covers[0]._url == expected_uri
+                    and covers[0].picture.get_paintable() is not None
+                    and not covers[0].placeholder.get_visible())
+
+        await_condition("exact_loan_reselection_" + str(resource_index),
+                        ready, continuation)
+
+    def reopen_first_local_loan():
+        assert len(image_gets) == 2
+        reselect_exact_loan(
+            0, late_cover_row[0]["thumbnail_url"], finish_exact_loan_reselection,
+        )
+
+    def finish_exact_loan_reselection():
+        assert len(image_gets) == 2, "Reopening loans must reuse physical covers"
+        assert loan_calls == ["login", "activity"]
+        report["checks"]["P1_3104_two_exact_loans_reselection_real_gtk"] = True
+        capture("11b-bnf-two-exact-loans-reopened")
         def checkpoint(stage):
             stages.append(stage)
             report["last_stage"] = stage
