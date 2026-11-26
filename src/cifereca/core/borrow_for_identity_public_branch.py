@@ -18,7 +18,7 @@ from .loan_action_scope import _inert_session_accounts, _inert_session_state
 from .notice_c_exact_source_lookup import _valid_coordinates
 from .notice_cover_projection import notice_cover_document_ref
 from .notice_search_cover_producer import _coordinate_digest
-from .notice_source_observation import NoticeSourceKey
+from .notice_source_observation import NoticeSourceKey, _valid_key
 from .source_context import source_context_mutation
 
 _TOKEN = object()
@@ -28,7 +28,10 @@ _MARKER = "_core_public_branch_borrow_occurrence"
 def _branches(descriptor):
     if type(descriptor) is not ProviderDescriptor or descriptor.state != "ready":
         return ()
-    raw = descriptor.authenticated_search_public_edition_branches_v1
+    return _validated_branches(descriptor.authenticated_search_public_edition_branches_v1)
+
+
+def _validated_branches(raw):
     if type(raw) is not tuple or not 1 <= len(raw) <= 64:
         return ()
     def valid(value):
@@ -88,7 +91,7 @@ def _current(service, call):
                 or coords[2] == "__public__"
                 or type(call.account) is not Account
                 or type(call.connection_epoch) is not int or call.connection_epoch < 1
-                or type(call.branches) is not tuple
+                or not _validated_branches(call.branches)
                 or not _branches(call.descriptor) or _branches(call.descriptor) != call.branches
                 or call.descriptor.id != coords[1]
                 or call.descriptor.capabilities.authentication is not True
@@ -279,10 +282,12 @@ def public_branch_occurrence_document(service, row, *, owner):
         r = row.__dict__.get(_MARKER)
         if (type(r) is not _Receipt or r.token is not _TOKEN or r.row is not row
                 or type(r.key) is not PublicBranchOccurrenceKey
-                or type(r.key.owner) is not str or r.key.owner != owner
+                or any(type(v) is not str for v in (r.key.owner, r.key.provider, r.key.credential, r.key.account_id))
+                or r.key.owner != owner or not _valid_key(r.key.source)
                 or not _current(service, r.call) or r.call.scope.identity_id != owner
                 or type(r.fields) is not tuple or not _valid_fields(r.fields)
-                or type(r.binding) is not tuple or len(r.binding) != 3):
+                or type(r.binding) is not tuple or len(r.binding) != 3
+                or any(type(v) not in (str, type(None)) for v in r.binding)):
             return None
         key = _key(r.call, row)
         if (key is None or key != r.key
