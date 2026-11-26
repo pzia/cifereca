@@ -262,12 +262,20 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
                                      if type(value) is str and value))
               for name, weight, values in groups]
     isbn_score = 0
-    if row.get("source") == "notice_c_public":
-        isbn = _local_isbn(query)
-        if isbn:
+    isbn = _local_isbn(query)
+    if isbn:
+        if row.get("source") == "notice_c_public":
             from .notice_c_loaded_filter import matches_loaded_public_isbn
             if matches_loaded_public_isbn(row, isbn):
                 isbn_score = 10
+        elif (meta.get("search_provenance") == "known_catalog_stale"
+              and meta.get("notice_c_query_status") in ("partial", "budget_exceeded")
+              and isbn in _field_values(row, "isbn")):
+            # A retained C fallback has already projected its descriptive
+            # ISBN values into a stale SearchResult. Its loaded All filter
+            # must keep the exact ISBN10/13 alias accepted by the C cursor.
+            # No claim about manifestation, ownership or delivery follows.
+            isbn_score = 10
     total = 0
     matched_fields: list[str] = []
     for token in [*terms, *phrases]:

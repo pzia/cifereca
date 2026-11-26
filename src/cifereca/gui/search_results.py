@@ -647,10 +647,26 @@ def _update_search_count(self, shown: int) -> None:
     # adapters without GTK tooltip support retain the unchanged count.
     label = self.search_page.count_label
     if hasattr(label, "set_tooltip_text"):
-        label.set_tooltip_text(tooltip or (
+        base_tooltip = tooltip or (
             "Nombre de résultats affichés dans le connu ; index potentiellement incomplet. "
             "Les filtres affinent les résultats chargés. Étendre en ligne interroge les catalogues distants."
             if self._search_mode == "local" else
             "Nombre de résultats affichés après extension ; la couverture des catalogues peut être incomplète."
-        ))
+        )
+        from cifereca.core.notice_c_known_projection import known_public_c_loaded_coverage
+        loaded = getattr(self, "_search_local_objects", None)
+        viewer = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+        coverage = known_public_c_loaded_coverage(
+            loaded.values(), identity_id=viewer,
+        ) if type(loaded) is dict else None
+        if coverage is not None:
+            loaded_count, known_count, status, more = coverage
+            minimum = "au moins " if status == "budget_exceeded" else ""
+            base_tooltip += (
+                f" Lot C de la requête initiale : {loaded_count} notices chargées, "
+                f"{minimum}{known_count} notices connues repérées."
+                + (" Lecture bornée ; couverture incomplète." if more or status == "budget_exceeded" else
+                   " Couverture fournisseur non attestée.")
+            )
+        label.set_tooltip_text(base_tooltip)
 
