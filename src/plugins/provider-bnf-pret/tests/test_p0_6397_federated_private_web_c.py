@@ -706,9 +706,21 @@ def test_native_resource_namespace_groups_edition_not_accounts(harness, other_re
     assert private_search_c_binding_facts(second, "bob") == (c.document, c.epoch)
     assert private_search_c_binding_facts(second, "alice") is None
     assert private_search_c_binding_facts(replace(second), "bob") is None
+    # Consume the actual original Search receipt through the common native
+    # lender detail binding. The durable C alone cannot recreate a row.
+    from cifereca.core.borrow_for_identity_native_roster import _detail_binding
+    from cifereca.core.borrow_for_identity_native_occurrence import retained_native_borrow_occurrences
+    assert _detail_binding(second, "bob") == (c.document, c.epoch)
+    assert _detail_binding(replace(second), "bob") is None
+    refs = frozenset(m.source_ref for m in c.sources)
+    native = retained_native_borrow_occurrences(service, source_refs=refs)
+    expected = {id(first), id(second)} if other_record == "record-a" else {id(second)}
+    assert {id(row) for row in native} == expected
     assert search_public_notice_c(db, "fiction").hits == ()
     assert len(client.calls) == len(bob_client.calls) == 1
     bob_session.connected = False
+    remaining = retained_native_borrow_occurrences(service, source_refs=refs)
+    assert {id(row) for row in remaining} == ({id(first)} if other_record == "record-a" else set())
     assert resolve_authenticated_web_choice(
         service, menu_b, choice_id=menu_b.choices[0].choice_id,
     ) is None
