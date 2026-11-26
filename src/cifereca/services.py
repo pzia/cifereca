@@ -448,6 +448,20 @@ class LibraryService:
         )
         return result if scope_current() else ()
 
+    def possible_borrow_lenders_for_c_for_current_identity(
+        self, *, document, expected_epoch: int,
+    ):
+        """#4988: common read-only roster port for an already pinned C."""
+        from .core.borrow_for_identity_native_roster import native_lender_roster_for_c
+        requesting_id, scope_current = _capture_cross_profile_read_scope(self)
+        if not scope_current():
+            return None
+        result = native_lender_roster_for_c(
+            self, document, expected_epoch=expected_epoch,
+            requesting_identity_id=requesting_id,
+        )
+        return result if scope_current() else None
+
     def preview_borrow_for_current_identity(
         self, *, expected_edition_id: str, observations: object,
         now: int | None = None,
