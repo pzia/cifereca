@@ -8,7 +8,7 @@ N2 derives its decisions from this record; N3 owns image bytes/previews.
 """
 from __future__ import annotations
 
-from .public_search_projection import PublicSeriesRelation, PublicLanguageObservation, PublicClassification
+from .public_search_projection import PublicSeriesRelation, PublicLanguageObservation, PublicClassification, PublicIsbnObservation
 from .notice_c_public_age import PublicAgeObservation, decode_public_age_observation
 
 from dataclasses import asdict, dataclass
@@ -56,6 +56,7 @@ class ConsolidatedPublicBibliography:
     language_observation: PublicLanguageObservation | None = None
     classification: PublicClassification | None = None
     age_observation: PublicAgeObservation | None = None
+    isbn_observation: PublicIsbnObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,11 +193,11 @@ def _decode_public_bibliography(
     from .public_search_projection import (
         _public_bibliographic_text, decode_public_series_relation,
         decode_public_language_observation,
-        decode_public_classification,
+        decode_public_classification, decode_public_isbn_observation,
     )
 
     if (type(raw) is not dict or not _BIB_KEYS <= set(raw)
-            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation", "classification", "age_observation"}):
+            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation", "classification", "age_observation", "isbn_observation"}):
         raise ValueError("corrupt_canonical_cover")
     def coord(value, *, optional=False):
         return (value is None and optional) or (
@@ -258,6 +259,18 @@ def _decode_public_bibliography(
         if language is None:
             raise ValueError("corrupt_canonical_cover")
         values["language_observation"] = language
+    if "isbn_observation" in values:
+        proof = values["isbn_observation"]
+        # The retained source already binds exact provider, record and edition.
+        # Its parser scenario was checked at original source admission.
+        isbns = decode_public_isbn_observation(
+            proof, provider_id=provider,
+            scenario=proof.get("scope") if type(proof) is dict else None,
+            record_id=raw["record_id"],
+        )
+        if isbns is None:
+            raise ValueError("corrupt_canonical_cover")
+        values["isbn_observation"] = isbns
     if "classification" in values:
         classification = decode_public_classification(values["classification"])
         if classification is None:
@@ -595,6 +608,8 @@ def _persist_consolidated_cover_source_txn(
                 incoming["public_bibliography"]["series_relation"] = asdict(hit.series_relation)
             if hit.language_observation is not None:
                 incoming["public_bibliography"]["language_observation"] = hit.language_observation.wire()
+            if hit.isbn_observation is not None:
+                incoming["public_bibliography"]["isbn_observation"] = hit.isbn_observation.wire()
             if hit.classification is not None:
                 incoming["public_bibliography"]["classification"] = hit.classification.wire()
             if hit.age_observation is not None:
