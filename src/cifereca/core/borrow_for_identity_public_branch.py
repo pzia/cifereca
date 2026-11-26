@@ -151,6 +151,11 @@ def capture_public_branch_borrow_call(service, session, identity_id):
         if len(candidates) != 1:
             return None
         account = candidates[0]
+        # For an already authorized public-only Search, capture its actual
+        # owner rather than the requesting reader. _current still checks
+        # that exact registered account, SQL owner and connection epoch.
+        if identity_id is None:
+            identity_id = account.identity_id
         if account.identity_id != identity_id or account.unique_id != "":
             return None
         coords = (identity_id, account.provider_id, account.credential_id, account.unique_id)
@@ -231,6 +236,41 @@ def stamp_public_branch_borrow_occurrences(service, call, rows):
                 row.__dict__.pop(_MARKER, None)
 
 
+def stamp_public_branch_borrow_response(service, call, response):
+    """Foreign public-only Search retains no row without same-call declaration.
+
+    The caller continues to publish ONLY the existing sanitized projection.
+    Keep the raw native occurrence within Core for a later explicit borrow.
+    """
+    from collections import Counter
+    from ..plugin_api import ProviderSearchResponse, PublicSearchNotice
+    from .public_search_projection import _key as projection_key, project_public_search_results
+
+    if not _current(service, call) or type(response) is not ProviderSearchResponse:
+        return
+    try:
+        projections = project_public_search_results(response)
+        if projections is None or len({id(row) for row in response.results}) != len(response.results):
+            return
+        claims = Counter(
+            (projection_key(decl.result), decl.result.revision_id)
+            for decl in response.public_notices
+            if type(decl) is PublicSearchNotice
+            and type(decl.result) is SearchResult
+            and projection_key(decl.result) is not None
+            and type(decl.result.revision_id) in (str, type(None))
+        )
+        totals = Counter(k for (k, _revision) in claims.elements())
+        rows = [row for row in response.results
+                if id(row) in projections
+                and _key(call, row) is not None
+                and totals[projection_key(row)] == 1
+                and claims[(projection_key(row), row.revision_id)] == 1]
+        stamp_public_branch_borrow_occurrences(service, call, rows)
+    except Exception:
+        return
+
+
 def public_branch_occurrence_document(service, row, *, owner):
     """A public source locator only, still NOT a verified member of visible C."""
     if type(row) is not SearchResult or type(owner) is not str:
@@ -260,4 +300,5 @@ def public_branch_occurrence_document(service, row, *, owner):
 
 
 __all__ = ["PublicBranchOccurrenceKey", "capture_public_branch_borrow_call",
-           "stamp_public_branch_borrow_occurrences", "public_branch_occurrence_document"]
+           "stamp_public_branch_borrow_occurrences", "stamp_public_branch_borrow_response",
+           "public_branch_occurrence_document"]
