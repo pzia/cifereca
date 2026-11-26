@@ -9,16 +9,42 @@ from __future__ import annotations
 
 from ..core.notice_c_cover_index import is_canonical_cover_document
 from ..core.notice_c_web_choices import (
-    PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
+    PublicWebChoice, PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
 )
 from ..storage import Storage
 from ..core.notice_c_authenticated_web_choices import (
-    AuthenticatedWebChoices, resolve_authenticated_web_choice,
+    AuthenticatedWebChoice, AuthenticatedWebChoices, resolve_authenticated_web_choice,
 )
 from ..core.notice_c_private_search_web import read_authenticated_web_for_search, _read_source_key
 from ..core.loan_action_scope import _inert_session_state, _inert_session_accounts
 from ..core.search_orchestration import SearchReadScope, capture_search_read_scope
 from ..models import SearchResult
+
+
+def _authenticated_menu_sessions_current(core, menu):
+    # Inert snapshots only: no SQLite, provider dispatch or login from
+    # GTK. Core still performs the full durable revalidation at click.
+    try:
+        for binding in menu._bindings:
+            doc = binding.document
+            state = _inert_session_state(binding.session)
+            accounts = _inert_session_accounts(binding.session)
+            if (core._sessions.get(core._session_key(doc.provider_id, doc.credential_id))
+                    is not binding.session or state is None or accounts is None
+                    or state.get('connected') is not True or state.get('_closed') is True
+                    or state.get('descriptor') is not binding.descriptor
+                    or state.get('provider_id') != doc.provider_id
+                    or state.get('credential_id') != doc.credential_id
+                    or type(state.get('_epoch')) is not type(binding.session_epoch)
+                    or state.get('_epoch') != binding.session_epoch
+                    or sum(a is binding.account for a in accounts) != 1
+                    or (binding.account.identity_id, binding.account.provider_id,
+                        binding.account.credential_id, binding.account.unique_id)
+                    != (doc.identity_id, doc.provider_id, doc.credential_id, doc.account_id)):
+                return False
+        return bool(menu._bindings)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return False
 
 
 def request_public_web_actions(host, panel, document, *, expected_epoch, current,
@@ -47,6 +73,15 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         return _request_web_actions(
             host, panel, current=current, Gtk=Gtk, Gio=Gio,
             worker_guard=lambda: reader_scope.current(core),
+            initial_menu_current=lambda menu: (
+                menu._authenticated is None
+                or _authenticated_menu_sessions_current(core, menu._authenticated)
+            ),
+            choice_current=lambda menu, choice: (
+                type(choice) is PublicWebChoice
+                or (type(choice) is AuthenticatedWebChoice
+                    and _authenticated_menu_sessions_current(core, menu._authenticated))
+            ),
             load=lambda core, storage: read_c_web_choices(
                 core, document, reader_scope=reader_scope, expected_epoch=expected_epoch,
             ),
@@ -88,29 +123,7 @@ def request_authenticated_search_web_actions(host, panel, row, *, reader_scope, 
                 and coordinates() == captured)
 
     def display_current(menu):
-        # Inert snapshots only: no SQLite, provider dispatch or login from
-        # GTK. Core still performs the full durable revalidation at click.
-        try:
-            for binding in menu._bindings:
-                doc = binding.document
-                state = _inert_session_state(binding.session)
-                accounts = _inert_session_accounts(binding.session)
-                if (core._sessions.get(core._session_key(doc.provider_id, doc.credential_id))
-                        is not binding.session or state is None or accounts is None
-                        or state.get('connected') is not True or state.get('_closed') is True
-                        or state.get('descriptor') is not binding.descriptor
-                        or state.get('provider_id') != doc.provider_id
-                        or state.get('credential_id') != doc.credential_id
-                        or type(state.get('_epoch')) is not type(binding.session_epoch)
-                        or state.get('_epoch') != binding.session_epoch
-                        or sum(a is binding.account for a in accounts) != 1
-                        or (binding.account.identity_id, binding.account.provider_id,
-                            binding.account.credential_id, binding.account.unique_id)
-                        != (doc.identity_id, doc.provider_id, doc.credential_id, doc.account_id)):
-                    return False
-            return bool(menu._bindings)
-        except (AttributeError, TypeError, ValueError, RuntimeError):
-            return False
+        return _authenticated_menu_sessions_current(core, menu)
 
     def resolve(core, storage, menu, choice):
         # The selected row may have changed its coordinates while the menu
@@ -219,7 +232,9 @@ def _web_choice_labels(core, choices):
 
 def _request_web_actions(host, panel, *, current, load, accept, resolve,
                          authenticated=False, worker_guard=lambda: True,
-                         menu_current=lambda menu: True, Gtk=None, Gio=None):
+                         menu_current=lambda menu: True,
+                         initial_menu_current=lambda menu: True,
+                         choice_current=lambda menu, choice: True, Gtk=None, Gio=None):
     core = getattr(host, "service", None)
     storage = getattr(core, "storage", None)
     runner = getattr(host, "runner", None)
@@ -282,7 +297,8 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         if not consume_initial():
             return
         if (not active() or route_token() is not requested_route
-                or not accept(menu) or not menu.choices or not menu_current(menu)):
+                or not accept(menu) or not menu.choices or not menu_current(menu)
+                or not initial_menu_current(menu)):
             return
         root = None
         pending_click = None
@@ -319,7 +335,7 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
                 # newer click or launch the browser a second time.
                 if not consume() or not click_current():
                     return
-                if not uri:
+                if not uri or not choice_current(menu, choice):
                     host.toast("Fiche web modifiée ; actualisez la notice.")
                     return
                 try:
@@ -370,7 +386,7 @@ def _request_web_actions(host, panel, *, current, load, accept, resolve,
         root._cifereca_action_priority = 30
         # GTK construction and signal setup can re-enter navigation. A
         # stale menu must never be published after that route change.
-        if not root_current():
+        if not root_current() or not initial_menu_current(menu):
             return
         panel.add_actions([root])
 
