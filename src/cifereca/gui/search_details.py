@@ -142,6 +142,10 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 self, panel, document, expected_epoch=binding.epoch,
                 current=current_c_detail,
             )
+            from .cross_profile_possible_lender_detail import append_c_possible_lender_summary
+            append_c_possible_lender_summary(
+                panel, document, expected_epoch=binding.epoch, current=current_c_detail,
+            )
             return
         description = self._book_description(item)
         # The same *known v2 exact notice* may already have a validated
