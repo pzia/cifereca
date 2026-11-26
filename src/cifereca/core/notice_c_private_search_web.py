@@ -436,6 +436,22 @@ def read_authenticated_web_for_search(service, row, *, reader_scope):
     from .search_orchestration import SearchReadScope
     if type(reader_scope) is not SearchReadScope or not reader_scope.current(service):
         return None
+    # Shared catalogue projections are deliberately inert. A retained row
+    # from a foreign profile must not acquire private web authority merely
+    # because navigation later returns to its credential's owner.
+    if type(row) is not SearchResult:
+        return None
+    metadata = row.metadata
+    if (type(metadata) is not dict or len(metadata) > 256
+            or any(type(name) is not str for name in metadata)):
+        return None
+    access = metadata.get("catalogue_access")
+    provenance = metadata.get("search_provenance")
+    if (type(access) not in (str, type(None))
+            or type(provenance) not in (str, type(None))
+            or access == "shared_read_only"
+            or provenance == "known_catalog_stale"):
+        return None
     key = _source_key(row, reader_scope.identity_id)
     if key is None:
         return None
