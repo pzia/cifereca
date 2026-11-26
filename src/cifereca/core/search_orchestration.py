@@ -1079,8 +1079,6 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         session_rows = session.search(variant, effective_search_scope)
                 from .borrow_for_identity_native_occurrence import stamp_native_borrow_occurrences
                 stamp_native_borrow_occurrences(self, private_call, session_rows)
-            if not public_only and (request_cancelled is None or not request_cancelled()):
-                stamp_public_branch_borrow_occurrences(self, public_branch_call, session_rows)
                 if not foreign_owner and request_current():
                     stamp_public_branch_borrow_occurrences(self, public_branch_call, session_rows)
                 stamp_authenticated_search_rows(self, private_call, session_rows)
@@ -1508,6 +1506,8 @@ def _search_provider_session(
                 )
             from .borrow_for_identity_native_occurrence import stamp_native_borrow_occurrences
             stamp_native_borrow_occurrences(self, private_call, session_rows)
+            if not public_only and (request_cancelled is None or not request_cancelled()):
+                stamp_public_branch_borrow_occurrences(self, public_branch_call, session_rows)
             stamp_authenticated_search_rows(self, private_call, session_rows)
             stamp_series_rows(self, series_call, session_rows)
             for raw_row in session_rows:
