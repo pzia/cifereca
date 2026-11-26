@@ -257,6 +257,12 @@ def main() -> int:
             assert report["appearance"] == appearance
         report["appearance"] = appearance
         assert screenshot.getbbox() is not None, "Blank GTK surface"
+        if args.synthetic_matrix and stage in ("02-bnf-first-detail", "03-bnf-second-detail"):
+            from notice_c_native_readability import native_title_witness
+            index = 0 if stage == "02-bnf-first-detail" else 1
+            window = app_window[0]
+            report["checks"]["synthetic_native_title_" + str(index)] = native_title_witness(
+                window, window.search_page.detail, screenshot, "Synthetic " + RESOURCES[index])
         filename = out / (stage + ".png")
         screenshot.save(filename)
         shutil.copyfile(filename, out / "screen.png")

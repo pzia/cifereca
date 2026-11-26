@@ -67,6 +67,22 @@ def verify_theme_pairs(rows, root, family):
         raise CaptureError("missing or identical theme pair")
 
 
+def verify_native_titles(root, sha):
+    for theme, width in MATRIX:
+        for folder, reader, keys in (
+            (root / "generic" / theme / f"book-detail-{width}", generic.read_regular,
+             ("synthetic_native_title_readable",)),
+            (bnf.capture_folder(root / "bnf", theme, width), bnf.read_regular,
+             ("synthetic_native_title_0", "synthetic_native_title_1")),
+        ):
+            report = json.loads(reader(folder / "screen.json", 8 * 1024 * 1024))
+            if (type(report) is not dict or report.get("git_sha") != sha
+                    or report.get("status") != "PASS"
+                    or type(report.get("checks")) is not dict
+                    or not all(report["checks"].get(key) is True for key in keys)):
+                raise CaptureError("missing native title witness")
+
+
 def verify(root, sha):
     first, gf = generic.verify_captures(root / "generic", sha)
     second, bf = bnf.inventory(root / "bnf", sha)
@@ -78,6 +94,7 @@ def verify(root, sha):
     if not all(type(value) is str and re.fullmatch("[0-9a-f]{64}", value)
                for value in (gf, bf)):
         raise CaptureError("invalid matrix fingerprint")
+    verify_native_titles(root, sha)
     verify_theme_pairs(first, root / "generic", "generic")
     verify_theme_pairs(second, root / "bnf", "bnf")
     return dict(status="SYNTHETIC_GTK_MATRIX_VERIFIED", git_sha=sha,
@@ -96,7 +113,7 @@ def run(python, expected_sha):
             root = Path(tmp)
             for theme, width in MATRIX:
                 for family, scenario, extra, target in (
-                    ("generic", f"book-detail-{width}", [],
+                    ("generic", f"book-detail-{width}", ["--synthetic-matrix"],
                      root / "generic" / theme),
                     ("bnf", "bnf-covers-1366", ["--bnf-width", str(width), "--synthetic-matrix"],
                      root / "bnf" / theme / str(width)),

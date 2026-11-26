@@ -80,11 +80,15 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(960, 1280, 1300, 1366, 1600, 1700))
     parser.add_argument("--appearance", choices=("light", "dark"))
+    parser.add_argument("--synthetic-matrix", action="store_true")
     parser.add_argument("--geometry-1300", action="store_true", help="UX #611: measure native X11 position, shell and both split views at exact 1300×768")
     parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
     parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
     parser.add_argument("--plugin-scroll-only", action="store_true", help="Run the 36-plugin GTK scroll/focus acceptance independently of bibliographic detail")
     args = parser.parse_args()
+    if args.synthetic_matrix and (args.appearance is None or args.width not in (1366, 1600)
+            or args.out.resolve().is_relative_to(ROOT.resolve())):
+        parser.error("synthetic matrix requires explicit appearance and external output")
     if args.geometry_1300 and args.width != 1300:
         parser.error("--geometry-1300 requires --width 1300")
     out = args.out.resolve()
@@ -155,6 +159,10 @@ def main():
                 args.geometry_1300 and picture.height != 768):
             report.setdefault("capture_failure_phase", "display_geometry")
             raise AssertionError(picture.size)
+        if args.synthetic_matrix and name == "00-search-detail-closed":
+            from notice_c_native_readability import native_title_witness
+            report["checks"]["synthetic_native_title_readable"] = native_title_witness(
+                window, window.search_page.detail, picture, TITLE)
         filename = out / f"{name}.png"
         try:
             picture.save(filename)

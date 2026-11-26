@@ -550,7 +550,7 @@ def main() -> int:
     parser.add_argument("--bnf-width", type=int, choices=(1366, 1600),
                         help="Private local BnF cover review geometry")
     parser.add_argument("--synthetic-matrix", action="store_true",
-                        help="Explicit synthetic BnF fixture, temporary output only")
+                        help="Explicit synthetic notice fixture, temporary output only")
     parser.add_argument("--plugin", help="Ne lancer que les scénarios associés à ce plugin/domaine")
     parser.add_argument("--out", type=Path, default=ROOT / "e2e-artifacts")
     parser.add_argument("--python", default=os.environ.get("CIFERECA_E2E_PYTHON", sys.executable))
@@ -565,10 +565,12 @@ def main() -> int:
     if args.bnf_width is not None and (
             args.scenario != "bnf-covers-1366" or args.appearance is None):
         parser.error("--bnf-width requires the BnF scenario and explicit appearance")
-    if args.synthetic_matrix and (args.scenario != "bnf-covers-1366"
-            or args.appearance is None or args.bnf_width is None
+    if args.synthetic_matrix and (
+            args.scenario not in ("bnf-covers-1366", "book-detail-1366", "book-detail-1600")
+            or args.appearance is None
+            or (args.scenario == "bnf-covers-1366" and args.bnf_width is None)
             or args.plugin is not None or args.out.resolve().is_relative_to(ROOT.resolve())):
-        parser.error("synthetic matrix requires explicit BnF fixture and external output")
+        parser.error("synthetic matrix requires explicit notice fixture and external output")
     if not args.synthetic_matrix and args.scenario == "bnf-covers-1366" and args.appearance is not None and (
             os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
         parser.error("alternative BnF review is local only")
@@ -752,6 +754,7 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/book_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     *([] if args.appearance is None else ["--appearance", args.appearance]),
+                    *(["--synthetic-matrix"] if args.synthetic_matrix else []),
                     *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
                     *(["--plugin-scroll-only"] if scenario.get("plugin_scroll_only") else []),
                 ]

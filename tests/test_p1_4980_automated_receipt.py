@@ -30,6 +30,7 @@ def matrix(monkeypatch):
     monkeypatch.setattr(receipt.bnf, "inventory", bnf)
     monkeypatch.setattr(receipt, "native_aba_report", aba)
     monkeypatch.setattr(receipt, "clean_head", lambda: SHA)
+    monkeypatch.setattr(receipt, "verify_native_titles", Mock())
     monkeypatch.setattr(receipt, "capture_pixel_digest", lambda root, row, family: row["sha256"])
     return SimpleNamespace(generic=generic, bnf=bnf, aba=aba)
 
@@ -110,3 +111,41 @@ def test_png_metadata_cannot_fake_distinct_theme_pixels(tmp_path, monkeypatch):
     receipt.verify_theme_pairs(captures, tmp_path, "generic")
     with pytest.raises(receipt.CaptureError, match="changed after validation"):
         receipt.pixel_digest(light, sha(samples["dark"]))
+
+
+def test_title_geometry_and_contrast_refuse_negative_witnesses():
+    from PIL import Image
+    from notice_c_native_readability import require_inside, check_pixels
+    require_inside((1, 1, 8, 8), (0, 0, 10, 10))
+    for clipped in ((-1, 1, 8, 8), (1, 1, 10, 8), (1, 1, 8, 10), (1, 1, 0, 8)):
+        with pytest.raises(AssertionError, match="clipped"):
+            require_inside(clipped, (0, 0, 10, 10))
+    for background, foreground in ((255, 0), (0, 255)):
+        image = Image.new("RGB", (12, 12), (background,) * 3)
+        with pytest.raises(AssertionError, match="contrast or paint"):
+            check_pixels(image, (foreground,) * 3)
+        for x in range(4):
+            image.putpixel((x + 3, 5), (foreground,) * 3)
+        check_pixels(image, (foreground,) * 3)
+    image = Image.new("RGB", (12, 12), (255,) * 3)
+    for x in range(4):
+        image.putpixel((x + 3, 5), (190,) * 3)
+    with pytest.raises(AssertionError, match="contrast or paint"):
+        check_pixels(image, (190,) * 3)
+
+
+@pytest.mark.parametrize("bad", [None, False, 1, "true"])
+def test_native_title_receipt_refuses_missing_or_nonboolean(tmp_path, monkeypatch, bad):
+    import json
+    payload = dict(git_sha=SHA, status="PASS", checks={
+        "synthetic_native_title_readable": True,
+        "synthetic_native_title_0": True,
+        "synthetic_native_title_1": bad,
+    })
+    read = lambda *args: json.dumps(payload).encode()
+    monkeypatch.setattr(receipt.generic, "read_regular", read)
+    monkeypatch.setattr(receipt.bnf, "read_regular", read)
+    with pytest.raises(receipt.CaptureError, match="missing native title witness"):
+        receipt.verify_native_titles(tmp_path, SHA)
+    payload["checks"]["synthetic_native_title_1"] = True
+    receipt.verify_native_titles(tmp_path, SHA)
