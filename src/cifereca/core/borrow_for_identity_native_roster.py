@@ -16,7 +16,7 @@ from .borrow_for_identity_discovery import (
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_native_occurrence import native_borrow_occurrence_document
 from .notice_c_cover_index import (
-    _db_key, _decode, is_canonical_cover_document,
+    _db_key, _decode, is_canonical_cover_document, read_consolidated_notice_cover,
 )
 from .notice_cover_repository import _checked_source_state, _opaque_key
 
@@ -179,5 +179,83 @@ def native_lender_roster_current(service, roster):
         return False
 
 
+def _detail_binding(item, identity_id):
+    """Recognize only existing native C receipts, never metadata hints."""
+    from .notice_c_recommendation_known import known_public_c_binding_facts
+    from .notice_c_known_projection import matching_live_public_canonical_ref
+    from .notice_c_cached_revision import matching_cached_public_canonical_ref
+    from .notice_c_live_revision import persisted_live_c_revision
+    known = known_public_c_binding_facts(item)
+    if known is not None:
+        return known
+    for matcher in (matching_live_public_canonical_ref, matching_cached_public_canonical_ref):
+        doc = matcher(item, identity_id=identity_id)
+        if doc is not None:
+            epoch = persisted_live_c_revision(item, doc)
+            if epoch is not None:
+                return doc, epoch
+    return None
+
+
+def native_lender_roster_for_detail(service, item, *, requesting_identity_id):
+    """Read existing C membership and original native rows; no new Search.
+
+    The bool distinguishes a C-bound detail with zero qualified occurrences
+    from a legacy exact-source detail. Never fall back to a reconstructed
+    public row as an executable loan occurrence.
+    """
+    from .borrow_for_identity_native_occurrence import retained_native_borrow_occurrences
+    if type(item) is not SearchResult:
+        return False, None
+    try:
+        binding = _detail_binding(item, requesting_identity_id)
+        if binding is None:
+            return False, None
+        document, epoch = binding
+        c = read_consolidated_notice_cover(service.storage, document)
+        if c is None or c.epoch != epoch:
+            return True, None
+        refs = frozenset(m.source_ref for m in c.sources if m.visibility == "private")
+        rows = retained_native_borrow_occurrences(service, source_refs=refs)
+        if not rows:
+            return True, None
+        return True, capture_native_lender_roster(
+            service, document=document, expected_epoch=epoch,
+            requesting_identity_id=requesting_identity_id, occurrences=rows,
+        )
+    except Exception:
+        return True, None
+
+
+def native_roster_matches_detail(service, roster, item, *, requesting_identity_id):
+    """Pure GTK delivery/consent check. The worker rechecks SQLite at dispatch."""
+    try:
+        if (type(roster) is not NativeLenderRoster or roster._token is not _TOKEN
+                or roster._service is not service
+                or type(roster._reader_id) is not str
+                or roster._reader_id != requesting_identity_id
+                or not _reader_current(service, roster._reader, roster._reader_id,
+                                       roster._account_epoch, roster._source_epoch)
+                or not is_canonical_cover_document(roster.document)
+                or _detail_binding(item, requesting_identity_id) != (roster.document, roster.epoch)
+                or type(roster.rows) is not tuple or not 1 <= len(roster.rows) <= 64
+                or any(type(row) is not PossibleBorrowLender for row in roster.rows)
+                or len({id(row) for row in roster.rows}) != len(roster.rows)):
+            return False
+        seal = (roster.document.source_key, roster.epoch, tuple(id(row) for row in roster.rows),
+                id(roster._reader), roster._reader_id, roster._account_epoch,
+                roster._source_epoch, roster._sources)
+        return (type(roster._seal) is tuple and roster._seal == seal
+                and all(possible_lender_matches(
+                    row, row._notice, requesting_identity_id=requesting_identity_id,
+                ) and possible_lender_session_matches(
+                    row, service._sessions.get(service._session_key(
+                        row._account.provider_id, row._account.credential_id)),
+                ) for row in roster.rows))
+    except Exception:
+        return False
+
+
 __all__ = ["NativeLenderRoster", "capture_native_lender_roster",
-           "native_lender_roster_current"]
+           "native_lender_roster_current", "native_lender_roster_for_detail",
+           "native_roster_matches_detail"]
