@@ -1,5 +1,7 @@
 """Synthetic receipt is not a human review."""
 import sys
+import hashlib
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -28,6 +30,7 @@ def matrix(monkeypatch):
     monkeypatch.setattr(receipt.bnf, "inventory", bnf)
     monkeypatch.setattr(receipt, "native_aba_report", aba)
     monkeypatch.setattr(receipt, "clean_head", lambda: SHA)
+    monkeypatch.setattr(receipt, "capture_pixel_digest", lambda root, row, family: row["sha256"])
     return SimpleNamespace(generic=generic, bnf=bnf, aba=aba)
 
 
@@ -74,3 +77,36 @@ def test_invalid_fingerprint_refused(tmp_path, matrix):
     matrix.bnf.return_value = (rows(96), "not-a-digest")
     with pytest.raises(receipt.CaptureError):
         receipt.verify(tmp_path, SHA)
+
+
+def test_png_metadata_cannot_fake_distinct_theme_pixels(tmp_path, monkeypatch):
+    from PIL import Image, PngImagePlugin
+
+    def png(color, note):
+        out = BytesIO()
+        info = PngImagePlugin.PngInfo()
+        info.add_text("note", note)
+        Image.new("RGB", (4, 4), color).save(out, format="PNG", pnginfo=info)
+        return out.getvalue()
+
+    light = png("white", "light")
+    dark = png("white", "dark")
+    sha = lambda raw: hashlib.sha256(raw).hexdigest()
+    assert sha(light) != sha(dark)
+    captures = [
+        dict(width="1366", stage="test", appearance=mode, sha256=sha(raw))
+        for mode, raw in (("light", light), ("dark", dark))
+    ]
+    samples = {"light": light, "dark": dark}
+    monkeypatch.setattr(
+        receipt, "capture_pixel_digest",
+        lambda root, row, family: receipt.pixel_digest(
+            samples[row["appearance"]], row["sha256"]),
+    )
+    with pytest.raises(receipt.CaptureError, match="identical theme pair"):
+        receipt.verify_theme_pairs(captures, tmp_path, "generic")
+    samples["dark"] = png("black", "dark")
+    captures[1]["sha256"] = sha(samples["dark"])
+    receipt.verify_theme_pairs(captures, tmp_path, "generic")
+    with pytest.raises(receipt.CaptureError, match="changed after validation"):
+        receipt.pixel_digest(light, sha(samples["dark"]))

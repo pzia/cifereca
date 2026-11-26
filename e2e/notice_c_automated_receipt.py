@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic-only GTK evidence. Never generates a human review verdict."""
 import argparse
+import hashlib
+from io import BytesIO
 import json
 import os
 import re
@@ -19,19 +21,47 @@ class MatrixFailure(CaptureError):
     """Only internal fixed matrix labels may be exposed."""
 
 
-def verify_theme_pairs(rows):
+def pixel_digest(raw, expected_sha):
+    """Hash decoded RGB samples, never PNG metadata or compression."""
+    from PIL import Image
+    if hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise CaptureError("capture changed after validation")
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            image.load()
+            return hashlib.sha256(image.convert("RGB").tobytes()).hexdigest()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise CaptureError("invalid decoded capture") from exc
+
+
+def capture_pixel_digest(root, row, family):
+    mode, width, stage = row["appearance"], row["width"], row["stage"]
+    if mode not in ("light", "dark") or width not in ("1366", "1600"):
+        raise CaptureError("invalid capture identity")
+    if family == "generic" and stage in generic.STAGES:
+        path = root / mode / f"book-detail-{width}" / (stage + ".png")
+        raw = generic.read_regular(path, 16 * 1024 * 1024)
+    elif family == "bnf" and stage in bnf.STAGES:
+        path = bnf.capture_folder(root, mode, int(width)) / (stage + ".png")
+        raw = bnf.read_regular(path, 16 * 1024 * 1024)
+    else:
+        raise CaptureError("invalid capture stage")
+    return pixel_digest(raw, row["sha256"])
+
+
+def verify_theme_pairs(rows, root, family):
     """Reject identical light/dark pixels for the same stage and geometry."""
     pairs = {}
     for row in rows:
         key = (row["width"], row["stage"])
         mode = row["appearance"]
-        digest = row["sha256"]
-        if mode not in ("light", "dark") or not re.fullmatch("[0-9a-f]{64}", digest):
+        file_digest = row["sha256"]
+        if mode not in ("light", "dark") or not re.fullmatch("[0-9a-f]{64}", file_digest):
             raise CaptureError("invalid capture identity")
         pair = pairs.setdefault(key, {})
         if mode in pair:
             raise CaptureError("duplicate capture identity")
-        pair[mode] = digest
+        pair[mode] = capture_pixel_digest(root, row, family)
     if not pairs or any(set(pair) != {"light", "dark"} or
                         pair["light"] == pair["dark"] for pair in pairs.values()):
         raise CaptureError("missing or identical theme pair")
@@ -48,8 +78,8 @@ def verify(root, sha):
     if not all(type(value) is str and re.fullmatch("[0-9a-f]{64}", value)
                for value in (gf, bf)):
         raise CaptureError("invalid matrix fingerprint")
-    verify_theme_pairs(first)
-    verify_theme_pairs(second)
+    verify_theme_pairs(first, root / "generic", "generic")
+    verify_theme_pairs(second, root / "bnf", "bnf")
     return dict(status="SYNTHETIC_GTK_MATRIX_VERIFIED", git_sha=sha,
                 capture_count=224, native_aba_surfaces_per_configuration=12,
                 generic_fingerprint=gf, bnf_fingerprint=bf,
