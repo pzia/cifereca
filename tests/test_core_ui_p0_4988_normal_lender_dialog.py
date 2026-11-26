@@ -79,6 +79,7 @@ def test_choice_and_confirmation_are_separate_and_submit_only_once():
         captured_candidate=args["rows"][1], exact_notice=args["item"],
         expected_requesting_identity_id="bob", expected_requesting_identity=args["identity"],
         expected_context_epoch=3, expected_source_epoch=5, confirmed=True,
+        captured_roster=args["rows"],
     )
     done(result)
     done(result)
