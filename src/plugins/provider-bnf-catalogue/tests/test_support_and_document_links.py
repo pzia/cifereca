@@ -133,3 +133,25 @@ def test_competing_exact_record_arks_refuse_ambiguous_sru_row():
         _parse(_dc(ark=ark, identifiers=(other,)))
     row, = _parse(_dc(ark=ark, identifiers=(ark, f"https://catalogue.bnf.fr/{ark}")))
     assert row.record_id == ark
+
+
+def test_isbn_metadata_only_retains_valid_literal_record_identifiers():
+    row, = _parse(_dc(
+        ark="ark:/12148/cb100000008h",
+        identifiers=("urn:isbn:978-0-306-40615-7", "ISBN 0306406152",
+                     "9780306406157", "9780306406158", "0306406153",
+                     "4006381333931"),
+        relations=("urn:isbn:9780140328721",),
+    ))
+    assert row.metadata["isbns"] == ["9780306406157", "0306406152"]
+    assert row.owned is False and row.downloadable is False
+
+
+def test_nested_or_attributed_identifier_is_not_literal_isbn_evidence():
+    row, = _parse(
+        '<dc:dc><dc:identifier>ark:/12148/cb100000009i</dc:identifier>'
+        '<dc:identifier><dc:title>9780306406157</dc:title></dc:identifier>'
+        '<dc:identifier role="related">9780140328721</dc:identifier>'
+        '<dc:title>Titre</dc:title></dc:dc>'
+    )
+    assert row.metadata["isbns"] == []
