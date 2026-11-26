@@ -15,7 +15,7 @@ from ..storage import Storage
 from ..core.notice_c_authenticated_web_choices import (
     AuthenticatedWebChoices, resolve_authenticated_web_choice,
 )
-from ..core.notice_c_private_search_web import read_authenticated_web_for_search, _source_key
+from ..core.notice_c_private_search_web import read_authenticated_web_for_search, _read_source_key
 from ..core.loan_action_scope import _inert_session_state, _inert_session_accounts
 from ..core.search_orchestration import SearchReadScope, capture_search_read_scope
 from ..models import SearchResult
@@ -50,7 +50,7 @@ def request_authenticated_search_web_actions(host, panel, row, *, reader_scope, 
     # Bind native coordinates before enqueue. The mutable DTO may change
     # in place after a worker read but before the GTK callback is delivered.
     def coordinates():
-        return (_source_key(row, reader_scope.identity_id), row.id, row.scenario)
+        return (_read_source_key(row, reader_scope.identity_id), row.id, row.scenario)
 
     captured = coordinates()
     if captured[0] is None:
