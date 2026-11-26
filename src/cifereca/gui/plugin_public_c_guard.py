@@ -232,7 +232,13 @@ def request_plugin_public_web_action(view, panel, pinned, *, expected_epoch=None
     if not current():
         return False
     from .notice_c_web_action_controller import request_public_web_actions
-    return request_public_web_actions(
+    shown = request_public_web_actions(
         window, panel, receipt.document, expected_epoch=receipt.minimum_revision,
         current=current,
     )
+    from .cross_profile_possible_lender_detail import append_c_possible_lender_summary
+    append_c_possible_lender_summary(
+        panel, receipt.document, expected_epoch=receipt.minimum_revision,
+        current=current,
+    )
+    return shown
