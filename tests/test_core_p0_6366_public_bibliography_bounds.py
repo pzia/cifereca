@@ -209,3 +209,50 @@ def test_public_projection_preserves_literal_valid_isbns_without_edition_inferen
     }
     assert actual.metadata["isbns"] is not values
     assert project({"isbn": "https://private.invalid/?token=secret"}) is None
+
+
+def _isbn_proof(**changes):
+    return {
+        "source": "synthetic-a.sru", "source_field": "dc.identifier",
+        "scope": "search", "record_id": "edition",
+        "confidence": "explicit_record_field", "freshness": "search_response",
+        "relationship": "record_identifier", **changes,
+    }
+
+
+def test_public_isbn_observation_preserves_exact_record_provenance():
+    from cifereca.core.public_search_projection import declared_public_isbn_observation
+    values = ["0-306-40615-2", "9780306406157"]
+    proof = _isbn_proof()
+    actual = project({"isbns": values, "bibliography_evidence": {"isbns": proof}})
+    assert actual.metadata["bibliography_evidence"] == {"isbns": proof}
+    obs = declared_public_isbn_observation(
+        actual.metadata, provider_id="synthetic-a", scenario="search", record_id="edition",
+    )
+    assert obs is not None and obs.isbns == tuple(values)
+    assert obs.wire() == {"isbns": values, **proof}
+    actual.metadata["isbns"].clear()
+    assert obs.isbns == tuple(values)
+    assert not actual.owned and not actual.downloadable
+
+
+@pytest.mark.parametrize("mutation", [
+    {"source": "other.sru"}, {"scope": "foreign"}, {"record_id": "another"},
+    {"relationship": "own_manifestation"}, {"relationship": "associated"},
+    {"confidence": "inferred"}, {"freshness": "cache"},
+    {"source_field": "https://private.invalid/"}, {"token": "secret"},
+])
+def test_public_isbn_provenance_refuses_foreign_and_unqualified_evidence(mutation):
+    actual = project({"isbns": ["9780306406157"],
+                      "bibliography_evidence": {"isbns": _isbn_proof(**mutation)}})
+    assert actual.metadata == {"catalogue_access": "shared_read_only",
+                               "isbns": ["9780306406157"]}
+
+
+def test_invalid_or_duplicate_isbns_cannot_receive_provenance():
+    for values in (["9780306406158"], ["9780306406157"] * 2,
+                   ["9780306406157", "4006381333931"]):
+        actual = project({"isbns": values,
+                          "bibliography_evidence": {"isbns": _isbn_proof()}})
+        assert actual is not None
+        assert "bibliography_evidence" not in actual.metadata
