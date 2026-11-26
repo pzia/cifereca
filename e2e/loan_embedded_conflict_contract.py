@@ -8,6 +8,7 @@ from copy import deepcopy
 from cifereca.core.book_cover_source_projection import exact_loan_cover_scope
 from cifereca.core.loan_source_identity import loan_source_key
 from cifereca.gui.book_widgets import BookListCell, CoverView
+from cifereca.gui.loans_controller import _library_loan_covers_updated
 
 
 def walk(widget):
@@ -19,7 +20,8 @@ def walk(widget):
 
 
 def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
-                                  report, image_gets, complete):
+                                  report, image_gets, complete, checkpoint):
+    checkpoint("embedded_conflict_setup")
     page = window.loan_page
     key = loan_source_key(loan)
     original = window._loan_cover_projection
@@ -52,7 +54,6 @@ def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
             for cover in covers
         )
 
-    assert painted(embedded)
     other = deepcopy(first)
     other.update(artifact_id="synthetic-conflict-artifact",
                  placement_id="synthetic-conflict-placement",
@@ -63,7 +64,10 @@ def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
                      url=other["thumbnail_url"])
     # The second proof is admitted at the synthetic producer boundary, not
     # extracted or fetched. Neither candidate may be materialized on conflict.
-    window._library_loan_covers_updated([*rows, other])
+    def begin_conflict():
+        checkpoint("embedded_conflict_publish")
+        _library_loan_covers_updated(window, [*rows, other])
+        await_condition("embedded_conflict_placeholder", neutral, conflicted)
 
     def neutral():
         covers = visible_pair()
@@ -77,6 +81,7 @@ def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
                         for cover in covers))
 
     def conflicted():
+        checkpoint("embedded_conflict_validate")
         current_revision = window._loan_cover_decision_revision
         assert current_revision > revision
         decision = cache.peek(scope, revision=current_revision)
@@ -91,10 +96,12 @@ def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
         assert window.service.current_identity.identity_id == owner
         capture("10b-bnf-embedded-conflict-placeholder")
         # Restore the original exact proof through the same live callback.
-        window._library_loan_covers_updated(list(rows))
+        checkpoint("embedded_conflict_restore")
+        _library_loan_covers_updated(window, list(rows))
         await_condition("embedded_conflict_recovered", lambda: painted(embedded), restored)
 
     def restored():
+        checkpoint("embedded_conflict_validate_recovery")
         decision = cache.peek(scope, revision=window._loan_cover_decision_revision)
         assert decision.status == "selected" and decision.uri == embedded
         assert tuple(image_gets) == before_gets
@@ -103,4 +110,4 @@ def verify_loan_embedded_conflict(window, loan, *, await_condition, capture,
         report["checks"]["P0_4980_embedded_ambiguous_placeholder_real_gtk"] = True
         complete()
 
-    await_condition("embedded_conflict_placeholder", neutral, conflicted)
+    await_condition("embedded_conflict_initial_paint", lambda: painted(embedded), begin_conflict)
