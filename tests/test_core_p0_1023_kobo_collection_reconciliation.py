@@ -92,7 +92,7 @@ def test_kobo_collection_known_scope_and_relevance_after_restart(tmp_path):
                               provider_ids=("kobo",))) == expected_known
         for key, reason in (
             ("award", "Prix littéraire"), ("subject", "Sujet"),
-            ("collection", "Collection"), ("summary", "Description"),
+            ("collection", "Collection"), ("summary", "Résumé"),
         ):
             row = next(row for row in library if row["item_id"] == key)
             assert reason in local_match_explanation(row, "prix du quai")
