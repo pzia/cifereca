@@ -1,6 +1,6 @@
 """Private BnF review contract; all images and reports are synthetic."""
 import csv
-import importlib.util
+from io import BytesIO
 import json
 from pathlib import Path
 import sys
@@ -24,10 +24,13 @@ def populate(folder, theme, width):
     size = (width, 1000 if width == 1600 else 900)
     image = Image.new("RGB", size, (255, 255, 255))
     image.putpixel((0, 0), (1, 2, 3))
+    encoded = BytesIO()
+    image.save(encoded, format="PNG")
+    content = encoded.getvalue()
     snapshots = []
     for stage in review.STAGES:
         png = folder / (stage + ".png")
-        image.save(png)
+        png.write_bytes(content)
         snapshots.append(dict(stage=stage, file=png.name, appearance=theme,
                               sha256=review.digest(png.read_bytes())))
     report = dict(status="PASS", git_sha=HEAD, scenario=f"bnf-covers-{width}",

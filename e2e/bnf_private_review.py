@@ -161,14 +161,17 @@ def validate_folder(folder, sha, theme, width):
         sha_png = digest(raw_png)
         if step.get("sha256") != sha_png:
             raise CaptureError("BnF capture digest mismatch")
-        with Image.open(BytesIO(raw_png)) as image:
-            if image.format != "PNG" or image.size != size:
-                raise CaptureError("wrong BnF PNG dimensions")
-            image.verify()
-        with Image.open(BytesIO(raw_png)) as image:
-            image.load()
-            if all(lo == hi for lo, hi in image.convert("RGB").getextrema()):
-                raise CaptureError("uniform BnF screenshot")
+        try:
+            with Image.open(BytesIO(raw_png)) as image:
+                if image.format != "PNG" or image.size != size:
+                    raise CaptureError("wrong BnF PNG dimensions")
+                image.verify()
+            with Image.open(BytesIO(raw_png)) as image:
+                image.load()
+                if all(lo == hi for lo, hi in image.convert("RGB").getextrema()):
+                    raise CaptureError("uniform BnF screenshot")
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            raise CaptureError("invalid BnF PNG") from exc
         rows.append(dict(appearance=theme, width=str(width), stage=stage,
                          sha256=sha_png, verdict="", notes=""))
     return rows, digest(raw)
