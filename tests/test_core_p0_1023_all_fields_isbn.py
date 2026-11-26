@@ -35,7 +35,10 @@ def test_all_fields_isbn_exact_and_ranked_after_restart(tmp_path):
             assert all(local_match_explanation(row, query) == "Correspondance : Identifiant"
                        for row in selected)
             page = search_public_notice_c(db, query, now=100, field="all", group_by_document=True)
-            expected = {"isbn-a", "isbn-b"} | ({"title"} if query == "9780306406157" else set())
+            # Keep ordinary all-fields token matching for actual title text,
+            # including punctuation variants; only ISBN evidence is exact.
+            title_match = local_search_evidence({"title": "Étude 9780306406157"}, query)[0]
+            expected = {"isbn-a", "isbn-b"} | ({"title"} if title_match else set())
             assert {hit.record_id for hit in page.hits} == expected
             assert page.known_matches == page.known_documents == len(expected)
             assert page.status == "partial"
