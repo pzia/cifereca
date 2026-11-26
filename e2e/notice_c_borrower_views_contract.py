@@ -44,7 +44,8 @@ def walk(widget):
 
 
 def verify_borrower_c_views(window, loan, record, descriptor, *,
-                            later, capture, report, complete, checkpoint):
+                            later, capture, report, complete, checkpoint,
+                            settled_capture=False):
     gtk_thread = get_ident()
     owner = window.service.current_identity.identity_id
     account_epoch = window.service._account_context_epoch
@@ -245,7 +246,7 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
                 route, page, row, "list", monotonic() + 8,
             )))
 
-        def wait_texture(route, page, row, variant, deadline):
+        def wait_texture(route, page, row, variant, deadline, settled=False):
             assert window.view_stack.get_visible_child_name() == route
             if variant == "list":
                 covers = [cell.cover for cell in walk(page.listview)
@@ -264,6 +265,15 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
                 later(40, guard(lambda: wait_texture(route, page, row, variant, deadline)))
                 return
             cover = covers[0]
+            if settled_capture:
+                from gi.repository import Gtk
+                from notice_c_native_readability import stack_transition_running
+                running = stack_transition_running(cover, window, Gtk.Stack)
+                if running or not settled:
+                    assert monotonic() < deadline, "borrower title transition timeout"
+                    later(40, guard(lambda: wait_texture(
+                        route, page, row, variant, deadline, settled=not running)))
+                    return
             assert cover._loader is loader
             assert cover._request.source_uri == url and cover._request.still_current
             texture = cover.picture.get_paintable()
@@ -272,7 +282,11 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
             assert reads == [doc] and gets == ["GET"]
             assert window.service._account_context_epoch == account_epoch
             assert window.service._source_context_epoch == source_epoch
-            capture("12-c-" + route + "-" + variant + "-" + label)
+            stage = "12-c-" + route + "-" + variant + "-" + label
+            if settled_capture:
+                capture(stage, title_witness=(route, variant, record.title))
+            else:
+                capture(stage)
             if variant == "list":
                 checkpoint("borrower_c_" + label + "_" + route + "_detail")
                 page.selection.set_selected(0)

@@ -178,3 +178,9 @@ contract_tests = ["tests/test_core_p0_7100_maintenance_page.py"]
 failure_tests = ["tests/test_core_p0_7100_page_mount.py"]
 data = []
 gap = "Composition hôte, contexte/lifecycle et mounting guidé ; scénarios GTK du nouvel ensemble à qualifier séparément"
+
+# #4552 : consolidateur local ; preuves contractuelles source uniquement.
+[package.metadata-age-standard]
+contract_tests = ["tests/test_core_p1_4552_standard_age_package.py", "tests/test_core_p1_4552_age_core_composition.py"]
+data = []
+gap = "Consolidateur âge local : installation, priorité exacte, conflit, héritage et composition Core ; aucun corpus de simulation spécifique ni recette GTK autonome attestée"
