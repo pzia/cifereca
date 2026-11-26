@@ -2121,12 +2121,22 @@ class UxRecommendationsView:
         self._provider.set_selected(selected)
 
     def _reload_languages(self, ranked_rows) -> None:
-        available = {
-            language
-            for ranked in ranked_rows
-            for language in _candidate_languages(ranked.item)
-        }
         controls = getattr(self, "_query_controls", None)
+        read_known = getattr(controls, "known_public_language_choices", None)
+        available = set()
+        for ranked in ranked_rows:
+            known = None
+            if callable(read_known):
+                try:
+                    known = read_known(ranked.item)
+                except Exception:
+                    continue
+            if known is None:
+                known = _candidate_languages(ranked.item)
+            if type(known) is tuple and len(known) <= 256:
+                available.update(value for value in known if type(value) is str
+                                 and value and len(value) <= 120
+                                 and value.isprintable() and value == value.strip())
         selected_id = self.selected_language_id() if controls is None else ""
         if selected_id:
             available.add(selected_id)

@@ -154,3 +154,38 @@ def test_grouped_search_recommendations_full_filter_matrix_after_restart(tmp_pat
                 assert known_public_c_binding_facts(candidate) == (canonical.document, canonical.epoch)
             assert "_notice_c_matched_providers" not in row
         assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+def test_grouped_facet_inventory_uses_native_sources_after_restart(tmp_path):
+    from cifereca.core.notice_c_loaded_filter import (
+        known_public_document_facets, known_public_language_facets,
+    )
+    from cifereca.core.notice_c_recommendation_known import known_public_notice_candidates
+    from cifereca.models import SearchResult
+    from dataclasses import asdict
+
+    filename = tmp_path / "facets.sqlite"
+    with closing(Storage(filename)) as db:
+        a = make(db, "bnf", "a", "Deux sources A", "Astronomie", "fr", "EPUB")
+        b = make(db, "numilog-catalog", "b", "Deux sources B", "Cuisine", "en", "PDF")
+        shared(db, a, b)
+    with closing(Storage(filename)) as db:
+        page = search_public_notice_c(db, "deux sources", group_by_document=True)
+        row, = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        candidate, = known_public_notice_candidates(db, "deux sources")
+        for item in (row, candidate):
+            assert set(known_public_document_facets(item, ("epub", "pdf"))) == {
+                ("digital", ("epub",)), ("digital", ("pdf",)),
+            }
+            assert set(known_public_language_facets(item)) == {"fr", "en"}
+        # No copied DTO or detached alternative packet can grant facets.
+        copied = SearchResult(**asdict(candidate))
+        assert known_public_document_facets(copied, ("epub", "pdf")) == ()
+        assert known_public_language_facets(copied) == ()
+        detached = dict(row)
+        detached.pop("_core_notice_c_filter_sources")
+        assert known_public_document_facets(detached, ("epub", "pdf")) == (
+            ("digital", ("epub",)),
+        )
+        assert known_public_language_facets(detached) == ("fr",)
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
