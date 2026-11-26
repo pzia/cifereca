@@ -186,3 +186,26 @@ def test_structured_public_proof_rejects_foreign_keys_before_set_or_get(field):
             {"languages": ["fr"], "bibliography_evidence": {"languages": injected}},
             provider_id="synthetic-a", scenario="search",
         ) is None
+
+
+@pytest.mark.parametrize("field", ("isbn", "isbns"))
+@pytest.mark.parametrize("invalid", (
+    "9780306406158", "4006381333931", "0306406153", "",
+    ["9780306406157", "9780306406158"], [], "9" * 65,
+))
+def test_public_projection_omits_invalid_isbn_field_but_keeps_other_facts(field, invalid):
+    actual = project({field: invalid, "subjects": ["Roman"]})
+    assert actual is not None
+    assert actual.metadata == {
+        "catalogue_access": "shared_read_only", "subjects": ["Roman"],
+    }
+
+
+def test_public_projection_preserves_literal_valid_isbns_without_edition_inference():
+    values = ["0-306-40615-2", "9780306406157", "9791090636071"]
+    actual = project({"isbns": values, "source_record_id": "9780306406157"})
+    assert actual.metadata == {
+        "catalogue_access": "shared_read_only", "isbns": values,
+    }
+    assert actual.metadata["isbns"] is not values
+    assert project({"isbn": "https://private.invalid/?token=secret"}) is None
