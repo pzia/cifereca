@@ -832,3 +832,30 @@ def test_modern_light_real_gtk_scenarios_remain_targetable():
         scenario = runner.SCENARIOS[f"modern-light-{width}"]
         assert scenario["width"] == width
         assert scenario["runner"] == "gtk-modern-light"
+
+
+def test_4980_bnf_private_width_theme_keeps_ci_baseline():
+    import pytest
+    runner = _module()
+    assert runner.SCENARIOS["bnf-covers-1366"]["width"] == 1366
+    assert [name for name, _ in runner.select(None, "provider.bnf-pret")] == ["bnf-covers-1366"]
+    baseline = runner.bnf_capture_command("xvfb-run", "python", Path("/fixture"))
+    assert "-screen 0 1366x900x24" in baseline
+    assert "--appearance" not in baseline
+    for width, height in ((1366, 900), (1600, 1000)):
+        for appearance in ("light", "dark"):
+            command = runner.bnf_capture_command(
+                "xvfb-run", "python", Path("/fixture"),
+                width=width, appearance=appearance,
+            )
+            assert f"-screen 0 {width}x{height}x24" in command
+            assert command[-4:] == ["--width", str(width), "--appearance", appearance]
+    with pytest.raises(ValueError):
+        runner.bnf_capture_command("xvfb-run", "python", Path("/fixture"), width=1600)
+    with pytest.raises(ValueError):
+        runner.bnf_capture_command("xvfb-run", "python", Path("/fixture"), width=1024)
+    probe = (ROOT / "e2e/bnf_cover_probe.py").read_text(encoding="utf-8")
+    assert 'assert screenshot.size == size' in probe
+    assert 'Adw.StyleManager.get_default().get_dark()' in probe
+    assert '"git_sha": sha' in probe
+    assert 'assert report["appearance"] == appearance' in probe
