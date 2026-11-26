@@ -1017,16 +1017,30 @@ def main() -> int:
             assert "Connu" in window.search_page.count_label.get_text()
             assert search_requests[0] == before + 1
             window.search_controls.entry.set_text("9780140328722")
-            later(120, check_invalid)
+            edit_deadline[0] = monotonic() + 5
+            later(70, check_invalid)
+
+        edit_deadline = [0.0]
 
         def check_invalid():
-            assert window.search_page.store.get_n_items() == 0
-            assert "incomplet" in window.search_page.count_label.get_tooltip_text()
             assert search_requests[0] == before + 1
+            # GtkSearchEntry emits search-changed after a debounce, not
+            # synchronously on set_text. Await the actual rendered state.
+            if window.search_page.store.get_n_items() != 0:
+                assert monotonic() < edit_deadline[0], "Invalid ISBN filter did not settle"
+                later(70, check_invalid)
+                return
+            assert "incomplet" in window.search_page.count_label.get_tooltip_text()
             window.search_controls.entry.set_text("9780140328721")
-            later(120, check_alias)
+            edit_deadline[0] = monotonic() + 5
+            later(70, check_alias)
 
         def check_alias():
+            assert search_requests[0] == before + 1
+            if window.search_page.store.get_n_items() != 2:
+                assert monotonic() < edit_deadline[0], "ISBN alias filter did not settle"
+                later(70, check_alias)
+                return
             assert {row["item_id"]: row["_cover_document_ref"] for row in visible_rows()} == expected
             assert search_requests[0] == before + 1
             result["checks"]["P0_1023_native_retained_c_isbn"] = True
