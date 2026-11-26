@@ -1128,6 +1128,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert after_n3["download_ok"] == before_n3["download_ok"]
                 assert after_n3["preview_created"] == before_n3["preview_created"]
                 assert after_n3["ui_failed"] == before_n3["ui_failed"]
+                capture("00-notice-c-invalidated-n2-warm-n3")
                 report["checks"]["P0_4980_invalidated_n2_warm_n3_real_gtk"] = True
                 verify_epub_priority(list_cover, detail_cover)
 
