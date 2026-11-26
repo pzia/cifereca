@@ -824,6 +824,17 @@ def _completed_cover_metrics(source: Path, scenario: str) -> dict:
             if (data["checks"].get("P0_6168_postcommit_rebind_real_gtk") is True
                     and data["checks"].get("P0_4980_native_preview_decode_repair_redacted") is True):
                 evidence["notice_c_4980_native_preview_repair"] = True
+            # Twelve actual native surfaces must reject an old N3 delivery
+            # and repaint only with a new lease under synthetic ABA. No
+            # profile values, URL, widget names or trace are exported.
+            if (data["checks"].get("P0_4980_six_view_native_paint_lease_aba_audit") is True
+                    and data["checks"].get("P0_4980_six_view_native_late_n3_aba_rejected") is True
+                    and type(data.get("notice_c_native_lease_audit_count")) is int
+                    and data["notice_c_native_lease_audit_count"] == 12
+                    and type(data.get("notice_c_native_late_aba_count")) is int
+                    and data["notice_c_native_late_aba_count"] == 12
+                    and result["offline"]["n4"].get("ui_stale", 0) >= 12):
+                evidence["notice_c_4980_six_view_native_late_aba"] = True
         return evidence
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
         return {}

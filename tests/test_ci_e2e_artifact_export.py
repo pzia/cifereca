@@ -1365,6 +1365,39 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
             bad = copy.deepcopy(data)
             del bad["checks"][key]
             assert repair_receipt not in read(bad)
+        aba_markers = ("P0_4980_six_view_native_paint_lease_aba_audit",
+                       "P0_4980_six_view_native_late_n3_aba_rejected")
+        aba_counts = ("notice_c_native_lease_audit_count",
+                      "notice_c_native_late_aba_count")
+        aba_receipt = "notice_c_4980_six_view_native_late_aba"
+        assert aba_receipt not in read(data)
+        for key in aba_markers:
+            data["checks"][key] = True
+        for key in aba_counts:
+            data[key] = 12
+        data["notice_c_cover_metrics_offline"]["n4"]["ui_stale"] = 12
+        assert read(data)[aba_receipt] is True
+        for key in (*aba_markers, *stages):
+            for value in (False, 1, "PRIVATE", None, {}):
+                bad = copy.deepcopy(data)
+                bad["checks"][key] = value
+                assert aba_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad["checks"][key]
+            assert aba_receipt not in read(bad)
+        for key in aba_counts:
+            for value in (True, 11, 13, 12.0, "12", "PRIVATE", None):
+                bad = copy.deepcopy(data)
+                bad[key] = value
+                assert aba_receipt not in read(bad)
+                assert "PRIVATE" not in repr(read(bad))
+            bad = copy.deepcopy(data)
+            del bad[key]
+            assert aba_receipt not in read(bad)
+        bad = copy.deepcopy(data)
+        bad["notice_c_cover_metrics_offline"]["n4"]["ui_stale"] = 11
+        assert aba_receipt not in read(bad)
         safe = result["notice_c_cover_metrics"]
         assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
         assert safe["cold"]["n3"]["download_ok"] == 1
