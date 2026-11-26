@@ -35,6 +35,7 @@ class NativeLenderRoster:
     _source_epoch: int
     _sources: tuple = field(repr=False)
     _token: object = field(repr=False)
+    _seal: tuple = field(repr=False)
 
 
 def _reader_current(service, reader, reader_id, account_epoch, source_epoch):
@@ -112,7 +113,9 @@ def capture_native_lender_roster(service, *, document, expected_epoch,
             return None
         roster = NativeLenderRoster(document, expected_epoch, rows, service,
                                     reader, requesting_identity_id, ae, se,
-                                    proof[1], _TOKEN)
+                                    proof[1], _TOKEN,
+                                    (document.source_key, expected_epoch, tuple(id(row) for row in rows),
+                                     id(reader), requesting_identity_id, ae, se, proof[1]))
         return roster if native_lender_roster_current(service, roster) else None
     except Exception:
         return None
@@ -139,8 +142,12 @@ def native_lender_roster_current(service, roster):
                    for p in roster._sources)):
         return False
     try:
-        if not _reader_current(service, roster._reader, roster._reader_id,
-                               roster._account_epoch, roster._source_epoch):
+        seal = (roster.document.source_key, roster.epoch, tuple(id(row) for row in roster.rows),
+                id(roster._reader), roster._reader_id, roster._account_epoch,
+                roster._source_epoch, roster._sources)
+        if (type(roster._seal) is not tuple or roster._seal != seal
+                or not _reader_current(service, roster._reader, roster._reader_id,
+                                       roster._account_epoch, roster._source_epoch)):
             return False
         sources, claims = [], set()
         for row in roster.rows:
