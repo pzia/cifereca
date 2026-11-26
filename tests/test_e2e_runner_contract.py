@@ -859,3 +859,23 @@ def test_4980_bnf_private_width_theme_keeps_ci_baseline():
     assert 'Adw.StyleManager.get_default().get_dark()' in probe
     assert '"git_sha": sha' in probe
     assert 'assert report["appearance"] == appearance' in probe
+
+
+def test_4980_synthetic_bnf_explicit_only(monkeypatch, tmp_path):
+    import sys
+    import pytest
+    runner = _module()
+    monkeypatch.setenv("CI", "true")
+    command = runner.bnf_capture_command(
+        "xvfb-run", "python", tmp_path, width=1600,
+        appearance="dark", synthetic_matrix=True,
+    )
+    assert command[-1] == "--synthetic-matrix"
+    assert "--synthetic-matrix" not in runner.bnf_capture_command(
+        "xvfb-run", "python", tmp_path)
+    for extra in ([], ["--synthetic-matrix", "--out", str(ROOT / "e2e-artifacts")]):
+        monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", "bnf-covers-1366",
+                            "--appearance", "dark", "--bnf-width", "1600", *extra])
+        with pytest.raises(SystemExit) as exc:
+            runner.main()
+        assert exc.value.code == 2
