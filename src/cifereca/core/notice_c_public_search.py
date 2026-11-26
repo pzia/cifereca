@@ -30,6 +30,7 @@ from .public_search_projection import (
     _public_bibliographic_text, PublicSeriesRelation, decode_public_series_relation,
     PublicLanguageObservation, decode_public_language_observation,
     PublicClassification, decode_public_classification,
+    PublicIsbnObservation, decode_public_isbn_observation,
     _MAX_BIBLIOGRAPHY_BYTES,
 )
 from .search import filter_loaded_results, local_search_evidence
@@ -75,6 +76,7 @@ class PublicNoticeCHit:
     language_observation: PublicLanguageObservation | None = None
     classification: PublicClassification | None = None
     age_observation: PublicAgeObservation | None = None
+    isbn_observation: PublicIsbnObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +137,7 @@ def _public_observation(
             return None
         bio = parsed.get("public_bibliography")
         if (type(bio) is not dict or not _BIBLIO_FIELDS <= set(bio)
-                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification", "age_observation"}
+                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification", "age_observation", "isbn_observation"}
                 or type(bio["schema"]) is not int or bio["schema"] != 1
                 or bio["source_collection"] != "public_catalog"
                 or bio["medium"] not in ("digital", "physical", "unknown")):
@@ -189,6 +191,14 @@ def _public_observation(
             )
             if language is None:
                 return None
+        isbns = None
+        if "isbn_observation" in bio:
+            isbns = decode_public_isbn_observation(
+                bio["isbn_observation"], provider_id=key.provider_id,
+                scenario=bio["scenario"], record_id=bio["record_id"],
+            )
+            if isbns is None:
+                return None
         classification = None
         if "classification" in bio:
             classification = decode_public_classification(bio["classification"])
@@ -230,6 +240,7 @@ def _public_observation(
             published_at=bio["published_at"], series_relation=relation,
             language_observation=language,
             classification=classification, age_observation=age,
+            isbn_observation=isbns,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -678,6 +689,7 @@ def search_public_notice_c(
                 published_at=bib.published_at, series_relation=bib.series_relation,
                 language_observation=bib.language_observation,
                 classification=bib.classification, age_observation=bib.age_observation,
+                isbn_observation=bib.isbn_observation,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
@@ -742,6 +754,7 @@ def search_public_notice_c(
                         and bib.series_relation == hit.series_relation
                         and bib.language_observation == hit.language_observation
                         and bib.classification == hit.classification
+                        and bib.isbn_observation == hit.isbn_observation
                         and bib.age_observation == hit.age_observation):
                     hit = replace(
                         hit, document=ref, epoch=epoch,
