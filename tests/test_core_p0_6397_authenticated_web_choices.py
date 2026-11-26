@@ -617,6 +617,24 @@ def test_native_multi_account_search_keeps_exact_web_links_separate(tmp_path):
             choice, = menu.choices
             assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) == row.friendly_url
         assert read_authenticated_web_for_search(host, unknown, reader_scope=scope) is None
+
+        # Exercise the actual Search entry point on a C whose second source
+        # was explicitly related by the existing writer. The relation is
+        # controlled here, not inferred from equal provider record IDs.
+        from cifereca.core.notice_c_private_search_web import _source_key
+        from cifereca.core.notice_cover_projection import notice_cover_document_ref
+        from cifereca.core.notice_cover_repository import read_notice_cover
+        first_key = _source_key(a, "alice")
+        second_key = _source_key(b, "alice")
+        second_source = read_notice_cover(db, notice_cover_document_ref(second_key))
+        combined = persist_consolidated_cover_source(
+            db, canonical_edition_id=first_key.edition_id, source=second_source,
+            relation_proof_id="strong:controlled-test",
+        )
+        menu = read_authenticated_web_for_search(host, a, reader_scope=scope)
+        assert menu.document == combined.document and menu.epoch == combined.epoch
+        assert {resolve_authenticated_web_choice(host, menu, choice_id=c.choice_id)
+                for c in menu.choices} == {a.friendly_url, b.friendly_url}
         assert db.entitlements() == [] and db.acquisitions() == []
 
 
@@ -677,4 +695,45 @@ def test_exact_mixed_c_web_references_keep_public_and_private_authority_separate
             db, combined.document, expected_epoch=public_menu.epoch,
             choice_id=public_choice.choice_id,
         ) == public_url
+        assert db.entitlements() == db.acquisitions() == db.placements() == []
+
+
+def test_native_c_inventory_uses_individual_scopes_after_eviction_and_restart(tmp_path):
+    from cifereca.core.notice_c_authenticated_web_choices import (
+        read_authenticated_web_choices_for_c,
+    )
+    filename = tmp_path / "native-inventory.sqlite"
+    with closing(Storage(filename)) as db:
+        host = Host(db)
+        a = host.account("alice")
+        second = host.account("alice", provider="fixture-b")
+        b = host.account("bob")
+        first, _ = host.source(a, record="first")
+        other, _ = host.source(second, record="second", url=HOST + "/resources/second")
+        foreign, c = host.source(b, record="foreign", url=HOST + "/resources/foreign")
+        assert evict_notice_cover(db, other.document, expected_epoch=other.epoch)
+    with closing(Storage(filename)) as db:
+        host.storage = db
+        alice = capture_search_read_scope(host, "alice")
+        bob = capture_search_read_scope(host, "bob")
+        menu = read_authenticated_web_choices_for_c(host, c.document, reader_scope=alice)
+        assert len(menu.choices) == 2 and menu.epoch == c.epoch
+        assert {resolve_authenticated_web_choice(host, menu, choice_id=x.choice_id)
+                for x in menu.choices} == {URL, HOST + "/resources/second"}
+        foreign_menu = read_authenticated_web_choices_for_c(host, c.document, reader_scope=bob)
+        choice, = foreign_menu.choices
+        assert resolve_authenticated_web_choice(host, foreign_menu, choice_id=choice.choice_id) == (
+            HOST + "/resources/foreign")
+        assert resolve_authenticated_web_choice(host, menu, choice_id=choice.choice_id) is None
+        assert read_authenticated_web_choices_for_c(
+            host, c.document, reader_scope=alice, required_source=foreign.document,
+        ) is None
+        host._sessions[(second.provider_id, second.credential_id)].connected = False
+        assert all(resolve_authenticated_web_choice(host, menu, choice_id=x.choice_id) is None
+                   for x in menu.choices)
+        renewed = read_authenticated_web_choices_for_c(host, c.document, reader_scope=alice)
+        remaining, = renewed.choices
+        assert resolve_authenticated_web_choice(host, renewed, choice_id=remaining.choice_id) == URL
+        assert resolve_authenticated_web_choice(host, foreign_menu, choice_id=choice.choice_id) == (
+            HOST + "/resources/foreign")
         assert db.entitlements() == db.acquisitions() == db.placements() == []
