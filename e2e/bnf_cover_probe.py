@@ -793,7 +793,15 @@ def main() -> int:
         # #4979: the actual Library callback may arrive AFTER the loan list.
         # Verify that the visible list repaints without a second loan fetch,
         # not merely that the on-click detail sees the new Placement.
-        later(150, begin_late_library_loan_cover)
+        from loan_embedded_conflict_contract import verify_loan_embedded_conflict
+        window = app_window[0]
+        loan = next(item for item in window.service.last_loans
+                    if item.record_id == RESOURCES[0])
+        verify_loan_embedded_conflict(
+            window, loan, await_condition=await_condition, capture=capture,
+            report=report, image_gets=image_gets,
+            complete=lambda: later(150, begin_late_library_loan_cover),
+        )
 
     def begin_late_library_loan_cover():
         from copy import copy
