@@ -326,7 +326,12 @@ def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
         if not query.strip():
             return True
         isbn = _local_isbn(query)
-        return bool(isbn) and isbn in _field_values(row, field)
+        if not isbn:
+            return False
+        if row.get("source") == "notice_c_public":
+            from .notice_c_loaded_filter import matches_loaded_public_isbn
+            return matches_loaded_public_isbn(row, isbn)
+        return isbn in _field_values(row, field)
     if row.get("source") == "notice_c_public" and field in {"title", "author", "publisher"}:
         # The retained C cursor deliberately keeps literal substring
         # semantics for these explicit fields. Do not reinterpret a C hit
