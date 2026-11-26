@@ -20,7 +20,7 @@ def walk(widget):
         child = child.get_next_sibling()
 
 
-def verify_local_notice_c_views(window, later, capture, report, complete):
+def verify_local_notice_c_views(window, later, capture, report, complete, *, late_audit=None):
     """One retained C, three completed test Origins, six real GTK list/detail views.
 
     One source is the unmodified recorded Numilog HTML through its actual
@@ -697,7 +697,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             deadline = monotonic() + 8
             later(40, guard(lambda: wait_texture(route, page, row, "list", deadline)))
 
-        def wait_texture(route, page, row, variant, deadline):
+        def wait_texture(route, page, row, variant, deadline, revoked=None):
             assert window.view_stack.get_visible_child_name() == (
                 recommendation_route if route == "recommendations" else route
             )
@@ -715,7 +715,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             )
             if not ready:
                 assert monotonic() < deadline, "local C N4 timeout: " + route + "/" + variant
-                later(40, guard(lambda: wait_texture(route, page, row, variant, deadline)))
+                later(40, guard(lambda: wait_texture(route, page, row, variant, deadline, revoked)))
                 return
             cover = covers[0]
             assert cover._loader is loader
@@ -724,12 +724,44 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
                 assert image.convert("RGB").getpixel((0, 0)) == pixels
             assert reads == [doc] and gets == ["GET"]
-            # Wall clock from route/selection to observed N4, including GTK
-            # scheduling and polling. Distinct from worker/decoder percentiles.
-            route_timings[route + "/" + variant] = round(
-                (monotonic() - route_started[(route, variant)]) * 1000, 2,
-            )
-            capture("00-notice-c-" + route + "-" + variant + "-" + label)
+            if revoked is not None:
+                late_audit.restored(route, variant, cover, revoked)
+            else:
+                # Wall clock for the original route, not the fault injection.
+                route_timings[route + "/" + variant] = round(
+                    (monotonic() - route_started[(route, variant)]) * 1000, 2,
+                )
+                capture("00-notice-c-" + route + "-" + variant + "-" + label)
+                if offline and late_audit is not None:
+                    def native_rebind():
+                        assert page.store.get_item(0) is row
+                        if variant == "list":
+                            cells = [cell for cell in walk(page)
+                                     if isinstance(cell, BookListCell)
+                                     and cell.get_mapped() and cell.cover is cover
+                                     and cell._bound_key == row.key]
+                            cell, = cells
+                            cell._thumbnail_changed(row)
+                        else:
+                            page.selection.set_selected(0xFFFFFFFF)
+                            page.selection.set_selected(0)
+                            assert page.selection.get_selected_item() is row
+                            if page._narrow_master_detail:
+                                assert page._narrow_detail_visible
+
+                    def restore(revoked_request):
+                        assert reads == [doc] and gets == ["GET"]
+                        native_rebind()
+                        later(40, guard(lambda: wait_texture(
+                            route, page, row, variant, monotonic() + 8, revoked_request,
+                        )))
+
+                    report["local_c_stage"] = label + "_" + route + "_" + variant + "_late_aba"
+                    late_audit.deliver_late(
+                        route, variant, n2, doc, native_rebind,
+                        later=later, guard=guard, complete=restore,
+                    )
+                    return
             if variant == "list":
                 report["local_c_stage"] = label + "_" + route + "_detail"
                 # Closed geometry witness for the existing 960px acceptance.
