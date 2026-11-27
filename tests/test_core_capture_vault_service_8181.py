@@ -136,3 +136,21 @@ def test_activation_lease_revokes_reader_and_writer(tmp_path):
     core.close()
     with pytest.raises(VaultError, match="vault_activation_expired"):
         fresh.sessions(SCOPE_A)
+
+
+def test_diagnostics_capacity_does_not_increase_recorder_limit(tmp_path):
+    core = service(tmp_path)
+    recorder = core.for_plugin(RECORDER)
+    diagnostics = core.for_plugin(DIAGNOSTICS)
+    try:
+        # Representative body budget above the previous 3 MiB cap.
+        payload = b"x" * (32 * 1024 * 1024)
+        writer = diagnostics.begin(SCOPE_A, "large", consented=True)
+        writer.save(payload, "completed", force=True)
+        assert diagnostics.read(SCOPE_A, writer.capture_id).payload == payload
+        assert recorder.sessions(SCOPE_A) == ()
+        rejected = recorder.begin(SCOPE_A, "too-large", consented=True)
+        with pytest.raises(VaultError, match="vault_limit"):
+            rejected.save(payload, "completed", force=True)
+    finally:
+        core.close()

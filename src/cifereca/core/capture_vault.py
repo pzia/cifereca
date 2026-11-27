@@ -111,6 +111,10 @@ class EncryptedCaptureVault:
         raise NotImplementedError
 
     @property
+    def max_file(self):
+        return MAX_FILE
+
+    @property
     def max_vault_bytes(self):
         return MAX_VAULT_BYTES
 
@@ -132,8 +136,7 @@ class EncryptedCaptureVault:
         except OSError as exc:
             raise VaultError("vault_unsafe_directory") from exc
 
-    @staticmethod
-    def _staging(fd):
+    def _staging(self, fd):
         """Recognize only our opaque write staging files, without following links."""
         found = []
         for name in os.listdir(fd):
@@ -142,17 +145,16 @@ class EncryptedCaptureVault:
                 if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                         or info.st_uid != os.getuid()
                         or stat.S_IMODE(info.st_mode) != 0o600
-                        or not 0 <= info.st_size <= MAX_FILE):
+                        or not 0 <= info.st_size <= self.max_file):
                     raise VaultError("vault_unsafe_file")
                 found.append((name, info))
         return tuple(found)
 
-    @staticmethod
-    def _entries(fd):
+    def _entries(self, fd):
         """Count encrypted archives, labels AND orphan writes toward the quota."""
         total = count = 0
         try:
-            staging = dict(EncryptedCaptureVault._staging(fd))
+            staging = dict(self._staging(fd))
             for filename in os.listdir(fd):
                 if filename in staging:
                     info = staging[filename]
@@ -160,7 +162,7 @@ class EncryptedCaptureVault:
                     if not _ID.fullmatch(filename[:-5]):
                         continue
                     info = os.stat(filename, dir_fd=fd, follow_symlinks=False)
-                    max_size = MAX_FILE if filename.endswith(".cbrv") else MAX_LABEL_FILE
+                    max_size = self.max_file if filename.endswith(".cbrv") else MAX_LABEL_FILE
                     if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                             or info.st_uid != os.getuid()
                             or stat.S_IMODE(info.st_mode) != 0o600
@@ -438,7 +440,7 @@ class EncryptedCaptureVault:
     def _retention_fingerprint(self, fd, sid: str):
         if type(sid) is not str or not _ID.fullmatch(sid):
             raise VaultError("vault_invalid")
-        capture = self._retention_bytes(fd, sid + ".cbrv", MAX_FILE)
+        capture = self._retention_bytes(fd, sid + ".cbrv", self.max_file)
         label_name = sid + ".cbrn"
         try:
             label = self._retention_bytes(fd, label_name, MAX_LABEL_FILE)
@@ -575,7 +577,7 @@ class EncryptedCaptureVault:
         may temporarily block admission rather than exceed the hard caps.
         """
         if (type(older_than_days) is not int or not 1 <= older_than_days <= 365
-                or type(reserve_bytes) is not int or not 0 <= reserve_bytes <= MAX_FILE):
+                or type(reserve_bytes) is not int or not 0 <= reserve_bytes <= self.max_file):
             raise VaultError("vault_retention_invalid")
         if not self.path.exists() and not self.path.is_symlink():
             return 0, 0
@@ -658,17 +660,17 @@ class EncryptedCaptureVault:
                 if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                         or info.st_uid != os.getuid()
                         or stat.S_IMODE(info.st_mode) != 0o600
-                        or not 64 <= info.st_size <= MAX_FILE):
+                        or not 64 <= info.st_size <= self.max_file):
                     raise VaultError("vault_unsafe_file")
                 with os.fdopen(file_fd, "rb", closefd=False) as stream:
-                    data = stream.read(MAX_FILE + 1)
+                    data = stream.read(self.max_file + 1)
             finally:
                 os.close(file_fd)
         except OSError as exc:
             raise VaultError("vault_unsafe_file") from exc
         finally:
             os.close(fd)
-        if not data.startswith(MAGIC) or len(data) > MAX_FILE:
+        if not data.startswith(MAGIC) or len(data) > self.max_file:
             raise VaultError("vault_invalid")
         salt = data[len(MAGIC):len(MAGIC) + 16]
         nonce = data[len(MAGIC) + 16:len(MAGIC) + 28]
@@ -734,7 +736,7 @@ class SessionWriter:
             + bytes.fromhex(self.session_id),
         )
         data = MAGIC + self._salt + nonce + ciphertext
-        if len(data) > MAX_FILE:
+        if len(data) > self.vault.max_file:
             raise VaultError("vault_limit")
         fd = self.vault._open_dir(create=False)
         tmp = "." + self.session_id + "-" + secrets.token_hex(8) + ".part"

@@ -23,6 +23,13 @@ _STATES = frozenset(("recording", "completed", "interrupted"))
 _SCHEMA = "cifereca.capture-vault/1"
 _HEADER_LIMIT = 8192
 MAX_PAYLOAD = MAX_FILE - _HEADER_LIMIT - 128
+# HTTP Trace has a 32 MiB session budget; the bounded ZIP adds index overhead.
+MAX_HTTP_FILE = 64 * 1024 * 1024
+MAX_HTTP_PAYLOAD = MAX_HTTP_FILE - _HEADER_LIMIT - 128
+
+
+def _payload_limit(producer):
+    return MAX_HTTP_PAYLOAD if producer == "ui.page.diagnostics" else MAX_PAYLOAD
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_VOLUME_BYTES = 128 * 1024 * 1024
 MIN_VOLUME_BYTES = 8 * 1024 * 1024
@@ -101,6 +108,10 @@ class _Storage(EncryptedCaptureVault):
         self._policy = policy
 
     @property
+    def max_file(self):
+        return MAX_HTTP_FILE
+
+    @property
     def max_vault_bytes(self):
         return self._policy()[1]
 
@@ -116,7 +127,7 @@ class _Storage(EncryptedCaptureVault):
     @staticmethod
     def _encode(capture, session_id, state):
         if (type(capture) is not _Capture or type(capture.payload) is not bytes
-                or len(capture.payload) > MAX_PAYLOAD or state not in _STATES):
+                or len(capture.payload) > _payload_limit(capture.producer) or state not in _STATES):
             raise VaultError("vault_limit")
         _validate_scope(capture.scope)
         if capture.producer not in _ALLOWED or not _identifier(capture.source_session_ref):
@@ -143,7 +154,7 @@ class _Storage(EncryptedCaptureVault):
                     or row["producer"] not in _ALLOWED or row["state"] not in _STATES
                     or not _identifier(row["source_session_ref"])
                     or type(row["bytes"]) is not int or row["bytes"] != len(payload)
-                    or len(payload) > MAX_PAYLOAD
+                    or len(payload) > _payload_limit(row["producer"])
                     or row["sha256"] != sha256(payload).hexdigest()):
                 raise ValueError
             scope = CaptureScope(**row["scope"])
@@ -185,7 +196,7 @@ class CoreCaptureVault:
             raise VaultError("vault_retention_invalid")
         return days, volume
 
-    def maintain(self, *, reserve=False, now=None):
+    def maintain(self, *, reserve=False, reserve_bytes=None, now=None):
         with self._lock:
             if not self._storage.path.exists() and not self._storage.path.is_symlink():
                 return (0, 0)
@@ -193,7 +204,7 @@ class CoreCaptureVault:
             days, _ = self._policy()
             return self._storage.auto_prune(
                 key, older_than_days=days, pinned=_pinned,
-                reserve_bytes=MAX_FILE if reserve else 0,
+                reserve_bytes=(MAX_FILE if reserve else 0) if reserve_bytes is None else reserve_bytes,
                 reserve_session=reserve, now=now,
             )
 
@@ -263,6 +274,9 @@ class _Port:
         self._service._check(self._producer, scope)
 
     def begin(self, scope, source_session_ref, *, consented=False):
+        return self._begin(scope, source_session_ref, consented=consented, reserve_bytes=MAX_FILE)
+
+    def _begin(self, scope, source_session_ref, *, consented=False, reserve_bytes):
         if consented is not True:
             raise VaultError("vault_confirmation_required")
         self._check(scope)
@@ -271,7 +285,9 @@ class _Port:
         with self._service._lock:
             self._check(scope)
             key = self._service._key(create=True)
-            self._service.maintain(reserve=True)
+            if reserve_bytes > self._service._policy()[1]:
+                raise VaultError("vault_limit")
+            self._service.maintain(reserve=True, reserve_bytes=reserve_bytes)
             writer = self._service._storage.begin(key)
             self._service.start_maintenance()
             return _Writer(self, scope, source_session_ref, writer, key)
