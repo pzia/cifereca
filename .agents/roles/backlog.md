@@ -21,8 +21,9 @@ Commande conversationnelle : **Next max — Capitalisation et purge du staging.*
 Backlog inventorie toutes les références `staging/backlog/p0-*`, vérifie les
 manifestes, empreintes et journaux DONE, distingue les lots incomplets et
 organise les handoffs aux rôles propriétaires pour mutualiser les connaissances
-dans les documents et skills canoniques. Les preuves uniques doivent rester
-durablement accessibles. Backlog réceptionne la couverture sémantique et les
+dans les documents et skills canoniques. Capitalisation au mieux, sans exigence
+d'exhaustivité ; perte historique résiduelle acceptée après revue raisonnable.
+Backlog réceptionne cette revue et les
 livraisons sur main ; il ne modifie pas lui-même les fichiers ni ne fusionne les PR.
 Après réception, il détermine les identifiants, SHA et empreintes sans saisie
 manuelle du propriétaire, puis crée et ferme completed sous pzia le contrôle

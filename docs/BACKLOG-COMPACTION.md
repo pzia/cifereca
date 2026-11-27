@@ -71,9 +71,10 @@ métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 Sur demande, les LLM des rôles propriétaires inventorient
 `staging/backlog/p0-*`, lisent les manifestes, vérifient les empreintes
 et mutualisent les connaissances dans les documents/skills canoniques.
-Les preuves uniques non capitalisables restent accessibles durablement
-avant purge ; sans destination sûre, conserver le staging. Backlog
-réceptionne la couverture sémantique complète, puis ferme completed sous
+La capitalisation est une obligation de moyens : conserver les connaissances
+utiles, sans couverture exhaustive. Le propriétaire accepte la perte résiduelle
+d'informations historiques non capitalisées après revue raisonnable. Backlog
+réceptionne cette revue, puis ferme completed sous
 pzia un contrôle sans label ni assignation, titre `Capitalisation #8195 — N`,
 corps JSON :
 
