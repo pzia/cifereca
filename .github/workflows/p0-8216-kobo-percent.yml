@@ -1,0 +1,46 @@
+name: P0 8216 Kobo percent mutation
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-kobo-percent.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 440f3ae0747c2fc0f86eae8ca874f42eb2ad1e87
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . pytest httpx packaging Pillow cryptography
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin focus/8216-kobo-percent-oracle
+          test "$(git rev-parse FETCH_HEAD)" = 50cb69ca89c5c3e5bd217e386fdfa40d0940e0c5
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          path=src/plugins/provider-kobo/tests/test_kobo_public_cover_url_p1.py
+          node="$path::test_benign_percent_encoded_cover_paths_remain_valid"
+          python -m pytest -q "$node"
+          git checkout FETCH_HEAD -- "$path"
+          python -m pytest -q "$node"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("src/plugins/provider-kobo/cifereca_kobo_catalog.py")
+          s=p.read_text()
+          old="            return resolved\n        def candidate"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"            return resolved.replace('%20', '%2520')\n        def candidate"))
+          PY
+          git checkout 440f3ae0747c2fc0f86eae8ca874f42eb2ad1e87 -- "$path"
+          python -m pytest -q "$node"
+          git checkout FETCH_HEAD -- "$path"
+          set +e
+          python -m pytest -q "$node"
+          rc=$?
+          set -e
+          test "$rc" = 1
+          echo "Old oracle survives; independent expected URLs kill double-encoding mutant"
