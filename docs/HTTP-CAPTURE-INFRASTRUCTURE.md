@@ -1,0 +1,11 @@
+# Infrastructure commune de capture HTTP — #7263 / #8181
+
+Contrat durable réceptionné par #8202, #8203 et #8204. Le Core possède un seul moteur permanent de coffre chiffré, indépendant de l’activation des consommateurs. Browser Recorder et Diagnostics utilisent le broker public `capture.vault`, à portée exacte et révocable ; aucun accès direct au moteur, aucune extension implicite des autorisations.
+
+La clé d’installation privée est séparée des captures ; AES-GCM/HKDF, permissions restrictives et refus fermé si la clé manque. Aucun déverrouillage manuel, migration ou compatibilité historique exigés ; l’ancien répertoire éventuel reste ignoré, sans suppression physique attestée. Rétention automatique commune, quotas et épingles bornés ; admission refusée sans purge partielle si la réserve est impossible. Consentements de capture, archivage et export distincts ; aucun transfert automatique. ZIP local et kit de développement mutualisés ; confirmation invalidée si sélection ou politique change. Préserver les protections des credentials sans expurgation générale du journal brut.
+
+Diagnostics conserve une préférence binaire persistante, activée par défaut, commune aux exports manuels et automatiques. Si désactivée, classifier avant consommation du budget et reprojeter les archives à l’export ; conserver les métadonnées et causes d’omission, les textes documentaires compressés et ACSM/XML. Aucun changement du trafic applicatif. Recorder conserve ses propres limites de capture.
+
+Réception : vérifier le HEAD exact, installation indépendante, rollback, isolation interproducteurs/scopes, révocation, redémarrage, clé absente, quotas, épingles, consentements et export. Recettes GTK/Chromium synthétiques avec trois sessions et interruption SIGKILL ; les fixtures installées doivent obtenir le broker réel. Ne pas affaiblir les gates de frontière de packages pour adapter un test. Réception #8204 : HEAD `4bf77979190e00aef19b3661d3ffecfea31b51ab`, six workflows PASS, fusion `aa5d8a7c586c9e3224fa9979f4e084ca9e63be03`. #8182 et les P2 restent hors périmètre.
+
+Détails opérationnels : [Recorder](../src/plugins/browser-recorder/README.md), [Diagnostics](../src/plugins/diagnostics-page/README.md). Les contrats installés prévalent sur les exemples historiques.
