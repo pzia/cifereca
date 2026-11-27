@@ -105,7 +105,7 @@ def _private_export_panel(tmp_path):
     panel, _, messages = panel_fixture()
     events = []
     panel._diagnostic = lambda op, code, **metrics: events.append((op, code, metrics))
-    panel.vault_directory = vault.path
+    panel.vault = SimpleNamespace(read=lambda sid: vault.open(sid, PASSPHRASE))
     panel.session_list = SimpleNamespace(get_active_id=lambda: source.session_id)
     panel._private_destination_dialog = None
     panel.is_scanning = lambda: False
@@ -113,9 +113,6 @@ def _private_export_panel(tmp_path):
     destination.mkdir(mode=0o755)
     panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
         destination / "session-for-llm.zip",
-    )
-    panel.vault_passphrase = SimpleNamespace(
-        get_text=lambda: PASSPHRASE, set_text=lambda _: None,
     )
     panel._refresh = lambda: None
     return panel, events, messages, destination, source

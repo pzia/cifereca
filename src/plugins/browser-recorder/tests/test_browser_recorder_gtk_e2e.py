@@ -346,10 +346,13 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
 
     Gtk.init()
     tasks = FakeTasks()
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys", authorize_scope=lambda *_: True)
+    port = core.for_activation("ui.page.browser-recorder", current=lambda: True)
     plugin = BrowserRecorderPage()
     plugin.activate(NS(
         data_directory=tmp_path,
-        broker=lambda name: tasks if name == "tasks" else None,
+        broker=lambda name: tasks if name == "tasks" else port if name == "capture.vault" else None,
     ))
     window = Gtk.Window()
     window.set_default_size(width, height)
@@ -407,6 +410,7 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         assert tasks.handle is None
     finally:
         plugin.deactivate()
+        core.close()
         window.close()
         flush_glib()
 
@@ -499,10 +503,13 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
             manager, PLUGIN_ID, message, status, detail, level,
         )
 
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys", authorize_scope=lambda *_: True)
+    port = core.for_activation("ui.page.browser-recorder", current=lambda: True)
     page = BrowserRecorderPage()
     page.activate(NS(
         data_directory=tmp_path,
-        broker=lambda name: tasks if name == "tasks" else None,
+        broker=lambda name: tasks if name == "tasks" else port if name == "capture.vault" else None,
         report_diagnostic=report,
     ))
     window = Gtk.Window()
@@ -525,9 +532,6 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
 
         consent.set_active(True)
         page.private_panel.vault_consent.set_active(True)
-        page.private_panel.vault_passphrase.set_text(
-            "FICTIONAL-TEST-PASSPHRASE-2026"
-        )
         page.private_panel.start.emit("clicked")
         assert tasks.submissions == 1
         assert diagnostics.snapshot() == []
@@ -549,10 +553,12 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
         assert "example.invalid" not in repr(feed)
         # Consent can create the private directory, but a failed synthetic
         # launch must never persist source bytes, ciphertext or ZIP.
-        assert not any(path.is_file() for path in tmp_path.rglob("*"))
+        assert not list(tmp_path.rglob("*.cbrv"))
+        assert not list(tmp_path.rglob("*.zip"))
         assert not page.private_panel.has_private_data()
     finally:
         page.deactivate()
+        core.close()
         window.close()
         flush_glib()
 
@@ -659,10 +665,13 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
             manager, PLUGIN_ID, message, status, detail, level,
         )
 
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys", authorize_scope=lambda *_: True)
+    port = core.for_activation("ui.page.browser-recorder", current=lambda: True)
     plugin = page_module.BrowserRecorderPage()
     plugin.activate(NS(
         data_directory=tmp_path,
-        broker=lambda name: tasks if name == "tasks" else None,
+        broker=lambda name: tasks if name == "tasks" else port if name == "capture.vault" else None,
         report_diagnostic=report,
     ))
     window = Gtk.Window()
@@ -731,6 +740,7 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
         assert "example.invalid" not in repr(feed)
     finally:
         plugin.deactivate()
+        core.close()
         window.close()
         flush_glib()
 
@@ -739,14 +749,14 @@ def test_real_gtk4_completed_capture_selects_sealed_vault_session_without_next_c
     monkeypatch, tmp_path,
 ):
     """Real GTK controls + AES-GCM, fake network; source ID, not random ordering."""
-    from browser_recorder_vault import PrivateSessionVault
+    from test_browser_recorder_review_ui import new_test_vault
     import browser_recorder_review_ui as view
 
     Gtk.init()
     tasks = FakeTasks()
     origin = ORIGIN
     secret = "FICTIONAL-SELECTOR-SESSION-PASSWORD"
-    vault_path = tmp_path / "vault"
+    core, vault = new_test_vault(tmp_path)
     ids = []
 
     def recorder(start, stop, **kwargs):
@@ -770,7 +780,7 @@ def test_real_gtk4_completed_capture_selects_sealed_vault_session_without_next_c
     consent.set_active(True)
     panel = PrivateReviewPanel(
         Gtk, GLib, tasks, url, consent, lambda: False,
-        vault_directory=vault_path,
+        vault=vault,
     )
     window = Gtk.Window()
     window.set_default_size(1280, 800)
@@ -779,28 +789,31 @@ def test_real_gtk4_completed_capture_selects_sealed_vault_session_without_next_c
     flush_glib()
     try:
         for count in (1, 2):
-            panel.vault_passphrase.set_text(secret)
             panel.vault_consent.set_active(True)
             panel.start.emit("clicked")
             assert tasks.handle is not None
             panel.stop.emit("clicked")
             tasks.handle.finish()
             flush_glib()
+            tasks.handle.finish()
+            flush_glib()
             assert len(ids) == count
             assert panel.session_list.get_active_id() == ids[-1]
-            assert len(PrivateSessionVault(vault_path).list_ids()) == count
-            recovered = PrivateSessionVault(vault_path).open(ids[-1], secret)
+            assert len(vault.sessions()) == count
+            recovered = vault.read(ids[-1])
             try:
                 assert recovered.trace.exchanges[0].url.endswith("/" + str(count))
             finally:
                 recovered.trace.destroy()
         panel.session_list.set_active_id(ids[0])
         panel.refresh_sessions()
+        tasks.handle.finish()
         flush_glib()
         assert panel.session_list.get_active_id() == ids[0]
-        previous = PrivateSessionVault(vault_path).open(ids[0], secret)
+        previous = vault.read(ids[0])
         previous.trace.destroy()
     finally:
         panel.destroy()
+        core.close()
         window.close()
         flush_glib()
