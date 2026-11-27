@@ -43,7 +43,7 @@ REPO = "pzia/cifereca"
 PROTECTED = (
     "main", "master", "dev", "develop", "development", "staging",
     "production", "stable", "release", "release/*", "releases/*",
-    "hotfix/*", "support/*",
+    "hotfix/*", "support/*", "staging/backlog/*",
 )
 PR_SUFFIX = re.compile(r"\(#([1-9][0-9]*)\)\s*$")
 SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -124,6 +124,8 @@ def exclusion_rules(path: str | None) -> tuple[list[str], set[str]]:
 
 def validate_forced_names(names: list[str]) -> set[str]:
     for name in names:
+        if name.startswith("staging/backlog/"):
+            raise RuntimeError("Staging Backlog : purge dédiée obligatoire")
         if not name or any(ch in name for ch in "*?["):
             raise RuntimeError(f"Suppression forcée : nom explicite requis, sans glob : {name!r}")
         if not git_test("check-ref-format", "--branch", name):

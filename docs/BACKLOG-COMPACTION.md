@@ -1,103 +1,95 @@
-# Compactage Backlog — #8195
+# Consolidation et capitalisation — #8195
 
-Backlog qualifie et autorise le plan exact sous délégation propriétaire pzia
-(arbitrage #8195 du 27/11/2026). CI/CD exécute et vérifie ; les rôles
-propriétaires réalisent les PR documentaires. À la clôture de chaque P0,
-Focus/Backlog applique la [politique commune](AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0).
-Le Focus clôturant peut coordonner ; aucun autre agent ne doit écrire sur
-le corpus pendant l'application. Backlog vérifie cette condition, les preuves uniques,
-décisions, exigences, exceptions, liens entrants connus et le gain global.
-La séparation des rôles est procédurale : même identité pzia, main non
-protégée lors de l'audit, rulesets vides, protection détaillée inaccessible.
-Ni l'identité ni le workflow ne prouvent une séparation cryptographique.
+Le dernier arbitrage propriétaire dissocie le transfert déterministe à la clôture
+d'un P0 et la capitalisation sémantique différée à la demande. Aucun moteur LLM
+dans CI/CD, aucun chiffrement du staging. Voir [politique commune](AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0).
 
-## Exploitation
+## Qualification et limites
 
-Audit/validation en lecture seule avec GITHUB_TOKEN et checkout exact :
+Focus/Backlog atteste le corpus public clos dans le corps du P0, avant fermeture
+completed sous pzia, par une seule ligne :
 
-```sh
-python3 scripts/backlog_compaction.py audit --issues 123,456
-python3 -m unittest discover -s tests -p test_backlog_compaction.py
-python3 scripts/backlog_compaction.py validate --pilot 999 --plan-sha256 <empreinte>
-```
+`<!-- backlog-staging-v1: 123,456 ; public -->`
 
-Le [workflow dédié](../.github/workflows/backlog-compaction.yml), exclusivement
-workflow_dispatch sur main, offre ces deux opérations et apply. Ce dernier
-nécessite premier run pzia, SHA exact, plan autorisé et revue Backlog.
-Aucun autre workflow modifié ; aucun secret supplémentaire. Permissions
-contents:read/issues:read pour audit, contents:read/issues:write pour apply.
-Aucun rerun, même après échec. Pas d'appel apply depuis un poste local.
-Le connecteur actuel n'expose pas workflow_dispatch : déclenchement via
-l'interface GitHub avec les entrées exactes. Recette réelle de test à
-réceptionner avant tout pilote historique (maximum trois issues closes).
+Les nombres constituent le rattachement explicite au maître : toute issue fermée,
+quelle que soit sa priorité (ou son absence) et son motif de clôture, est admissible.
+`none` pour un P0 autonome. Aucun changement de priorité, motif ou relation native.
+Il ne s'agit pas d'un plan de synthèse. Ne jamais inférer les cibles de simples
+mentions #n ; aucun lien retour dans le ticket historique n'est requis.
+Les relations natives doivent être compatibles avec l'inventaire. Refuser les
+corpus déjà transférés (journal ou renvoi de compactage).
+Aucun autre agent ne modifie le corpus pendant la clôture. Le pilote reste
+borné à trois issues, 1 Mio de manifeste ; au-delà, refus sans mutation.
 
-Issue de pilotage dédiée ouverte, usage unique, distincte de #8195, des cibles
-et des canoniques. Corps JSON brut, SHA-256 des octets UTF-8 exacts.
-Schéma v2 fermé (exemple fictif, SHA et dates à remplacer) :
+## Staging en clair
+
+Une référence orpheline par P0, `staging/backlog/p0-N`, sans parent ni fusion
+dans main ; manifeste JSON canonique : corps et commentaires intégraux,
+identifiants, auteurs publics, dates, références, labels, relations natives.
+Pas de dump REST, email, secret, capture privée ou copie des pièces jointes.
+Le contrôle heuristique de secrets ne garantit pas une détection exhaustive.
+La déclaration de publicité est obligatoire. Pas de chiffrement.
+
+La suppression de la ref ne garantit pas la purge physique des objets GitHub,
+ni des copies externes. Le gain logique et le gain physique sont distincts.
+Le contenu ne doit pas être publié dans les logs, artefacts ou historique main.
+
+## Exécution et réception
+
+Le workflow dédié, sur fermeture completed pzia et première tentative,
+publie le manifeste dans une branche orpheline via Git avec bail
+d'absence ; relecture depuis un dépôt vide avant toute mutation.
+Ne jamais merger le staging. Les deux nettoyeurs de branches excluent
+ce namespace, y compris les suppressions forcées.
+
+Le journal START (SHA-256 et commit) précède les mutations. Les textes d'au moins 256 octets réellement raccourcissables sont remplacés par des renvois déterministes
+au P0 en conservant les références explicites, les identifiants des
+commentaires et les métadonnées. Aucun commentaire ni issue supprimé.
+Pilote : dix commentaires modifiables au maximum ; gain contextuel positif
+après START et DONE. Vérifier main, le corpus et le staging avant chaque
+mutation, relire chaque résultat. Toute erreur arrête sans reprise
+automatique ; garder le staging, y compris après échec partiel.
+Fenêtre REST non atomique ; gel procédural du corpus obligatoire.
+Expiration 24 h, aucun rerun. Le dispatch manuel est lecture seule.
+Après une écriture vérifiée, une progression de l'horodatage de l'issue
+seule est admise ; toute autre divergence arrête. Si seuls les journaux
+de fin manquent et que toutes les mutations sont déjà effectives, Backlog
+peut fermer sous pzia un contrôle sans label ni assignation nommé
+`Réception consolidation #8195 — N` avec JSON exact :
 
 ```json
-{
-  "version": 2,
-  "repository": "pzia/cifereca",
-  "pilot_issue": 999,
-  "main_sha": "<40 hex>",
-  "baseline_sha": "<même SHA que main_sha>",
-  "closure_p0": 123,
-  "created_at": "2026-11-27T12:00:00Z",
-  "expires_at": "2026-11-27T13:00:00Z",
-  "semantic_review": "Preuves et exigences transférées, références vérifiées.",
-  "execution_review": {
-    "corpus_quiescent": true,
-    "known_inbound_references": true,
-    "global_gain": true
-  },
-  "retained_issues": [{"number": 456, "snapshot_sha256": "<64 hex>"}],
-  "issues": [{
-    "number": 123,
-    "snapshot_sha256": "<64 hex>",
-    "body_after": "Synthèse proposée",
-    "remove_comments": [456],
-    "rationale": "Motif précis de chaque retrait"
-  }]
-}
+{"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","reviewed":true}
 ```
 
-`closure_p0` désigne le parent P0 déjà clos, cible ou canonique conservée.
-`null` est réservé à la recette initiale et au pilote historique #8195.
-Backlog atteste le lien de chaque cible avec ce parent et le gel du corpus.
-Revue déclarative, pas une preuve automatique d'équivalence. Maximum
-24 h, trois cibles closes et dix commentaires au total, trois canoniques
-ouvertes ou closes en lecture seule, jamais PR. Corps seul possible si
-modifié ; aucune suppression d'issue entière. Les empreintes couvrent
-métadonnées et commentaires paginés ; références explicites du corpus
-conservées, liens connus vers commentaires retirés interdits. Vérifier
-aussi les liens hors corpus, capitalisations et leurs empreintes sur main.
+La réception relit le manifeste, vérifie les textes attendus, la provenance
+publique et les relations ; elle n'écrit que DONE. Elle refuse un corpus
+incomplet, un START absent ou un rejeu. La revue Backlog couvre les
+métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 
-## Application et réception
+## Capitalisation différée
 
-La consommation persistante est un commentaire minimal
-BACKLOG-COMPACTION-CONSUMED v1 (empreinte + run) vérifié avant toute
-mutation cible. Toute présence du marqueur interdit le rejeu de cette issue,
-y compris après échec partiel. Ne jamais modifier, effacer ou réutiliser ce
-contrôle ; il est éditable par pzia, pas un verrou inviolable. Concurrence
-sérialisée par le workflow ; vérifier absence d'écritures concurrentes hors
-workflow. Le REST n'est pas atomique : une fenêtre résiduelle subsiste entre
-lecture et mutation. Vérification du corpus, expiration et main avant
-chaque mutation, écriture et relecture de toutes les synthèses avant toute
-suppression de commentaire. Aucun changement de métadonnée hors effet
-serveur attendu. Tout écart/échec arrête ; inventorier l'état réellement
-observé, nouveau plan et nouvelle autorisation Backlog pour reprise.
-Aucun contenu retiré dans le journal ; pas d'archivage systématique.
+Sur demande, les LLM des rôles propriétaires inventorient
+`staging/backlog/p0-*`, lisent les manifestes, vérifient les empreintes
+et mutualisent les connaissances dans les documents/skills canoniques.
+Les preuves uniques non capitalisables restent accessibles durablement
+avant purge ; sans destination sûre, conserver le staging. Backlog
+réceptionne la couverture sémantique complète, puis ferme completed sous
+pzia un contrôle sans label ni assignation, titre `Capitalisation #8195 — N`,
+corps JSON :
 
-Mesures caractères/octets/tokens estimés (octets UTF-8 / 4 arrondis au
-supérieur). Corpus comparable : cibles, canoniques, neuf instructions,
-registre #3913 et ce runbook ; baseline d'application égale au HEAD courant
-pour ne jamais recompter un gain documentaire historique. Backlog mesure
-séparément les changements documentaires entre SHA avant/après de la clôture,
-une seule fois (baseline initiale #8195 : 8921002d1a5b9e0a4a0f0f592dbb6d669a283f4c).
-Plan et commentaires de pilotage comptés en surcoût. Apply refuse un gain borné
-non positif après marqueur et rapporte le gain borné réel après relecture.
-Backlog doit ajouter le coût de #8195, PR et autres journaux et vérifier
-l'équivalence sémantique : ni STRUCTURAL_VALIDATION_ONLY ni
-APPLIED_BOUNDED_PLAN ne valent réception globale. Ne fermer #8195
-qu'après recette de test, pilote réel et capitalisation effective.
+```json
+{"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","evidence":[{"path":"AGENTS.md","sha256":"<sha256>"}],"semantic_review":true}
+```
+
+Le workflow vérifie le contrôle, DONE, le manifeste et les documents
+sur main. La revue sémantique est déclarative, pas une preuve par le CLI.
+Journal PURGE-START persistant avant suppression de la ref avec bail sur le
+commit exact ; journal PURGED seulement après relecture de l'absence de ref.
+Pas de purge physique garantie. Si échec, inventaire et reprise
+explicite par CI/CD, jamais rerun. Aucun chiffrement, aucune clé.
+
+Distinguer clôture fonctionnelle, consolidation, capitalisation et purge.
+Mesurer caractères, octets et tokens estimés ; inclure staging, nouvelles
+synthèses, documents et journaux dans le gain global. Recette synthétique avant toute déclaration de périmètre historique,
+puis pilote réel, exact HEAD ; pas de réception globale avant preuve des deux
+parcours. Le stockage physique GitHub reste hors garantie.

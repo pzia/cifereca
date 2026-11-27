@@ -226,3 +226,61 @@ def test_close_revokes_dialog_and_timer(setup):
     assert dialog.destroyed and s.export.chooser is None
     assert s.export.refresh() is False
     s.glib.source_remove.assert_called_once_with(7)
+
+
+class CheckButton(Button):
+    def __init__(self):
+        super().__init__()
+        self.active = False
+
+    def set_active(self, value):
+        if self.active != value:
+            self.active = value
+            self.callback(self)
+
+    def get_active(self):
+        return self.active
+
+
+def test_binary_policy_is_core_owned_independent_of_trace_and_revokes_consent(setup):
+    s = setup
+    s.export.close()
+    policy = {"include_binary": True}
+    s.broker.http_trace_status = lambda: {"active": s.state["active"], **policy}
+    s.broker.set_http_trace_include_binary = Mock(
+        side_effect=lambda value: policy.update(include_binary=value))
+    checkbox = CheckButton()
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, include_binary=checkbox,
+    )
+    assert checkbox.active and checkbox.sensitive
+    s.broker.set_http_trace_include_binary.assert_not_called()
+    dialog = open_chooser(s)
+    checkbox.set_active(False)
+    assert dialog.destroyed and s.export.chooser is None
+    assert policy["include_binary"] is False
+    s.state["active"] = False
+    s.export.refresh()
+    assert checkbox.sensitive and not s.button.sensitive
+    checkbox.set_active(True)
+    assert policy["include_binary"] is True
+    s.broker.set_http_trace_include_binary.side_effect = RuntimeError("PRIVATE")
+    checkbox.set_active(False)
+    assert checkbox.active and "PRIVATE" not in s.host.toast.call_args.args[0]
+    s.export.close()
+    assert not checkbox.sensitive
+
+
+def test_binary_policy_is_unavailable_on_legacy_core(setup):
+    s = setup
+    s.export.close()
+    checkbox = CheckButton()
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, include_binary=checkbox,
+    )
+    assert checkbox.active and not checkbox.sensitive
+    assert s.button.sensitive

@@ -1,38 +1,20 @@
 name: Backlog compaction
 
 on:
+  issues:
+    types: [closed]
   workflow_dispatch:
     inputs:
-      mode:
-        description: Bounded operation (apply consumes the exact plan)
-        required: true
-        type: choice
-        options:
-          - audit
-          - validate
-          - apply
       issues:
-        description: One to three closed issue numbers, comma separated (audit)
-        required: false
-        type: string
-      pilot:
-        description: Dedicated open pilot issue (validate/apply)
-        required: false
-        type: string
-      plan_sha256:
-        description: SHA-256 of exact pilot issue body (validate/apply)
-        required: false
+        description: One to three closed issue numbers (read-only audit)
+        required: true
         type: string
 
 permissions: {}
 
-concurrency:
-  group: backlog-compaction
-  cancel-in-progress: false
-
 jobs:
   audit:
-    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.mode != 'apply'
+    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       issues: read
@@ -42,51 +24,41 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
           persist-credentials: false
-      - name: Offline tests and read-only operation
-        shell: bash
+      - name: Read-only audit
         env:
-          MODE: ${{ inputs.mode }}
           ISSUES: ${{ inputs.issues }}
-          PILOT: ${{ inputs.pilot }}
-          PLAN_SHA256: ${{ inputs.plan_sha256 }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 -m unittest discover -s tests -p test_backlog_compaction.py
-          case "$MODE" in
-            audit) python3 scripts/backlog_compaction.py audit --issues="$ISSUES" ;;
-            validate) python3 scripts/backlog_compaction.py validate --pilot="$PILOT" --plan-sha256="$PLAN_SHA256" ;;
-            *) exit 2 ;;
-          esac
+          python3 scripts/backlog_compaction.py audit --issues="$ISSUES"
 
-  apply:
-    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.actor == 'pzia' && github.triggering_actor == 'pzia' && inputs.mode == 'apply'
+  closure:
+    if: >-
+      github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'issues' && github.event.action == 'closed' &&
+      github.run_attempt == 1 && github.actor == 'pzia' && github.triggering_actor == 'pzia' &&
+      github.event.sender.id == 11092036 && github.event.issue.state_reason == 'completed' &&
+      ((contains(github.event.issue.labels.*.name, 'P0') &&
+        contains(github.event.issue.body, '<!-- backlog-staging-v1:')) ||
+       startsWith(github.event.issue.title, 'Capitalisation #8195 — ') ||
+       startsWith(github.event.issue.title, 'Réception consolidation #8195 — '))
+    concurrency:
+      group: backlog-compaction
+      cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       issues: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - name: Offline safety tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 -m unittest discover -s tests -p test_backlog_compaction.py
-      - name: Consume and execute exact authorized plan
-        shell: bash
+        run: python3 -m unittest discover -s tests -p test_backlog_compaction.py
+      - name: Verify staging and consolidate or purge
         env:
-          PILOT: ${{ inputs.pilot }}
-          PLAN_SHA256: ${{ inputs.plan_sha256 }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 scripts/backlog_compaction.py apply --pilot="$PILOT" --plan-sha256="$PLAN_SHA256"
+        run: python3 scripts/backlog_compaction.py closure

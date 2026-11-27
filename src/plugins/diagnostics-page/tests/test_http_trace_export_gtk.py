@@ -50,7 +50,7 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
     set_diagnostics_level('trace')
     content=b'synthetic HTTP response with binary \x00\xff'
     with httpx.Client(transport=TraceHTTPTransport(
-            httpx.MockTransport(lambda r:httpx.Response(200,stream=httpx.ByteStream(content))),
+            httpx.MockTransport(lambda r:httpx.Response(200,headers={'Content-Type':'application/octet-stream'},stream=httpx.ByteStream(content))),
             capture=capture),trust_env=False) as client:
         assert client.get('https://example.test/synthetic').content==content
     set_diagnostics_level('normal')
@@ -59,6 +59,9 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
         exports=0
         def http_trace_status(self):
             return capture.status()
+        def set_http_trace_include_binary(self, value):
+            capture.set_include_binary(value)
+            return value
         def export_http_trace(self,destination):
             result=capture.export(destination)
             self.exports+=1
@@ -85,6 +88,9 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
         spin_until(lambda:page.get_mapped())
         button=next(w for w in walk(page) if isinstance(w,Gtk.Button)
                     and w.get_label()=='Exporter les échanges HTTP…')
+        checkbox=next(w for w in walk(page) if isinstance(w,Gtk.CheckButton)
+                      and w.get_label()=='Inclure les contenus binaires dans les captures HTTP')
+        assert checkbox.get_active() and checkbox.get_sensitive()
         controller=plugin._http_trace_export
         assert controller not in plugin._support_exports
         assert not button.get_sensitive()
@@ -119,8 +125,37 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
             index=json.loads(archive.read('index.json'))
             body=index['exchanges'][0]['response_body']
             assert archive.read(body['blob'])==content and body['state']=='complete'
+        # Existing binary content must disappear from the next export, even
+        # when collected before the user changed the common preference.
+        button.emit('clicked')
+        assert controller.armed
+        checkbox.set_active(False)
+        assert not controller.armed and capture.status()['include_binary'] is False
+        with httpx.Client(transport=TraceHTTPTransport(
+                httpx.MockTransport(lambda r:httpx.Response(
+                    200,headers={'Content-Type':'application/json'},
+                    stream=httpx.ByteStream(b'{"document":true}'))),
+                capture=capture),trust_env=False) as client:
+            assert client.get('https://example.test/document').content==b'{"document":true}'
+        button.emit('clicked')
+        button.emit('clicked')
+        chooser=controller.chooser
+        chooser.set_current_name('without-binary.zip')
+        filtered=tmp_path/'without-binary.zip'
+        spin_until(lambda:chooser.get_file() is not None
+                   and chooser.get_file().get_path()==str(filtered))
+        chooser.emit('response',Gtk.ResponseType.ACCEPT)
+        spin_until(filtered.exists)
+        with zipfile.ZipFile(filtered) as archive:
+            index=json.loads(archive.read('index.json'))
+            binary,textual=[entry['response_body'] for entry in index['exchanges']]
+            assert binary['state']=='binary_excluded' and not binary.get('blob')
+            assert archive.read(textual['blob'])==b'{"document":true}'
         set_diagnostics_level('normal')
         spin_until(lambda:not button.get_sensitive())
+        assert checkbox.get_sensitive() and not checkbox.get_active()
+        checkbox.set_active(True)
+        assert capture.status()['include_binary'] is True
         assert target.exists()  # disabling Trace never removes a chosen export
     finally:
         plugin.deactivate()
