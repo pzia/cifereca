@@ -354,6 +354,130 @@ class ReaderUsbExecutionBrokerImpl:
 
         return work
 
+    def admit_delta(
+        self, *, identity_id: str, device_id: str, confirmations: tuple,
+        mountpoint: Path, expected_profile_epoch: int, mount_key: tuple,
+    ) -> Callable[[], UsbSyncResult]:
+        """Capture a single explicitly confirmed exact delta, then run once.
+
+        No scan or filesystem mutation on the confirmation thread. The
+        worker may survive navigation, not owner, binding, configuration,
+        source-context, registry, intent or destination revocation.
+        """
+        from .source_context import source_context_epoch
+        from .device_usb_preview import _relative, _sha
+        from .device_usb_copy_admission import _MAX_AGE
+        from .device_usb_removal_review import _OPERATION_ID
+        from ..paths import state_dir
+
+        scope = self._scope(identity_id, device_id)
+        now = int(time.time())
+        if (scope is None or type(expected_profile_epoch) is not int
+                or scope.epoch != expected_profile_epoch
+                or type(confirmations) is not tuple or not 1 <= len(confirmations) <= 1000
+                or type(mount_key) is not tuple or len(mount_key) != 6
+                or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
+                or mountpoint == Path("/") or ".." in mountpoint.parts
+                or mount_key[:2] != (scope.fingerprint, mountpoint)
+                or type(mount_key[2]) is not str
+                or any(type(v) is not int for v in mount_key[3:])):
+            raise ValueError("reader_delta_confirmation_invalid")
+        service = self.service
+        storage, config = service.storage, service.config
+        manager = getattr(service, "_plugin_manager", None)
+        generation = getattr(manager, "registry_generation", -1)
+        epoch = source_context_epoch(service)
+        identity = deepcopy(storage.identity_get(identity_id))
+        if type(identity) is not dict:
+            raise ValueError("reader_delta_confirmation_invalid")
+        confirmed = {}
+        operation_ids = set()
+
+        def matches_intent(c):
+            row = storage.device_placement_get(device_id, c.artifact_id)
+            return (type(row) is dict and row.get("device_id") == device_id
+                    and row.get("artifact_id") == c.artifact_id
+                    and row.get("desired_state") == (
+                        "keep" if type(c) is UsbCopyConsent else "remove")
+                    and row.get("target_relative_path") == c.target_relative_path
+                    and type(row.get("metadata")) is dict
+                    and row["metadata"].get("intent_identity_id") == identity_id)
+
+        for c in confirmations:
+            if (type(c) not in (UsbCopyConsent, UsbRemovalConsent)
+                    or (c.identity_id, c.device_id, c.usb_fingerprint)
+                        != (identity_id, device_id, scope.fingerprint)
+                    or not _sha(c.sha256) or c.artifact_id != "sha256:" + c.sha256
+                    or c.artifact_id in confirmed or not _relative(c.target_relative_path)
+                    or type(c.operation_id) is not str or _OPERATION_ID.fullmatch(c.operation_id) is None
+                    or c.operation_id in operation_ids
+                    or type(c.confirmed_at) is not int or type(c.expires_at) is not int
+                    or not 0 <= now - c.confirmed_at <= _MAX_AGE
+                    or not now < c.expires_at <= c.confirmed_at + _MAX_AGE
+                    or not matches_intent(c)):
+                raise ValueError("reader_delta_confirmation_invalid")
+            if type(c) is UsbRemovalConsent:
+                if (c.copy_operation_id == c.operation_id
+                        or self.completed_copy_operation(identity_id=identity_id,
+                            device_id=device_id, artifact_id=c.artifact_id) != c.copy_operation_id):
+                    raise ValueError("reader_delta_removal_unverified")
+            elif c.operation != "upload":
+                raise ValueError("reader_delta_confirmation_invalid")
+            confirmed[c.artifact_id] = c
+            operation_ids.add(c.operation_id)
+
+        def current():
+            try:
+                return (
+                    self.service is service and service.storage is storage and service.config is config
+                    and getattr(service, "_plugin_manager", None) is manager
+                    and getattr(manager, "registry_generation", -1) == generation
+                    and source_context_epoch(service) == epoch
+                    and storage.identity_get(identity_id) == identity
+                    and all(matches_intent(c) for c in confirmed.values())
+                    and self._current(scope, admitted=True)
+                )
+            except Exception:
+                return False
+
+        if not current() or not self._current(scope):
+            raise ValueError("reader_delta_scope_revoked")
+        lock, used = Lock(), [False]
+
+        def check():
+            if (not all(c.confirmed_at <= int(time.time()) < c.expires_at
+                        for c in confirmed.values())
+                    or not self._mount_attested(scope, mountpoint,
+                        scope_current=current, mount_key=mount_key)):
+                raise ValueError("reader_delta_scope_revoked")
+
+        def profile():
+            check()
+            return scope.identity_id, scope.identity_root, scope.epoch
+
+        def work():
+            with lock:
+                if used[0]:
+                    return UsbSyncResult("blocked")
+                used[0] = True
+            try:
+                check()
+                lock_root = state_dir(create=False) / "usb"
+                with InterProcessLock(lock_root / "sync.lock"):
+                    check()
+                    return synchronize_usb_reader(
+                        storage=storage, identity_id=identity_id, device_id=device_id,
+                        identity_root=scope.identity_root, mountpoint=mountpoint,
+                        lock_root=lock_root, current_profile=profile,
+                        plugin_manager=manager, plugin_id="storage.usb",
+                        registry_generation=generation, confirmations=confirmed,
+                        rights={}, policy_verifier=None, check_cancelled=check,
+                        exact_delta=True,
+                    )
+            except Exception:
+                return UsbSyncResult("blocked")
+        return work
+
     def execute_one(
         self, *, confirmation: UsbRemovalConsent | UsbCopyConsent,
         mountpoint: Path, expected_profile_epoch: int,

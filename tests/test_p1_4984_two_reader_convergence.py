@@ -62,10 +62,11 @@ def test_two_identities_and_devices_with_same_sha_remain_distinct(
 
     def run(consent, rights):
         class Storage:
-            def device_placements(self, *, device_id):
-                assert device_id == consent.device_id
+            def placements(self, *, state):
+                assert state == "present"
                 return [{
                     "artifact_id": consent.artifact_id, "placement_id": "owned-placement",
+                    "identity_id": consent.identity_id,
                 }]
         return sync.synchronize_usb_reader(
             storage=Storage(), identity_id=consent.identity_id,

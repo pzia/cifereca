@@ -39,6 +39,7 @@ def synchronize_usb_reader(
     policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
     check_cancelled: Callable[[], None] | None = None,
     artifact_id: str | None = None,
+    exact_delta: bool = False,
 ) -> UsbSyncResult:
     """Apply only exact per-book confirmations from a fresh advisory delta.
 
@@ -76,6 +77,21 @@ def synchronize_usb_reader(
             ))):
         return UsbSyncResult("unavailable")
 
+    if exact_delta:
+        if (type(preview.rows) is not tuple
+                or any(type(row) is not UsbPreviewRow or row.executable is not False
+                       for row in preview.rows)):
+            return UsbSyncResult("unavailable")
+        candidates = {
+            row.artifact_id: (UsbCopyConsent if row.action == "upload_candidate"
+                              else UsbRemovalConsent)
+            for row in preview.rows
+            if row.action in ("upload_candidate", "remove_candidate")
+        }
+        if (set(confirmations) != set(candidates)
+                or any(type(confirmations[key]) is not cls
+                       for key, cls in candidates.items())):
+            return UsbSyncResult("blocked")
     journal = SqliteUsbOperationJournal(storage)
     placement_ids = {}
     if any(row.action == "upload_candidate" for row in preview.rows):
