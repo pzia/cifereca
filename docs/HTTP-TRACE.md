@@ -1,7 +1,8 @@
 # HTTP Trace — contrat Core #3203
 
 Le niveau effectif `trace` existant active les observations des transports
-explicitement instrumentés. Aucun état ou préférence de capture supplémentaire.
+explicitement instrumentés. La préférence `diagnostics.http_capture_include_binary`
+(#7263, true par défaut pour les anciens paramètres) ne change jamais ce niveau.
 `verbose`, `normal` et `errors` ne capturent rien. Les clients déjà construits
 avec ces transports suivent également les changements du niveau effectif.
 
@@ -144,6 +145,30 @@ métadonnées ne sont pas anonymisés. Les secrets éventuels doivent rester pri
 Seul un `task_ref` obtenu dans un vrai contexte de tâche existant est ajouté ;
 pas de tâche ou `operation_ref` fabriqué ni de corrélation par horodatage.
 Les corps ne sont pas dupliqués dans le journal canonique.
+
+### Politique d'inclusion des corps (#7263)
+
+Avec la préférence décochée, les MIME image (SVG inclus), audio, vidéo,
+PDF, EPUB, archives et dispositions explicites binaires sont exclus avant
+débit du quota des corps. JSON/XML/HTML/texte déclarés restent admissibles,
+même transportés compressés. Un type ambigu est examiné sur un préfixe
+borné à 512 octets ; sans preuve de type documentaire textuel, il est omis
+(`body_type_unknown`), jamais conservé par défaut. Les signatures connues
+permettent de distinguer `binary_excluded`. Les préfixes transitoires sont
+hors budget des corps, bornés par le nombre d'échanges, sans lecture eager.
+L'exclusion ne bloque pas la livraison applicative.
+
+Les deux ZIP utilisent la même projection : un corps exclu conserve son état,
+son MIME observé et sa taille observée, avec `stored_bytes=0`, sans blob ni
+SHA de blob. Une exclusion à l'export peut porter sur un ancien corps ; son
+`prior_state` conserve alors l'état historique. Les octets antérieurement
+débités restent comptabilisés dans la session append-only et ne sont pas
+récupérables lorsqu'ils avaient été omis. Les anciennes archives et le mode
+coché gardent leur représentation précédente. Le choix courant est figé au
+snapshot de l'export. Le broker Diagnostics publie la préférence dans
+`http_trace_status()` et l'extension optionnelle
+`DiagnosticsHttpPolicyBroker` est réservée à la page Diagnostics.
+Le contrat privé d'export brut confirmé et ses avertissements sont inchangés.
 
 Cette première tranche fournit les primitives et le broker. L'adoption des
 clients Core/plugins et le bouton Diagnostics nécessitent leurs adaptations

@@ -19,6 +19,8 @@ import tempfile
 import zipfile
 import zlib
 
+from ..http_trace import _EXCLUDED_STATES, http_body_member
+
 _FORMAT = "cifereca-capture-session/1"
 _MAX_HTML_BYTES = 2 * 1024 * 1024
 _MAX_EXCHANGES = 1_000
@@ -192,12 +194,9 @@ def _http_members(snapshot: dict[str, object]):
             if total_http > _MAX_HTTP_BYTES:
                 raise ValueError("capture_http_size_limit")
             filename = f"http/bodies/{ref}-{side}.bin"
-            members[filename] = data
-            record[key] = {k: v for k, v in body.items() if k != "data"}
-            record[key].update({
-                "blob": filename, "stored_bytes": len(data),
-                "sha256": sha256(data).hexdigest(),
-            })
+            record[key], member = http_body_member(body, filename)
+            if member is not None:
+                members[filename] = member
             state = body.get("state")
             if state not in ("complete",):
                 incomplete = True
@@ -363,6 +362,14 @@ def _crosscheck_capture_index(archive: zipfile.ZipFile, names: set[str],
             body = row.get(side + "_body")
             blob = f"http/bodies/{ref}-{side}.bin"
             meta = manifest["members"].get(blob)
+            if type(body) is dict and body.get("state") in _EXCLUDED_STATES:
+                if ("blob" in body or "sha256" in body or meta is not None
+                        or type(body.get("stored_bytes")) is not int
+                        or body["stored_bytes"] != 0
+                        or type(body.get("observed_bytes")) is not int
+                        or body["observed_bytes"] <= 0):
+                    raise ValueError("capture_archive_invalid")
+                continue
             if (type(body) is not dict or body.get("blob") != blob
                     or type(body.get("stored_bytes")) is not int
                     or type(body.get("sha256")) is not str

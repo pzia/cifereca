@@ -255,6 +255,17 @@ class DiagnosticsBroker(Protocol):
     def export_support_text(self, *, verbose: bool = False) -> str: ...
 
 @runtime_checkable
+class DiagnosticsHttpPolicyBroker(Protocol):
+    """Optional preference extension supplied only to the Diagnostics page.
+
+    The setting is independent of the effective Trace level. Existing
+    DiagnosticsBroker implementations need not implement this extension.
+    """
+
+    def set_http_trace_include_binary(self, value: bool) -> bool: ...
+
+
+@runtime_checkable
 class LibraryNamingBroker(Protocol):
     def preview(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str: ...
 
