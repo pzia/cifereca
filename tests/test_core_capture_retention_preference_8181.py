@@ -20,7 +20,6 @@ def test_retention_settings_are_persistent_and_scoped(tmp_path, monkeypatch):
     page.set_capture_retention_policy(30, 64 * 1024 * 1024)
     assert page.capture_retention_policy() == {"days": 30, "volume_bytes": 64 * 1024 * 1024}
     reopened = Config(tmp_path / "config.json")
-    reopened.load()
     assert reopened.get("diagnostics.capture_retention_days") == 30
     assert reopened.get("diagnostics.capture_retention_bytes") == 64 * 1024 * 1024
     stale = {"diagnostics": {"capture_retention_days": 90}}

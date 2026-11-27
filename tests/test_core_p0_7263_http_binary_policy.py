@@ -151,6 +151,7 @@ def test_preference_is_persistent_and_only_diagnostics_page_can_change_it(monkey
     draft = {"diagnostics": {"level": "trace", "http_capture_include_binary": True}}
     assert http_trace.preserve_http_capture_preference(draft, current=reloaded)["diagnostics"] == {
         "level": "trace", "http_capture_include_binary": False,
+        "capture_retention_days": 90, "capture_retention_bytes": 128 * 1024 * 1024,
     }
     assert diagnostics.set_http_trace_include_binary(True) is True
     assert http_trace.http_capture_include_binary(Config(cfg.path)) is True
