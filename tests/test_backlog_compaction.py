@@ -1,4 +1,5 @@
 import datetime as dt
+import tempfile
 import unittest
 from unittest.mock import patch
 from scripts import backlog_compaction as c
@@ -34,9 +35,9 @@ class API:
         if path == "/issues/42/comments?per_page=100&page=1":
             return []
         if path == "/issues/123/comments?per_page=100&page=1":
-            return list(self.comments[:100])
+            return [dict(x) for x in self.comments[:100]]
         if path == "/issues/123/comments?per_page=100&page=2":
-            return list(self.comments[100:])
+            return [dict(x) for x in self.comments[100:]]
         raise AssertionError("unexpected path")
 
     def replace_body(self, n, body):
@@ -105,7 +106,7 @@ class Tests(unittest.TestCase):
         result = c.local_stage_roundtrip(manifest)
         self.assertEqual(result["status"], "STAGING_LOCAL_ROUNDTRIP_ONLY")
         self.assertFalse(result["destruction_enabled"])
-                self.assertEqual(self.api.writes, [])
+        self.assertEqual(self.api.writes, [])
 
     def test_staging_refuses_ambiguous_or_missing_scope(self):
         event = self.staging_issue()
@@ -216,6 +217,31 @@ class Tests(unittest.TestCase):
     def test_duplicate_json(self):
         with self.assertRaises(c.Refusal):
             c.strict_json(b'{"x":1,"x":2}')
+
+    def test_git_transport_and_lease(self):
+        with tempfile.TemporaryDirectory() as remote_dir, tempfile.TemporaryDirectory() as writer_dir:
+            remote = c.GitStage(remote_dir)
+            writer = c.GitStage(writer_dir)
+            writer.remote = remote_dir
+            raw = b'{"version":1,"p0":123}'
+            commit = writer.publish(123, raw)
+            self.assertEqual(writer.read_remote(123, commit), raw)
+            self.assertEqual(writer.remote_head(123), commit)
+            with self.assertRaises(c.Refusal):
+                writer.publish(123, raw)
+            with self.assertRaises(c.Refusal):
+                writer.purge(123, "a" * 40)
+            writer.purge(123, commit)
+            self.assertIsNone(writer.remote_head(123))
+
+    def test_no_gain_refuses_before_staging(self):
+        event, stage = self.consolidation_fixture()
+        self.api.issue["body"] = event["body"] = "Evidence\n<!-- backlog-staging-v1: none ; public -->"
+        self.api.comments[0]["body"] = "Unique"
+        with self.assertRaisesRegex(c.Refusal, "no positive contextual gain"):
+            self.execute(event, stage)
+        self.assertIsNone(stage.commit)
+        self.assertEqual(self.api.writes, [])
 
     def test_ref_injection(self):
         with self.assertRaises(c.Refusal):

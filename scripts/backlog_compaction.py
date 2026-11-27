@@ -111,7 +111,7 @@ class ReadOnlyAPI:
 class WriteAPI(ReadOnlyAPI):
     """Fixed issue mutation endpoints; staging must be verified first."""
     def mark(self, pilot, marker):
-        require(marker.startswith(("BACKLOG-STAGING-START v1 ", "BACKLOG-STAGING-DONE v1 ", "BACKLOG-STAGING-PURGED v1 ")), "invalid staging marker")
+        require(marker.startswith(("BACKLOG-STAGING-START v1 ", "BACKLOG-STAGING-DONE v1 ", "BACKLOG-STAGING-PURGE-START v1 ", "BACKLOG-STAGING-PURGED v1 ")), "invalid staging marker")
         return self._request("POST", f"/issues/{number(pilot)}/comments", 201, {"body": marker})
 
     def replace_body(self, n, body):
@@ -338,6 +338,7 @@ def collect_closure(api, event_issue, current):
 STAGE_PREFIX = "refs/heads/staging/backlog/p0-"
 START = "BACKLOG-STAGING-START v1 "
 DONE = "BACKLOG-STAGING-DONE v1 "
+PURGE_START = "BACKLOG-STAGING-PURGE-START v1 "
 PURGED = "BACKLOG-STAGING-PURGED v1 "
 PURGE_TITLE = "Capitalisation #8195 — "
 
@@ -391,8 +392,10 @@ class GitStage:
     def read_commit(self, commit):
         checked_sha(commit)
         require(self.run("rev-list", "--count", commit).strip() == b"1", "staging has ancestry")
-        require(self.run("ls-tree", "--name-only", commit).strip() == b"manifest.json",
-                "unexpected staging tree")
+        tree = self.run("ls-tree", commit).strip()
+        require(bool(re.fullmatch(rb"100644 blob [0-9a-f]{40}\tmanifest\.json", tree)), "unexpected staging tree")
+        size = int(self.run("cat-file", "-s", commit + ":manifest.json").strip())
+        require(0 < size <= STAGE_LIMIT, "invalid staged size")
         raw = self.run("show", commit + ":manifest.json")
         require(0 < len(raw) <= STAGE_LIMIT, "invalid staged size")
         return raw
@@ -563,18 +566,24 @@ def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_ev
     snap = snapshot(api, parent)
     require(any(c["body"] == DONE + digest + " " + commit for c in snap["comments"]),
             "consolidation not complete")
-    require(not any(c["body"].startswith(PURGED) for c in snap["comments"]), "purge already consumed")
+    require(not any(c["body"].startswith((PURGE_START, PURGED)) for c in snap["comments"]), "purge already consumed")
     main_guard(api, current)
     require(snapshot(api, control) == control_before and snapshot(api, parent) == snap,
             "capitalization corpus drift")
     require(stage.read_remote(parent, commit) == raw, "staging changed")
-    marker = PURGED + digest + " " + commit + " review #" + str(control)
+    marker = PURGE_START + digest + " " + commit + " review #" + str(control)
     response = api.mark(parent, marker)
     require(response.get("body") == marker, "purge journal mismatch")
-    expected_change(snap, snapshot(api, parent), marker=response)
+    after_start = snapshot(api, parent)
+    expected_change(snap, after_start, marker=response)
     main_guard(api, current)
     require(snapshot(api, control) == control_before, "capitalization control changed")
+    require(snapshot(api, parent) == after_start, "capitalization corpus drift")
     stage.purge(parent, commit)
+    marker = PURGED + digest + " " + commit + " review #" + str(control)
+    response = api.mark(parent, marker)
+    require(response.get("body") == marker, "purge completion journal mismatch")
+    expected_change(after_start, snapshot(api, parent), marker=response)
     return {"status": "STAGING_REFERENCE_PURGED", "p0": parent, "stage_sha": commit,
             "physical_erasure_proven": False, "semantic_equivalence_proven_by_cli": False}
 

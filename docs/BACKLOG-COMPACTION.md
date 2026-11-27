@@ -66,12 +66,13 @@ corps JSON :
 
 Le workflow vérifie le contrôle, DONE, le manifeste et les documents
 sur main. La revue sémantique est déclarative, pas une preuve par le CLI.
-Journal persistant avant suppression de la ref avec bail sur le commit
-exact ; pas de purge physique garantie. Si échec, inventaire et reprise
+Journal PURGE-START persistant avant suppression de la ref avec bail sur le
+commit exact ; journal PURGED seulement après relecture de l'absence de ref.
+Pas de purge physique garantie. Si échec, inventaire et reprise
 explicite par CI/CD, jamais rerun. Aucun chiffrement, aucune clé.
 
 Distinguer clôture fonctionnelle, consolidation, capitalisation et purge.
 Mesurer caractères, octets et tokens estimés ; inclure staging, nouvelles
-synthèses, documents et journaux dans le gain global. Recettes synthétique
-puis réelle, exact HEAD ; pas de réception globale avant preuve des deux
+synthèses, documents et journaux dans le gain global. Recette synthétique avant toute déclaration de périmètre historique,
+puis pilote réel, exact HEAD ; pas de réception globale avant preuve des deux
 parcours. Le stockage physique GitHub reste hors garantie.
