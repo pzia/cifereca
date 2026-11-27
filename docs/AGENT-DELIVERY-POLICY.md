@@ -7,16 +7,11 @@ et les protections GitHub priment sur une interprétation optimiste.
 
 ## Application particulière : P0 découplage #5975 (arbitrage du 16/11/2026)
 
-Le contrat de sortie [#5975](https://github.com/pzia/cifereca/issues/5975) privilégie la suppression **des décisions fournisseur actives en Core/CoreUI**, pas une preuve exhaustive de toutes les courses historiques, la remise en état parfaite des liens EPUB retéléchargeables ni le nettoyage de tous les AST bruts. La preuve proportionnée au risque consiste à tester le cutover réel, ses appels contractuels et l'absence de régression grave touchant identité, autorisation, consentement, double mutation, fichiers uniques, transactions et credentials.
-
-Une association EPUB manquante peut être présentée « à récupérer » **uniquement si un retéléchargement autorisé est encore possible** ; cela ne permet pas de supprimer un fichier local unique, d'inventer un prêt ou de masquer une corruption. Les scénarios extrêmes sans effet d'intégrité/autorisation actuel démontré peuvent être explicitement différés. **#5376 reste un audit qualité ultérieur non bloquant pour la clôture du parent**, même si son ticket reste ouvert. La CI requise sur le HEAD exact et les preuves de sécurité directement pertinentes ne sont jamais dispensées. Le binôme Focus implémenteur unique / CI-CD intégrateur respecte les rôles existants.
+Historique, parent clos réalisé : appliquer les invariants capitalisés dans [AGENTS.md](../AGENTS.md), section « #5975 — recentrage opposable du 16/11/2026 : découplage d'abord ». Source [#5975](https://github.com/pzia/cifereca/issues/5975). Cutovers et tests proportionnés, #5376 différable, risques d'intégrité/autorisation non reportables ; Focus implémenteur unique / CI-CD intégrateur.
 
 ## Application particulière : P0 Notices C / miniatures #6366 (16/11/2026)
 
-La livraison [#6366](https://github.com/pzia/cifereca/issues/6366) consiste en **un parcours réel** fournisseur → Notice C canonique persistante/indexée → Search C-first progressive sans blocage GTK → façade partagée N1/N2/N3 → six vues liste/détail. Preuves proportionnées : producteur réellement parsé, deux sources même édition prouvée et non-fusion homonyme, reboot/offline, recherche rapide/lente, miniatures et actions des six vues. Une couverture non qualifiable peut rester placeholder et un lien EPUB retéléchargeable pourra être reconstruit sans perdre la copie locale unique.
-
-Ne sont pas préalables à la clôture : toutes les combinaisons de comptes/profils, ABA/TTL, CAS/invalidation fine de chaque niveau, strict single-flight 1 GET dans chaque ordonnancement, métriques HIT/MISS exhaustives, E2E de chaque micro-état UX, intégration de tous les fournisseurs ou scheduler P2 #4982. **Non reportables** : mauvaise association édition/image, fuite de données privées/credentials, faux droits, mutation sous mauvais compte, corruption SQLite, perte d'EPUB unique ou gel GTK manifeste ; les tests/gates réellement requis restent obligatoires sur le HEAD exact. Les P1 propriétaires demeurent indépendants après clôture du P0.
-
+Historique, parent clos `not_planned` : contrat et arbitrages capitalisés dans [AGENTS.md](../AGENTS.md), section « #6366 — priorité Notices C + miniatures, six vues (16/11/2026) ». Source [#6366](https://github.com/pzia/cifereca/issues/6366). Aucun PASS global induit ; les P1 gardent leurs propres critères. Gates et risques non reportables restent impératifs.
 
 ## Objectif
 

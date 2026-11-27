@@ -1,22 +1,17 @@
 # Rôle : cicd
 
-**Contrats et preuves :** [index d'autorité documentaire Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinction obligatoire entre politique cible, API réellement installée et historique daté ; ce renvoi ne modifie pas la frontière de ce rôle.
+**Contrats et preuves :** [index normatif](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md) (cible, API installée, historique distincts ; périmètre du rôle inchangé).
 
 ## Mission
 Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolution technique des conflits de PR** et les merges.
 
 ## Découplage #5975 — binôme autorisé, sans second implémenteur (16/11/2026)
 
-Avec un agent Focus chargé de **l'analyse et de l'implémentation uniques** du P0, CI/CD peut travailler en parallèle sur le suivi des checks, l'ordre des PR empilées, les conflits Git **mécaniques**, les problèmes de harnais/workflow et les fusions après contrôle du SHA effectif. Une correction de tests purement infrastructurels appartient à CI/CD ; un test métier rouge (source/compte, ADEPT, prêts, consensus d'ABI, écrivain SQLite) retourne au pilote, avec trace et reproduction. **Ne pas ajouter de durcissement métier de races/epochs hors cutover simplement pour faire progresser une PR**, ni contourner les protections de branche.
-
-La décision de clôture du P0 suit le recentrage du [#5975](https://github.com/pzia/cifereca/issues/5975) ; la présence d'améliorations différables (#5376 ou scénarios extrêmes) ne rend pas automatiquement toutes les PR fonctionnelles non fusionnables. Les gates réellement requis et l'absence de régression grave restent impératifs.
+Historique, parent clos réalisé : [règles capitalisées](../../AGENTS.md), [#5975](https://github.com/pzia/cifereca/issues/5975). CI/CD traite checks, ordre des PR empilées, conflits Git mécaniques, harnais/workflows et merge au SHA exact ; test métier rouge (source/compte, ADEPT, prêts, ABI, writer SQLite) ou divergence de contrat → pilote avec trace/reproduction. Pas de second implémenteur, durcissement métier hors cutover ni contournement de protections. #5376 et scénarios extrêmes différables ne rendent pas automatiquement une PR non fusionnable ; gates requis et risques graves impératifs.
 
 ## P0 #6366 — validations ciblées et merge (16/11/2026)
 
-À la réception du parent #6366, vérifier au HEAD exact une preuve intégrée source fournisseur réelle → C SQLite/index persistant → Search C-first progressif → get_cover N2/N3 → **six vues liste/détail**, avec reboot/offline, non-fusion de deux éditions homonymes et isolation des données privées. Pour la clôture, ne pas transformer les matrices historiques de TTL/ABA/tous comptes/1 GET exact, les micro-interactions GTK, les métriques exhaustives ou l'ordonnanceur P2 #4982 en gates supplémentaires.
-
-Les checks GitHub réellement requis restent obligatoires ; pas de merge avec erreur de CI ou échec fonctionnel. CI/CD corrige harnais/conflits Git mécaniques puis fusionne ; les divergences d'édition, de source, de compte, d'autorisation ou d'ABI reviennent au pilote métier. Les P1 continuent après clôture #6366 selon leurs critères propres. Voir [#6366](https://github.com/pzia/cifereca/issues/6366).
-
+Historique, parent clos `not_planned` : [règles capitalisées](../../AGENTS.md), [#6366](https://github.com/pzia/cifereca/issues/6366). Vérifier au HEAD exact les preuves intégrées réellement exigées, pas les matrices TTL/ABA, tous comptes, 1 GET, micro-UX, métriques ni ordonnanceur P2 #4982 comme gates supplémentaires. Erreur CI ou échec fonctionnel : pas de merge ; harnais/conflit mécanique → CI/CD, divergence édition/source/compte/autorisation/ABI → pilote. P1 indépendants, aucune réception globale implicite.
 
 ## Ordre d'itération
 1. Résoudre d'abord les problèmes CI/CD et de chaîne de tests.
@@ -85,7 +80,7 @@ La dérogation liée au quota GitHub Actions de l'issue #310 est **expirée : ti
 
 ## Revue de clôture et `PU`
 
-Avant une nouvelle relance, une enquête additionnelle ou le classement « bloqué », comparer les **critères restants** aux preuves du HEAD exact. Si un retour **nouveau et indispensable de l'utilisateur** bloque réellement un critère, le pilote de l'issue peut **documenter la question précise, les preuves/PR/HEAD/runs, 2–3 options maximum et le critère de reprise, puis apposer directement `PU`**. Si CI/CD pilote effectivement l'issue, il peut faire cette apposition lui-même. **Aucune reprise, test, merge ni clôture de l'issue étiquetée `PU`, même si des checks sont verts** ; seul Backlog retire le label. Une CI en cours/rouge, un conflit Git résoluble ou une recette UX non indispensable ne constituent pas `PU`. Lorsque le retour est seulement utile, le solliciter sans bloquer et **fusionner/clore dès que les preuves requises suffisent**.
+Appliquer la [politique commune de clôture et PU](../../docs/AGENT-DELIVERY-POLICY.md#revue-de-clôture--retour-utilisateur-et-pu) au HEAD exact avant toute relance. CI rouge/en cours, conflit Git résoluble ou recette facultative : pas de PU. Le pilote CI/CD peut le poser ; Backlog seul le retire. Jamais de reprise/test/merge/clôture sous PU, même CI verte ; retour facultatif sans blocage.
 
 ## E2E ciblés, fusion et clôture en réalisation asynchrone
 

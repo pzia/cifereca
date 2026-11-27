@@ -206,7 +206,7 @@ class Tests(unittest.TestCase):
             c.snapshot(self.api, 123)
 
     def test_local_apply_refused_before_any_network(self):
-        with patch.object(c, "ReadOnlyAPI") as api, patch.object(c, "head") as head:
+        with patch.dict(c.os.environ, {}, clear=True), patch.object(c, "ReadOnlyAPI") as api, patch.object(c, "head") as head:
             with redirect_stderr(io.StringIO()):
                 self.assertEqual(c.main(["apply"]), 2)
             api.assert_not_called()
@@ -309,6 +309,65 @@ class Tests(unittest.TestCase):
                 with self.assertRaises(c.Refusal):
                     call()
             opener.assert_not_called()
+
+    def test_apply_expiration_after_consumption(self):
+        raw = c.encode(self.plan)
+        self.api.pilot["body"] = raw.decode("utf-8")
+        expired = NOW + dt.timedelta(hours=2)
+        clock = iter([NOW, NOW, NOW, expired])
+        with self.assertRaisesRegex(c.Refusal, "plan expired during execution"):
+            c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
+                         docs_at=docs, clock=lambda: next(clock))
+        self.assertEqual(self.api.writes, [("consume", 999)])
+
+    def test_apply_no_positive_gain(self):
+        self.api.comments[0]["body"] = "tiny"
+        self.plan["issues"][0]["snapshot_sha256"] = c.fingerprint(c.snapshot(self.api, 123))
+        with self.assertRaisesRegex(c.Refusal, "no positive bounded projected gain"):
+            self.apply()
+        self.assertEqual(self.api.writes, [])
+
+    def test_apply_removal_bound(self):
+        self.api.comments = [{"id": i, "body": "x" * 1000} for i in range(1, 12)]
+        self.api.issue["comments"] = 11
+        self.plan["issues"][0].update(snapshot_sha256=c.fingerprint(c.snapshot(self.api, 123)),
+                                      remove_comments=list(range(1, 12)))
+        with self.assertRaisesRegex(c.Refusal, "too many comment removals"):
+            self.apply()
+        self.assertEqual(self.api.writes, [])
+
+    def test_mutation_http_permission_failure_and_no_leak(self):
+        api = c.WriteAPI("synthetic-secret")
+        err = c.urllib.error.HTTPError(c.API + "/issues/123", 403, "secret response", {}, None)
+        with patch.object(api.opener, "open", side_effect=err) as opener:
+            with self.assertRaisesRegex(c.Refusal, "GitHub request failed; do not retry mutations") as exc:
+                api.replace_body(123, "private synthesis")
+            self.assertNotIn("secret", str(exc.exception))
+            self.assertNotIn("synthesis", str(exc.exception))
+            opener.assert_called_once()
+
+    def test_mutation_http_methods_and_payload(self):
+        api = c.WriteAPI("synthetic-secret")
+        with patch.object(api.opener, "open") as opener:
+            response = opener.return_value.__enter__.return_value
+            response.status = 201
+            response.read.return_value = b'{"id":88}'
+            marker = c.CONSUMED + "a" * 64
+            api.consume(999, marker)
+            req = opener.call_args.args[0]
+            self.assertEqual((req.method, req.full_url, c.strict_json(req.data)),
+                             ("POST", c.API + "/issues/999/comments", {"body": marker}))
+            response.status = 200
+            api.replace_body(123, "synthesis")
+            req = opener.call_args.args[0]
+            self.assertEqual((req.method, req.full_url, c.strict_json(req.data)),
+                             ("PATCH", c.API + "/issues/123", {"body": "synthesis"}))
+            response.status = 204
+            response.read.return_value = b""
+            api.delete_comment(8)
+            req = opener.call_args.args[0]
+            self.assertEqual((req.method, req.full_url, req.data),
+                             ("DELETE", c.API + "/issues/comments/8", None))
 
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
