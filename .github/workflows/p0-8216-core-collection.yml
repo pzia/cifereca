@@ -1,0 +1,106 @@
+name: P0 8216 canonical Core collection
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-collection.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46065388826
+          pattern: core-shard-[2356]
+          path: ${{ runner.temp }}/original
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46066816167
+          name: repaired-core-shard-0
+          path: ${{ runner.temp }}/repaired/core-shard-0
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/collection"
+          mkdir -p "$out"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          git fetch origin e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          test "$(git rev-parse FETCH_HEAD)" = e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          python -m pip freeze > "$out/dependencies.txt"
+          for label in A B; do
+            case "$label" in A) sha=4fd07df843b9d940746bbfe962a1877eec15d431;; B) sha=e8ed298116e57d44645c37cd3fa7ad91e1e9077e;; esac
+            git checkout --detach "$sha"
+            test "$(git rev-parse HEAD)" = "$sha"
+            test -z "$(git status --porcelain --untracked-files=no)"
+            python -m scripts.ci_test_collection_inventory --suite tests --output "$out/$label.json" > "$out/$label.log" 2>&1 || { tail -80 "$out/$label.log"; exit 1; }
+            test -z "$(git status --porcelain --untracked-files=no)"
+          done
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, xml.etree.ElementTree as ET
+          from _pytest.junitxml import mangle_test_address
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          out = root/"collection"
+          selected = {0,2,3,5,6}
+          report = {"missing_shards":sorted(set(range(8))-selected),"arms":{}}
+          bad = False
+          for arm,sha in (("A","4fd07df843b9d940746bbfe962a1877eec15d431"),("B","e8ed298116e57d44645c37cd3fa7ad91e1e9077e")):
+              inv = json.loads((out/f"{arm}.json").read_text())
+              assert inv["source_sha"]==sha and inv["collection_exit_code"]==0
+              items = inv["items"]
+              assert len(items)==inv["count_collected"]
+              expected = collections.defaultdict(collections.Counter)
+              mapping = collections.defaultdict(list)
+              non_file_sharded = []
+              for item in items:
+                  node = item["nodeid"]
+                  path = node.split("::",1)[0]
+                  if not(path.startswith("tests/") and pathlib.PurePosixPath(path).name.startswith("test") and path.endswith(".py")):
+                      non_file_sharded.append(node)
+                      continue
+                  shard = int(hashlib.sha256(path.encode()).hexdigest(),16)%8
+                  parts = mangle_test_address(node)
+                  key = (".".join(parts[:-1]),parts[-1])
+                  mapping[(shard,key)].append(node)
+                  expected[shard][key]+=1
+              collisions = [{"shard":s,"key":key,"nodeids":nodes} for (s,key),nodes in mapping.items() if len(nodes)>1]
+              rec = report["arms"][arm] = {"source_sha":sha,"collected":len(items),"matrix":inv["matrix"],"shard_collected_counts":{str(s):sum(expected[s].values()) for s in range(8)},"non_file_sharded":non_file_sharded,"junit_key_collisions":collisions,"shards":{}}
+              if collisions or non_file_sharded: bad = True
+              for s in sorted(selected):
+                  folder = root/("repaired" if s==0 else "original")/f"core-shard-{s}"
+                  actual = collections.Counter()
+                  extra = []
+                  for case in ET.parse(folder/f"{arm}.plain.xml").findall(".//testcase"):
+                      key = (case.get("classname"),case.get("name"))
+                      if not key[0]:
+                          extra.append({"class":key[0],"name":key[1],"collection_skip":case.find("skipped") is not None})
+                      else:
+                          actual[key]+=1
+                  def rows(c):
+                      return [{"class":k[0],"name":k[1],"count":n} for k,n in sorted(c.items(),key=lambda i:repr(i[0]))]
+                  missing, added = expected[s]-actual,actual-expected[s]
+                  rec["shards"][str(s)] = {"collected":sum(expected[s].values()),"junit_items":sum(actual.values()),"classless_records":extra,"missing":rows(missing),"unexpected":rows(added)}
+                  if missing or added or any(not x["collection_skip"] for x in extra): bad=True
+                  print("RECONCILE",arm,s,"collected",sum(expected[s].values()),"JUnit",sum(actual.values()),"classless",len(extra),"missing",sum(missing.values()),"unexpected",sum(added.values()))
+              print("COLLECTED",arm,len(items),"unsharded",len(non_file_sharded),"ambiguous",len(collisions))
+          (out/"reconciliation.json").write_text(json.dumps(report,indent=2))
+          if bad: raise SystemExit("Unresolved collection reconciliation; see artifact")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-canonical-collection
+          path: ${{ runner.temp }}/collection
+          retention-days: 7
