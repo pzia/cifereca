@@ -40,6 +40,8 @@ def synchronize_usb_reader(
     check_cancelled: Callable[[], None] | None = None,
     artifact_id: str | None = None,
     exact_delta: bool = False,
+    cancelled: Callable[[], bool] | None = None,
+    progress: Callable[[int, int, int], None] | None = None,
 ) -> UsbSyncResult:
     """Apply only exact per-book confirmations from a fresh advisory delta.
 
@@ -109,7 +111,23 @@ def synchronize_usb_reader(
            for row in preview.rows):
         return UsbSyncResult("blocked")
     copied = removed = pending = failed = 0
+    processed = copied_bytes = 0
+    total = sum(row.action in ("upload_candidate", "remove_candidate") for row in preview.rows)
+    def notify():
+        if progress is not None:
+            try:
+                progress(processed, total, copied_bytes)
+            except Exception:
+                pass  # Presentation failure is not a storage failure.
+    def stopped():
+        return cancelled is not None and cancelled()
+    def interrupted():
+        return UsbSyncResult("cancelled", copied=copied, removed=removed,
+                             pending=pending + total - processed, failed=failed)
+    notify()
     for row in preview.rows:
+        if stopped():
+            return interrupted()
         if check_cancelled is not None:
             check_cancelled()
         if row.action not in ("upload_candidate", "remove_candidate"):
@@ -140,6 +158,9 @@ def synchronize_usb_reader(
             )
             if result.status == "completed":
                 copied += 1
+                artifact = storage.artifact_get(row.artifact_id)
+                if type(artifact) is dict and type(artifact.get("size")) is int:
+                    copied_bytes += artifact["size"]
             else:
                 failed += 1
                 if result.status == "recovery_required":
@@ -167,6 +188,10 @@ def synchronize_usb_reader(
                 if result.status == "recovery_required":
                     break
 
+        processed += 1
+        notify()
+    if stopped():
+        return interrupted()
     # An earlier Core removal review may have refused an operation because
     # the originating GTK selection was revoked *during* inode hashing.
     # That refusal is not permission to persist a fresh observation under a

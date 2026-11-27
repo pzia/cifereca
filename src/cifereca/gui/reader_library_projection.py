@@ -16,7 +16,7 @@ from ..core.device_usb_variant_review import _SUFFIX
 
 _MAX_ROWS = 30000
 _MAX_DEVICES = 100000
-_FILTERS = frozenset({"all", "to_send", "to_remove", "without_intent"})
+_FILTERS = frozenset({"all", "to_send", "to_remove", "without_intent", "last_present", "anomalies"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,12 @@ def project_reader_library(
         }[desired]
         if (view_filter == "to_send" and desired != "keep"
                 or view_filter == "to_remove" and desired != "remove"
-                or view_filter == "without_intent" and desired != "none"):
+                or view_filter == "without_intent" and desired != "none"
+                or view_filter == "last_present" and last_known != "present"
+                or view_filter == "anomalies" and not (
+                    desired != "none" and (last_known == "unknown"
+                    or (desired == "keep" and last_known == "missing")
+                    or not row.get("target_relative_path")))):
             continue
         target = row.get("target_relative_path") if row is not None else None
         if not (managed_prefix and _relative(target) and target.startswith(managed_prefix)):

@@ -15,8 +15,8 @@ from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
 
-FILTERS = ("all", "to_send", "to_remove", "without_intent")
-FILTER_LABELS = ("Tous", "À mettre", "À retirer", "Sans intention")
+FILTERS = ("all", "to_send", "to_remove", "without_intent", "last_present", "anomalies")
+FILTER_LABELS = ("Tous", "À mettre", "À retirer", "Sans intention", "Dernier état présent", "À vérifier")
 
 
 def build_readers_page(window, *, Gtk, MasterDetailPage):
@@ -120,6 +120,16 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_sync(window, button)
     sync.connect("clicked", sync_clicked)
     page.header_actions.append(sync)
+    cancel = Gtk.Button.new_from_icon_name("process-stop-symbolic")
+    cancel._cifereca_action_id = "reader-sync-cancel"
+    cancel.set_tooltip_text("Interrompre la synchronisation en cours.")
+    def cancel_clicked(_button):
+        event = getattr(window, "_reader_sync_cancel", None)
+        if event is not None:
+            event.set()
+            window._reader_status_label.set_label("Interruption demandée…")
+    cancel.connect("clicked", cancel_clicked)
+    page.header_actions.append(cancel)
     local = Gtk.Button.new_from_icon_name("folder-new-symbolic")
     local._cifereca_action_id = "reader-local-pair"
     local.set_tooltip_text("Associer un dossier existant comme liseuse locale.")

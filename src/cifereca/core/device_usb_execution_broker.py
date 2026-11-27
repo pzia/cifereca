@@ -442,6 +442,8 @@ class ReaderUsbExecutionBrokerImpl:
     def admit_delta(
         self, *, identity_id: str, device_id: str, confirmations: tuple,
         mountpoint: Path, expected_profile_epoch: int, mount_key: tuple,
+        cancelled: Callable[[], bool] | None = None,
+        progress: Callable[[int, int, int], None] | None = None,
     ) -> Callable[[], UsbSyncResult]:
         """Capture a single explicitly confirmed exact delta, then run once.
 
@@ -530,6 +532,8 @@ class ReaderUsbExecutionBrokerImpl:
         lock, used = Lock(), [False]
 
         def check():
+            if cancelled is not None and cancelled():
+                raise RuntimeError("reader_delta_cancelled")
             if (not all(c.confirmed_at <= int(time.time()) < c.expires_at
                         for c in confirmed.values())
                     or not self._mount_attested(scope, mountpoint,
@@ -557,10 +561,10 @@ class ReaderUsbExecutionBrokerImpl:
                         plugin_manager=manager, plugin_id="storage.usb",
                         registry_generation=generation, confirmations=confirmed,
                         rights={}, policy_verifier=None, check_cancelled=check,
-                        exact_delta=True,
+                        exact_delta=True, cancelled=cancelled, progress=progress,
                     )
             except Exception:
-                return UsbSyncResult("blocked")
+                return UsbSyncResult("cancelled" if cancelled is not None and cancelled() else "blocked")
         return work
 
     def execute_one(

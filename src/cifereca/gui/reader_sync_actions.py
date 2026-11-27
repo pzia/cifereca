@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from threading import Event
 
 from ..core.device_usb_copy_admission import UsbCopyConsent
 from ..core.device_usb_removal_review import UsbRemovalConsent
@@ -95,28 +96,43 @@ def request_reader_sync(window, button, *, Adw=None):
                 tail = (secrets.token_hex(16), now, now + 240)
                 confirmations.append(UsbCopyConsent(*args, fmt, path, *tail)
                     if fmt is not None else UsbRemovalConsent(*args, path, receipt, *tail))
+            cancellation = Event()
+            def progress(done, total, copied_bytes):
+                # TaskRunner worker never touches GTK; publish via GLib.
+                from gi.repository import GLib
+                def show():
+                    if (getattr(window, "_reader_sync_cancel", None) is cancellation
+                            and current()):
+                        window._reader_status_label.set_label(
+                            f"Synchronisation : {done}/{total} fichiers · {copied_bytes} octets copiés.")
+                    return False
+                GLib.idle_add(show)
             try:
                 work = broker.admit_delta(identity_id=owner, device_id=device,
                     confirmations=tuple(confirmations), mountpoint=volume.mountpoint,
-                    expected_profile_epoch=epoch, mount_key=volume.selection_key())
+                    expected_profile_epoch=epoch, mount_key=volume.selection_key(),
+                    cancelled=cancellation.is_set, progress=progress)
             except Exception:
                 error()
                 return
             window._reader_sync_active = True
+            window._reader_sync_cancel = cancellation
             window._reader_status_label.set_label("Synchronisation en cours…")
             def finished(value):
                 window._reader_sync_active = False
+                window._reader_sync_cancel = None
                 if current():
                     window._render_readers()
                     if type(value) is UsbSyncResult:
                         window._reader_status_label.set_label(
-                            f"Synchronisation : {value.copied} copié(s), {value.removed} retiré(s), "
+                            ("Synchronisation interrompue : " if value.status == "cancelled" else "Synchronisation : ") + f"{value.copied} copié(s), {value.removed} retiré(s), "
                             f"{value.pending} en attente, {value.failed} échec(s). "
                             + ("Observation vérifiée." if value.observed else "Présence non confirmée."))
                     else:
                         error()
             def failed(exc):
                 window._reader_sync_active = False
+                window._reader_sync_cancel = None
                 error(exc)
             try:
                 window.runner.submit("Synchroniser la liseuse…", work, ok=finished,

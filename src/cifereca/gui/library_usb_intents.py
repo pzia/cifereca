@@ -125,10 +125,10 @@ def build_library_usb_intents(
         devices.append((device_id, label, desired, fingerprint))
     if not devices:
         return None
-    menu = Gtk.MenuButton(label="Liseuses…")
+    menu = Gtk.MenuButton(label="Envoyer à une liseuse…")
     menu._cifereca_action_id = "usb-intents"
     menu.set_tooltip_text(
-        "Enregistrer Mettre/Retirer comme souhaits ; aucune copie ou suppression USB."
+        "Préparer un envoi ; retirer un livre depuis le détail Liseuses."
     )
     popover = Gtk.Popover()
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -206,9 +206,10 @@ def build_library_usb_intents(
             )
 
     for device_id, label, desired, fingerprint in devices:
-        next_state = "remove" if desired == "keep" else "keep"
-        action = "Retirer de " if next_state == "remove" else "Mettre sur "
-        button = Gtk.Button(label=action + label)
+        next_state = "keep"
+        if desired == "keep":
+            continue
+        button = Gtk.Button(label="Mettre sur " + label)
         button._cifereca_action_id = "usb-intent:" + next_state + ":" + device_id
         button.add_css_class("flat")
         button.set_tooltip_text(
@@ -226,7 +227,7 @@ def build_library_usb_intents(
     menu.set_popover(popover)
     if callable(getattr(detail, "add_group", None)):
         detail.add_group("Liseuses · intentions", status_rows)
-    return menu
+    return menu if any(desired != "keep" for _, _, desired, _ in devices) else None
 
 
 __all__ = ["build_library_usb_intents"]
