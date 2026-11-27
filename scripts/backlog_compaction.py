@@ -132,7 +132,7 @@ def issue_data(api, n, closed=True):
     require(type(issue.get("body")) is str or issue.get("body") is None, "invalid issue body")
     return issue
 
-def snapshot(api, n, closed=True):
+def scan_snapshot(api, n, closed=True):
     first = issue_data(api, n, closed=closed)
     comments = []
     for page in range(1, MAX_PAGES + 1):
@@ -149,9 +149,29 @@ def snapshot(api, n, closed=True):
         ids.append(number(c.get("id")))
     require(len(set(ids)) == len(ids), "duplicate comment during pagination")
     last = issue_data(api, n, closed=closed)
-    require(first == last and len(comments) == first.get("comments"), "issue changed during scan")
-    # Hash entire REST snapshots: fail conservatively on metadata or content drift.
-    return {"issue": first, "comments": sorted(comments, key=lambda c: c["id"])}
+    require(len(comments) == first.get("comments"), "issue changed during scan")
+    return first, last, sorted(comments, key=lambda c: c["id"])
+
+def issue_timestamp_only(before, after):
+    left, right = dict(before), dict(after)
+    old, new = left.pop("updated_at", None), right.pop("updated_at", None)
+    return (left == right and old is not None and new is not None
+            and timestamp(old) <= timestamp(new))
+
+def snapshot(api, n, closed=True):
+    # A bounded full reread handles delayed issue updated_at after comment writes.
+    # Never normalize the returned snapshot or retry substantive drift.
+    prior_issue = prior_comments = None
+    for _ in range(3):
+        first, last, comments = scan_snapshot(api, n, closed)
+        if prior_issue is not None:
+            require((first == prior_issue or issue_timestamp_only(prior_issue, first))
+                    and comments == prior_comments, "issue changed during scan")
+        if first == last:
+            return {"issue": last, "comments": comments}
+        require(issue_timestamp_only(first, last), "issue changed during scan")
+        prior_issue, prior_comments = last, comments
+    raise Refusal("unstable issue timestamp during scan")
 
 def fingerprint(snap):
     return sha256(encode(snap))
@@ -508,10 +528,8 @@ def same_after_write(before, after):
     """Allow only monotonic issue timestamp drift after our verified mutation."""
     if before == after:
         return True
-    left, right = dict(before["issue"]), dict(after["issue"])
-    old, new = left.pop("updated_at", None), right.pop("updated_at", None)
-    return (left == right and before["comments"] == after["comments"]
-            and old is not None and new is not None and timestamp(old) <= timestamp(new))
+    return (issue_timestamp_only(before["issue"], after["issue"])
+            and before["comments"] == after["comments"])
 
 def lot_plan(manifest):
     """Stable write order based solely on the verified original manifest."""
@@ -549,13 +567,18 @@ def expected_prefix(manifest, count):
             c.pop("updated_at", None)
     return result
 
-def verify_lot_prefix(api, manifest, digest, commit, count):
-    """No mutation unless the exact durable journal and all original texts agree."""
+def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
+    """Verify the entire real prefix separately from the durable journal cursor."""
+    if journal_count is None:
+        journal_count = count
+    require(0 <= journal_count <= count <= journal_count + LOT_BATCH,
+            "invalid partial prefix")
     parent = manifest["p0"]
     require("master" in manifest, "not a historical lot")
     require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"],
             "master inventory drift")
     states = {}
+    originals = {s["issue"]["number"]: s for s in manifest["snapshots"]}
     for expected in expected_prefix(manifest, count):
         n = expected["issue"]["number"]
         snap = snapshot(api, n)
@@ -564,22 +587,30 @@ def verify_lot_prefix(api, manifest, digest, commit, count):
         journals = [c for c in observed["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
         if n == parent:
             markers = [START + digest + " " + commit] + [
-                progress_marker(digest, commit, i) for i in range(LOT_BATCH, count + 1, LOT_BATCH)]
+                progress_marker(digest, commit, i) for i in range(LOT_BATCH, journal_count + 1, LOT_BATCH)]
             require([c["body"] for c in journals] == markers
-                    and all(c["author"]["login"] == "github-actions[bot]" for c in journals),
-                    "lot journal or cursor mismatch")
+                    and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
+                            for c in journals), "lot journal or cursor mismatch")
+            master, members, _ = lot_attachment(api, snap["issue"])
+            require(master == manifest["master"] and set(members) == set(originals) - {parent},
+                    "lot attachment drift")
             observed["comments"] = [c for c in observed["comments"] if c not in journals]
             expected["issue"].pop("updated_at", None)
         else:
             require(not journals, "unexpected child journal")
+        original = originals[n]
         if "updated_at" not in expected["issue"]:
-            observed["issue"].pop("updated_at", None)
-        for want, seen in zip(expected["comments"], observed["comments"]):
+            require(timestamp(original["issue"]["updated_at"]) <= timestamp(observed["issue"].pop("updated_at")),
+                    "issue timestamp regressed")
+        for old, want, seen in zip(original["comments"], expected["comments"], observed["comments"]):
             if "updated_at" not in want:
-                seen.pop("updated_at", None)
+                require(timestamp(old["updated_at"]) <= timestamp(seen.pop("updated_at")),
+                        "comment timestamp regressed")
         require(observed == expected, "incomplete or divergent lot prefix")
         subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
-        require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
+        require(type(subs) is list and len(subs) < 100
+                and snap["issue"].get("sub_issues_summary", {}).get("total") == len(subs)
+                and sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
     return states
 
 def consolidate(api, stage, event_issue, current, clock=None):
@@ -680,9 +711,11 @@ def continue_lot(api, stage, event_issue, current):
                 ("id", "number", "body", "title", "state", "state_reason", "closed_at", "labels", "assignees")),
             "continuation control changed")
     data = strict_json(event_issue["body"].encode())
-    exact_keys(data, ("version", "p0", "stage_sha", "manifest_sha256", "main_sha", "cursor"))
-    require(type(data["version"]) is int and data["version"] == 1 and data["main_sha"] == current,
-            "stale continuation")
+    keys = ("version", "p0", "stage_sha", "manifest_sha256", "main_sha", "cursor")
+    require(type(data.get("version")) is int and data["version"] in (1, 2), "invalid continuation version")
+    recovery = data["version"] == 2
+    exact_keys(data, keys + ("applied",) if recovery else keys)
+    require(data["main_sha"] == current, "stale continuation")
     parent = number(data["p0"])
     require(parent not in (8195, control) and event_issue["title"] == CONTINUE_TITLE + str(parent),
             "invalid continuation parent")
@@ -697,9 +730,13 @@ def continue_lot(api, stage, event_issue, current):
     require(parent in numbers and control not in numbers and 8195 not in numbers, "invalid staged corpus")
     mutations = lot_plan(manifest)
     cursor = data["cursor"]
-    require(type(cursor) is int and 0 < cursor < len(mutations) and cursor % LOT_BATCH == 0,
-            "invalid progress cursor")
-    states = verify_lot_prefix(api, manifest, digest, commit, cursor)
+    require(type(cursor) is int and 0 <= cursor < len(mutations) and cursor % LOT_BATCH == 0
+            and (recovery or cursor > 0), "invalid progress cursor")
+    end = min(cursor + LOT_BATCH, len(mutations))
+    applied = data["applied"] if recovery else cursor
+    require(type(applied) is int and cursor <= applied <= end
+            and (not recovery or cursor == 0 or applied > cursor), "invalid applied prefix")
+    states = verify_lot_prefix(api, manifest, digest, commit, applied, journal_count=cursor)
     written = set()
     def guard():
         main_guard(api, current)
@@ -714,8 +751,7 @@ def continue_lot(api, stage, event_issue, current):
         require(stage.remote_head(parent) == commit, "staging ref drift")
         main_guard(api, current)
     guard()
-    end = min(cursor + LOT_BATCH, len(mutations))
-    for n, cid, body in mutations[cursor:end]:
+    for n, cid, body in mutations[applied:end]:
         guard()
         if cid is None:
             api.replace_body(n, body)
@@ -731,7 +767,11 @@ def continue_lot(api, stage, event_issue, current):
     marker = DONE + digest + " " + commit if end == len(mutations) else progress_marker(digest, commit, end)
     response = api.mark(parent, marker)
     require(response.get("body") == marker, "continuation journal mismatch")
-    expected_change(states[parent], snapshot(api, parent), marker=response)
+    after = snapshot(api, parent)
+    expected_change(states[parent], after, marker=response)
+    states[parent] = after
+    written.add(parent)
+    guard()
     return {"status": "STAGED_AND_COMPACTED" if end == len(mutations) else "LOT_PENDING",
             "p0": parent, "stage_sha": commit, "manifest_sha256": digest, "cursor": end, "total": len(mutations)}
 
