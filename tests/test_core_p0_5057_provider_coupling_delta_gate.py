@@ -361,3 +361,9 @@ def test_identical_condition_moved_to_other_control_branch():
     old = "if enabled:\n    x = source == 'kobo'\n"
     new = "if enabled:\n    pass\nelse:\n    x = source == 'kobo'\n"
     assert added_signals(old, new) == {("comparisons", "kobo"): 1}
+
+
+def test_aliased_provider_invocation_change_is_a_new_signature():
+    old = "def run(service):\n    invoke = getattr(service, 'kobo_action')\n    invoke('read')\n"
+    new = old.replace("'read'", "'write'")
+    assert added_signals(old, new) == {("provider_dynamic_calls", "kobo"): 1}

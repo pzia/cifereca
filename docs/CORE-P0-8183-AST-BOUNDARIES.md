@@ -20,10 +20,12 @@ D01–D06, D11–D13 ; aucun changement des ports métier ou de l'autorité des 
   requires/recommends ou contrat de catégorie pour les références inter-package
   détectées. Les imports relatifs et services intra-package restent admis.
   L'unité de qualification statique est le package, pas le descriptor individuel
-  lorsque plusieurs entrypoints partagent des modules.
+  lorsque plusieurs entrypoints partagent des modules. Les identifiants de
+  services Core historiques comme `llm` ne sont pas des plugins installés ;
+  les IDs externes inconnus ne sont pas assimilés à des packages du dépôt.
 - D11 : les 28 packages recensés ont une qualification dans le graphe CI ;
   les quatre packages maintenance.tool alimentent maintenance-page via le
-  broker Core maintenance.page.host, d'où les arêtes explicites. Les autres
+  broker Core maintenance.page.host, d'où les arêtes explicites. Les
   sept packages auparavant non qualifiés ont été parcourus : pas d'import
   inter-package ni de résolution nommée externe relevés ; BiblioAccess est
   couvert comme fournisseur de provider.library par le contrat home-page.

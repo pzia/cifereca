@@ -584,9 +584,15 @@ def _boundary_findings(
         name = dotted(node)
         if name in service_aliases:
             return service_aliases[name]
+        methods = {"service", "services", "select_service", "subscribe_services"}
         if isinstance(node, ast.Attribute) and receiver(node.value) == "context":
-            if node.attr in {"service", "services", "select_service", "subscribe_services"}:
+            if node.attr in methods:
                 return node.attr
+        if (isinstance(node, ast.Call) and qualified(node.func) == "builtins.getattr"
+                and len(node.args) >= 2 and receiver(node.args[0]) == "context"):
+            method = literal(node.args[1])
+            if method in methods:
+                return method
         return ""
 
     for _ in range(len(assignments) + 1):
@@ -664,6 +670,13 @@ def _boundary_findings(
                         check_module(node, prefix + ("." + suffix if suffix else ""))
                 else:
                     check_module(node, module)
+                    if name == "builtins.__import__" and _is_public_plugin_api(module):
+                        fromlist = call_arg(node, 3, "fromlist")
+                        if isinstance(fromlist, (ast.List, ast.Tuple)):
+                            for item in fromlist.elts:
+                                attribute = literal(item)
+                                if attribute is not None and attribute.startswith("_"):
+                                    add(node, module + "." + attribute)
             elif name == "sys.modules.get":
                 module = literal(call_arg(node, 0, "key"))
                 if module is not None:
@@ -678,7 +691,10 @@ def _boundary_findings(
                 argument = literal(call_arg(node, 0, "plugin_id" if method == "service" else "category_id"))
                 if argument is not None:
                     if method == "service":
-                        if (plugin_owners.get(argument) != package
+                        # Core's historical named public service (e.g. llm)
+                        # is not an inter-plugin edge. Only installed plugin
+                        # IDs establish ownership; external IDs stay unknown.
+                        if (argument in plugin_owners and plugin_owners[argument] != package
                                 and argument not in declared_ids):
                             add(node, "undeclared_plugin_service:" + argument)
                     elif (category_owners.get(argument, set()) - {package}
@@ -721,10 +737,10 @@ def _repository_dependency_context(plugin_dirs: Sequence[Path]) -> dict[str, dic
         declared_ids = {
             dep if isinstance(dep, str) else dep["plugin"]
             for row in rows for field in ("requires", "recommends")
-            for dep in row.get(field, ())
+            for dep in (row.get(field) or ())
         }
         declared_categories = {
-            dep["category"] for row in rows for dep in row.get("requires_contracts", ())
+            dep["category"] for row in rows for dep in (row.get("requires_contracts") or ())
         }
         contexts[package] = {
             "package": package, "module_owners": module_owners,

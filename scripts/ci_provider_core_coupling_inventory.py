@@ -256,12 +256,15 @@ def _aliased_getattr_provider_calls(
                 matched.add(attribute.value.casefold())
             if not matched:
                 continue
-            if any(isinstance(node, ast.Call)
-                   and isinstance(node.func, ast.Name)
-                   and node.func.id == variable
-                   and node.lineno > stmt.lineno for node in nodes):
-                findings.append(make_row(stmt, sorted(matched)) if make_row else
-                                {"line": stmt.lineno, "providers": sorted(matched)})
+            invocations = [node for node in nodes if isinstance(node, ast.Call)
+                           and isinstance(node.func, ast.Name)
+                           and node.func.id == variable and node.lineno > stmt.lineno]
+            if invocations:
+                findings.append(
+                    make_row(stmt, sorted(matched),
+                             invocations=sorted(ast.dump(node) for node in invocations))
+                    if make_row else {"line": stmt.lineno, "providers": sorted(matched)}
+                )
     return findings
 
 
@@ -445,7 +448,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS,
                 matched = sorted(_match_providers(case.pattern, names, constants))
                 if matched:
                     dispatches.append(row(case.pattern, matched))
-    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names, row))
+    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names, row if structural else None))
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),

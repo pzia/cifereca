@@ -950,6 +950,7 @@ class PluginBoundaryTests(unittest.TestCase):
             "import importlib\nimportlib.import_module('.services', 'cifereca')",
             "from importlib import import_module\nimport_module(name)",
             "from cifereca.plugin_api import _internal",
+            "__import__('cifereca.plugin_api', fromlist=['_internal'])",
         )
         for source in cases:
             with self.subTest(source=source):
@@ -1021,6 +1022,10 @@ class PluginBoundaryTests(unittest.TestCase):
         context = dict(package="alpha", plugin_owners={"alpha.service": "alpha", "beta.service": "beta"},
                        category_owners={"provider.library": {"beta"}})
         self.assertEqual(_boundary_findings("def f(ctx): return ctx.service('alpha.service')", **context), [])
+        self.assertEqual(_boundary_findings("def f(ctx): return ctx.service('llm')", **context), [])
+        indirect = "def f(ctx):\n    resolve = getattr(ctx, 'service')\n    return resolve('beta.service')"
+        self.assertTrue(_boundary_findings(indirect, **context))
+        self.assertEqual(_boundary_findings(indirect, declared_ids={"beta.service"}, **context), [])
         source = "def f(ctx): return ctx.services('provider.library')"
         self.assertTrue(_boundary_findings(source, **context))
         self.assertEqual(_boundary_findings(source, declared_categories={"provider.library"}, **context), [])
