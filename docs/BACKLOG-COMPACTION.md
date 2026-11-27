@@ -38,8 +38,7 @@ d'absence ; relecture depuis un dépôt vide avant toute mutation.
 Ne jamais merger le staging. Les deux nettoyeurs de branches excluent
 ce namespace, y compris les suppressions forcées.
 
-Le journal START (SHA-256 et commit) précède les mutations. Les textes
-réellement raccourcissables sont remplacés par des renvois déterministes
+Le journal START (SHA-256 et commit) précède les mutations. Les textes d'au moins 256 octets réellement raccourcissables sont remplacés par des renvois déterministes
 au P0 en conservant les références explicites, les identifiants des
 commentaires et les métadonnées. Aucun commentaire ni issue supprimé.
 Pilote : dix commentaires modifiables au maximum ; gain contextuel positif
@@ -48,6 +47,20 @@ mutation, relire chaque résultat. Toute erreur arrête sans reprise
 automatique ; garder le staging, y compris après échec partiel.
 Fenêtre REST non atomique ; gel procédural du corpus obligatoire.
 Expiration 24 h, aucun rerun. Le dispatch manuel est lecture seule.
+Après une écriture vérifiée, une progression de l'horodatage de l'issue
+seule est admise ; toute autre divergence arrête. Si seuls les journaux
+de fin manquent et que toutes les mutations sont déjà effectives, Backlog
+peut fermer sous pzia un contrôle sans label ni assignation nommé
+`Réception consolidation #8195 — N` avec JSON exact :
+
+```json
+{"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","reviewed":true}
+```
+
+La réception relit le manifeste, vérifie les textes attendus, la provenance
+publique et les relations ; elle n'écrit que DONE. Elle refuse un corpus
+incomplet, un START absent ou un rejeu. La revue Backlog couvre les
+métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 
 ## Capitalisation différée
 

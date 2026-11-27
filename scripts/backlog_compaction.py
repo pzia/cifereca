@@ -341,6 +341,7 @@ DONE = "BACKLOG-STAGING-DONE v1 "
 PURGE_START = "BACKLOG-STAGING-PURGE-START v1 "
 PURGED = "BACKLOG-STAGING-PURGED v1 "
 PURGE_TITLE = "Capitalisation #8195 — "
+RECEIVE_TITLE = "Réception consolidation #8195 — "
 
 def stage_ref(n):
     return STAGE_PREFIX + str(number(n))
@@ -444,7 +445,7 @@ def main_guard(api, current):
             "main changed")
 
 def compact_text(text, parent):
-    if not text:
+    if not text or len(text.encode("utf-8")) < 256:
         return text
     refs = sorted(set(REFERENCE.findall(text)))
     stub = "Corpus transféré — P0 #" + str(parent) + " (consolidation #8195)."
@@ -452,6 +453,15 @@ def compact_text(text, parent):
         stub += "\nRéférences : " + " ".join(refs)
     # Both metrics must decrease. Keep short comments and their unique links intact.
     return stub if len(stub) < len(text) and len(stub.encode()) < len(text.encode()) else text
+
+def same_after_write(before, after):
+    """Allow only monotonic issue timestamp drift after our verified mutation."""
+    if before == after:
+        return True
+    left, right = dict(before["issue"]), dict(after["issue"])
+    old, new = left.pop("updated_at", None), right.pop("updated_at", None)
+    return (left == right and before["comments"] == after["comments"]
+            and old is not None and new is not None and timestamp(old) <= timestamp(new))
 
 def consolidate(api, stage, event_issue, current, clock=None):
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
@@ -483,10 +493,14 @@ def consolidate(api, stage, event_issue, current, clock=None):
     estimate = metrics(projected + [START + digest + " " + "0" * 40, DONE + digest + " " + "0" * 40])
     require(all(before[k] > estimate[k] for k in ("characters", "bytes")), "no positive contextual gain")
     commit = None
+    written = set()
     def guard():
         require(clock() < timestamp(event_issue["closed_at"]) + dt.timedelta(hours=24), "closure expired")
         main_guard(api, current)
-        require(all(snapshot(api, n) == snap for n, snap in states.items()), "corpus drift")
+        for n, snap in states.items():
+            observed = snapshot(api, n)
+            require(observed == snap or (n in written and same_after_write(snap, observed)), "corpus drift")
+            states[n] = observed
         for n in states:
             subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
             require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
@@ -502,6 +516,7 @@ def consolidate(api, stage, event_issue, current, clock=None):
         after = snapshot(api, parent)
         expected_change(states[parent], after, marker=marker)
         states[parent] = after
+        written.add(parent)
     mark(START + digest + " " + commit)
     for n, cid, body in mutations:
         guard()
@@ -514,6 +529,7 @@ def consolidate(api, stage, event_issue, current, clock=None):
         after = snapshot(api, n)
         expected_change(states[n], after, **change)
         states[n] = after
+        written.add(n)
     guard()
     mark(DONE + digest + " " + commit)
     guard()
@@ -529,6 +545,75 @@ def canonical_evidence(ref, path):
             bool(re.fullmatch(r"(?:docs|\.agents/roles|\.agents/skills)/[A-Za-z0-9_./-]+\.md", path)))
             and all(part not in ("", ".", "..") for part in path.split("/")), "invalid evidence path")
     return git("show", ref + ":" + path)
+
+def receive_completed(api, stage, event_issue, current):
+    """Finalize only an already completed deterministic transfer; never edit targets."""
+    require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
+            and not event_issue["labels"] and not event_issue["assignees"]
+            and event_issue["user"]["id"] == OWNER_ID, "invalid reception control")
+    control = number(event_issue["number"])
+    control_before = snapshot(api, control)
+    require(all(control_before["issue"].get(k) == event_issue.get(k) for k in
+                ("id", "number", "body", "title", "state", "state_reason", "closed_at", "labels", "assignees")),
+            "reception control changed")
+    data = strict_json(event_issue["body"].encode())
+    exact_keys(data, ("version", "p0", "stage_sha", "manifest_sha256", "main_sha", "reviewed"))
+    require(type(data["version"]) is int and data["version"] == 1 and data["main_sha"] == current
+            and data["reviewed"] is True, "reception review missing or stale")
+    parent = number(data["p0"])
+    require(parent not in (8195, control) and event_issue["title"] == RECEIVE_TITLE + str(parent),
+            "invalid reception parent")
+    commit = checked_sha(data["stage_sha"])
+    raw = stage.read_remote(parent, commit)
+    digest = sha256(raw)
+    require(digest == data["manifest_sha256"], "staging digest mismatch")
+    manifest = strict_json(raw)
+    require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent,
+            "invalid staged manifest")
+    originals = manifest["snapshots"]
+    numbers = issue_numbers([x["issue"]["number"] for x in originals])
+    require(parent in numbers and control not in numbers and 8195 not in numbers,
+            "invalid staged corpus")
+    states = {}
+    start = START + digest + " " + commit
+    for original in originals:
+        n = original["issue"]["number"]
+        snap = snapshot(api, n)
+        states[n] = snap
+        projected = public_projection(snap)
+        journals = [c for c in projected["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
+        if n == parent:
+            require(len(journals) == 1 and journals[0]["body"] == start
+                    and journals[0]["author"]["login"] == "github-actions[bot]", "missing exact START")
+        else:
+            require(not journals, "unexpected child journal")
+        projected["comments"] = [c for c in projected["comments"] if c not in journals]
+        expected = strict_json(encode(original))
+        expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
+        # Compare preserved public provenance; server timestamps are allowed to change
+        # only for items which were compacted (parent also received the journal).
+        if n == parent or expected["issue"]["body"] != original["issue"]["body"]:
+            expected["issue"].pop("updated_at")
+            projected["issue"].pop("updated_at")
+        for old, want, seen in zip(original["comments"], expected["comments"], projected["comments"]):
+            want["body"] = compact_text(old["body"], parent)
+            if want["body"] != old["body"]:
+                want.pop("updated_at")
+                seen.pop("updated_at")
+        require(expected == projected, "incomplete or divergent compacted corpus")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
+    main_guard(api, current)
+    require(snapshot(api, control) == control_before and all(snapshot(api, n) == snap for n, snap in states.items()),
+            "reception corpus drift")
+    require(stage.read_remote(parent, commit) == raw, "staging changed")
+    main_guard(api, current)
+    marker = DONE + digest + " " + commit
+    response = api.mark(parent, marker)
+    require(response.get("body") == marker, "reception journal mismatch")
+    expected_change(states[parent], snapshot(api, parent), marker=response)
+    return {"status": "RECEIVED_ALREADY_COMPACTED", "p0": parent, "stage_sha": commit,
+            "manifest_sha256": digest, "destructive_mutations": 0, "capitalized": False}
 
 def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_evidence):
     require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
@@ -604,8 +689,10 @@ def main(argv=None):
             else:
                 with tempfile.TemporaryDirectory(prefix="backlog-stage-") as directory:
                     stage = GitStage(directory, token)
-                    result = (purge_capitalized if event_issue["title"].startswith(PURGE_TITLE)
-                              else consolidate)(api, stage, event_issue, current)
+                    operation = (purge_capitalized if event_issue["title"].startswith(PURGE_TITLE)
+                                 else receive_completed if event_issue["title"].startswith(RECEIVE_TITLE)
+                                 else consolidate)
+                    result = operation(api, stage, event_issue, current)
         else:
             require(bool(re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*){0,2}", args.issues)), "invalid audit list")
             numbers = issue_numbers([int(n) for n in args.issues.split(",")])
