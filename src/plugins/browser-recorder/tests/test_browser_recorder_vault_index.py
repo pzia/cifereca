@@ -82,7 +82,8 @@ def test_snapshot_replacement_counts_only_final_encrypted_bytes(tmp_path, monkey
     writer.save(trace, "recording", force=True)
     first = vault.path / (writer.session_id + ".cbrv")
     previous_size = first.stat().st_size
-    monkeypatch.setattr(vault_api, "MAX_VAULT_BYTES", previous_size + 256)
+    from cifereca.core import capture_storage
+    monkeypatch.setattr(capture_storage, "MAX_VAULT_BYTES", previous_size + 256)
     # Every incremental/final replacement is safe: it occupies one file.
     writer.save(trace, "recording", force=True)
     writer.save(trace, "completed", force=True)

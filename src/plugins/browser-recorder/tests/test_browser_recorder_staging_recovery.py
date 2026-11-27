@@ -95,7 +95,8 @@ def test_orphan_ciphertext_counts_toward_quota_and_never_auto_deleted(tmp_path, 
     path = _orphan(vault, sid, "part")
     source = vault.path / (sid + ".cbrv")
     total = path.stat().st_size + source.stat().st_size
-    monkeypatch.setattr(vault_api, "MAX_VAULT_BYTES", total - 1)
+    from cifereca.core import capture_storage
+    monkeypatch.setattr(capture_storage, "MAX_VAULT_BYTES", total - 1)
     # Even in begin(), old orphan ciphertext must NOT be deleted silently.
     with pytest.raises(VaultError, match="vault_limit"):
         vault.begin(KEY)
