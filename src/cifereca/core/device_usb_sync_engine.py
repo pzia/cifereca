@@ -158,9 +158,13 @@ def synchronize_usb_reader(
             )
             if result.status == "completed":
                 copied += 1
-                artifact = storage.artifact_get(row.artifact_id)
-                if type(artifact) is dict and type(artifact.get("size")) is int:
-                    copied_bytes += artifact["size"]
+                if progress is not None:
+                    try:
+                        artifact = storage.artifact_get(row.artifact_id)
+                        if type(artifact) is dict and type(artifact.get("size")) is int:
+                            copied_bytes += artifact["size"]
+                    except Exception:
+                        pass  # Telemetry cannot invalidate a committed copy.
             else:
                 failed += 1
                 if result.status == "recovery_required":

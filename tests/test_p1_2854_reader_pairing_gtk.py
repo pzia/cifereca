@@ -339,15 +339,17 @@ def test_no_profile_or_no_selected_reader_can_change_settings(tmp_path):
 def test_inert_pairing_action_exists_on_native_reader_page(tmp_path):
     db, window, errors = rig(tmp_path)
     controls = window.readers_page.header_actions.children
-    assert len(controls) == 5
+    assert len(controls) == 11
     assert [getattr(control, "_cifereca_action_id", None)
             for control in controls[1:]] == [
-        "reader-usb-dry-run", "reader-usb-pair", "reader-usb-formats",
+        "reader-usb-dry-run", "reader-sync-delta", "reader-sync-cancel",
+        "reader-local-pair", "reader-setup-directory", "reader-directory-config",
+        "reader-forget", "reader-usb-pair", "reader-usb-formats",
         "reader-usb-activation",
     ]
-    assert window._reader_pair_button is controls[2]
+    assert window._reader_pair_button is controls[8]
     assert "choisir un volume USB monté" in window._reader_pair_button.tooltip
     assert "UUID en mode expert" in window._reader_pair_button.tooltip
-    assert window._reader_formats_button is controls[3]
-    assert window._reader_activation_button is controls[4]
+    assert window._reader_formats_button is controls[9]
+    assert window._reader_activation_button is controls[10]
     assert db.device_placements() == []
