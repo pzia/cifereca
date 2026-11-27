@@ -939,5 +939,92 @@ class PluginPackagingTests(unittest.TestCase):
         self.assertGreater(len(expected), 0)
 
 
+class PluginBoundaryTests(unittest.TestCase):
+    def test_dynamic_private_imports_aliases_literals_and_unresolved_names(self):
+        from scripts.plugin_packaging import _boundary_findings
+        cases = (
+            "from importlib import import_module as load\nload('cifereca.services')",
+            "import importlib as lib\nload = lib.import_module\nPATH = 'cifereca.' + 'storage'\nload(PATH)",
+            "import builtins as b\nb.__import__('cifereca.core')",
+            "import sys as s\ns.modules['cifereca.services']",
+            "import importlib\nimportlib.import_module('.services', 'cifereca')",
+            "from importlib import import_module\nimport_module(name)",
+            "from cifereca.plugin_api import _internal",
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertTrue(_boundary_findings(source))
+        self.assertIn((2, "dynamic_import_unresolved"),
+                      _boundary_findings("import importlib\nimportlib.import_module(name)"))
+
+    def test_public_dynamic_import_and_local_private_state_are_not_violations(self):
+        from scripts.plugin_packaging import _boundary_findings
+        cases = (
+            "from importlib import import_module as load\nload('cifereca.plugin_api.models')",
+            "import importlib\nimportlib.import_module('.models', 'cifereca.plugin_api')",
+            "def f(local):\n    return local._cache",
+            "class P:\n    def run(self):\n        return self._cache",
+            "def run(__import__):\n    return __import__('cifereca.services')",
+            "from . import sibling",
+            "def f(ctx):\n    return ctx.broker('tasks')",
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertEqual(_boundary_findings(source), [])
+
+    def test_private_context_host_and_broker_access_including_aliases(self):
+        from scripts.plugin_packaging import _boundary_findings
+        cases = (
+            "def f(context):\n    return context._service_resolver",
+            "def f(ctx):\n    alias = ctx\n    return alias._broker_resolver",
+            "def f(context):\n    api = context.broker('tasks')\n    return api._storage",
+            "def f(host):\n    return getattr(host, '_service')",
+            "class P:\n    def f(self):\n        return self._context._service_resolver",
+            "def f(pc: PluginContext):\n    return pc._config_resolver",
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertTrue(any("private_boundary_access" in target
+                                    for _, target in _boundary_findings(source)))
+
+    def test_cross_package_dependency_must_be_declared_for_all_package_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = make_plugin(root, "alpha", "org.cifereca.provider.alpha", "1.0")
+            beta = make_plugin(root, "beta", "org.cifereca.provider.beta", "1.0")
+            (beta / "beta_helper.py").write_text("value = 1\n")
+            manifest_path = alpha / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["plugins"][0]["type"] = "ui.page"
+            manifest_path.write_text(json.dumps(manifest))
+            nested = alpha / "nested"
+            nested.mkdir()
+            (nested / "helper.py").write_text(
+                "import beta_helper\n"
+                "def f(ctx):\n    resolve = ctx.service\n    return resolve('beta.service')\n"
+            )
+            with self.assertRaisesRegex(PackagingError, "undeclared_plugin_import:beta_helper"):
+                verify_repository(root)
+            (nested / "helper.py").write_text("def f(ctx):\n    resolve = ctx.service\n    return resolve('beta.service')\n")
+            with self.assertRaisesRegex(PackagingError, "undeclared_plugin_service:beta.service"):
+                verify_repository(root)
+            manifest["plugins"][0]["requires"] = [{"plugin": "beta.service", "version": ">=1"}]
+            manifest_path.write_text(json.dumps(manifest))
+            (nested / "helper.py").write_text(
+                "import beta_helper\n"
+                "def f(ctx):\n    return ctx.service('beta.service')\n"
+            )
+            self.assertEqual(len(verify_repository(root)), 2)
+
+    def test_declared_category_and_local_service_are_valid(self):
+        from scripts.plugin_packaging import _boundary_findings
+        context = dict(package="alpha", plugin_owners={"alpha.service": "alpha", "beta.service": "beta"},
+                       category_owners={"provider.library": {"beta"}})
+        self.assertEqual(_boundary_findings("def f(ctx): return ctx.service('alpha.service')", **context), [])
+        source = "def f(ctx): return ctx.services('provider.library')"
+        self.assertTrue(_boundary_findings(source, **context))
+        self.assertEqual(_boundary_findings(source, declared_categories={"provider.library"}, **context), [])
+
+
 if __name__ == "__main__":
     unittest.main()

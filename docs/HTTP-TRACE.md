@@ -218,7 +218,8 @@ PR CI l'exécute même si la modification n'ajoute pas de dépendance Python.
 Les types/erreurs HTTPX et `urllib.parse` restent autorisés ; constructeurs
 HTTPX directs, raccourcis réseau et piles urllib.request/requests/aiohttp/
 http.client sont refusés, y compris les alias simples et `getattr` littéral.
-Les doubles sous `tests/` sont exclus. Browser Recorder est la seule exception
-de production, par nom de package exact. Cette garde statique ne constitue pas
+Les doubles sous `tests/` sont exclus. Browser Recorder conserve son autonomie
+Playwright pour la navigation, la capture et le rejeu ; aucun fichier de son
+package n'est exempté du contrôle des piles HTTP Python. Cette garde statique ne constitue pas
 une sandbox ; les tests de consommateurs prouvent aussi le passage réel par le
 service et la fidélité des échanges capturés.
