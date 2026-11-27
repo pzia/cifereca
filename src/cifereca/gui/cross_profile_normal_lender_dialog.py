@@ -67,15 +67,18 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         for index, row in enumerate(rows)
     }
 
-    def route_current():
-        # This generation is plain owner state; no GTK read on the worker.
+    def route_generation_current():
         return (not getattr(window, "_closed", False)
                 and window.service is service
-                and getattr(panel, "_action_buttons" if canonical_binding is not None
-                            else "_rendered_search_detail", None) is visible
                 and getattr(window, "_route_display_token", None) is route
                 and getattr(window, "_identity_context_generation", None) == ui_identity
                 and getattr(window, "_account_context_generation", None) == ui_account)
+
+    def route_current():
+        # This generation is plain owner state; no GTK read on the worker.
+        return (route_generation_current()
+                and getattr(panel, "_action_buttons" if canonical_binding is not None
+                            else "_rendered_search_detail", None) is visible)
 
     def dialog_current():
         return route_current() and current()
@@ -97,6 +100,10 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                 or not lender_current(candidate) or not roster_current()):
             release()
             return
+        # Pin the exact consented occurrence for the independent local
+        # continuation. Never recover a lender from the currently shown row.
+        chosen_account = candidate._account
+        chosen_notice = candidate._notice if native_roster is not None else item
         stage = "submitted"
         dispatch_lock = Lock()
         dispatched = False
@@ -117,7 +124,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                 return {"status": "blocked"}
             return execute(
                 captured_candidate=candidate,
-                exact_notice=candidate._notice if native_roster is not None else item,
+                exact_notice=chosen_notice,
                 expected_requesting_identity_id=identity_id,
                 expected_requesting_identity=identity,
                 expected_context_epoch=account_epoch,
@@ -136,9 +143,36 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
                     and result.get("delivery") == "unavailable"
                     and result.get("transfer") == "blocked"
                     and result.get("retry_borrow") is False):
-                window._activity_result(
-                    "Prêt confirmé sur le profil prêteur. Livraison non vérifiée ; aucune copie lancée."
-                )
+                if chosen_account.identity_id == identity_id:
+                    window._activity_result(
+                        "Prêt confirmé sur votre compte. Livraison à vérifier dans vos prêts."
+                    )
+                else:
+                    window._activity_result(
+                        "Prêt confirmé sur le profil prêteur. Livraison non vérifiée ; aucune copie lancée."
+                    )
+                    # The normal lender claim is spent. The existing
+                    # local-only continuation rechecks the exact A-owned
+                    # placement, and requests a separate send consent.
+                    # Never replay the borrow or infer delivery from C.
+                    try:
+                        if (result.get("reason_code") ==
+                                "lender_loan_confirmed_transfer_unverified"
+                                and dialog_current()
+                                and candidate._account is chosen_account
+                                and candidate._notice is chosen_notice
+                                and lender_current(candidate)):
+                            from .cross_profile_local_send_controller import offer_cross_profile_local_send
+                            offer_cross_profile_local_send(
+                                window, borrowing_account=chosen_account,
+                                exact_notice=chosen_notice, expected_item=item,
+                                Adw=Adw, TaskPriority=TaskPriority, control=control,
+                                **({"detail_current": dialog_current,
+                                    "detail_worker_current": route_generation_current}
+                                   if canonical_binding is not None else {}),
+                            )
+                    except Exception:
+                        pass
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error("Ce choix n'est plus admissible.", "Emprunt entre profils")
             else:

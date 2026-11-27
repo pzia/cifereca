@@ -165,3 +165,115 @@ def test_c_first_facade_and_dialog_use_original_occurrence(harness, monkeypatch,
         assert state["status"] == "confirmed"
     done(result)
     assert work() == {"status": "blocked"}
+
+
+@pytest.mark.parametrize("view", ["search", "recommendations"])
+@pytest.mark.parametrize("delivery", ["present", "missing", "stale"])
+def test_c_first_confirmed_normal_lender_continues_to_exact_native_copy(
+        harness, monkeypatch, tmp_path, view, delivery):
+    import hashlib
+    import os
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    from cifereca.gui.cross_profile_normal_lender_dialog import present_normal_lender_choice
+    from tests.test_core_ui_p1_4987_cross_profile_borrow_controller import Dialog, Runner
+
+    service, account, session, first, second, c, _ = setup(harness, monkeypatch)
+    roster = service.possible_borrow_lenders_for_c_for_current_identity(
+        document=c.document, expected_epoch=c.epoch,
+    )
+    Dialog.made.clear()
+    route = object()
+    window = NS(
+        service=service, runner=Runner(), _activity_result=Mock(), show_error=Mock(),
+        _identity_context_generation=2, _account_context_generation=3,
+        _route_display_token=route,
+    )
+    panel = NS(window=window, _action_buttons=[])
+    visible = panel._action_buttons
+    current = lambda: (window._route_display_token is route
+                       and panel._action_buttons is visible)
+    # Both C-first routes use the same shared presenter, deliberately
+    # without any legacy window.search_page or SearchResult selection.
+    panel.route_name = view
+    assert present_normal_lender_choice(
+        panel, item=None, rows=roster.rows, current=current, service=service,
+        identity=service.current_identity, identity_id="default",
+        account_epoch=service._account_context_epoch, source_epoch=service._source_context_epoch,
+        Adw=NS(MessageDialog=Dialog), TaskPriority=NS(USER_ACTION="user"),
+        native_roster=roster, canonical_binding=(c.document, c.epoch),
+    )
+    index = next(i for i, row in enumerate(roster.rows) if row._notice is second)
+    Dialog.made[0].respond(f"choice-{index}")
+    Dialog.made[1].respond("borrow")
+    _, work, done, _, _ = window.runner.jobs[0]
+    result = work()
+    assert result["status"] == "confirmed" and session.actions == 1
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, first)) is None
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, second))["status"] == "confirmed"
+    # Synthetic local delivery, tied to the exact confirmed occurrence.
+    if delivery == "present":
+        payload = b"%PDF-1.7\nSynthetic confirmed lender copy\n"
+        digest = hashlib.sha256(payload).hexdigest()
+        source = tmp_path / "EBooks" / "alex" / "paris" / "Synthetic.pdf"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(payload)
+        artifact = "sha256:" + digest
+        service.storage.artifact_put({
+            "artifact_id": artifact, "sha256": digest,
+            "size": len(payload), "media_format": "pdf",
+        })
+        placement = service.storage.placement_put({
+            "identity_id": "alex", "provider_id": account.provider_id,
+            "source_item_id": second.record_id, "artifact_id": artifact,
+            "path": str(source), "state": "present", "metadata": {},
+        })
+        service.storage.acquisition_put({
+            "acquisition_id": "synthetic-native-selected-delivery",
+            "identity_id": "alex", "provider_id": account.provider_id,
+            "credential_id": account.credential_id, "account_id": account.unique_id,
+            "item_id": second.record_id, "status": "complete", "artifact_id": artifact,
+            "metadata": {"provider_loan_id": "loan-synthetic"},
+        })
+    done(result)
+    done(result)
+    assert len(window.runner.jobs) == 2 and session.actions == 1
+    _, check, ready, _, kw = window.runner.jobs[1]
+    assert kw["kind"] == "lender-placement-check"
+    resolved = check()
+    if delivery == "stale":
+        panel._action_buttons = []
+    ready(resolved)
+    if delivery == "stale":
+        assert len(Dialog.made) == 2
+        assert window._cross_profile_send_pending is None
+    elif delivery == "missing":
+        assert resolved.status == "unavailable" and resolved.loan == "confirmed"
+        assert "retry" in Dialog.made[-1].responses
+        assert "send" not in Dialog.made[-1].responses
+        Dialog.made[-1].respond("close")
+    else:
+        assert resolved.status == "present" and resolved._placement_id == placement
+        assert "send" in Dialog.made[-1].responses
+        assert len([p for p in service.storage.placements() if p["identity_id"] == "default"]) == 0
+        Dialog.made[-1].respond("send")
+        Dialog.made[-1].respond("send")
+        assert len(window.runner.jobs) == 3
+        _, send, complete, _, kw = window.runner.jobs[2]
+        assert kw["kind"] == "lender-local-send"
+        sent = send()
+        assert sent["status"] == "complete", sent
+        complete(sent)
+        copies = [p for p in service.storage.placements()
+                  if p["identity_id"] == "default"
+                  and (p.get("metadata") or {}).get("materialized_from") == placement]
+        assert len(copies) == 1
+        copied = Path(copies[0]["path"])
+        assert copied.read_bytes() == payload
+        assert os.stat(copied).st_ino != os.stat(source).st_ino
+    assert service.current_identity.identity_id == "default"
+    assert session.actions == 1
+    assert work() == {"status": "blocked"}
+    assert service.storage.entitlements() == []
+    assert window._cross_profile_send_pending is None
