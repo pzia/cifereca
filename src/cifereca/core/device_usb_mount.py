@@ -167,9 +167,9 @@ def observe_linux_usb_mount(
     is accepted. No caller-supplied `attested=True` flag can bypass Linux
     mountinfo, the real block-device UUID, or its USB sysfs ancestry.
 
-    Deliberately unsupported: MTP, FUSE, bind mounts, absent UUID symlink,
-    internal disks, emulated folders, and volumes behind USB abstractions
-    without an independently verifiable USB block-device lineage.
+    Physical USB still requires independently verifiable block lineage.
+    An explicitly bound local directory uses a separate inode/device proof;
+    it is never a fallback for a failed physical USB attestation.
     """
     if (type(identity_id) is not str or not identity_id
             or type(binding) is not dict
@@ -186,6 +186,10 @@ def observe_linux_usb_mount(
         return None
     fingerprint = metadata.get("usb_fingerprint")
     if type(fingerprint) is not str or _UUID.fullmatch(fingerprint) is None:
+        return None
+    if metadata.get("reader_transport") == "local":
+        return _observe_local_reader(identity_id, binding, mountpoint)
+    if metadata.get("reader_transport") not in (None, "usb") or fingerprint.startswith("local-"):
         return None
     try:
         # A user-controlled symlink (or an aliasing ancestor) must not change
@@ -239,6 +243,41 @@ def observe_linux_usb_mount(
             mountpoint, filesystem, major, minor, int(time.time()), mount_id,
         )
     except (OSError, ValueError, UnicodeError, OverflowError):
+        return None
+
+
+def _observe_local_reader(identity_id, binding, mountpoint):
+    """Attest an explicitly configured local directory, never a USB UUID fallback."""
+    metadata = binding["metadata"]
+    if (metadata.get("local_root") != str(mountpoint)
+            or mountpoint == Path("/") or len(mountpoint.parts) < 3):
+        return None
+    try:
+        if mountpoint.resolve(strict=True) != mountpoint:
+            return None
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open("/", flags)
+        try:
+            for component in mountpoint.parts[1:]:
+                child = os.open(component, flags, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            info = os.fstat(fd)
+            mount_id = _fd_mount_id(fd)
+            if (mount_id is None or metadata.get("local_inode") != info.st_ino
+                    or metadata.get("local_device") != info.st_dev
+                    or (mountpoint.lstat().st_dev, mountpoint.lstat().st_ino)
+                        != (info.st_dev, info.st_ino)):
+
+                return None
+            return LinuxUsbMount(
+                identity_id, binding["device_id"], metadata["usb_fingerprint"],
+                mountpoint, "local:" + str(info.st_ino), os.major(info.st_dev),
+                os.minor(info.st_dev), int(time.time()), mount_id,
+            )
+        finally:
+            os.close(fd)
+    except (OSError, ValueError, OverflowError):
         return None
 
 

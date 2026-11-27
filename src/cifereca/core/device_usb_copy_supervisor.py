@@ -25,7 +25,7 @@ from .device_usb_variant_review import _SUFFIX
 @dataclass(frozen=True, slots=True)
 class UsbCopyJournalEntry:
     consent: UsbCopyConsent
-    rights: UsbCopyRightsEvidence
+    rights: UsbCopyRightsEvidence | None
     size: int
     phase: Literal["pending", "checkpointed", "completed"] = "pending"
     pin: UsbCopyRecoveryPin | None = None
@@ -69,20 +69,22 @@ def _authorization_fresh(entry: UsbCopyJournalEntry) -> bool:
         type(consent.confirmed_at) is int and type(consent.expires_at) is int
         and 0 <= now - consent.confirmed_at <= _MAX_AGE
         and now < consent.expires_at <= consent.confirmed_at + _MAX_AGE
-        and type(rights.observed_at) is int and type(rights.valid_until) is int
+        and (rights is None or (
+        type(rights.observed_at) is int and type(rights.valid_until) is int
         and 0 <= now - rights.observed_at <= _MAX_AGE
         and now < rights.valid_until <= now + _MAX_AGE
         and (rights.loan_expires_at is not None or rights.source_kind == "purchase")
         and (rights.loan_expires_at is None
              or (type(rights.loan_expires_at) is int and now < rights.loan_expires_at))
+        ))
     )
 
 
 def execute_usb_copy(
     *, journal: UsbCopyJournal, lock_root: Path, mount: LinuxUsbMount,
-    directory_fd: int, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence,
+    directory_fd: int, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence | None,
     payload: bytes, plugin_manager: Any, plugin_id: str, registry_generation: int,
-    revalidate: Callable[[UsbCopyConsent, UsbCopyRightsEvidence], bool],
+    revalidate: Callable[[UsbCopyConsent, UsbCopyRightsEvidence | None], bool],
     review_target: Callable[[], bool],
     check_cancelled: Callable[[], None] | None = None,
 ) -> UsbCopyExecution:
@@ -95,7 +97,7 @@ def execute_usb_copy(
     journal transition must be durable before
     returning True. Uncertain or failed writes are left for supervised review.
     """
-    if (type(consent) is not UsbCopyConsent or type(rights) is not UsbCopyRightsEvidence
+    if (type(consent) is not UsbCopyConsent or (rights is not None and type(rights) is not UsbCopyRightsEvidence)
             or type(mount) is not LinuxUsbMount or not isinstance(lock_root, Path)
             or not lock_root.is_absolute() or not callable(revalidate)
             or type(directory_fd) is not int or directory_fd < 0
@@ -112,11 +114,12 @@ def execute_usb_copy(
             or type(consent.selected_format) is not str or consent.selected_format not in _SUFFIX
             or PurePosixPath(target).name != consent.sha256 + _SUFFIX[consent.selected_format]
             or consent.operation != "upload" or consent.artifact_id != "sha256:" + consent.sha256
-            or _coordinates(consent) != _coordinates(rights)
+            or (rights is not None and _coordinates(consent) != _coordinates(rights))
             or _coordinates(consent)[:3] != (mount.identity_id, mount.device_id, mount.usb_fingerprint)
-            or rights.personal_usb_copy_permitted is not True
-            or rights.source_kind not in ("loan", "purchase")
-            or not _text(rights.source_reference_id) or not _text(rights.policy_ref)
+            or (rights is not None and (
+                rights.personal_usb_copy_permitted is not True
+                or rights.source_kind not in ("loan", "purchase")
+                or not _text(rights.source_reference_id) or not _text(rights.policy_ref)))
             or sha256(payload).hexdigest() != consent.sha256):
         return UsbCopyExecution("blocked", "usb_copy_request_invalid")
 

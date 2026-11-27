@@ -50,7 +50,8 @@ def reconcile_usb_pending_copy(
             if (type(entry) is not UsbCopyJournalEntry
                     or entry.phase != "checkpointed" or entry.pin is None
                     or entry.consent.operation_id != operation_id
-                    or _coordinates(entry.consent) != _coordinates(entry.rights)
+                    or (entry.rights is not None
+                        and _coordinates(entry.consent) != _coordinates(entry.rights))
                     or _coordinates(entry.consent)[:3] != (
                         mount.identity_id, mount.device_id, mount.usb_fingerprint,
                     )):

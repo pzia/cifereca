@@ -12,6 +12,7 @@ from .device_usb_content_review import review_usb_content
 from .device_usb_content_snapshot import MAX_SNAPSHOT_BYTES, snapshot_local_usb_content
 from .device_usb_copy_admission import (
     UsbCopyConsent, UsbCopyRightsEvidence, review_usb_copy_admission,
+    review_usb_local_copy_admission,
 )
 from .device_usb_copy_provenance import resolve_live_usb_copy_right
 from .device_usb_file_commit import _file_version
@@ -26,26 +27,28 @@ class UsbLiveCopySource:
     mount: LinuxUsbMount
     identity_root: Path
     payload: bytes = field(repr=False)
-    revalidate: Callable[[UsbCopyConsent, UsbCopyRightsEvidence], bool] = field(repr=False)
+    revalidate: Callable[[UsbCopyConsent, UsbCopyRightsEvidence | None], bool] = field(repr=False)
 
 
 def prepare_usb_live_source(
     *, storage: Any, placement_id: str, mountpoint: Path,
-    consent: UsbCopyConsent, rights: UsbCopyRightsEvidence,
+    consent: UsbCopyConsent, rights: UsbCopyRightsEvidence | None,
     current_profile: Callable[[], tuple[str, Path, int]],
-    policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
+    policy_verifier: Callable[[UsbCopyRightsEvidence | None], bool] | None,
 ) -> UsbLiveCopySource | None:
     """Pin an exact source and give the supervisor a fresh, read-only guard.
 
     The trusted Core caller supplies the selected profile, its generation,
-    and the independent rights policy. It separately runs target preparation.
+    and optionally a legacy independent rights policy. It separately runs target preparation.
     Neither this value nor a positive revalidation consumes the consent
     or enables writing without the supervisor and its durable journal.
     """
-    if (type(consent) is not UsbCopyConsent or type(rights) is not UsbCopyRightsEvidence
+    if (type(consent) is not UsbCopyConsent or (rights is not None and type(rights) is not UsbCopyRightsEvidence)
             or type(placement_id) is not str or not placement_id
             or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
-            or not callable(current_profile) or not callable(policy_verifier)):
+            or not callable(current_profile)
+            or (rights is not None and not callable(policy_verifier))
+            or (rights is None and policy_verifier is not None)):
         return None
 
     def scope() -> tuple[dict, dict, dict, dict] | None:
@@ -145,8 +148,8 @@ def prepare_usb_live_source(
             usb_fingerprint=consent.usb_fingerprint, binding=binding,
         )
 
-        def revalidate(live_consent: UsbCopyConsent, live_rights: UsbCopyRightsEvidence) -> bool:
-            if (type(live_consent) is not UsbCopyConsent or type(live_rights) is not UsbCopyRightsEvidence
+        def revalidate(live_consent: UsbCopyConsent, live_rights: UsbCopyRightsEvidence | None) -> bool:
+            if (type(live_consent) is not UsbCopyConsent or type(live_rights) is not type(rights)
                     or live_consent != consent or live_rights != rights):
                 return False
             try:
@@ -154,20 +157,29 @@ def prepare_usb_live_source(
                 if not still_current():
                     return False
                 checked_at = int(time.time())
-                decision = review_usb_copy_admission(
-                    identity_id=consent.identity_id, binding=binding, artifact=artifact, local=local,
-                    selected_format=consent.selected_format, target_relative_path=consent.target_relative_path,
-                    reader=reader, rights=rights, consent=consent, now=checked_at,
-                    live_rights_resolver=lambda witness: resolve_live_usb_copy_right(
-                        storage, witness, policy_verifier=policy_verifier, now=checked_at,
-                    ),
-                )
+                if rights is None:
+                    decision = review_usb_local_copy_admission(
+                        identity_id=consent.identity_id, binding=binding, artifact=artifact, local=local,
+                        selected_format=consent.selected_format, target_relative_path=consent.target_relative_path,
+                        reader=reader, consent=consent, now=checked_at,
+                    )
+                else:
+                    decision = review_usb_copy_admission(
+                        identity_id=consent.identity_id, binding=binding, artifact=artifact, local=local,
+                        selected_format=consent.selected_format, target_relative_path=consent.target_relative_path,
+                        reader=reader, rights=rights, consent=consent, now=checked_at,
+                        live_rights_resolver=lambda witness: resolve_live_usb_copy_right(
+                            storage, witness, policy_verifier=policy_verifier, now=checked_at,
+                        ),
+                    )
                 if (decision.status != "review" or not still_current()
                         or database_revision() != revision):
                     return False
-                expires_at = min(consent.expires_at, rights.valid_until)
-                if rights.loan_expires_at is not None:
-                    expires_at = min(expires_at, rights.loan_expires_at)
+                expires_at = consent.expires_at
+                if rights is not None:
+                    expires_at = min(expires_at, rights.valid_until)
+                    if rights.loan_expires_at is not None:
+                        expires_at = min(expires_at, rights.loan_expires_at)
                 return checked_at <= int(time.time()) < expires_at
             except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, OverflowError, RuntimeError):
                 return False

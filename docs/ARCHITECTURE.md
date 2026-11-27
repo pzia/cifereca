@@ -19,6 +19,12 @@ La session fournisseur emploie le transport mutualisé `HTTPX_TRANSPORT` pour so
 
 **Compatibilité :** les champs/ABI `right`, `rights`, `Entitlement`, `owned` et les tables legacy mentionnés plus bas sont des éléments **encore présents dans certaines implémentations**, non le modèle cible. Leur retrait exige un audit des appelants et une migration d'interface maîtrisée, sans créer un nouveau miroir de permissions ou de pseudo-capacités. Les preuves transactionnelles indispensables à un emprunt non répétable sont conservées.
 
+## Frontière normative de récupération et opérations locales (27/11/2026, #2854)
+
+La capacité de récupération du fournisseur est la frontière implicite de gestion des droits dans Cifereca. Un fichier final disponible localement et accessible au profil est admissible aux opérations de copie Liseuses (USB ou pseudo-liseuse locale), quelle que soit son origine. Aucun droit de copie fournisseur persistant, nouvelle consultation du fournisseur, preuve de licence, déclaration utilisateur de droits ou contrôle d'expiration de prêt n'est requis pour cette copie locale. Cette règle d'admission applicative n'est pas une attestation juridique et ne change pas les conditions de récupération, ni n'autorise de contournement DRM.
+
+Le Core reste responsable des preuves techniques : placement exact dans le profil, octets et SHA, format compatible, consentement explicite à l'opération, cible identifiée et confinée, mutation atomique, observation physique et retrait exclusivement d'une copie gérée attestée. Un fichier inconnu, absent, altéré ou hors profil ne constitue pas un placement local vérifié. Les protections contre la modification des fichiers tiers et les collisions restent obligatoires. Le parcours physique et local utilise les mêmes exécuteurs, sans second moteur.
+
 ## 1. Parcours nominal : UNE synchronisation automatique A → B
 
 La synchronisation d'un achat ou prêt numérique est un seul parcours métier :

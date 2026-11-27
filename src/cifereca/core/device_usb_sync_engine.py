@@ -39,6 +39,7 @@ def synchronize_usb_reader(
     policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
     check_cancelled: Callable[[], None] | None = None,
     artifact_id: str | None = None,
+    exact_delta: bool = False,
 ) -> UsbSyncResult:
     """Apply only exact per-book confirmations from a fresh advisory delta.
 
@@ -76,19 +77,43 @@ def synchronize_usb_reader(
             ))):
         return UsbSyncResult("unavailable")
 
+    if exact_delta:
+        if (type(preview.rows) is not tuple
+                or any(type(row) is not UsbPreviewRow or row.executable is not False
+                       for row in preview.rows)):
+            return UsbSyncResult("unavailable")
+        candidates = {
+            row.artifact_id: (UsbCopyConsent if row.action == "upload_candidate"
+                              else UsbRemovalConsent)
+            for row in preview.rows
+            if row.action in ("upload_candidate", "remove_candidate")
+        }
+        if (set(confirmations) != set(candidates)
+                or any(type(confirmations[key]) is not cls
+                       for key, cls in candidates.items())):
+            return UsbSyncResult("blocked")
     journal = SqliteUsbOperationJournal(storage)
-    placements = storage.device_placements(device_id=device_id)
-    placement_ids = {
-        row["artifact_id"]: row.get("placement_id")
-        for row in placements
-        if type(row) is dict and type(row.get("artifact_id")) is str
-    }
+    placement_ids = {}
+    if any(row.action == "upload_candidate" for row in preview.rows):
+        sources = storage.placements(state="present")
+        if type(sources) is not list or len(sources) > 30000:
+            return UsbSyncResult("blocked")
+        for source in sources:
+            if (type(source) is dict and source.get("identity_id") == identity_id
+                    and type(source.get("artifact_id")) is str):
+                key = source["artifact_id"]
+                placement_ids[key] = (
+                    None if key in placement_ids else source.get("placement_id")
+                )
+    if any(row.reason in ("target_batch_capacity_insufficient", "target_space_insufficient")
+           for row in preview.rows):
+        return UsbSyncResult("blocked")
     copied = removed = pending = failed = 0
     for row in preview.rows:
         if check_cancelled is not None:
             check_cancelled()
         if row.action not in ("upload_candidate", "remove_candidate"):
-            if row.action not in ("none", "up_to_date", "noop"):
+            if row.action not in ("none", "up_to_date", "noop", "skip"):
                 pending += 1
             continue
         consent = confirmations.get(row.artifact_id)
@@ -96,7 +121,10 @@ def synchronize_usb_reader(
             authorization = rights.get(row.artifact_id)
             placement_id = placement_ids.get(row.artifact_id)
             if (type(consent) is not UsbCopyConsent
-                    or type(authorization) is not UsbCopyRightsEvidence
+                    or consent.artifact_id != row.artifact_id
+                    or consent.identity_id != identity_id or consent.device_id != device_id
+                    or (authorization is not None and type(authorization) is not UsbCopyRightsEvidence)
+                    or (authorization is None and policy_verifier is not None)
                     or type(placement_id) is not str or not placement_id):
                 pending += 1
                 continue
@@ -114,8 +142,12 @@ def synchronize_usb_reader(
                 copied += 1
             else:
                 failed += 1
+                if result.status == "recovery_required":
+                    break
         else:
-            if type(consent) is not UsbRemovalConsent:
+            if (type(consent) is not UsbRemovalConsent
+                    or consent.artifact_id != row.artifact_id
+                    or consent.identity_id != identity_id or consent.device_id != device_id):
                 pending += 1
                 continue
             def removal_profile() -> tuple[str, int]:
@@ -132,6 +164,8 @@ def synchronize_usb_reader(
                 removed += 1
             else:
                 failed += 1
+                if result.status == "recovery_required":
+                    break
 
     # An earlier Core removal review may have refused an operation because
     # the originating GTK selection was revoked *during* inode hashing.
