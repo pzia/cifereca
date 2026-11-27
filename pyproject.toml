@@ -13,6 +13,7 @@ dependencies = [
   "httpx>=0.28.1,<0.29",
   "httpcore>=1.0,<1.1",
   "packaging>=24,<26",
+  "cryptography>=42,<48",
 ]
 
 [project.optional-dependencies]
@@ -36,4 +37,4 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.setuptools.package-data]
-cifereca = ["builtin_ui/*.json", "builtin_ui/*.py", "plugin-release.json"]
+cifereca = ["builtin_ui/*.json", "builtin_ui/*.py", "plugin-release.json", "core/PROVIDER-DEVELOPMENT.md"]

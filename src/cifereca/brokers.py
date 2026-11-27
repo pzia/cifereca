@@ -1945,6 +1945,31 @@ class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
         return value
 
 
+    def capture_retention_policy(self):
+        from .core.capture_vault_service import validate_retention_policy
+        cfg = self.service.config
+        days, volume = validate_retention_policy(
+            cfg.get("diagnostics.capture_retention_days", 90),
+            cfg.get("diagnostics.capture_retention_bytes", 128 * 1024 * 1024),
+        )
+        return {"days": days, "volume_bytes": volume}
+
+    def set_capture_retention_policy(self, days: int, volume_bytes: int):
+        from copy import deepcopy
+        from .core.capture_vault_service import validate_retention_policy
+        from .locking import InterProcessLock
+        from .paths import acquisition_lock_file
+        days, volume_bytes = validate_retention_policy(days, volume_bytes)
+        with InterProcessLock(acquisition_lock_file()):
+            cfg = self.service.config
+            draft = deepcopy(cfg)
+            draft.set("diagnostics.capture_retention_days", days)
+            draft.set("diagnostics.capture_retention_bytes", volume_bytes)
+            draft.save()
+            cfg.data = draft.data
+        return {"days": days, "volume_bytes": volume_bytes}
+
+
 class DiagnosticsBrokerFactory(DiagnosticsBrokerImpl):
     """Do not publish the preference writer or the scoping factory to others."""
 

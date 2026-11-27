@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 
 
-def test_manifest_declares_diagnostics_and_tasks_brokers():
+def test_manifest_declares_diagnostics_tasks_and_capture_vault_brokers():
     root = Path(__file__).resolve().parents[1]
     data = json.loads((root / "cifereca-plugin.json").read_text())
     plugin = data["plugins"][0]
     assert plugin["type"] == "ui.page"
-    assert plugin["requires_brokers"] == ["diagnostics", "tasks"]
+    assert plugin["requires_brokers"] == ["diagnostics", "tasks", "capture.vault"]
     assert "requires_services" not in plugin
 
 

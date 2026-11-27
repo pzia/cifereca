@@ -53,7 +53,7 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
 
     plugin = BrowserRecorderPage()
     plugin.activate(SimpleNamespace(
-        broker=lambda name: Tasks() if name == "tasks" else None,
+        broker=lambda name: Tasks() if name == "tasks" else object() if name == "capture.vault" else None,
         data_directory=tmp_path,
     ))
     window = Gtk.Window()

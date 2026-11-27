@@ -238,11 +238,13 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
     monkeypatch.setattr("cifereca.plugins.manager.cache_dir", lambda: tmp_path / "core-cache")
     tasks = TaskBroker()
     store = PackageStore(tmp_path / "packages")
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "capture-vault", tmp_path / "capture-keys", authorize_scope=lambda *_: True)
     manager = PluginManager(
         package_store=store,
         state_store=PluginStateStore(tmp_path / "state.json"),
         config_store=PluginConfigStore(tmp_path / "config.json"),
-        brokers={"tasks": tasks},
+        brokers={"tasks": tasks, "capture.vault": core},
     )
     window = Gtk.Window()
     window.set_default_size(1366, 850)
@@ -292,7 +294,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         consent.set_active(True)
         panel = plugin.private_panel
         panel.vault_consent.set_active(True)
-        panel.vault_passphrase.set_text("FICTIONAL-TEST-PASSPHRASE-2026")
+
         assert not panel.export_button.get_sensitive()
         assert not tasks.handles
         panel.start.emit("clicked")  # actual page → installed HTTP collector
@@ -303,20 +305,14 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         # Allow async Chromium requestfinished listeners to drain.
         sleep(.35)
         panel.stop.emit("clicked")
-        assert _pump_until(lambda: panel._review is not None, seconds=20), (
+        assert _pump_until(lambda: panel._review is not None and not panel.is_scanning(), seconds=20), (
             "review unavailable after Chromium session"
         )
         trace = panel._trace
         assert trace is not None
         assert trace.vault_session_id
-        from browser_recorder_vault import PrivateSessionVault
-        vault = PrivateSessionVault(
-            tmp_path / "core-data" / "plugins" / "data" / PLUGIN_ID
-            / "private-sessions"
-        )
-        session = vault.open(
-            trace.vault_session_id, "FICTIONAL-TEST-PASSPHRASE-2026",
-        )
+        vault = panel.vault
+        session = vault.read(trace.vault_session_id)
         assert session.state == "completed"
         assert len(session.trace.exchanges) == len(trace.exchanges)
         session.trace.destroy()
@@ -353,7 +349,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         assert evidence["request_unfinished"] == 0
         # Check the *persisted encrypted* archive, not only the transient
         # panel trace. Explicitly destroy decrypted material on test exit.
-        stored = vault.open(trace.vault_session_id, "FICTIONAL-TEST-PASSPHRASE-2026")
+        stored = vault.read(trace.vault_session_id)
         try:
             saved = stored.trace.coverage()
             for key in (
@@ -435,4 +431,5 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         finally:
             window.close()
             manager.close()
+            core.close()
             _flush()

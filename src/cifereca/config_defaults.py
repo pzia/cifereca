@@ -42,6 +42,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "diagnostics": {"enabled": True, "level": "normal",
                     "http_capture_include_binary": True,
+                    "capture_retention_days": 90,
+                    "capture_retention_bytes": 128 * 1024 * 1024,
                     "regression_capture_directory": None},
     "security": {"python_dependency_quarantine_hours": 72},
     "ui": {"width": 1320, "height": 840},

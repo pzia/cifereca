@@ -13,8 +13,19 @@ import browser_recorder_review_ui as review_ui
 ORIGIN = "https://books.example.org"
 
 
+def new_test_vault(tmp_path):
+    """Real common Core store, isolated in a synthetic test directory."""
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    from browser_recorder_vault import RecorderVault
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                            authorize_scope=lambda *_: True)
+    port = core.for_activation("ui.page.browser-recorder", current=lambda: True)
+    return core, RecorderVault(port)
+
+
 @pytest.mark.parametrize("code,fragment", [
-    ("vault_unlock_failed", "bonne phrase"),
+    ("vault_unlock_failed", "altérée"),
+    ("vault_key_unavailable", "Clé du coffre"),
     ("vault_crypto_unavailable", "Installer les dépendances"),
     ("vault_unsafe_directory", "0700"),
     ("vault_unsafe_file", "actualisez"),
@@ -27,24 +38,16 @@ ORIGIN = "https://books.example.org"
 def test_private_export_failures_are_actionable_and_retryable(monkeypatch, tmp_path, code, fragment):
     secret = "PRIVATE-PASSPHRASE-DO-NOT-PRINT"
     destroyed, outcomes = [], []
+    stored = NS(trace=NS(destroy=lambda: destroyed.append(True)))
     panel = review_ui.PrivateReviewPanel(
         Gtk, GLib, FakeTasks(), NS(get_text=lambda: ORIGIN),
         NS(get_active=lambda: True), lambda: False,
-        vault_directory=tmp_path / "vault",
+        vault=NS(read=lambda sid: stored),
         diagnostic=lambda *a, **kw: outcomes.append((a, kw)),
     )
     panel.session_list.append("synthetic", "synthetic")
     panel.session_list.set_active_id("synthetic")
-    panel._vault_secret = bytearray(secret.encode())
     panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(tmp_path / "private.zip")
-    stored = NS(trace=NS(destroy=lambda: destroyed.append(True)))
-    class Vault:
-        def __init__(self, path):
-            pass
-        def open(self, sid, password):
-            assert password == secret
-            return stored
-    monkeypatch.setattr(review_ui, "PrivateSessionVault", Vault)
     def fail(*a, **kw):
         raise review_ui.VaultError(code)
     monkeypatch.setattr(review_ui, "save_session_llm_zip", fail)
@@ -54,12 +57,10 @@ def test_private_export_failures_are_actionable_and_retryable(monkeypatch, tmp_p
         assert destroyed == [True]
         assert secret not in panel.status.label + repr(outcomes)
         assert outcomes[-1][0] == ("private_zip_export", "private_zip_export_failed")
-        assert panel._vault_secret.decode() == secret
         monkeypatch.setattr(review_ui, "save_session_llm_zip", lambda *a, **kw: 42)
         panel.export_private_zip()
         assert destroyed == [True, True]
         assert outcomes[-1][0] == ("private_zip_export", "private_zip_exported")
-        assert panel.vault_passphrase.get_text() == ""
     finally:
         panel.destroy()
 
@@ -796,11 +797,9 @@ def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
     """Private export is the explicit fallback when heuristic review fails."""
     import pytest
     from zipfile import ZipFile
-    from browser_recorder_vault import PrivateSessionVault
-
     pytest.importorskip("cryptography")
     vault_path = tmp_path / "vault"
-    secret = "FICTIONAL-STRONG-VAULT-PASSPHRASE"
+    core, vault = new_test_vault(tmp_path)
     raw = PrivateHttpTrace((ORIGIN,))
     raw.exchanges.append(PrivateExchange(
         1, "POST", url=ORIGIN + "/api?AccountId=PRIVATE-BOUND-42",
@@ -824,15 +823,15 @@ def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
     panel = review_ui.PrivateReviewPanel(
         Gtk, GLib, tasks, NS(get_text=lambda: ORIGIN + "/catalog"),
         NS(get_active=lambda: True), legacy_running=lambda: False,
-        vault_directory=vault_path,
+        vault=vault,
     )
     destination = tmp_path / "private-llm.zip"
     try:
         panel.vault_consent.set_active(True)
-        panel.vault_passphrase.set_text(secret)
         panel.begin()
         panel.stop_capture()
         tasks.handles[-1].finish()
+        tasks.handles[-1].finish()  # authenticated session list
         assert panel._review is None
         assert panel._trace is raw
         assert raw.vault_session_id
@@ -843,16 +842,15 @@ def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
         assert not destination.exists()
 
         panel._prompt_private_zip_file = lambda callback, cancel: callback(destination)
-        panel.vault_passphrase.set_text(secret)
         panel.export_private_zip(current=True)
         assert destination.is_file()
         assert destination.stat().st_mode & 0o777 == 0o600
         with ZipFile(destination) as archive:
             assert "PRIVATE-BOUND-42" in archive.read("trace.json").decode()
-        assert panel.vault_passphrase.get_text() == ""
-        assert len(PrivateSessionVault(vault_path).list_ids()) == 1
+        assert len(vault.sessions()) == 1
     finally:
         panel.destroy()
+        core.close()
 
 
 

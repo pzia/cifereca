@@ -43,7 +43,8 @@ def test_release_zip_contains_scoped_recorder_and_explicit_browser_dependency(
         page = manifest["plugins"][0]
         assert page["id"] == PLUGIN
         assert page["enabled_by_default"] is False
-        assert page["requires_brokers"] == ["tasks"]
+        assert page["requires_brokers"] == ["tasks", "capture.vault"]
+        assert "browser.recorder.http.private_zip.encrypted" not in page["capabilities"]
         assert {
             "type": "python-package",
             "name": "playwright",

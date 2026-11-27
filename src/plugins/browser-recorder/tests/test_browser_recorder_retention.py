@@ -1,4 +1,4 @@
-"""Explicit retention: no automatic or non-authenticated session deletion.
+"""Automatic retention: authenticated preflight and age/volume bounds.
 
 Fixtures are entirely fictional; safe through independently encrypted storage.
 """
@@ -12,7 +12,7 @@ pytest.importorskip("cryptography")
 
 import browser_recorder_vault as v
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 
 PASSWORD = "FICTIONAL-SESSION-RETENTION-KEY-2026"
 OTHER = "SEPARATE-FICTIONAL-RETENTION-KEY-2026"
@@ -50,159 +50,103 @@ def capture_bytes(vault):
             if x.suffix in {".cbrv", ".cbrn"}}
 
 
-def test_preview_does_nothing_and_requires_fresh_consent(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    old = session(vault, tmp_path, monkeypatch, age_days=130,
-                  label="Ancienne fiction privée")
+def prune(vault, *, days=90, keep="", **kwargs):
+    return vault.auto_prune(PASSWORD, older_than_days=days,
+                            pinned=lambda label, now: bool(keep and label == keep),
+                            **kwargs)
+
+
+def test_age_retention_and_pin_preserve_young_and_pinned(tmp_path, monkeypatch):
+    vault = FixtureVault(tmp_path / "vault")
+    old = session(vault, tmp_path, monkeypatch, age_days=130, label="Old private")
     young = session(vault, tmp_path, monkeypatch, age_days=10)
-    partial = session(vault, tmp_path, monkeypatch, age_days=190,
-                      state="recording")
-    interrupted = session(vault, tmp_path, monkeypatch, age_days=200,
-                          state="interrupted")
-    other = session(vault, tmp_path, monkeypatch, age_days=220, key=OTHER)
+    partial = session(vault, tmp_path, monkeypatch, age_days=190, state="recording")
+    interrupted = session(vault, tmp_path, monkeypatch, age_days=200, state="interrupted")
+    pinned = session(vault, tmp_path, monkeypatch, age_days=220, label="pin")
     before = capture_bytes(vault)
-    assert set(vault.list_ids()) == {old, young, partial, interrupted, other}
     with pytest.raises(VaultError, match="vault_retention_invalid"):
-        vault.retention_preview(PASSWORD, 0)
-    with pytest.raises(VaultError, match="vault_retention_invalid"):
-        vault.retention_preview(PASSWORD, 1)
-    with pytest.raises(VaultError, match="vault_passphrase_required"):
-        vault.retention_preview("bad", 90)
-    preview = vault.retention_preview(PASSWORD, 90)
-    assert preview.count == 1
-    assert preview.fingerprints[0][0] == old
-    assert preview.total_bytes > 0
-    assert FAKE not in repr(preview)
+        prune(vault, days=0)
     assert capture_bytes(vault) == before
-    with pytest.raises(VaultError, match="vault_confirmation_required"):
-        vault.retention_apply(preview, PASSWORD)
+    count, reclaimed = prune(vault, keep="pin")
+    assert count == 3 and reclaimed > 0
+    assert set(vault.list_ids()) == {young, pinned}
+    for name, data in capture_bytes(vault).items():
+        assert before[name] == data
+    assert not (vault.path / (old + ".cbrn")).exists()
+    assert partial not in vault.list_ids() and interrupted not in vault.list_ids()
+
+
+def test_wrong_key_blocks_entire_purge(tmp_path, monkeypatch):
+    vault = FixtureVault(tmp_path / "vault")
+    first = session(vault, tmp_path, monkeypatch, age_days=130)
+    second = session(vault, tmp_path, monkeypatch, age_days=160, key=OTHER)
+    before = capture_bytes(vault)
     with pytest.raises(VaultError, match="vault_unlock_failed"):
-        vault.retention_apply(preview, OTHER, confirmed=True)
-    assert capture_bytes(vault) == before
-    count, freed = vault.retention_apply(preview, PASSWORD, confirmed=True)
-    assert count == 1 and freed == preview.total_bytes
-    assert old not in vault.list_ids()
-    assert set(vault.list_ids()) == {young, partial, interrupted, other}
-    assert (vault.path / (old + ".cbrn")).exists() is False
-    after = capture_bytes(vault)
-    for name, data in before.items():
-        if name.startswith(old):
-            assert name not in after
-        else:
-            assert after[name] == data
-
-
-def test_replaced_source_or_label_aborts_whole_batch(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    one = session(vault, tmp_path, monkeypatch, age_days=150, label="old title")
-    two = session(vault, tmp_path, monkeypatch, age_days=200)
-    preview = vault.retention_preview(PASSWORD, 90)
-    assert preview.count == 2
-    vault.set_label(one, PASSWORD, "new title")
-    before = capture_bytes(vault)
-    with pytest.raises(VaultError, match="vault_retention_changed"):
-        vault.retention_apply(preview, PASSWORD, confirmed=True)
-    assert capture_bytes(vault) == before
-    assert set(vault.list_ids()) == {one, two}
-
-
-def test_expired_preview_and_no_empty_bulk_action(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    session(vault, tmp_path, monkeypatch, age_days=120)
-    empty = vault.retention_preview(PASSWORD, 180)
-    assert empty.count == 0
-    with pytest.raises(VaultError, match="vault_retention_invalid"):
-        vault.retention_apply(empty, PASSWORD, confirmed=True)
-    preview = vault.retention_preview(PASSWORD, 90)
-    assert preview.count == 1
-    expired = v.RetentionPlan(
-        preview.older_than_days,
-        (datetime.now(timezone.utc) - timedelta(days=91)).isoformat(),
-        preview.fingerprints, preview.total_bytes,
-    )
-    with pytest.raises(VaultError, match="vault_retention_expired"):
-        vault.retention_apply(expired, PASSWORD, confirmed=True)
-    assert len(vault.list_ids()) == 1
+        prune(vault)
+    assert capture_bytes(vault) == before and set(vault.list_ids()) == {first, second}
 
 
 def test_symlink_or_hardlinked_label_blocks_all_deletion(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    first = session(vault, tmp_path, monkeypatch, age_days=130,
-                    label="FICTIONAL LABEL")
+    vault = FixtureVault(tmp_path / "vault")
+    first = session(vault, tmp_path, monkeypatch, age_days=130, label="FICTIONAL")
     second = session(vault, tmp_path, monkeypatch, age_days=160)
-    plan = vault.retention_preview(PASSWORD, 90)
     victim = vault.path / (first + ".cbrn")
     victim.unlink()
-    foreign = tmp_path / "foreign"
-    foreign.write_bytes(b"FICTIONAL_NOT_OURS")
-    victim.symlink_to(foreign)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"OUTSIDE")
+    victim.symlink_to(outside)
     with pytest.raises(VaultError, match="vault_unsafe_file"):
-        vault.retention_apply(plan, PASSWORD, confirmed=True)
+        prune(vault)
     assert set(vault.list_ids()) == {first, second}
-    assert foreign.read_bytes() == b"FICTIONAL_NOT_OURS"
+    assert outside.read_bytes() == b"OUTSIDE"
     victim.unlink()
     vault.set_label(first, PASSWORD, "new label")
-    other = tmp_path / "hardlink"
-    os.link(vault.path / (first + ".cbrn"), other)
-    # Hardlinks are rejected even during authenticated preview.
+    os.link(victim, outside.with_name("hardlink"))
     with pytest.raises(VaultError, match="vault_unsafe_file"):
-        vault.retention_preview(PASSWORD, 90)
-    other.unlink()
+        prune(vault)
     assert set(vault.list_ids()) == {first, second}
 
 
-def test_unrelated_orphan_chiffre_is_never_pruned_by_retention(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+def test_recent_orphan_is_not_pruned_by_age_retention(tmp_path, monkeypatch):
+    vault = FixtureVault(tmp_path / "vault")
     sid = session(vault, tmp_path, monkeypatch, age_days=200)
     ciphertext = (vault.path / (sid + ".cbrv")).read_bytes()
     staging = vault.path / ("." + sid + "-feedfeedfeedfeed.part")
     staging.write_bytes(ciphertext)
     staging.chmod(0o600)
-    plan = vault.retention_preview(PASSWORD, 90)
-    vault.retention_apply(plan, PASSWORD, confirmed=True)
+    assert prune(vault)[0] == 1
     assert not vault.list_ids()
     assert staging.read_bytes() == ciphertext
 
 
-def test_corrupted_encrypted_label_cannot_be_previsualized_or_deleted(
-    tmp_path, monkeypatch,
-):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    first = session(vault, tmp_path, monkeypatch, age_days=170,
-                    label="PRIVATE-FICTIONAL-LABEL")
-    second = session(vault, tmp_path, monkeypatch, age_days=175)
-    plan = vault.retention_preview(PASSWORD, 90)
-    assert plan.count == 2
-    label_path = vault.path / (first + ".cbrn")
-    original = label_path.read_bytes()
-    label_path.write_bytes(original[:-1] + bytes([original[-1] ^ 0x01]))
+@pytest.mark.parametrize("attack", ["tamper", "swap"])
+def test_corrupt_or_swapped_label_blocks_all_deletion(tmp_path, monkeypatch, attack):
+    vault = FixtureVault(tmp_path / "vault")
+    first = session(vault, tmp_path, monkeypatch, age_days=170, label="FIRST")
+    second = session(vault, tmp_path, monkeypatch, age_days=175, label="SECOND")
+    path = vault.path / (first + ".cbrn")
+    original = path.read_bytes()
+    if attack == "tamper":
+        path.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+    else:
+        path.write_bytes((vault.path / (second + ".cbrn")).read_bytes())
     before = capture_bytes(vault)
     with pytest.raises(VaultError, match="vault_label_invalid"):
-        vault.retention_preview(PASSWORD, 90)
-    # This previously issued preview is also invalidated. All-or-nothing
-    # preflight must never delete the *other* independently valid session.
-    with pytest.raises(VaultError, match="vault_retention_changed"):
-        vault.retention_apply(plan, PASSWORD, confirmed=True)
+        prune(vault)
     assert capture_bytes(vault) == before
     assert set(vault.list_ids()) == {first, second}
 
 
-def test_replaced_label_from_other_session_fails_aad_authentication(
-    tmp_path, monkeypatch,
-):
-    vault = PrivateSessionVault(tmp_path / "vault")
-    first = session(vault, tmp_path, monkeypatch, age_days=190,
-                    label="FICTIONAL_FIRST_LABEL")
-    second = session(vault, tmp_path, monkeypatch, age_days=210,
-                     key=OTHER, label="FICTIONAL_OTHER_PRIVATE_LABEL")
-    original = vault.path / (first + ".cbrv")
-    before = original.read_bytes()
-    # Valid AES-GCM ciphertext for another archive; identical file
-    # permissions/magic but wrong key/session-ID associated data.
-    (vault.path / (first + ".cbrn")).write_bytes(
-        (vault.path / (second + ".cbrn")).read_bytes()
-    )
-    with pytest.raises(VaultError, match="vault_label_invalid"):
-        vault.retention_preview(PASSWORD, 90)
-    assert original.read_bytes() == before
-    assert set(vault.list_ids()) == {first, second}
+def test_pinned_or_partial_volume_refusal_does_not_delete_other_sessions(tmp_path, monkeypatch):
+    import cifereca.core.capture_vault as engine
+    vault = FixtureVault(tmp_path / "vault")
+    partial = session(vault, tmp_path, monkeypatch, age_days=0, state="recording")
+    pinned = session(vault, tmp_path, monkeypatch, age_days=0, label="pin")
+    young = session(vault, tmp_path, monkeypatch, age_days=0)
+    before = capture_bytes(vault)
+    volume = sum(len(x) for x in before.values())
+    monkeypatch.setattr(engine, "MAX_VAULT_BYTES", volume)
+    with pytest.raises(VaultError, match="vault_limit"):
+        prune(vault, keep="pin", reserve_bytes=volume, reserve_session=True)
+    assert capture_bytes(vault) == before
+    assert set(vault.list_ids()) == {partial, pinned, young}

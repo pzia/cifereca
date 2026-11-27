@@ -13,9 +13,9 @@ import os
 import pytest
 pytest.importorskip("cryptography")
 
-import browser_recorder_vault as vault_impl
+import cifereca.core.capture_vault as vault_impl
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 
 PASSWORD = "FICTIONAL-DISK-FAILURE-TEST-KEY-2026"
 ACCOUNT = "FICTIONAL_PRIVATE_ACCOUNT_197"
@@ -42,7 +42,7 @@ def _enospc(*_args, **_kwargs):
 def test_disk_full_before_first_fsync_leaves_no_snapshot_or_plaintext(
     tmp_path, monkeypatch,
 ):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     with monkeypatch.context() as m:
@@ -69,7 +69,7 @@ def test_disk_full_before_first_fsync_leaves_no_snapshot_or_plaintext(
 def test_disk_full_during_incremental_save_preserves_prior_committed_snapshot(
     tmp_path, monkeypatch,
 ):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "recording", force=True)
@@ -98,7 +98,7 @@ def test_disk_full_during_incremental_save_preserves_prior_committed_snapshot(
 
 
 def test_label_fsync_enospc_does_not_change_name_or_capture(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "completed", force=True)
@@ -120,7 +120,7 @@ def test_label_fsync_enospc_does_not_change_name_or_capture(tmp_path, monkeypatc
 
 
 def test_unsafe_directory_and_snapshot_permissions_fail_closed(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "recording", force=True)
@@ -152,7 +152,7 @@ def test_unsafe_directory_and_snapshot_permissions_fail_closed(tmp_path):
 def test_disk_full_on_encrypted_name_does_not_create_sidecar(
     tmp_path, monkeypatch,
 ):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "recording", force=True)
@@ -180,7 +180,7 @@ def test_directory_fsync_failure_after_rename_keeps_authenticated_snapshot(
     """
     import stat
 
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "recording", force=True)
@@ -210,7 +210,7 @@ def test_directory_fsync_failure_after_rename_keeps_authenticated_snapshot(
     assert not list(vault.path.glob(".*.part"))
     # The committed rename may expose old OR new ciphertext after a real
     # crash; assert only authenticated valid snapshots, not fake durability.
-    recovered = PrivateSessionVault(vault.path).open(writer.session_id, PASSWORD)
+    recovered = FixtureVault(vault.path).open(writer.session_id, PASSWORD)
     try:
         assert recovered.recovery_status in ("partial", "completed")
         assert len(recovered.trace.exchanges) in (1, 2)
@@ -235,7 +235,7 @@ def test_directory_fsync_failure_during_private_label_never_leaks_plaintext(
 ):
     import stat
 
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = _trace()
     writer = vault.begin(PASSWORD)
     writer.save(trace, "completed", force=True)

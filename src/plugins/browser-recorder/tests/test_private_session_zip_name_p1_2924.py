@@ -16,7 +16,7 @@ def panel(tmp_path):
     return ui.PrivateReviewPanel(
         Gtk, GLib, FakeTasks(), NS(get_text=lambda: ORIGIN),
         NS(get_active=lambda: True), lambda: False,
-        vault_directory=tmp_path / "vault",
+        vault=NS(sessions=lambda: ()),
     )
 
 
@@ -46,17 +46,10 @@ def test_name_source_is_exact_exported_session_not_selected_caption(monkeypatch,
     view.session_list.append(aa, "PRIVATE_CAPTION_NOT_A_SOURCE")
     view.session_list.append(bb, "PRIVATE_OTHER_CAPTION")
     view.session_list.set_active_id(aa)
-    view._vault_secret = bytearray(SECRET.encode("utf-8"))
     view._private_labels = {
         aa: "Première session", bb: "Deuxième BnF privée",
     }
-    class Vault:
-        def __init__(self, path): pass
-        def open(self, sid, secret):
-            assert secret == SECRET
-            assert sid in {aa, bb}
-            return NS(trace=NS(destroy=lambda: None))
-    monkeypatch.setattr(ui, "PrivateSessionVault", Vault)
+    view.vault = NS(read=lambda sid: NS(trace=NS(destroy=lambda: None)))
     monkeypatch.setattr(ui, "save_session_llm_zip", lambda *a, **k: 99)
 
     names = []
@@ -79,26 +72,19 @@ def test_name_source_is_exact_exported_session_not_selected_caption(monkeypatch,
     assert view._private_export_suggested_name == ui._PRIVATE_ZIP_DEFAULT
 
 
-def test_opaque_refresh_lock_and_missing_label_clear_names(monkeypatch, tmp_path):
+def test_refresh_and_destroy_clear_stale_names(tmp_path):
     view = panel(tmp_path)
     sid = "1" * 32
-    class Vault:
-        def __init__(self, path): pass
-        def list_ids(self):
-            return (sid,)
-    monkeypatch.setattr(ui, "PrivateSessionVault", Vault)
     try:
         view._private_labels[sid] = "Sensitive-title"
         assert view.refresh_sessions()
+        view.tasks.handles[-1].finish()
         assert view._private_labels == {}
-        assert view._private_export_suggested_name == ui._PRIVATE_ZIP_DEFAULT
         view._private_labels[sid] = "Sensitive-title"
-        view._vault_secret = bytearray(SECRET.encode("utf-8"))
-        view.lock_vault()
-        assert view._private_labels == {}
-        assert view._vault_secret is None
     finally:
         view.destroy()
+    assert view._private_labels == {}
+    assert view._private_export_suggested_name == ui._PRIVATE_ZIP_DEFAULT
 
 
 def test_save_as_chooser_receives_suggestion_and_user_can_cancel(tmp_path):

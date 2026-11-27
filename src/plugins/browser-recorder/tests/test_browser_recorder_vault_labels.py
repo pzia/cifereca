@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("cryptography")
 
 from browser_recorder_http import PrivateHttpTrace, PrivateExchange
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 
 ORIGIN = "https://fictional-books.example.org"
 SECRET = "FAKE_PRIVATE_ACCOUNT-777"
@@ -17,7 +17,7 @@ LABEL = "Mes tests Alice — lecture privée"
 
 
 def vault_with_session(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin(KEY)
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
@@ -44,8 +44,6 @@ def test_renaming_encrypts_metadata_and_preserves_original_capture(tmp_path):
     assert not any(suffix in {".zip", ".json", ".har"}
                    for suffix in (f.suffix for f in vault.path.iterdir()))
     assert vault.get_label(sid, KEY) == LABEL
-    index, failures = vault.unlocked_index(KEY)
-    assert failures == 0 and index[0]["label"] == LABEL
     assert sha256(capture.read_bytes()).hexdigest() == original_sha
     vault.set_label(sid, KEY, "Autre nom — privé")
     assert vault.get_label(sid, KEY) == "Autre nom — privé"
@@ -82,10 +80,7 @@ def test_wrong_password_and_tamper_fail_closed_without_data_loss(tmp_path):
         vault.set_label(sid, KEY, "overwrite impossible")
     assert capture.read_bytes() == original
     assert sidecar.read_bytes() != cipher
-    index, failures = vault.unlocked_index(KEY)
-    assert failures == 0
-    assert index[0]["label"] == ""
-    assert index[0]["label_unavailable"] is True
+    assert vault.open(sid, KEY).recovery_status == "completed"
     sidecar.unlink()
     # Symlinks are neither read nor replaced by authenticated metadata API.
     foreign = tmp_path / "other"
@@ -102,8 +97,7 @@ def test_wrong_password_and_tamper_fail_closed_without_data_loss(tmp_path):
 def test_label_stays_out_of_the_anonymized_and_private_zip(tmp_path):
     from browser_recorder_review import IdentifierReview
     from browser_recorder_zip import prepare_reviewed_zip
-    from browser_recorder_private_zip import save_private_zip, decrypt_private_zip
-    from io import BytesIO
+    from browser_recorder_private_zip import save_session_llm_zip
     from zipfile import ZipFile
 
     vault, sid = vault_with_session(tmp_path)
@@ -117,13 +111,9 @@ def test_label_stays_out_of_the_anonymized_and_private_zip(tmp_path):
         assert LABEL.encode() not in plan._blob
         private = tmp_path / "private"
         private.mkdir(mode=0o700)
-        zip_password = "FICTIONAL-EXPORT-KEY-SEPARATE-2026"
-        name = save_private_zip(
-            stored, private, zip_password, confirmed=True,
-        )
-        with ZipFile(BytesIO(decrypt_private_zip(
-            (private / name).read_bytes(), zip_password
-        ))) as zipped:
+        output = private / "session.zip"
+        save_session_llm_zip(stored, output, confirmed=True)
+        with ZipFile(output) as zipped:
             assert LABEL.encode() not in zipped.read("trace.json")
     finally:
         stored.trace.destroy()
@@ -142,7 +132,7 @@ def test_delete_wins_blocked_rename_never_resurrects_orphan_label(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event, current_thread
     import fcntl
-    import browser_recorder_vault as vault_api
+    import cifereca.core.capture_vault as vault_api
 
     vault, sid = vault_with_session(tmp_path)
     vault.set_label(sid, KEY, "Original fictional encrypted title")
@@ -185,7 +175,7 @@ def test_corrupted_prior_label_is_rejected_after_acquiring_write_lock(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event, current_thread
     import fcntl
-    import browser_recorder_vault as vault_api
+    import cifereca.core.capture_vault as vault_api
 
     vault, sid = vault_with_session(tmp_path)
     vault.set_label(sid, KEY, "Safe fictional title")

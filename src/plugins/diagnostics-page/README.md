@@ -1,3 +1,11 @@
+## Coffre commun HTTP du Core (#7263, #8181)
+
+Dans Journaux, Trace doit être actif pour archiver volontairement les échanges HTTP. Cocher le consentement de stockage, puis cliquer sur Archiver. Le coffre chiffré permanent du Core conserve uniquement les observations déjà capturées. Aucun démarrage de Trace, rejeu, transfert ni archivage automatique.
+
+Les archives restent accessibles après redémarrage sans mot de passe, dans le périmètre Diagnostics. L’export ZIP local exige une confirmation et un choix de destination ; il applique la préférence binaire courante, y compris aux archives antérieures, et contient le kit public de développement. Le ZIP est en clair, 0600, sans écrasement. Relire avant partage.
+
+La durée et le volume de rétention sont configurables pour le coffre commun. Les épingles sont bornées à 30 jours. Une suppression manuelle exige la sélection et une confirmation dédiée. La clé d’installation privée est séparée des captures ; sa perte ne déclenche pas de remplacement silencieux.
+
 ## 0.1.28 — Export ZIP local du seul jour courant (#3649)
 
 Dans **Diagnostics → Journaux**, l'action principale « Exporter le journal

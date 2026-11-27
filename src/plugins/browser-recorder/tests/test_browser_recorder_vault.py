@@ -14,8 +14,8 @@ pytest.importorskip("cryptography")
 
 from browser_recorder import RecorderError
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace, record_http
-from browser_recorder_vault import (
-    MAGIC, PrivateSessionVault, VaultError, MAX_FILE,
+from capture_engine_fixture import (
+    MAGIC, FixtureVault, VaultError, MAX_FILE,
 )
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
@@ -58,10 +58,10 @@ def sample_trace():
 
 def test_no_disk_before_explicit_consent_and_encrypted_reopen(tmp_path):
     directory = tmp_path / "private"
-    vault = PrivateSessionVault(directory)
+    vault = FixtureVault(directory)
     assert vault.list_ids() == ()
     assert not directory.exists()
-    with pytest.raises(VaultError, match="vault_passphrase_required"):
+    with pytest.raises(VaultError, match="vault_key_unavailable"):
         vault.begin("short")
     assert not directory.exists()
     writer = vault.begin(PASSPHRASE)
@@ -94,7 +94,7 @@ def test_no_disk_before_explicit_consent_and_encrypted_reopen(tmp_path):
 
 
 def test_multiple_sessions_partial_and_deferred_independent_zip(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     ids = []
     for number in range(3):
         writer = vault.begin(PASSPHRASE)
@@ -133,7 +133,7 @@ def test_multiple_sessions_partial_and_deferred_independent_zip(tmp_path):
 
 def test_tampering_id_swap_links_and_permissions_fail_closed(tmp_path):
     directory = tmp_path / "private"
-    vault = PrivateSessionVault(directory)
+    vault = FixtureVault(directory)
     one = vault.begin(PASSPHRASE)
     trace = sample_trace()
     one.save(trace, "completed", force=True)
@@ -169,9 +169,9 @@ def test_unsafe_directory_and_wrong_confirmation_are_not_mutated(tmp_path):
     linked = tmp_path / "linked"
     linked.symlink_to(wrong, target_is_directory=True)
     with pytest.raises(VaultError, match="vault_unsafe_directory"):
-        PrivateSessionVault(linked).begin(PASSPHRASE)
+        FixtureVault(linked).begin(PASSPHRASE)
     assert list(wrong.iterdir()) == []
-    vault = PrivateSessionVault(tmp_path / "secure")
+    vault = FixtureVault(tmp_path / "secure")
     writer = vault.begin(PASSPHRASE)
     trace = sample_trace()
     writer.save(trace, "completed", force=True)
@@ -187,7 +187,7 @@ def test_unsafe_directory_and_wrong_confirmation_are_not_mutated(tmp_path):
 
 
 def test_snapshot_is_bounded_and_never_plain(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "secure")
+    vault = FixtureVault(tmp_path / "secure")
     writer = vault.begin(PASSPHRASE)
     trace = sample_trace()
     for n in range(200):
@@ -204,7 +204,8 @@ def test_snapshot_is_bounded_and_never_plain(tmp_path):
 
 def test_imported_vault_does_not_capture_or_contact_network(tmp_path):
     import browser_recorder_vault
-    assert browser_recorder_vault.MAGIC == MAGIC
+    assert not hasattr(browser_recorder_vault, 'EncryptedCaptureVault')
+    assert not hasattr(browser_recorder_vault, '_key')
     assert list(tmp_path.iterdir()) == []
 
 
@@ -248,9 +249,9 @@ def test_compressed_opt_in_provenance_survives_encrypted_vault_and_reviewed_zip(
     from zipfile import ZipFile
     trace = sample_trace()
     trace.allow_compressed_responses = True
-    writer = PrivateSessionVault(tmp_path / "vault").begin(PASSPHRASE)
+    writer = FixtureVault(tmp_path / "vault").begin(PASSPHRASE)
     writer.save(trace, "completed", force=True)
-    stored = PrivateSessionVault(tmp_path / "vault").open(writer.session_id, PASSPHRASE)
+    stored = FixtureVault(tmp_path / "vault").open(writer.session_id, PASSPHRASE)
     try:
         assert stored.trace.allow_compressed_responses is True
         target = tmp_path / "private.zip"
@@ -298,7 +299,7 @@ def test_selected_128k_text_body_survives_encrypted_reopen_and_private_zip(tmp_p
         response_body=body,
         response_body_state="captured", response_body_reason="captured",
     ))
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin(PASSPHRASE)
     writer.save(trace, "completed", force=True)
     recovered = vault.open(writer.session_id, PASSPHRASE)
@@ -349,7 +350,7 @@ def test_completed_vault_and_private_zip_contain_no_pending_response(tmp_path):
     assert trace.exchanges[0].response_body_reason == "unfinished"
     assert trace.omitted["unfinished"] == 1
 
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin(PASSPHRASE)
     writer.save(trace, "completed", force=True)
     reopened = vault.open(writer.session_id, PASSPHRASE)

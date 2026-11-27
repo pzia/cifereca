@@ -11,7 +11,8 @@ class HTTPTraceExport:
     CONFIRM = "Confirmer l’export HTTP non masqué"
 
     def __init__(self, button, *, broker, tasks, host, current, folder,
-                 gtk=None, gio=None, glib=None, include_binary=None):
+                 gtk=None, gio=None, glib=None, include_binary=None,
+                 vault=None, archive_source=None):
         if gtk is None:
             from gi.repository import Gtk, Gio, GLib
             gtk, gio, glib = Gtk, Gio, GLib
@@ -22,6 +23,10 @@ class HTTPTraceExport:
         self.chooser = self.handle = None
         self.timer = None
         self.include_binary = include_binary
+        self.vault, self.archive_source = vault, archive_source
+        self._armed_source = self._chosen_source = None
+        if archive_source is not None:
+            self.LABEL = "Exporter l’archive HTTP sélectionnée…"
         self._updating_policy = False
         if include_binary is not None:
             include_binary.connect("toggled", self.policy_toggled)
@@ -38,7 +43,25 @@ class HTTPTraceExport:
         except Exception:
             return {}
 
+    def _source(self):
+        if self.archive_source is None:
+            return None
+        sid = self.archive_source()
+        policy = self._status().get("include_binary")
+        return (sid, policy) if sid and type(policy) is bool else None
+
+    def invalidate(self):
+        self.armed = False
+        self._armed_source = self._chosen_source = None
+        self.button.set_label(self.LABEL)
+        if self.chooser is not None:
+            chooser, self.chooser = self.chooser, None
+            chooser.destroy()
+
     def active(self):
+        if self.archive_source is not None:
+            return (not self.closed and self.current() and self._source() is not None
+                    and callable(getattr(self.vault, "export_http_archive", None)))
         return (callable(getattr(self.broker, 'export_http_trace', None))
                 and self._status().get('active') is True)
 
@@ -89,14 +112,21 @@ class HTTPTraceExport:
             return False
         status = self._status()
         self._sync_policy(status)
-        active = (callable(getattr(self.broker, 'export_http_trace', None))
+        active = (self.active() if self.archive_source is not None else
+                  callable(getattr(self.broker, 'export_http_trace', None))
                   and status.get('active') is True)
+        if self.archive_source is not None:
+            source = self._source()
+            if ((self.armed and source != self._armed_source)
+                    or (self.chooser is not None and source != self._chosen_source)):
+                self.invalidate()
         self.button.set_sensitive(active)
         self.button.set_tooltip_text(
             "Export local brut : mots de passe, cookies, tokens et URLs signées "
             "peuvent être présents. Ne pas partager sans vérification."
-            if active else "Trace inactif ou Core incompatible : activez le niveau "
-            "Trace pour exporter les échanges HTTP de cette session."
+            if active else ("Sélectionnez une archive HTTP locale." if self.archive_source is not None else
+                            "Trace inactif ou Core incompatible : activez le niveau "
+                            "Trace pour exporter les échanges HTTP de cette session.")
         )
         if not active:
             self.armed = False
@@ -108,6 +138,7 @@ class HTTPTraceExport:
             self.refresh()
             return
         if not self.armed:
+            self._armed_source = self._source()
             self.armed = True
             button.set_label(self.CONFIRM)
             self.host.toast(
@@ -116,10 +147,14 @@ class HTTPTraceExport:
                 "choisir une destination locale."
             )
             return
+        if self.archive_source is not None and self._source() != self._armed_source:
+            self.invalidate()
+            return
         if self.chooser is not None:
             self.host.toast("Un sélecteur d’export HTTP est déjà ouvert")
             return
         self.armed = False
+        self._chosen_source = self._armed_source
         button.set_label(self.LABEL)
         root = button.get_root()
         parent = root if isinstance(root, self.gtk.Window) else None
@@ -149,6 +184,9 @@ class HTTPTraceExport:
             if not self.active():
                 self.host.toast("Export HTTP indisponible : Trace est désactivé")
                 return
+            source = self._chosen_source
+            if self.archive_source is not None and self._source() != source:
+                return
             output = dialog.get_file()
             destination = output.get_path() if output is not None else None
             if not destination:
@@ -158,7 +196,16 @@ class HTTPTraceExport:
             def write(control):
                 if control.cancelled() or self.closed or not self.current():
                     return False
-                self.broker.export_http_trace(destination)
+                if self.archive_source is None:
+                    self.broker.export_http_trace(destination)
+                else:
+                    # The worker must not read GTK selection widgets.
+                    # Selection changes invalidate the immutable source token
+                    # on the GTK thread; the broker reports current policy.
+                    if (self._chosen_source != source
+                            or self._status().get("include_binary") != source[1]):
+                        return False
+                    self.vault.export_http_archive(source[0], destination, confirmed=True)
                 return True
 
             try:
@@ -181,7 +228,10 @@ class HTTPTraceExport:
         except FileExistsError:
             okay, error = False, "Ce fichier existe déjà : choisissez un nouveau nom"
         except Exception as exc:
-            okay, error = False, f"Export HTTP impossible : {exc}"
+            from cifereca.plugin_api.capture_vault import VaultError
+            code = exc.args[0] if type(exc) is VaultError and exc.args else None
+            okay, error = False, ("Ce fichier existe déjà : choisissez un nouveau nom"
+                                  if code == "private_zip_exists" else "Export HTTP impossible")
 
         def show_status():
             if not self.closed and self.current():
@@ -207,3 +257,182 @@ class HTTPTraceExport:
         if self.handle is not None:
             self.handle.cancel()
             self.handle = None
+
+
+class HTTPVaultArchive:
+    """Explicit local archiving; reuse the existing raw export consent controller."""
+
+    def __init__(self, container, *, vault, broker, tasks, host, current, folder,
+                 gtk, gio, glib):
+        from cifereca.plugin_api.capture_vault import CaptureScope
+        self.vault, self.broker, self.tasks, self.host = vault, broker, tasks, host
+        self.current, self.glib, self.scope = current, glib, CaptureScope()
+        self.closed = False
+        self.handle = None
+        self.rows = gtk.ComboBoxText()
+        self.consent = gtk.CheckButton(
+            label="J’autorise le stockage local chiffré des échanges HTTP de cette session."
+        )
+        self.save = gtk.Button(label="Archiver les échanges HTTP dans le coffre commun")
+        self.list = gtk.Button(label="Actualiser les archives HTTP")
+        self.export = gtk.Button(label="Exporter l’archive HTTP sélectionnée…")
+        self.pin = gtk.Button(label="Épingler l’archive HTTP (30 jours)")
+        self.unpin = gtk.Button(label="Retirer l’épingle de l’archive HTTP")
+        self.delete_confirm = gtk.CheckButton(label="Je confirme la suppression de l’archive HTTP choisie.")
+        self.delete = gtk.Button(label="Supprimer l’archive HTTP")
+        self.status = gtk.Label(label="Coffre commun chiffré · archivage volontaire, Trace actif requis.",
+                                xalign=0, wrap=True)
+        for widget in (self.status, self.consent, self.save, self.list, self.rows,
+                       self.export, self.pin, self.unpin, self.delete_confirm, self.delete):
+            container.append(widget)
+        self.exporter = HTTPTraceExport(
+            self.export, broker=broker, tasks=tasks, host=host, current=current, folder=folder,
+            gtk=gtk, gio=gio, glib=glib, vault=vault, archive_source=self._selected,
+        )
+        self.consent.connect("toggled", lambda *_: self._controls())
+        self.delete_confirm.connect("toggled", lambda *_: self._controls())
+        self.rows.connect("changed", self._selection_changed)
+        self.save.connect("clicked", self._archive)
+        self.list.connect("clicked", lambda *_: self._list())
+        self.pin.connect("clicked", lambda *_: self._pin(True))
+        self.unpin.connect("clicked", lambda *_: self._pin(False))
+        self.delete.connect("clicked", self._delete)
+        self.retention_days = self.retention_mib = self.retention_apply = None
+        if (callable(getattr(broker, "capture_retention_policy", None))
+                and callable(getattr(broker, "set_capture_retention_policy", None))):
+            try:
+                policy = broker.capture_retention_policy()
+                self.retention_days = gtk.SpinButton.new_with_range(1, 365, 1)
+                self.retention_mib = gtk.SpinButton.new_with_range(8, 128, 1)
+                self.retention_days.set_value(policy["days"])
+                self.retention_mib.set_value(policy["volume_bytes"] / (1024 * 1024))
+                self.retention_apply = gtk.Button(label="Appliquer les limites de rétention du coffre")
+                for widget in (
+                    gtk.Label(label="Rétention automatique : durée en jours", xalign=0),
+                    self.retention_days,
+                    gtk.Label(label="Volume du coffre en Mio (les épingles restent bornées)", xalign=0),
+                    self.retention_mib,
+                    self.retention_apply,
+                ):
+                    container.append(widget)
+                self.retention_apply.connect("clicked", self._apply_retention)
+            except Exception:
+                self.retention_days = self.retention_mib = self.retention_apply = None
+        self._controls()
+
+    def _selected(self):
+        if self.closed or self.handle is not None:
+            return None
+        return self.rows.get_active_id()
+
+    def _controls(self):
+        idle = not self.closed and self.current() and self.handle is None
+        selected = idle and bool(self._selected())
+        self.save.set_sensitive(idle and self.consent.get_active())
+        self.consent.set_sensitive(idle)
+        self.list.set_sensitive(idle)
+        self.rows.set_sensitive(idle)
+        self.pin.set_sensitive(selected)
+        self.unpin.set_sensitive(selected)
+        self.delete_confirm.set_sensitive(selected)
+        self.delete.set_sensitive(selected and self.delete_confirm.get_active())
+        if self.retention_apply is not None:
+            self.retention_days.set_sensitive(idle)
+            self.retention_mib.set_sensitive(idle)
+            self.retention_apply.set_sensitive(idle)
+        self.exporter.refresh()
+
+    def _selection_changed(self, *_):
+        self.exporter.invalidate()
+        self.delete_confirm.set_active(False)
+        self._controls()
+
+    def _submit(self, label, work, done):
+        if self.closed or not self.current() or self.handle is not None:
+            return
+        self.exporter.invalidate()
+        def execute(control):
+            if control.cancelled() or self.closed or not self.current():
+                raise RuntimeError("cancelled")
+            return work()
+        try:
+            self.handle = self.tasks.submit(execute, label=label, kind="diagnostics")
+        except Exception:
+            self.status.set_label("Opération du coffre indisponible.")
+            self._controls()
+            return
+        self._controls()
+
+        def completed(handle):
+            try:
+                result, okay = handle.result(), True
+            except Exception:
+                result, okay = None, False
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                if okay:
+                    done(result)
+                else:
+                    self.status.set_label("Opération du coffre refusée : clé, limites ou capture indisponible.")
+                self._controls()
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def _archive(self, *_):
+        if not self.consent.get_active():
+            return
+        self.consent.set_active(False)
+        self._submit("Archivage HTTP chiffré",
+                     lambda: self.vault.archive_http_trace(consented=True),
+                     lambda sid: self._list(preferred=sid))
+
+    def _list(self, *, preferred=None):
+        old = self.rows.get_active_id()
+        def done(rows):
+            self.rows.remove_all()
+            ids = []
+            for row in rows:
+                ids.append(row.capture_id)
+                self.rows.append(row.capture_id,
+                                 f"{row.saved_at[:16]} · {row.payload_bytes} octets"
+                                 + (" · épinglée" if row.pinned_until else ""))
+            selected = preferred if preferred in ids else old if old in ids else ids[0] if ids else None
+            if selected:
+                self.rows.set_active_id(selected)
+            self.status.set_label(f"{len(ids)} archives HTTP chiffrées ; aucun envoi.")
+        self._submit("Lister les archives HTTP", lambda: self.vault.sessions(self.scope), done)
+
+    def _pin(self, pinned):
+        sid = self._selected()
+        if sid:
+            self._submit("Modifier l’épingle HTTP",
+                         lambda: self.vault.pin(self.scope, sid, pinned=pinned, confirmed=True),
+                         lambda _: self._list(preferred=sid))
+
+    def _apply_retention(self, *_):
+        days = self.retention_days.get_value_as_int()
+        volume = self.retention_mib.get_value_as_int() * 1024 * 1024
+        self._submit(
+            "Configurer la rétention du coffre",
+            lambda: self.broker.set_capture_retention_policy(days, volume),
+            lambda _: self.status.set_label("Limites de rétention enregistrées ; purge automatique."),
+        )
+
+    def _delete(self, *_):
+        sid = self._selected()
+        if sid and self.delete_confirm.get_active():
+            self.delete_confirm.set_active(False)
+            self._submit("Supprimer une archive HTTP",
+                         lambda: self.vault.delete(self.scope, sid, confirmed=True),
+                         lambda _: self._list())
+
+    def close(self):
+        self.closed = True
+        self.exporter.close()
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        self.rows.remove_all()

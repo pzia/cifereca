@@ -910,7 +910,7 @@ def test_scripts_share_static_budget_without_discarding_fetch_or_post():
 
 
 def test_origin_inventory_is_absent_from_vault_and_private_zip(tmp_path):
-    from browser_recorder_vault import PrivateSessionVault
+    from capture_engine_fixture import FixtureVault
     from browser_recorder_private_zip import save_session_llm_zip
     from zipfile import ZipFile
     from io import BytesIO
@@ -919,7 +919,7 @@ def test_origin_inventory_is_absent_from_vault_and_private_zip(tmp_path):
     trace.request(Request(FOREIGN + '/private?token=PRIVATE-QUERY'))
     req = Request(ORIGIN + '/api')
     emit(trace, req, Response(req))
-    vault = PrivateSessionVault(tmp_path / 'vault')
+    vault = FixtureVault(tmp_path / 'vault')
     writer = vault.begin('FICTIONAL-VAULT-PASSPHRASE')
     writer.save(trace, 'completed', force=True)
     stored = vault.open(trace.vault_session_id, 'FICTIONAL-VAULT-PASSPHRASE')

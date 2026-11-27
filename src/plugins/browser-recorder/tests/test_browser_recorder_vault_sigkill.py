@@ -15,7 +15,7 @@ import sys
 import pytest
 pytest.importorskip("cryptography")
 
-from browser_recorder_vault import PrivateSessionVault, MAGIC
+from capture_engine_fixture import FixtureVault, MAGIC
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 
@@ -32,9 +32,9 @@ import signal
 import sys
 
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault
+from capture_engine_fixture import FixtureVault
 
-vault = PrivateSessionVault(Path(sys.argv[1]))
+vault = FixtureVault(Path(sys.argv[1]))
 key = sys.argv[2]
 origin = sys.argv[3]
 account = sys.argv[4]
@@ -70,7 +70,7 @@ def test_sigkill_recovers_last_durable_snapshot_and_independent_reviews(tmp_path
     plugin_dir = Path(__file__).resolve().parents[1]
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(
-        (str(plugin_dir), environment.get("PYTHONPATH", ""))
+        (str(plugin_dir / "tests"), str(plugin_dir), environment.get("PYTHONPATH", ""))
     )
     child = subprocess.run(
         [sys.executable, "-c", _child_crash_code(), str(vault_dir),
@@ -83,7 +83,7 @@ def test_sigkill_recovers_last_durable_snapshot_and_independent_reviews(tmp_path
     assert child.returncode == -signal.SIGKILL
     assert FAKE_ACCOUNT not in child.stdout + child.stderr
     assert child.stdout == child.stderr == ""
-    vault = PrivateSessionVault(vault_dir)
+    vault = FixtureVault(vault_dir)
     ids = vault.list_ids()
     assert len(ids) == 3
     assert not list(vault_dir.glob("*.part"))
@@ -136,7 +136,7 @@ def test_sigkill_recovers_last_durable_snapshot_and_independent_reviews(tmp_path
 
 def test_unlocked_summary_is_private_and_never_claims_completion(tmp_path):
     from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-    vault = PrivateSessionVault(tmp_path / "private")
+    vault = FixtureVault(tmp_path / "private")
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
         1, "GET", ORIGIN + "/account?secret=" + FAKE_ACCOUNT, status=200,

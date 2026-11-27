@@ -115,6 +115,16 @@ class CiferecaCore:
         )
         brokers = (build_public_brokers(library) if notice_work_admission is None
                    else build_public_brokers(library, task_admission=notice_work_admission))
+        from .capture_vault_service import CoreCaptureVault, capture_scope_authorizer
+        from ..paths import data_dir
+        capture_root = database_path.parent if database_path is not None else data_dir(create=False)
+        brokers["capture.vault"] = CoreCaptureVault(
+            capture_root / "capture-vault-v1", config.path.parent / "capture-secrets",
+            authorize_scope=capture_scope_authorizer(library),
+            policy=lambda: (config.get('diagnostics.capture_retention_days', 90),
+                            config.get('diagnostics.capture_retention_bytes', 128 * 1024 * 1024)),
+        )
+        brokers['capture.vault'].start_maintenance()
         # All three tools are optional. Register read factories, not plugin
         # instances, before the manager constructs its activation leases.
         from .maintenance_read_ports import maintenance_read_ports

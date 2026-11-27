@@ -65,12 +65,16 @@ def test_three_session_fixture_opt_in_manifest_without_gtk():
 
 
 def make_manager(tmp_path, tasks):
-    return PluginManager(
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "capture-vault", tmp_path / "capture-keys",
+                            authorize_scope=lambda *_: True)
+    manager = PluginManager(
         package_store=PackageStore(tmp_path / "packages"),
         state_store=PluginStateStore(tmp_path / "state.json"),
         config_store=PluginConfigStore(tmp_path / "config.json"),
-        brokers={"tasks": tasks},
+        brokers={"tasks": tasks, "capture.vault": core},
     )
+    return manager, core
 
 
 def test_three_real_captures_reopen_two_different_zips_no_replay(
@@ -86,15 +90,14 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         "cifereca.plugins.manager.cache_dir", lambda: tmp_path / "core-cache",
     )
     tasks = TaskBroker()
-    manager = make_manager(tmp_path, tasks)
+    manager, core = make_manager(tmp_path, tasks)
     window = Gtk.Window()
     window.set_default_size(1024, 768)
     panel = None
     source_hashes = {}
     ids = []
     private_export = tmp_path / "explicit-private-session-B.zip"
-    vault_path = (tmp_path / "core-data" / "plugins" / "data"
-                  / PLUGIN_ID / "private-sessions")
+    vault_path = tmp_path / "capture-vault"
     try:
         manager.installer.install(
             _real_package_zip(tmp_path / "fixture-package.zip"), activate=True,
@@ -125,13 +128,11 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         panel = plugin.private_panel
-        from browser_recorder_vault import PrivateSessionVault
-        vault = PrivateSessionVault(vault_path)
+        vault = panel.vault
 
         for index in range(3):
             completed.clear()
             panel.vault_consent.set_active(True)
-            panel.vault_passphrase.set_text(PASSPHRASE)
             panel.start.emit("clicked")
             assert panel.is_recording()
             assert _pump_until(lambda: completed.is_set(), seconds=30), (
@@ -140,13 +141,13 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
             sleep(.35)
             panel.stop.emit("clicked")
             assert _pump_until(
-                lambda: not panel.is_recording() and panel._review is not None,
+                lambda: not panel.is_recording() and not panel.is_scanning() and panel._review is not None,
                 seconds=20,
             )
             sid = panel._trace.vault_session_id
             assert sid and sid not in ids
             ids.append(sid)
-            stored = vault.open(sid, PASSPHRASE)
+            stored = vault.read(sid)
             try:
                 assert stored.recovery_status == "completed"
                 assert len(stored.trace.exchanges) >= 9
@@ -155,7 +156,7 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
             source_hashes[sid] = sha256(
                 (vault_path / (sid + ".cbrv")).read_bytes()
             ).hexdigest()
-            assert len(vault.list_ids()) == index + 1
+            assert len(vault.sessions()) == index + 1
             assert not list(vault_path.glob("*.zip"))
             if index == 1:
                 # P0 private path: user explicitly selects the *current B*
@@ -168,7 +169,6 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
                     lambda accepted, cancelled: accepted(private_export)
                 )
                 try:
-                    panel.vault_passphrase.set_text(PASSPHRASE)
                     panel.export_private_zip(current=True)
                 finally:
                     panel._prompt_private_zip_file = original_prompt
@@ -221,6 +221,7 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         tasks.close()
         window.close()
         manager.close()
+        core.close()
         _flush()
 
     # Additionally decrypt *all three* encrypted archives in a newly
@@ -233,7 +234,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from browser_recorder import site_origin as policy
 import browser_recorder_http as network
-from browser_recorder_vault import PrivateSessionVault
+from browser_recorder_vault import RecorderVault
+from cifereca.core.capture_vault_service import CoreCaptureVault
 origin = sys.argv[2]
 def only_fixture(value):
     parsed = urlsplit(value)
@@ -244,14 +246,17 @@ def only_fixture(value):
         return origin
     return policy(value)
 network.site_origin = only_fixture
-vault = PrivateSessionVault(Path(sys.argv[1]))
-ids = vault.list_ids()
+root = Path(sys.argv[1])
+core = CoreCaptureVault(root, root.parent / "capture-keys", authorize_scope=lambda *_: True)
+vault = RecorderVault(core.for_plugin("ui.page.browser-recorder"))
+ids = [row.capture_id for row in vault.sessions()]
 assert len(ids) == 3
 for sid in ids:
-    item = vault.open(sid, sys.argv[3])
+    item = vault.read(sid)
     assert item.recovery_status == "completed"
     assert len(item.trace.exchanges) >= 9
     item.trace.destroy()
+core.close()
 print("3")
 """
     probe_env = dict(os.environ)
@@ -260,7 +265,7 @@ print("3")
     ))
     probe = subprocess.run(
         [sys.executable, "-c", isolated_script,
-         str(vault_path), origin, PASSPHRASE],
+         str(vault_path), origin],
         env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
         capture_output=True, text=True, timeout=40,
     )
@@ -302,10 +307,11 @@ import cifereca.plugins.manager as core_manager
 from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.plugins.configuration import PluginConfigStore
 from browser_recorder import site_origin as production_origin
-from browser_recorder_vault import PrivateSessionVault
+from browser_recorder_vault import RecorderVault
+from cifereca.core.capture_vault_service import CoreCaptureVault
 import browser_recorder_http as network
 
-home, origin, password, plugin_id, vault_path = sys.argv[1:]
+home, origin, plugin_id, vault_path = sys.argv[1:]
 home = Path(home)
 core_manager.data_dir = lambda: home / "core-data"
 core_manager.cache_dir = lambda: home / "core-cache"
@@ -338,11 +344,12 @@ def flush():
 
 Gtk.init()
 tasks = Tasks()
+core = CoreCaptureVault(Path(vault_path), home / "capture-keys", authorize_scope=lambda *_: True)
 manager = PluginManager(
     package_store=PackageStore(home / "packages"),
     state_store=PluginStateStore(home / "state.json"),
     config_store=PluginConfigStore(home / "config.json"),
-    brokers={"tasks": tasks},
+    brokers={"tasks": tasks, "capture.vault": core},
 )
 window = Gtk.Window()
 window.set_default_size(1024, 768)
@@ -360,26 +367,20 @@ try:
     window.present()
     flush()
     panel = plugin.private_panel
-    assert panel.vault_directory == Path(vault_path)
+    assert not hasattr(panel, "vault_passphrase")
     panel.sessions_refresh.emit("clicked")
-    ids = PrivateSessionVault(Path(vault_path)).list_ids()
+    ids = [row.capture_id for row in panel.vault.sessions()]
     assert len(ids) == 3
-    for sid in ids:
-        panel.session_list.set_active_id(sid)
-        assert origin not in panel.session_list.get_active_text()
-    panel.vault_passphrase.set_text(password)
-    panel.sessions_unlock.emit("clicked")
     stop_at = monotonic() + 35
     while monotonic() < stop_at and panel.is_scanning():
         flush()
         sleep(.03)
     flush()
     assert not panel.is_scanning()
-    assert "3 sessions déverrouillées" in panel.status.get_label()
+    assert "3 sessions chiffrées" in panel.status.get_label()
     for sid in ids:
         panel.session_list.set_active_id(sid)
         assert origin in panel.session_list.get_active_text()
-        panel.vault_passphrase.set_text(password)
         panel.sessions_open.emit("clicked")
         assert panel._trace.vault_session_id == sid
         assert panel._review is not None
@@ -389,12 +390,13 @@ try:
 finally:
     window.close()
     manager.close()
+    core.close()
     tasks.close()
     flush()
 """
     gui_probe = subprocess.run(
         [sys.executable, "-c", fresh_gui, str(tmp_path), origin,
-         PASSPHRASE, PLUGIN_ID, str(vault_path)],
+         PLUGIN_ID, str(vault_path)],
         env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
         capture_output=True, text=True, timeout=65,
     )
@@ -408,7 +410,7 @@ finally:
 
     # A *new* plugin manager/window/PrivateReviewPanel also works from disk.
     tasks2 = TaskBroker()
-    manager2 = make_manager(tmp_path, tasks2)
+    manager2, core2 = make_manager(tmp_path, tasks2)
     window2 = Gtk.Window()
     window2.set_default_size(1280, 720)
     panel2 = None
@@ -431,17 +433,10 @@ finally:
             network_after_restart, "site_origin", fixture_only,
         )
         panel2.sessions_refresh.emit("clicked")
-        assert set(vault.list_ids()) == set(ids)
-        assert ACCOUNT not in panel2.status.get_label()
-        assert origin not in panel2.status.get_label()
-        for sid in ids:
-            panel2.session_list.set_active_id(sid)
-            assert origin not in panel2.session_list.get_active_text()
-
-        panel2.vault_passphrase.set_text(PASSPHRASE)
-        panel2.sessions_unlock.emit("clicked")
+        assert {row.capture_id for row in panel2.vault.sessions()} == set(ids)
+        assert not hasattr(panel2, "vault_passphrase")
         assert _pump_until(lambda: not panel2.is_scanning(), seconds=30)
-        assert "3 sessions déverrouillées" in panel2.status.get_label()
+        assert "3 sessions chiffrées" in panel2.status.get_label()
         for sid in ids:
             panel2.session_list.set_active_id(sid)
             assert origin in panel2.session_list.get_active_text()
@@ -453,7 +448,6 @@ finally:
         for review_index in (0, 1):
             # Independently reopen the same archived source each time.
             panel2.session_list.set_active_id(ids[1])
-            panel2.vault_passphrase.set_text(PASSPHRASE)
             panel2.sessions_open.emit("clicked")
             assert panel2._review is not None
             for candidate in panel2._review.candidates():
@@ -484,7 +478,6 @@ finally:
         assert zip_digests[0] != zip_digests[1]
         for sid in (ids[0], ids[2]):
             panel2.session_list.set_active_id(sid)
-            panel2.vault_passphrase.set_text(PASSPHRASE)
             panel2.sessions_open.emit("clicked")
             assert panel2._trace.vault_session_id == sid
             assert panel2._review is not None
@@ -498,4 +491,5 @@ finally:
         tasks2.close()
         window2.close()
         manager2.close()
+        core2.close()
         _flush()

@@ -503,6 +503,10 @@ class DiagnosticsPagePlugin:
         if previous_http_export is not None:
             previous_http_export.close()
         self._http_trace_export = None
+        previous_vault = getattr(self, "_http_vault_archive", None)
+        if previous_vault is not None:
+            previous_vault.close()
+        self._http_vault_archive = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []
@@ -773,6 +777,17 @@ class DiagnosticsPagePlugin:
             current=lambda: self._page_root is page_root and self.diagnostics is broker,
             folder=_readable_raw_export_folder, include_binary=journals_include_binary,
         )
+
+        vault = self.context.broker("capture.vault")
+        if callable(getattr(vault, "archive_http_trace", None)):
+            from diagnostics_http_export import HTTPVaultArchive
+            self._http_vault_archive = HTTPVaultArchive(
+                journals_tab, vault=vault, broker=broker, tasks=self.tasks, host=host,
+                current=lambda: self._page_root is page_root and self.diagnostics is broker,
+                folder=_readable_raw_export_folder, gtk=Gtk, gio=Gio, glib=GLib,
+            )
+            archive_exporter = self._http_vault_archive.exporter
+            journals_include_binary.connect("toggled", lambda *_: archive_exporter.invalidate())
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()
@@ -2327,6 +2342,10 @@ class DiagnosticsPagePlugin:
         if previous_http_export is not None:
             previous_http_export.close()
         self._http_trace_export = None
+        previous_vault = getattr(self, "_http_vault_archive", None)
+        if previous_vault is not None:
+            previous_vault.close()
+        self._http_vault_archive = None
         for exporter in getattr(self, "_support_exports", ()):
             exporter.close()
         self._support_exports = []

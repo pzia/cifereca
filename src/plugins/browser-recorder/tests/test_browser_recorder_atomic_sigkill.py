@@ -15,8 +15,8 @@ import time
 import pytest
 pytest.importorskip("cryptography")
 
-from browser_recorder_vault import (
-    PrivateSessionVault, MAGIC, LABEL_MAGIC, MIN_STAGING_AGE_SECONDS,
+from capture_engine_fixture import (
+    FixtureVault, MAGIC, LABEL_MAGIC, MIN_STAGING_AGE_SECONDS,
 )
 
 KEY = "FICTIONAL-ATOMIC-SIGKILL-PASSPHRASE-2026"
@@ -27,10 +27,10 @@ _CHILD = r"""
 import os, signal, sys
 from pathlib import Path
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-import browser_recorder_vault as vault_api
+import capture_engine_fixture as vault_api
 
 directory, passphrase, origin, private, case = sys.argv[1:]
-vault = vault_api.PrivateSessionVault(Path(directory))
+vault = vault_api.FixtureVault(Path(directory))
 writer = vault.begin(passphrase)
 trace = PrivateHttpTrace((origin,))
 trace.exchanges.append(PrivateExchange(
@@ -70,7 +70,7 @@ def _crash(tmp_path, case):
     directory = tmp_path / "vault"
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
-        (str(Path(__file__).resolve().parents[1]),
+        (str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[1]),
          env.get("PYTHONPATH", ""))
     )
     child = subprocess.run(
@@ -81,7 +81,7 @@ def _crash(tmp_path, case):
     )
     assert child.returncode == -signal.SIGKILL
     assert child.stdout == child.stderr == ""
-    vault = PrivateSessionVault(directory)
+    vault = FixtureVault(directory)
     return vault, list(directory.iterdir())
 
 
@@ -122,14 +122,13 @@ def test_sigkill_after_ciphertext_fsync_never_loses_last_commit_or_leaks(
         finally:
             restored.trace.destroy()
         assert vault.get_label(sidlist[0], KEY) == ""
-    assert vault.prune_staging(confirmed=True) == (0, 0)
+    assert vault.auto_prune(KEY, older_than_days=90, pinned=lambda *_: False) == (0, 0)
     staged = [x for x in files if x.suffix in {".part", ".labelpart"}]
     assert len(staged) == 1
     old = time.time() - MIN_STAGING_AGE_SECONDS - 3600
     os.utime(staged[0], (old, old))
     assert vault.staging_summary()[2] == 1
-    count, size = vault.prune_staging(confirmed=True)
-    assert count == 1 and size > 36
+    assert vault.auto_prune(KEY, older_than_days=90, pinned=lambda *_: False) == (0, 0)
     assert not staged[0].exists()
     assert vault.staging_summary() == (0, 0, 0)
     if capture is not None:

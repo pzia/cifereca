@@ -94,6 +94,10 @@ class BrowserRecorderPage:
     def build(self, host):
         from gi.repository import Gtk, GLib
         from browser_recorder_review_ui import PrivateReviewPanel
+        from browser_recorder_vault import RecorderVault
+        port = self.context.broker("capture.vault")
+        if port is None:
+            raise RuntimeError("Broker public capture.vault requis")
 
         if self.private_panel is not None:
             self.private_panel.destroy()
@@ -126,7 +130,7 @@ class BrowserRecorderPage:
             Gtk, GLib, self.tasks, site, consent,
             legacy_running=lambda: self.handle is not None and not self.handle.done(),
             export_directory=self.context.data_directory / "exports",
-            vault_directory=self.context.data_directory / "private-sessions",
+            vault=RecorderVault(port),
             # The Core binds this callback to the installed plugin identity.
             # Never forward a provider value, URL, exception or trace body.
             diagnostic=self._report_http_outcome,

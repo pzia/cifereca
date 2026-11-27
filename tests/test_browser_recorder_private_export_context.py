@@ -32,7 +32,8 @@ def test_private_export_crosses_public_context_to_attested_feed(
 ):
     monkeypatch.syspath_prepend(str(SOURCE))
     from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-    from browser_recorder_vault import PrivateSessionVault
+    from browser_recorder_vault import RecorderVault
+    from cifereca.core.capture_vault_service import CoreCaptureVault
     from browser_recorder_page import BrowserRecorderPage
     from browser_recorder_review_ui import PrivateReviewPanel
 
@@ -45,11 +46,12 @@ def test_private_export_crosses_public_context_to_attested_feed(
         response_body='{"AccountId":"' + secret + '"}',
         response_body_state="captured",
     ))
-    vault = PrivateSessionVault(tmp_path / "vault")
-    writer = vault.begin(password)
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys", authorize_scope=lambda *_: True)
+    vault = RecorderVault(core.for_plugin("ui.page.browser-recorder"))
+    writer = vault.begin(consented=True)
     writer.save(trace, "recording", force=True)
     trace.destroy()
-    source = vault.path / (writer.session_id + ".cbrv")
+    source = tmp_path / "vault" / (writer.session_id + ".cbrv")
     before = source.read_bytes()
     chosen = tmp_path / "chosen"
     chosen.mkdir(mode=0o755)
@@ -73,7 +75,7 @@ def test_private_export_crosses_public_context_to_attested_feed(
     panel._generation = 0
     panel._private_destination_dialog = None
     panel.is_scanning = lambda: False
-    panel.vault_directory = vault.path
+    panel.vault = vault
     # Deliberately select an unrelated catalogue ID when exporting the
     # active review. Never let an old list selection redirect its contents.
     other_sid = "0" * 32
@@ -81,7 +83,8 @@ def test_private_export_crosses_public_context_to_attested_feed(
     panel.session_list = NS(get_active_id=lambda: other_sid if current else writer.session_id)
     panel._trace = NS(vault_session_id=writer.session_id) if current else None
     panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(chosen / "session.zip")
-    panel.vault_passphrase = Entry(password if not bad_key else "FICTIONAL-WRONG-VAULT-KEY")
+    if bad_key:
+        (tmp_path / "keys" / "key").unlink()
     panel._diagnostic = page._report_http_outcome
     panel._refresh = lambda: None
     panel.status = NS(set_label=lambda _: None)
@@ -89,7 +92,6 @@ def test_private_export_crosses_public_context_to_attested_feed(
     # Removing the view/context cannot erase an already published result.
     page.context = None
     panel._closed = True
-    assert panel.vault_passphrase.get_text() == ""
     assert source.read_bytes() == before
     result = query_diagnostic_events(collector, source="core_events", log_path=tmp_path / "absent")
     assert result["total"] == 1
@@ -108,6 +110,7 @@ def test_private_export_crosses_public_context_to_attested_feed(
     for rendered in (repr(result), repr(collector.snapshot()), collector.text("test")):
         assert secret not in rendered and password not in rendered
         assert str(chosen) not in rendered
+    core.close()
 
 
 def test_current_private_export_is_cancelled_if_active_review_changes_during_save_as(
@@ -122,12 +125,11 @@ def test_current_private_export_is_cancelled_if_active_review_changes_during_sav
     panel._handle = None
     panel._generation = 12
     panel._private_destination_dialog = None
-    panel.vault_directory = tmp_path / "vault"
+    panel.vault = NS()
     panel._trace = NS(vault_session_id="a" * 32)
     panel.session_list = NS(get_active_id=lambda: "b" * 32)
     panel.is_recording = lambda: False
     panel.is_scanning = lambda: False
-    panel.vault_passphrase = Entry("FICTIONAL-VALID-VAULT-KEY")
     messages, events, callbacks = [], [], []
     panel.status = NS(set_label=messages.append)
     panel._diagnostic = lambda op, code, **metrics: events.append((op, code, metrics))
@@ -136,7 +138,6 @@ def test_current_private_export_is_cancelled_if_active_review_changes_during_sav
     )
 
     panel.export_private_zip(current=True)
-    assert panel.vault_passphrase.get_text() == ""
     assert len(callbacks) == 1
     panel._trace = NS(vault_session_id="c" * 32)
     callbacks[0][0](tmp_path / "must-not-exist.zip")

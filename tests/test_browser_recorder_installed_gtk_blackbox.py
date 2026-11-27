@@ -87,11 +87,13 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
     archive = _real_package_zip(tmp_path / "browser-recorder.zip")
     tasks = FailClosedTasks()
     store = PackageStore(tmp_path / "packages")
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "capture-vault", tmp_path / "capture-keys", authorize_scope=lambda *_: True)
     manager = PluginManager(
         package_store=store,
         state_store=PluginStateStore(tmp_path / "state.json"),
         config_store=PluginConfigStore(tmp_path / "config.json"),
-        brokers={"tasks": tasks},
+        brokers={"tasks": tasks, "capture.vault": core},
     )
     window = Gtk.Window()
     window.set_default_size(width, 850)
@@ -160,6 +162,7 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
     finally:
         window.close()
         manager.close()
+        core.close()
         _flush()
         # Cached plugin modules may be detached at teardown; this test runs
         # alone, without the source-tree Browser Recorder test suite.
@@ -215,11 +218,13 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
 
     tasks = Tasks()
     store = PackageStore(tmp_path / "packages")
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "capture-vault", tmp_path / "capture-keys", authorize_scope=lambda *_: True)
     manager = PluginManager(
         package_store=store,
         state_store=PluginStateStore(tmp_path / "state.json"),
         config_store=PluginConfigStore(tmp_path / "config.json"),
-        brokers={"tasks": tasks},
+        brokers={"tasks": tasks, "capture.vault": core},
     )
     window = Gtk.Window()
     window.set_default_size(1366, 850)
@@ -274,9 +279,7 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         plugin.private_panel.vault_consent.set_active(True)
-        plugin.private_panel.vault_passphrase.set_text(
-            "FICTIONAL-TEST-PASSPHRASE-2026"
-        )
+
         # Use only exposed native GTK controls to complete the flow.
         assert tasks.handle is None
         assert not plugin.private_panel.export_button.get_sensitive()
@@ -352,6 +355,7 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
     finally:
         window.close()
         manager.close()
+        core.close()
         _flush()
 
 
@@ -420,11 +424,13 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
     collector = Diagnostics()
     tasks = SyntheticTasks()
     store = PackageStore(tmp_path / "packages")
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(tmp_path / "capture-vault", tmp_path / "capture-keys", authorize_scope=lambda *_: True)
     manager = PluginManager(
         package_store=store,
         state_store=PluginStateStore(tmp_path / "state.json"),
         config_store=PluginConfigStore(tmp_path / "config.json"),
-        brokers={"tasks": tasks},
+        brokers={"tasks": tasks, "capture.vault": core},
         diagnostics=collector,
     )
     window = Gtk.Window()
@@ -477,9 +483,7 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
 
         consent.set_active(True)
         plugin.private_panel.vault_consent.set_active(True)
-        plugin.private_panel.vault_passphrase.set_text(
-            "FICTIONAL-TEST-PASSPHRASE-2026"
-        )
+
         plugin.private_panel.start.emit("clicked")
         assert tasks.submissions == 1
         assert tasks.handle is not None
@@ -518,4 +522,5 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
     finally:
         window.close()
         manager.close()
+        core.close()
         _flush()
