@@ -4,6 +4,8 @@
 
 ## Frontière de rôle impérative (par défaut, sans exception implicite)
 
+À la clôture P0 (Backlog ou Focus), qualifier et autoriser la [consolidation du corpus clos](../../docs/AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0) sous délégation pzia ; CI/CD exécute, les rôles propriétaires capitalisent. Aucun développement ni lancement de tests par Backlog.
+
 **Le rôle `backlog` est strictement limité à l'analyse et au ticketing.** Cette contrainte prévaut sur les formulations génériques d'autonomie, d'avancement ou d'orchestration.
 
 - **Autorisé :** lire et analyser les issues, PR, code, tests, journaux et documentation existants ; rechercher les causes probables ; qualifier les risques et les preuves ; dédupliquer ; créer, commenter, enrichir, relier, étiqueter, prioriser, réorienter et, avec justification, clore/réouvrir des **issues**. Rédiger dans les issues les spécifications, critères d'acceptation, plans de test et handoffs. La consultation de code reste **en lecture seule**.

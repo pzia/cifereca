@@ -163,6 +163,10 @@ que des commentaires répétitifs ; ne pas committer un journal sur `main`.
 Ne pas fermer un ticket à la seule ouverture de la PR, ni laisser une issue
 livrée ouverte pour une recette exploratoire différée.
 
+## Consolidation à la clôture d'un P0
+
+À chaque clôture P0 par Focus ou Backlog, après preuve fonctionnelle et fermeture effective du parent, qualifier le corpus clos lié : décisions, exigences, exceptions, références et preuves uniques. Capitaliser d'abord les connaissances durables dans les documents canoniques via leurs rôles propriétaires ; vérifier les SHA sur main. Backlog autorise sous délégation pzia un plan exact de compactage, CI/CD exécute le [runbook #8195](BACKLOG-COMPACTION.md). Le Focus clôturant peut coordonner, mais aucune écriture concurrente sur le corpus. Un seul workflow dédié ; pas de suppression aveugle ni d'issue entière. Ne retirer que des redondances dont le gain net (synthèses, documents, plans et journaux inclus) est positif et l'équivalence vérifiée. Si aucun gain sûr, consigner brièvement ce verdict ; si outillage/recette indisponible, noter « non exécuté » et transmettre à CI/CD. Ne pas rouvrir ni déclarer un échec fonctionnel pour ce seul motif. Les deux verdicts restent distincts.
+
 ## Revue de clôture : retour utilisateur et `PU`
 
 **But : terminer l'issue, ou obtenir une question utilisateur directement actionnable — jamais prolonger une étude sans critère.** Avant tout nouveau lot ou recherche, le pilote confronte les critères restant ouverts aux preuves déjà acquises (PR, HEAD, tests, risques). Deux voies seulement :

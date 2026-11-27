@@ -142,6 +142,8 @@ Un blocage doit produire un handoff exploitable, pas un faux succès. Seul **cic
 
 ## Livraison asynchrone, preuves et clôture
 
+À chaque clôture P0 par Focus ou Backlog, appliquer la [consolidation du corpus clos](docs/AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0) ; distinguer réception fonctionnelle et compactage effectif.
+
 **Politique canonique : [docs/AGENT-DELIVERY-POLICY.md](docs/AGENT-DELIVERY-POLICY.md).**
 Elle s'applique à tous les rôles et aux fils ChatGPT qui avancent en parallèle.
 

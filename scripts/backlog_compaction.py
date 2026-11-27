@@ -214,12 +214,16 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
             and sha256(raw) == expected, "plan digest mismatch")
     plan = strict_json(raw)
     exact_keys(plan, ("version", "repository", "pilot_issue", "main_sha", "baseline_sha",
-                      "created_at", "expires_at", "issues", "retained_issues", "semantic_review",
+                      "created_at", "expires_at", "closure_p0", "issues", "retained_issues", "semantic_review",
                       "execution_review"))
-    require(type(plan["version"]) is int and plan["version"] == 1
+    require(type(plan["version"]) is int and plan["version"] == 2
             and plan["repository"] == REPO and number(plan["pilot_issue"]) == number(pilot)
             and pilot != 8195 and plan["main_sha"] == current
-            and plan["baseline_sha"] == BASELINE, "plan context mismatch")
+            and plan["baseline_sha"] == current,
+            "plan context mismatch")
+    closure = plan["closure_p0"]
+    if closure is not None:
+        number(closure)
     pilot_before = snapshot(api, pilot, closed=False)
     pilot_fingerprint = fingerprint(pilot_before)
     require(not any(c["body"].startswith(CONSUMED) for c in pilot_before["comments"]),
@@ -230,7 +234,7 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
     require(created <= now < expires <= created + dt.timedelta(hours=24), "plan expired or not current")
     require(type(plan["semantic_review"]) is str and bool(plan["semantic_review"].strip()),
             "missing semantic review")
-    exact_keys(plan["execution_review"], ("no_other_focus", "known_inbound_references", "global_gain"))
+    exact_keys(plan["execution_review"], ("corpus_quiescent", "known_inbound_references", "global_gain"))
     require(all(v is True for v in plan["execution_review"].values()), "missing Backlog execution review")
     entries = plan["issues"]
     require(type(entries) is list and 1 <= len(entries) <= 3, "pilot limited to 1–3 issues")
@@ -248,14 +252,25 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
     retained_numbers = [number(entry["number"]) for entry in retained]
     require(len(set(retained_numbers)) == len(retained_numbers)
             and not set(retained_numbers) & set(numbers + [pilot, 8195]), "overlapping retained issue")
+    if closure is not None:
+        require(closure in numbers + retained_numbers, "closure P0 outside bounded corpus")
+
+    def check_closure(snap):
+        issue = snap["issue"]
+        if issue["number"] == closure:
+            require(issue["state"] == "closed" and {label["name"] for label in issue["labels"]}
+                    & {"P0", "P-1", "P1", "P2", "P3"} == {"P0"}, "closure parent must be closed P0")
+
     for entry in retained:
         snap = snapshot(api, entry["number"], closed=None)
+        check_closure(snap)
         require(entry["snapshot_sha256"] == fingerprint(snap), "retained issue drift")
         before.extend(issue_texts(snap))
         after.extend(issue_texts(snap))
     removed_ids = set()
     for entry in entries:
         snap = snapshot(api, entry["number"])
+        check_closure(snap)
         require(entry["snapshot_sha256"] == fingerprint(snap), "snapshot drift")
         require(type(entry["body_after"]) is str and bool(entry["body_after"].strip())
                 and len(entry["body_after"].encode("utf-8")) <= MAX_PLAN
@@ -284,9 +299,10 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
         require(fingerprint(snapshot(api, entry["number"], closed=None)) == entry["snapshot_sha256"], "retained issue drift")
     require(fingerprint(snapshot(api, pilot, closed=False)) == pilot_fingerprint, "pilot plan changed")
     old, new = metrics(before), metrics(after + issue_texts(pilot_before))
-    # Count the entire pilot issue as overhead; future journal and other control-issue overhead are not measured yet.
+    # Count the entire pilot issue as overhead; document savings are measured separately
+    # at closure and never recredited to each execution.
     return {"status": "STRUCTURAL_VALIDATION_ONLY", "plan_sha256": expected,
-            "main_sha": current, "issues": numbers, "retained_issues": retained_numbers,
+            "main_sha": current, "closure_p0": closure, "issues": numbers, "retained_issues": retained_numbers,
             "pilot_snapshot_sha256": pilot_fingerprint,
             "before": old, "projected_after_with_plan": new,
             "projected_gain": {k: old[k] - new[k] for k in old},

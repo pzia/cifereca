@@ -66,12 +66,12 @@ def docs(ref):
 class Tests(unittest.TestCase):
     def setUp(self):
         self.api = API()
-        self.plan = {"version": 1, "repository": c.REPO, "pilot_issue": 999,
-                     "main_sha": HEAD, "baseline_sha": BASE,
+        self.plan = {"version": 2, "repository": c.REPO, "pilot_issue": 999,
+                     "main_sha": HEAD, "baseline_sha": HEAD, "closure_p0": None,
                      "created_at": "2026-11-27T11:00:00Z",
                      "expires_at": "2026-11-27T13:00:00Z",
                      "semantic_review": "Reviewed separately; not certified by the CLI.",
-                     "execution_review": {"no_other_focus": True, "known_inbound_references": True, "global_gain": True},
+                     "execution_review": {"corpus_quiescent": True, "known_inbound_references": True, "global_gain": True},
                      "retained_issues": [],
                      "issues": [{"number": 123, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 123)),
                                  "body_after": "Evidence #42", "remove_comments": [8],
@@ -119,8 +119,34 @@ class Tests(unittest.TestCase):
                 with self.assertRaisesRegex(c.Refusal, "unexpected issue state" if key == "state" else "not a repository issue"):
                     self.validate()
 
+    def test_closure_requires_closed_p0_in_corpus(self):
+        self.plan.update(closure_p0=123, baseline_sha=HEAD)
+        with self.assertRaisesRegex(c.Refusal, "closure parent must be closed P0"):
+            self.validate()
+        self.api.issue["labels"] = [{"name": "P0"}]
+        self.plan["issues"][0]["snapshot_sha256"] = c.fingerprint(c.snapshot(self.api, 123))
+        self.assertEqual(self.validate()["closure_p0"], 123)
+        self.plan["closure_p0"] = 456
+        with self.assertRaisesRegex(c.Refusal, "closure P0 outside bounded corpus"):
+            self.validate()
+
+    def test_closure_does_not_recredit_initial_document_baseline(self):
+        self.plan.update(closure_p0=123, baseline_sha=BASE)
+        with self.assertRaisesRegex(c.Refusal, "plan context mismatch"):
+            self.validate()
+
+    def test_closure_retained_parent_must_be_closed(self):
+        self.plan.update(closure_p0=42, baseline_sha=HEAD)
+        self.api.retained["labels"] = [{"name": "P0"}]
+        self.plan["retained_issues"] = [{"number": 42, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 42, closed=None))}]
+        with self.assertRaisesRegex(c.Refusal, "closure parent must be closed P0"):
+            self.validate()
+        self.api.retained["state"] = "closed"
+        self.plan["retained_issues"][0]["snapshot_sha256"] = c.fingerprint(c.snapshot(self.api, 42, closed=None))
+        self.assertEqual(self.validate()["closure_p0"], 42)
+
     def test_wrong_baseline(self):
-        self.plan["baseline_sha"] = HEAD
+        self.plan["baseline_sha"] = BASE
         with self.assertRaises(c.Refusal):
             self.validate()
 
@@ -240,7 +266,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.api.writes, [])
 
     def test_apply_requires_review(self):
-        self.plan["execution_review"]["no_other_focus"] = False
+        self.plan["execution_review"]["corpus_quiescent"] = False
         with self.assertRaisesRegex(c.Refusal, "missing Backlog execution review"):
             self.apply()
         self.assertEqual(self.api.writes, [])
