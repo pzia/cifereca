@@ -125,7 +125,7 @@ def build_library_usb_intents(
         devices.append((device_id, label, desired, fingerprint))
     if not devices:
         return None
-    menu = Gtk.MenuButton(label="Envoyer à une liseuse…")
+    menu = Gtk.MenuButton(label="Envoyer à")
     menu._cifereca_action_id = "usb-intents"
     menu.set_tooltip_text(
         "Préparer un envoi ; retirer un livre depuis le détail Liseuses."
@@ -225,6 +225,7 @@ def build_library_usb_intents(
         box.append(button)
     popover.set_child(box)
     menu.set_popover(popover)
+    menu._cifereca_send_choices = box
     if callable(getattr(detail, "add_group", None)):
         detail.add_group("Liseuses · intentions", status_rows)
     return menu if any(desired != "keep" for _, _, desired, _ in devices) else None

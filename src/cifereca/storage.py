@@ -4281,6 +4281,42 @@ class Storage:
         except ValueError:
             return None
 
+    def device_usb_directory_set(
+        self, *, identity_id: str, device_id: str, fingerprint: str,
+        target_directory: str,
+    ) -> None:
+        """Configure the managed subtree before any destination is reserved."""
+        from .core.device_usb_preview import _relative
+        if not _relative(target_directory):
+            raise ValueError("invalid managed directory")
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10))
+        for component in target_directory.split("/"):
+            if (component.endswith((".", " "))
+                    or len(component.encode("utf-8")) > 255
+                    or any(char in '<>:"|?*' for char in component)
+                    or component.split(".")[0].upper() in reserved):
+                raise ValueError("invalid managed directory component")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id, metadata_json, target_directory FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if (row is None or row[0] != identity_id
+                    or (self._json_load(row[1]) or {}).get("usb_fingerprint") != fingerprint):
+                raise ValueError("reader association changed")
+            if row[2] == target_directory:
+                return
+            if db.execute(
+                "SELECT 1 FROM device_placements WHERE device_id=? AND "
+                "(target_relative_path IS NOT NULL OR last_observed_at IS NOT NULL) LIMIT 1",
+                (device_id,),
+            ).fetchone() is not None:
+                raise ValueError("existing destinations require explicit migration")
+            db.execute("UPDATE device_bindings SET target_directory=?,updated_at=? WHERE device_id=?",
+                       (target_directory, int(time.time()), device_id))
+
     def device_usb_binding_forget(
         self, *, identity_id: str, device_id: str, fingerprint: str,
     ) -> None:

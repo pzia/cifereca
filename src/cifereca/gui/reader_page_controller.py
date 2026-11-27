@@ -146,6 +146,14 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_setup(window, button)
     setup.connect("clicked", setup_clicked)
     page.header_actions.append(setup)
+    directory = Gtk.Button.new_from_icon_name("folder-documents-symbolic")
+    directory._cifereca_action_id = "reader-directory-config"
+    directory.set_tooltip_text("Configurer le dossier géré avant réservation.")
+    def directory_clicked(_button):
+        from .reader_local_actions import request_reader_directory
+        request_reader_directory(window, Gtk=Gtk)
+    directory.connect("clicked", directory_clicked)
+    page.header_actions.append(directory)
     forget = Gtk.Button.new_from_icon_name("list-remove-symbolic")
     forget._cifereca_action_id = "reader-forget"
     forget.set_tooltip_text("Dissocier la liseuse sans supprimer de fichiers.")

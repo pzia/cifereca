@@ -145,3 +145,34 @@ def request_reader_forget(window, *, Adw=None):
             window.show_error("Dissociation refusée.", "Liseuses")
     dialog.connect("response", answered)
     dialog.present()
+
+
+def request_reader_directory(window, *, Gtk, Adw=None):
+    selected = _selected(window)
+    if selected is None or getattr(window, "_reader_sync_active", False):
+        return
+    scope, device, row, fingerprint, _ = selected
+    if Adw is None:
+        from gi.repository import Adw
+    dialog = Adw.MessageDialog.new(window, "Dossier géré de la liseuse",
+        "Chemin relatif à la racine du lecteur. Modifiable avant toute réservation ; "
+        "aucune migration ni suppression de fichiers.")
+    entry = Gtk.Entry()
+    entry.set_text(row["target_directory"])
+    entry.set_max_length(512)
+    dialog.set_extra_child(entry)
+    dialog.add_response("cancel", "Annuler")
+    dialog.add_response("save", "Enregistrer")
+    dialog.set_close_response("cancel")
+    def answered(_dialog, response):
+        if (response != "save" or not _current(window, selected)
+                or getattr(window, "_reader_sync_active", False)):
+            return
+        try:
+            scope[1].device_usb_directory_set(identity_id=scope[0], device_id=device,
+                fingerprint=fingerprint, target_directory=entry.get_text())
+            window._render_readers()
+        except Exception:
+            window.show_error("Chemin invalide ou destinations déjà réservées.", "Liseuses")
+    dialog.connect("response", answered)
+    dialog.present()

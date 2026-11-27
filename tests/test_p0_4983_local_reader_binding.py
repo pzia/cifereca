@@ -77,9 +77,15 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                                      usb_fingerprint=fingerprint, supported_formats=("epub",))
     db.device_usb_intent_set(identity_id="alice", device_id="local-a",
                              artifact_id=artifact, desired_state="keep")
-    target = "Books/Cifereca/" + digest + ".epub"
+    db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                fingerprint=fingerprint, target_directory="Reading/Library")
+    managed = root / "Reading" / "Library"
+    target = "Reading/Library/" + digest + ".epub"
     assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
                                                 artifact_id=artifact) == target
+    with pytest.raises(ValueError):
+        db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                    fingerprint=fingerprint, target_directory="Other")
     # Actual production storage.target service; no fake USB/mount or policy.
     plugin_file = Path(__file__).resolve().parents[1] / "src/plugins/storage-usb/cifereca_storage_usb.py"
     transport = runpy.run_path(str(plugin_file))["UsbMassStorageTarget"]()
