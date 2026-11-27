@@ -8,6 +8,14 @@ from scripts.ci_provider_business_coupling import (
 )
 
 
+@pytest.fixture(scope="module")
+def installed_core_inventory():
+    """One read-only inventory of the unchanged checkout per pytest worker."""
+    from pathlib import Path
+
+    return inventory(Path(__file__).resolve().parents[1])
+
+
 def write(root, path, text):
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -595,7 +603,7 @@ def test_versioned_historical_writer_survives_vendor_ast_selector_removal(tmp_pa
         inventory(tmp_path, registry=registry)
 
 
-def test_real_081_migration_is_explicitly_retained_after_genericization():
+def test_real_081_migration_is_explicitly_retained_after_genericization(installed_core_inventory):
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -613,7 +621,7 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert len(physical) == 1
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
-    actual = inventory(root)
+    actual = installed_core_inventory
     # Config 0.8.1, SQLite v5 and newly inventoried v8 mutate old data;
     # the unrelated SQLite v3 importer was physically retired in #6152.
     # v5 and v8 are historical writers; none is a new regression.
@@ -723,7 +731,7 @@ def test_v3_legacy_writer_retired_without_importing_any_provider_right():
     )
 
 
-def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
+def test_legacy_positive_mirror_body_retired_without_double_writer_credit(installed_core_inventory):
     import inspect
     from pathlib import Path
     from cifereca.storage import Storage
@@ -755,7 +763,7 @@ def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
     assert len(guards) == 1
     assert guards[0]["pr"] == "#6154"
     assert all((root / test).is_file() for test in guards[0]["tests"])
-    current = inventory(root)
+    current = installed_core_inventory
     assert current["retained_non_ast_legacy_migration_writers"] == 3
     assert current["retained_non_ast_legacy_migration_ids"] == [
         "legacy-config-081-cardinality-versioned-writer",
@@ -765,7 +773,7 @@ def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
     assert not current["stale_reviews"]
 
 
-def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3():
+def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3(installed_core_inventory):
     import ast
     from pathlib import Path
 
@@ -792,10 +800,10 @@ def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3():
     ]
     assert any("update provider_connections set identity_id" in s for s in sql_literals)
     assert any("delete from provider_accounts" in s for s in sql_literals)
-    assert inventory(root)["active_legacy_writers_to_retire"] >= 3
+    assert installed_core_inventory["active_legacy_writers_to_retire"] >= 3
 
 
-def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
+def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement(installed_core_inventory):
     import inspect
     from pathlib import Path
     import cifereca.storage as storage_module
@@ -831,7 +839,7 @@ def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
     assert len(live) == 1
     assert live[0]["classification"] == "legacy_mutating_cutover"
     assert len(ledger["retained_legacy_migrations"]) == 3
-    assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 3
+    assert installed_core_inventory["retained_non_ast_legacy_migration_writers"] == 3
 
 
 def test_residual_adept_facade_signals_have_source_scoped_reviews():
@@ -880,7 +888,7 @@ def test_retired_saved_paris_adept_facade_has_no_stale_ast_review():
     assert "def check_normal_paris_adept_runtime(" not in source
 
 
-def test_installed_core_has_no_unreviewed_or_active_supplier_business_debt():
+def test_installed_core_has_no_unreviewed_or_active_supplier_business_debt(installed_core_inventory):
     """Owner 16/11: freeze the semantic cutover, not a raw AST quota.
 
     The separately inventoried one-time upgrade writers are allowed to open
@@ -892,7 +900,7 @@ def test_installed_core_has_no_unreviewed_or_active_supplier_business_debt():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    report = inventory(root)
+    report = installed_core_inventory
     assert not report["ast_parse_errors"]
     assert not report["stale_reviews"]
     assert report["unclassified"] == 0, [
