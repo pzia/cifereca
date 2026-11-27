@@ -12,6 +12,13 @@ from tests import test_core_ui_1358_maintenance_preview_cancellation as harness
 from tests.test_maintenance_cache_row_callbacks import execute, flush, mounted
 
 
+@pytest.fixture(autouse=True)
+def isolated_acquisition_lock(tmp_path, monkeypatch):
+    # Each synthetic library has its own real interprocess lock. Never
+    # contend with unrelated pytest workers or the host's runtime lock.
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "acquisition.lock")
+
+
 def duplicates(tmp_path):
     from cifereca.config import Config
     from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
