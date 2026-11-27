@@ -48,6 +48,12 @@ La preuve minimale [#6366](https://github.com/pzia/cifereca/issues/6366) est un 
 Le P0 ne bloque plus sur toutes les combinaisons multi-profils/caches/ABA/TTL, le GET strictement unique en tout scénario, les raffinements UX/invalidations ou un scheduler général #4982. **Les invariants restent** : pas de rapprochement fictif, mauvaise couverture, faux droit, contamination entre comptes, secret persisté, mutation fournisseur sans admission, perte du seul EPUB ou corruption. Ces exceptions P0 bornent la preuve de clôture, pas l'architecture A/B/C ni le contenu à livrer dans les P1 #2385/#4552/#3724/#6168/#3104/#4979.
 
 
+### Réception consolidée Notices — 26/11/2026
+
+Le périmètre #7808 (5/5) et #7810 (doublon administratif) est consolidé dans #7814 (14/14 techniques), sans double comptage ni réouverture. #1023 (8/10 groupes techniques) et #6168 (9/10 fonctionnels) sont reçus sous arbitrage B : qualification terrain #6875/#8154 et C9 positif #8153 restent distincts, sans PASS terrain. Les contrats #7812 ne sont exigés que lorsqu'effectivement consommés.
+
+La réception #4980 puis #3104 repose sur #8165, main `f5645ad155cb6b57edc714795abe17a180807b91`, Core 45814102803 et E2E 45814102806 SUCCESS : 54/54 scénarios, quatre ZIP vérifiés CRC/SHA256, 224 captures, 12 ABA/config, 140 témoins natifs. Arbitrage B+C : preuve automatique objective reçue, inspection humaine seule reportée #8164 (`human_visual_review=false`). Une preuve synthétique ou automatique ne vaut ni qualification terrain ni inspection humaine ; les protections A/B/C, identité, scopes, droits, consentement, révocation et fail-closed restent opposables. Voir les reçus [#4980](https://github.com/pzia/cifereca/issues/4980#issuecomment-7191469001) et [#3104](https://github.com/pzia/cifereca/issues/3104#issuecomment-7191472360).
+
 ## Mesures de découplage — ne pas confondre les catégories
 
 Le [ticket #5519](https://github.com/pzia/cifereca/issues/5519) rapporte pour le **11 novembre 2026** une photographie de **2 670 LOC spécialisées historiques** et **302 lignes génériques uniques portant un signal AST** (après reclassement). Dans les 2 670 LOC : BnF 997, Kobo 653, Numilog 531, Paris 489. L'ancien compteur lexical générique de 1 958 lignes comprend des noms dans les commentaires/chaînes : **il ne représente pas 1 958 LOC métier**. Les catégories ont des recouvrements ; ne pas additionner sans méthode.
