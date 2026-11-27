@@ -1,0 +1,60 @@
+name: P0 8216 sharded Core evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-sharded.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/evidence"
+          mkdir -p "$out"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          git fetch origin e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          test "$(git rev-parse FETCH_HEAD)" = e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          python -m pip freeze > "$out/dependencies.txt"
+          for label in A B; do
+            case "$label" in A) sha=4fd07df843b9d940746bbfe962a1877eec15d431;; B) sha=e8ed298116e57d44645c37cd3fa7ad91e1e9077e;; esac
+            git checkout --detach "$sha"
+            test "$(git rev-parse HEAD)" = "$sha"
+            python - <<'PY' > "$out/$label.files"
+          import hashlib, os, subprocess
+          paths=subprocess.check_output(["git","ls-files","tests"],text=True).splitlines()
+          for p in paths:
+              if p.endswith(".py") and p.rsplit("/",1)[-1].startswith("test") and int(hashlib.sha256(p.encode()).hexdigest(),16)%8==int(os.environ["SHARD"]):
+                  print(p)
+          PY
+            mapfile -t files < "$out/$label.files"
+            test "${#files[@]}" -gt 0
+            /usr/bin/time -p -o "$out/$label.plain.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --junitxml="$out/$label.plain.xml" --durations=0 | tee "$out/$label.plain.log"
+            export COVERAGE_FILE="$out/$label.coverage"
+            /usr/bin/time -p -o "$out/$label.coverage.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/$label.coverage.xml" | tee "$out/$label.coverage.log"
+            test -z "$(git status --porcelain --untracked-files=no)"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/evidence
+          include-hidden-files: true
+          retention-days: 7
