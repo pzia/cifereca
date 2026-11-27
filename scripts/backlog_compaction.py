@@ -305,12 +305,10 @@ def collect_closure(api, event_issue, current):
     require(closure_identity(snapshots[root]["issue"]) == identity, "closure event drift")
     edges = {}
     for n, snap in snapshots.items():
-        require(snap["issue"]["state_reason"] == "completed", "non-completed corpus member")
-        require("PU" not in {l["name"] for l in snap["issue"]["labels"]}, "suspended corpus member")
+        # snapshot() already requires closed state, independently of priority/reason.
+        require(not any((text or "").startswith("Corpus transféré — P0 #")
+                        for text in issue_texts(snap)), "corpus already transferred")
         require(not any(c["body"].startswith("BACKLOG-STAGING-") for c in snap["comments"]), "corpus already consumed")
-        if n != root:
-            require({l["name"] for l in snap["issue"]["labels"]} & PRIORITIES == {"P-1"},
-                    "child must be P-1")
         subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
         require(type(subs) is list and len(subs) < 100, "ambiguous native sub-issues")
         ids = sorted(number(child["number"]) for child in subs)
@@ -318,10 +316,8 @@ def collect_closure(api, event_issue, current):
         require(type(summary) is dict and summary.get("total") == len(ids)
                 and set(ids) <= set(children) - {n}, "unresolved native sub-issue")
         edges[n] = ids
-    for n in children:
-        require(any(n in ids for ids in edges.values()) or
-                ("#" + str(root)) in set(REFERENCE.findall(snapshots[n]["issue"]["body"] or "")),
-                "child relation unverified")
+    # The exact owner-attested master inventory is the explicit attachment.
+    # Native edges, if present, must still be fully covered; no reverse mention required.
     for n, snap in snapshots.items():
         require(snapshot(api, n) == snap, "corpus drift")
         subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")

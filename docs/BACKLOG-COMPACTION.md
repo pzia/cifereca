@@ -11,9 +11,13 @@ completed sous pzia, par une seule ligne :
 
 `<!-- backlog-staging-v1: 123,456 ; public -->`
 
-Les nombres désignent les P-1 effectivement associés ; `none` pour un P0 autonome.
+Les nombres constituent le rattachement explicite au maître : toute issue fermée,
+quelle que soit sa priorité (ou son absence) et son motif de clôture, est admissible.
+`none` pour un P0 autonome. Aucun changement de priorité, motif ou relation native.
 Il ne s'agit pas d'un plan de synthèse. Ne jamais inférer les cibles de simples
-mentions #n. Les relations natives doivent être compatibles avec l'inventaire.
+mentions #n ; aucun lien retour dans le ticket historique n'est requis.
+Les relations natives doivent être compatibles avec l'inventaire. Refuser les
+corpus déjà transférés (journal ou renvoi de compactage).
 Aucun autre agent ne modifie le corpus pendant la clôture. Le pilote reste
 borné à trois issues, 1 Mio de manifeste ; au-delà, refus sans mutation.
 
