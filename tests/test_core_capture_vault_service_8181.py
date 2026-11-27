@@ -73,3 +73,44 @@ def test_limits_consent_and_key_permissions(tmp_path):
     os.chmod(key_path, 0o600)
     a.delete(SCOPE_A, writer.capture_id, confirmed=True)
     assert a.sessions(SCOPE_A) == ()
+
+
+def test_age_and_pin_retention(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    core = service(tmp_path)
+    port = core.for_plugin(RECORDER)
+    first = port.begin(SCOPE_A, "first", consented=True)
+    first.save(b"first", "completed", force=True)
+    second = port.begin(SCOPE_A, "second", consented=True)
+    second.save(b"second", "completed", force=True)
+    port.set_label(SCOPE_A, second.capture_id, "fictional label")
+    with pytest.raises(VaultError, match="vault_confirmation_required"):
+        port.pin(SCOPE_A, second.capture_id, pinned=True)
+    port.pin(SCOPE_A, second.capture_id, pinned=True, confirmed=True)
+    row = port.read(SCOPE_A, second.capture_id).summary
+    assert row.label == "fictional label" and row.pinned_until
+    # Short retention, but the explicit pin protects the second session.
+    core._policy_source = lambda: (1, 128 * 1024 * 1024)
+    now = datetime.now(timezone.utc)
+    assert core.maintain(now=now + timedelta(days=2))[0] == 1
+    assert [row.capture_id for row in port.sessions(SCOPE_A)] == [second.capture_id]
+    assert core.maintain(now=now + timedelta(days=31))[0] == 1
+    assert port.sessions(SCOPE_A) == ()
+    core.close()
+
+
+def test_volume_retention(tmp_path):
+    core = CoreCaptureVault(tmp_path / "vault", tmp_path / "secrets",
+                            authorize_scope=lambda p, s: s == SCOPE_A,
+                            policy=lambda: (90, 8 * 1024 * 1024))
+    port = core.for_plugin(RECORDER)
+    ids = []
+    for i in range(4):
+        writer = port.begin(SCOPE_A, "fixture-" + str(i), consented=True)
+        writer.save(b"x" * (MAX_PAYLOAD - 1), "completed", force=True)
+        ids.append(writer.capture_id)
+    rows = port.sessions(SCOPE_A)
+    assert len(rows) == 2
+    assert {row.capture_id for row in rows} == set(ids[-2:])
+    core.close()

@@ -6,13 +6,13 @@ No provider execution, network access, export or capture activation occurs here.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 
 from .capture_key import CaptureKey
 from .capture_vault import EncryptedCaptureVault, VaultError, MAX_FILE
@@ -23,6 +23,33 @@ _STATES = frozenset(("recording", "completed", "interrupted"))
 _SCHEMA = "cifereca.capture-vault/1"
 _HEADER_LIMIT = 8192
 MAX_PAYLOAD = MAX_FILE - _HEADER_LIMIT - 128
+DEFAULT_RETENTION_DAYS = 90
+DEFAULT_VOLUME_BYTES = 128 * 1024 * 1024
+MIN_VOLUME_BYTES = 8 * 1024 * 1024
+MAX_PIN_DAYS = 30
+MAX_PINS = 16
+
+
+def _metadata(value):
+    if not value:
+        return "", ""
+    try:
+        label, until = json.loads(value)
+        if (type(label) is not str or len(label) > 80 or not all(c.isprintable() for c in label)
+                or type(until) is not str):
+            raise ValueError
+        if until:
+            parsed = datetime.fromisoformat(until)
+            if parsed.tzinfo is None:
+                raise ValueError
+        return label, until
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise VaultError("vault_label_invalid") from exc
+
+
+def _pinned(value, now):
+    _, until = _metadata(value)
+    return bool(until and datetime.fromisoformat(until) > now)
 
 
 def _identifier(value: object, *, optional=False) -> bool:
@@ -69,6 +96,23 @@ class _Stored:
 
 
 class _Storage(EncryptedCaptureVault):
+    def __init__(self, path, policy):
+        super().__init__(path)
+        self._policy = policy
+
+    @property
+    def max_vault_bytes(self):
+        return self._policy()[1]
+
+    @staticmethod
+    def _label_value(value):
+        # The existing authenticated label sidecar stores both the label and
+        # the expiring pin. No separate persistent index or pin store.
+        if type(value) is not str or len(value.encode("utf-8")) > 800:
+            raise VaultError("vault_label_invalid")
+        _metadata(value)
+        return value
+
     @staticmethod
     def _encode(capture, session_id, state):
         if (type(capture) is not _Capture or type(capture.payload) is not bytes
@@ -124,11 +168,59 @@ class _Storage(EncryptedCaptureVault):
 
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
-    def __init__(self, directory: Path, key_directory: Path, *, authorize_scope):
-        self._storage = _Storage(directory)
+    def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
+                 policy=None):
+        self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
+        self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
         self._authorize_scope = authorize_scope
         self._lock = RLock()
+        self._stop = Event()
+        self._maintenance = None
+
+    def _policy(self):
+        days, volume = self._policy_source()
+        if (type(days) is not int or not 1 <= days <= 365
+                or type(volume) is not int or not MIN_VOLUME_BYTES <= volume <= DEFAULT_VOLUME_BYTES):
+            raise VaultError("vault_retention_invalid")
+        return days, volume
+
+    def maintain(self, *, reserve=False, now=None):
+        with self._lock:
+            if not self._storage.path.exists() and not self._storage.path.is_symlink():
+                return (0, 0)
+            key = self._key()
+            days, _ = self._policy()
+            return self._storage.auto_prune(
+                key, older_than_days=days, pinned=_pinned,
+                reserve_bytes=MAX_FILE if reserve else 0,
+                reserve_session=reserve, now=now,
+            )
+
+    def start_maintenance(self):
+        # Do not create a directory or a key merely by opening Core.
+        with self._lock:
+            if (self._maintenance is not None or self._stop.is_set()
+                    or not self._storage.path.exists()):
+                return
+            def work():
+                while not self._stop.is_set():
+                    try:
+                        self.maintain()
+                    except VaultError:
+                        # Keep unreadable captures intact. Access/admission
+                        # reports the concrete closed error to the consumer.
+                        pass
+                    if self._stop.wait(3600):
+                        break
+            self._maintenance = Thread(target=work, daemon=True,
+                                       name="capture-retention")
+            self._maintenance.start()
+
+    def close(self):
+        self._stop.set()
+        if self._maintenance is not None:
+            self._maintenance.join()
 
     def for_plugin(self, plugin_id: str, *, trusted: bool = False):
         if plugin_id not in _ALLOWED:
@@ -167,7 +259,9 @@ class _Port:
             raise VaultError("vault_scope_invalid")
         with self._service._lock:
             key = self._service._key(create=True)
+            self._service.maintain(reserve=True)
             writer = self._service._storage.begin(key)
+            self._service.start_maintenance()
             return _Writer(self, scope, source_session_ref, writer, key)
 
     def _open(self, scope, capture_id, key):
@@ -189,7 +283,8 @@ class _Port:
                 stored = self._service._storage.open(sid, key)
                 try:
                     if stored.producer == self._producer and stored.summary.scope == scope:
-                        rows.append(stored.summary)
+                        label, until = _metadata(self._service._storage.get_label(sid, key))
+                        rows.append(replace(stored.summary, label=label, pinned_until=until))
                 finally:
                     self._service._storage._release(stored)
             return tuple(sorted(rows, key=lambda row: (row.saved_at, row.capture_id), reverse=True))
@@ -199,9 +294,53 @@ class _Port:
         with self._service._lock:
             stored = self._open(scope, capture_id, self._service._key())
             try:
-                return CapturedSession(stored.summary, stored.payload)
+                key = self._service._key()
+                label, until = _metadata(self._service._storage.get_label(capture_id, key))
+                return CapturedSession(replace(stored.summary, label=label, pinned_until=until),
+                                       stored.payload)
             finally:
                 self._service._storage._release(stored)
+
+    def set_label(self, scope, capture_id, label):
+        if (type(label) is not str or len(label) > 80 or not all(c.isprintable() for c in label)):
+            raise VaultError("vault_label_invalid")
+        self._update_metadata(scope, capture_id, label=label)
+
+    def pin(self, scope, capture_id, *, pinned, confirmed=False):
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        if type(pinned) is not bool:
+            raise VaultError("vault_label_invalid")
+        self._update_metadata(scope, capture_id, pinned=pinned)
+
+    def _update_metadata(self, scope, capture_id, *, label=None, pinned=None):
+        self._service._check(self._producer, scope)
+        with self._service._lock:
+            key = self._service._key()
+            storage = self._service._storage
+            stored = self._open(scope, capture_id, key)
+            try:
+                if pinned is True and stored.recovery_status == "partial":
+                    raise VaultError("vault_pin_invalid")
+            finally:
+                storage._release(stored)
+            now = datetime.now(timezone.utc)
+            previous_label, previous_until = _metadata(storage.get_label(capture_id, key))
+            until = previous_until
+            if pinned is not None:
+                until = ((now + timedelta(days=MAX_PIN_DAYS)).isoformat() if pinned else "")
+            value = json.dumps([previous_label if label is None else label, until],
+                               ensure_ascii=False, separators=(",", ":"))
+            def guard(_fd):
+                # Count pins under the existing filesystem writer lock.
+                if pinned is True:
+                    count = sum(
+                        _pinned(storage.get_label(sid, key), now)
+                        for sid in storage.list_ids() if sid != capture_id
+                    )
+                    if count >= MAX_PINS:
+                        raise VaultError("vault_pin_limit")
+            storage.set_label(capture_id, key, value, guard=guard)
 
     def delete(self, scope, capture_id, *, confirmed=False):
         if confirmed is not True:

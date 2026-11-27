@@ -110,6 +110,10 @@ class EncryptedCaptureVault:
     def _mark_sealed(self, capture, session_id: str) -> None:
         raise NotImplementedError
 
+    @property
+    def max_vault_bytes(self):
+        return MAX_VAULT_BYTES
+
     def _open_dir(self, *, create: bool):
         try:
             if create:
@@ -285,7 +289,7 @@ class EncryptedCaptureVault:
         except Exception as exc:
             raise VaultError("vault_label_invalid") from exc
 
-    def set_label(self, session_id: str, passphrase: str, label: str) -> None:
+    def set_label(self, session_id: str, passphrase: str, label: str, *, guard=None) -> None:
         """Atomic, separately encrypted metadata; never change .cbrv."""
         label = self._label_value(label)
         # Authentication must occur *under* the same directory lock as
@@ -309,6 +313,8 @@ class EncryptedCaptureVault:
             # exclusive lock, before checking quotas or allocating staging.
             # Reject missing/altered archives and forged label sidecars.
             self.get_label(session_id, passphrase)
+            if guard is not None:
+                guard(fd)
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -321,7 +327,7 @@ class EncryptedCaptureVault:
                 raise VaultError("vault_unsafe_file")
             _count, total = self._entries(fd)
             previous_size = old.st_size if old is not None else 0
-            if total - previous_size + len(data) > MAX_VAULT_BYTES:
+            if total - previous_size + len(data) > self.max_vault_bytes:
                 raise VaultError("vault_limit")
             handle = os.open(
                 temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -543,13 +549,80 @@ class EncryptedCaptureVault:
                 raise VaultError("vault_retention_changed")
             # Full preflight passed. No page can silently trigger this call.
             for sid, _digest, label_digest in plan.fingerprints:
-                if label_digest is not None:
-                    os.unlink(sid + ".cbrn", dir_fd=fd)
-                os.unlink(sid + ".cbrv", dir_fd=fd)
+                self._unlink_capture(fd, sid, label_digest is not None)
             os.fsync(fd)
             return len(seen), total
         except VaultError:
             raise
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _unlink_capture(fd, sid, has_label):
+        if has_label:
+            os.unlink(sid + ".cbrn", dir_fd=fd)
+        os.unlink(sid + ".cbrv", dir_fd=fd)
+
+    def auto_prune(self, key, *, older_than_days, pinned, reserve_bytes=0,
+                   reserve_session=False, now=None):
+        """Apply the configured age/volume policy to authenticated snapshots.
+
+        This is a Core-only operation. All candidates and sidecars are checked
+        under the existing writer lock before deletion. Active/recent recording
+        snapshots are never volume-evicted; stale ones age out. Pinned sessions
+        may temporarily block admission rather than exceed the hard caps.
+        """
+        if (type(older_than_days) is not int or not 1 <= older_than_days <= 365
+                or type(reserve_bytes) is not int or not 0 <= reserve_bytes <= MAX_FILE):
+            raise VaultError("vault_retention_invalid")
+        if not self.path.exists() and not self.path.is_symlink():
+            return 0, 0
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=older_than_days)
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            count, total = self._entries(fd)
+            rows = []
+            for sid in self.list_ids():
+                stored = self.open(sid, key)
+                try:
+                    fingerprint, size = self._retention_fingerprint(fd, sid)
+                    label = self.get_label(sid, key) if fingerprint[2] is not None else ""
+                    date = self._retention_date(stored.saved_at)
+                    rows.append((date, sid, fingerprint[2] is not None, size,
+                                 stored.recovery_status, pinned(label, now)))
+                finally:
+                    self._release(stored)
+            # Old orphan staging is ciphertext and the lock excludes live writes.
+            stale = [(name, info) for name, info in self._staging(fd)
+                     if now.timestamp() - info.st_mtime >= MIN_STAGING_AGE_SECONDS]
+            total -= sum(info.st_size for _, info in stale)
+            selected = []
+            for date, sid, label, size, state, keep in sorted(rows):
+                if not keep and date < cutoff:
+                    selected.append((sid, label, size))
+                    total -= size
+                    count -= 1
+            chosen = {sid for sid, _, _ in selected}
+            for date, sid, label, size, state, keep in sorted(rows):
+                if (total + reserve_bytes <= self.max_vault_bytes
+                        and count + int(reserve_session) <= MAX_SESSIONS):
+                    break
+                if sid in chosen or keep or state == "partial":
+                    continue
+                selected.append((sid, label, size))
+                total -= size
+                count -= 1
+            for name, _ in stale:
+                os.unlink(name, dir_fd=fd)
+            for sid, label, _ in selected:
+                self._unlink_capture(fd, sid, label)
+            if stale or selected:
+                os.fsync(fd)
+            return len(selected), sum(size for _, _, size in selected)
         except OSError as exc:
             raise VaultError("vault_unsafe_file") from exc
         finally:
@@ -563,7 +636,7 @@ class EncryptedCaptureVault:
         fd = self._open_dir(create=True)
         try:
             count, total = self._entries(fd)
-            if count >= MAX_SESSIONS or total >= MAX_VAULT_BYTES:
+            if count >= MAX_SESSIONS or total >= self.max_vault_bytes:
                 raise VaultError("vault_limit")
             disk = os.fstatvfs(fd)
             if disk.f_bavail * disk.f_frsize < 8 * 1024 * 1024:
@@ -629,9 +702,7 @@ class EncryptedCaptureVault:
                 or stat.S_IMODE(sidecar.st_mode) != 0o600
             ):
                 raise VaultError("vault_unsafe_file")
-            if sidecar is not None:
-                os.unlink(session_id + ".cbrn", dir_fd=fd)
-            os.unlink(session_id + ".cbrv", dir_fd=fd)
+            self._unlink_capture(fd, session_id, sidecar is not None)
             os.fsync(fd)
         except OSError as exc:
             raise VaultError("vault_unsafe_file") from exc
@@ -685,8 +756,11 @@ class SessionWriter:
             # permanent session. Account for its previously persisted size
             # before checking the final cap (temporary fsync space is managed
             # by the filesystem; never loosen the total retention quota).
+            if old is None and self._last:
+                # A purged or explicitly deleted snapshot must not reappear.
+                raise VaultError("vault_sealed")
             previous_size = old.st_size if old is not None else 0
-            if (total - previous_size + len(data) > MAX_VAULT_BYTES
+            if (total - previous_size + len(data) > self.vault.max_vault_bytes
                     or (count >= MAX_SESSIONS and old is None)):
                 raise VaultError("vault_limit")
             handle = os.open(
