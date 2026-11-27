@@ -344,21 +344,17 @@ class ReaderUsbExecutionBrokerImpl:
         mountpoint: Path, expected_profile_epoch: int,
         check_cancelled: Callable[[], None] | None = None,
     ) -> UsbSyncResult:
-        """Run *one* confirmed managed removal; no broad implicit sync.
+        """Run one confirmed local copy or managed removal; no implicit sync.
 
         Never accept a rights witness or a policy callback from GTK/plugins.
-        Uploads are fail-closed until an independent Core source-rights
-        authority can issue their proof, rather than deriving rights from
-        the local file, acquisition history or selected reader.
+        Local copy admission is verified by the locked Core executor.
 
         The UI-pinned account/profile epoch is mandatory. It must be the
         generation *at confirmation*, not the current value looked up in
         this worker: switching A→B→A before execution revokes consent.
         """
         blocked = UsbSyncResult("blocked")
-        if type(confirmation) is UsbCopyConsent:
-            return blocked
-        if (type(confirmation) is not UsbRemovalConsent
+        if (type(confirmation) not in (UsbRemovalConsent, UsbCopyConsent)
                 or type(expected_profile_epoch) is not int
                 or expected_profile_epoch < 0
                 or (check_cancelled is not None and not callable(check_cancelled))):
@@ -386,7 +382,7 @@ class ReaderUsbExecutionBrokerImpl:
             if (type(placed) is not dict
                     or placed.get("device_id") != scope.device_id
                     or placed.get("artifact_id") != confirmation.artifact_id
-                    or placed.get("desired_state") != "remove"
+                    or placed.get("desired_state") != ("keep" if type(confirmation) is UsbCopyConsent else "remove")
                     or placed.get("target_relative_path") != confirmation.target_relative_path
                     or type(placed.get("metadata")) is not dict
                     or placed["metadata"].get("intent_identity_id") != scope.identity_id):
@@ -407,8 +403,9 @@ class ReaderUsbExecutionBrokerImpl:
                     or len(report.rows) != 1
                     or type(report.rows[0]) is not UsbPreviewRow
                     or report.rows[0].artifact_id != confirmation.artifact_id
-                    or report.rows[0].action != "remove_candidate"
-                    or report.rows[0].reason != "managed_removal_requires_confirmation"
+                    or report.rows[0].action != ("upload_candidate" if type(confirmation) is UsbCopyConsent else "remove_candidate")
+                    or (type(confirmation) is UsbRemovalConsent
+                        and report.rows[0].reason != "managed_removal_requires_confirmation")
                     or report.rows[0].executable is not False
                     or not scope_current()
                     or not self._mount_attested(scope, mountpoint,

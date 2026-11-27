@@ -77,18 +77,18 @@ def synchronize_usb_reader(
         return UsbSyncResult("unavailable")
 
     journal = SqliteUsbOperationJournal(storage)
-    placements = storage.device_placements(device_id=device_id)
     placement_ids = {
         row["artifact_id"]: row.get("placement_id")
-        for row in placements
-        if type(row) is dict and type(row.get("artifact_id")) is str
+        for row in storage.placements(state="present")
+        if type(row) is dict and row.get("identity_id") == identity_id
+        and type(row.get("artifact_id")) is str
     }
     copied = removed = pending = failed = 0
     for row in preview.rows:
         if check_cancelled is not None:
             check_cancelled()
         if row.action not in ("upload_candidate", "remove_candidate"):
-            if row.action not in ("none", "up_to_date", "noop"):
+            if row.action not in ("none", "up_to_date", "noop", "skip"):
                 pending += 1
             continue
         consent = confirmations.get(row.artifact_id)
@@ -96,7 +96,8 @@ def synchronize_usb_reader(
             authorization = rights.get(row.artifact_id)
             placement_id = placement_ids.get(row.artifact_id)
             if (type(consent) is not UsbCopyConsent
-                    or type(authorization) is not UsbCopyRightsEvidence
+                    or (authorization is not None and type(authorization) is not UsbCopyRightsEvidence)
+                    or (authorization is None and policy_verifier is not None)
                     or type(placement_id) is not str or not placement_id):
                 pending += 1
                 continue
