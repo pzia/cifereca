@@ -79,7 +79,7 @@ def _decode(payload: str) -> UsbCopyJournalEntry | UsbRemovalJournalEntry:
             version = tuple(version)
         return UsbCopyJournalEntry(
             consent=UsbCopyConsent(**data["consent"]),
-            rights=UsbCopyRightsEvidence(**data["rights"]),
+            rights=(None if data["rights"] is None else UsbCopyRightsEvidence(**data["rights"])),
             size=data["size"], phase=data["phase"],
             pin=pin, receipt=receipt, final_version=version,
         )
@@ -219,9 +219,10 @@ def completed_usb_managed_receipts(
                     or type(consent.artifact_id) is not str
                     or not _sha(digest)
                     or consent.artifact_id != "sha256:" + digest
-                    or type(rights) is not UsbCopyRightsEvidence
-                    or rights.personal_usb_copy_permitted is not True
-                    or _coordinates(rights) != _coordinates(consent)
+                    or (rights is not None and (
+                        type(rights) is not UsbCopyRightsEvidence
+                        or rights.personal_usb_copy_permitted is not True
+                        or _coordinates(rights) != _coordinates(consent)))
                     or type(receipt) is not UsbManagedReceipt
                     or receipt != UsbManagedReceipt(
                         identity_id, device_id, fingerprint,

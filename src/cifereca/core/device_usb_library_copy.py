@@ -14,9 +14,9 @@ from .device_usb_live_source import prepare_usb_live_source
 
 def execute_usb_library_copy(
     *, storage: Any, journal: UsbCopyJournal | None = None, lock_root: Path, placement_id: str,
-    mountpoint: Path, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence,
+    mountpoint: Path, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence | None = None,
     current_profile: Callable[[], tuple[str, Path, int]],
-    policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
+    policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None = None,
     plugin_manager: Any, plugin_id: str, registry_generation: int,
     check_cancelled: Callable[[], None] | None = None,
 ) -> UsbCopyExecution:

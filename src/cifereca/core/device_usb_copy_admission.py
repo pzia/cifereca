@@ -85,6 +85,68 @@ class UsbCopyAdmission:
     executable: bool = False
 
 
+def review_usb_local_copy_admission(
+    *, identity_id: str, binding: Mapping[str, object],
+    artifact: Mapping[str, object], local: UsbLocalArtifact | None,
+    selected_format: str, target_relative_path: str,
+    reader: UsbReaderFormatDeclaration | None, consent: UsbCopyConsent | None,
+    now: int,
+) -> UsbCopyAdmission:
+    """Review owner-local placement and exact consent; no provider rights model.
+
+    The caller must attest the placement and bytes freshly; this review is
+    advisory and never gives a writer or bypasses the locked supervisor.
+    """
+    device = binding.get("device_id") if isinstance(binding, Mapping) else None
+    artifact_id = (
+        artifact.get("artifact_id") if isinstance(artifact, Mapping) else None
+    )
+    identity = identity_id if _text(identity_id) else ""
+    device = device if _text(device) else ""
+    artifact_id = artifact_id if _text(artifact_id) else ""
+
+    def blocked(reason: str) -> UsbCopyAdmission:
+        return UsbCopyAdmission(
+            "blocked", reason, identity, device, artifact_id,
+        )
+
+    if type(now) is not int or not now > 0:
+        return blocked("copy_clock_unverified")
+    variant = review_usb_variant(
+        identity_id=identity_id, binding=binding, artifact=artifact,
+        local=local, selected_format=selected_format,
+        target_relative_path=target_relative_path, reader=reader,
+    )
+    if variant.executable is not False or variant.status != "review":
+        return blocked("copy_variant_unverified")
+    digest = artifact.get("sha256")
+    metadata = binding.get("metadata")
+    uuid = metadata.get("usb_fingerprint") if type(metadata) is dict else None
+    if (type(digest) is not str or not _sha(digest)
+            or type(uuid) is not str or not _text(uuid)
+            or not _relative(target_relative_path)):
+        return blocked("copy_scope_unverified")
+    if type(consent) is not UsbCopyConsent:
+        return blocked("copy_confirmation_required")
+    if (
+        consent.identity_id != identity_id or consent.device_id != device
+        or consent.usb_fingerprint != uuid or consent.artifact_id != artifact_id
+        or consent.sha256 != digest or consent.selected_format != selected_format
+        or consent.target_relative_path != target_relative_path
+        or consent.operation != "upload" or not _text(consent.operation_id)
+        or type(consent.confirmed_at) is not int
+        or type(consent.expires_at) is not int
+        or not 0 <= now - consent.confirmed_at <= _MAX_AGE
+        or consent.expires_at <= now
+        or consent.expires_at > consent.confirmed_at + _MAX_AGE
+    ):
+        return blocked("copy_confirmation_invalid_or_expired")
+    return UsbCopyAdmission(
+        "review", "copy_local_source_and_consent_attested_for_review_only",
+        identity, device, artifact_id,
+    )
+
+
 def review_usb_copy_admission(
     *, identity_id: str, binding: Mapping[str, object],
     artifact: Mapping[str, object], local: UsbLocalArtifact | None,
@@ -200,5 +262,5 @@ def review_usb_copy_admission(
 
 __all__ = [
     "UsbCopyRightsEvidence", "UsbCopyConsent", "UsbCopyAdmission",
-    "review_usb_copy_admission",
+    "review_usb_copy_admission", "review_usb_local_copy_admission",
 ]

@@ -112,7 +112,7 @@ def review_usb_removal(
         final_version = getattr(completed, "final_version", None)
         if (type(completed) is not UsbCopyJournalEntry or completed.phase != "completed"
                 or type(completed.consent) is not UsbCopyConsent
-                or type(completed.rights) is not UsbCopyRightsEvidence
+                or (completed.rights is not None and type(completed.rights) is not UsbCopyRightsEvidence)
                 or type(completed.pin) is not UsbCopyRecoveryPin
                 or type(completed.receipt) is not UsbManagedReceipt
                 or type(final_version) is not tuple or len(final_version) != 5
@@ -132,8 +132,9 @@ def review_usb_removal(
                 or copy.operation_id != consent.copy_operation_id or copy.operation != "upload"
                 or copy.target_relative_path != path or copy.selected_format != artifact.get("media_format")
                 or _coordinates(copy)[:5] != (identity, device, fingerprint, consent.artifact_id, digest)
-                or completed.rights.personal_usb_copy_permitted is not True
-                or _coordinates(completed.rights) != _coordinates(copy)
+                or (completed.rights is not None and (
+                    completed.rights.personal_usb_copy_permitted is not True
+                    or _coordinates(completed.rights) != _coordinates(copy)))
                 or artifact.get("size") != completed.size):
             return blocked("usb_removal_receipt_unverified")
 

@@ -115,13 +115,13 @@ def cycle(live_args, monkeypatch):
     placed, = storage.placements(state="present")
     lock_root = target.parent / "live-cycle-locks"
 
-    def copy_with(confirmation):
+    def copy_with(confirmation, *, local=False):
         return library_copy.execute_usb_library_copy(
             storage=storage, journal=journal, lock_root=lock_root,
             placement_id=placed["placement_id"], mountpoint=target,
-            consent=confirmation, rights=args["rights"],
+            consent=confirmation, rights=None if local else args["rights"],
             current_profile=lambda: active["profile"],
-            policy_verifier=independent_policy,
+            policy_verifier=None if local else independent_policy,
             plugin_manager=manager, plugin_id="storage.usb",
             registry_generation=5,
         )
@@ -216,3 +216,36 @@ def test_rejected_independent_source_policy_never_starts_real_usb_copy(cycle):
         rig.consent.device_id, rig.consent.artifact_id,
     )["observed_state"] == "unknown"
     assert rig.source.exists()
+
+
+def test_local_copy_without_provider_rights_is_managed_and_removable(cycle):
+    rig = cycle
+    rig.entitled[0] = False
+    payload = rig.source.read_bytes()
+    copied = rig.copy(rig.consent, local=True)
+    assert copied.status == "completed", (copied.status, copied.reason)
+    assert not rig.checked
+    assert rig.final.read_bytes() == payload
+    assert rig.journal.get(rig.consent.operation_id).rights is None
+    assert rig.copy(rig.consent, local=True).status != "completed"
+    rig.storage.device_usb_intent_set(
+        identity_id="alice", device_id=rig.consent.device_id,
+        artifact_id=rig.consent.artifact_id, desired_state="remove",
+    )
+    assert completed_usb_managed_copy_operations(
+        storage=rig.storage, identity_id="alice", device_id=rig.consent.device_id,
+        fingerprint=rig.consent.usb_fingerprint,
+    ) == {rig.consent.artifact_id: rig.consent.operation_id}
+    from cifereca.core.device_usb_removal_review import UsbRemovalConsent
+    removal = UsbRemovalConsent(
+        "alice", rig.consent.device_id, rig.consent.usb_fingerprint,
+        rig.consent.artifact_id, rig.consent.sha256,
+        rig.consent.target_relative_path, rig.consent.operation_id,
+        "b" * 32, NOW - 1, NOW + 60,
+    )
+    result = rig.facade.execute_one(
+        confirmation=removal, mountpoint=rig.mountpoint, expected_profile_epoch=3,
+    )
+    assert result == UsbSyncResult("completed", removed=1, observed=True)
+    assert not rig.final.exists()
+    assert rig.source.read_bytes() == payload
