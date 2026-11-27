@@ -1,0 +1,66 @@
+name: P0 8216 Numilog ISBN ABBA
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-numilog-isbn-abba.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fbab2e644e3f570fee71d8c4713fd39037cc3ad4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . 'pytest>=8,<9'
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/abba"
+          mkdir -p "$out"
+          git fetch origin 1980de4aa816f9fe3c062a446009260af6a9ea11
+          test "$(git rev-parse FETCH_HEAD)" = 1980de4aa816f9fe3c062a446009260af6a9ea11
+          p=src/plugins/provider-numilog/tests/test_numilog_public_digital_isbn_local_refinement_p0.py
+          for label in A1 B1 B2 A2; do
+            case "$label" in A*) sha=fbab2e644e3f570fee71d8c4713fd39037cc3ad4;; B*) sha=1980de4aa816f9fe3c062a446009260af6a9ea11;; esac
+            git checkout --detach "$sha"
+            test "$(git rev-parse HEAD)" = "$sha"
+            (
+              cd src/plugins/provider-numilog
+              export PYTHONPATH="$GITHUB_WORKSPACE/src:$PWD"
+              /usr/bin/time -p -o "$out/$label.time" python -m pytest -q "tests/${p##*/}" --junitxml="$out/$label.xml"
+              python - <<'PY'
+          import runpy
+          from pathlib import Path
+          listing=runpy.run_path("tests/test_numilog_public_digital_isbn_local_refinement_p0.py")["listing"]
+          a,b=listing(),listing()
+          assert a==b and a is not b and a.items[0] is not b.items[0]
+          a.items[0].metadata["isolation_probe"]=True
+          assert "isolation_probe" not in b.items[0].metadata
+          assert "isolation_probe" not in listing().items[0].metadata
+          PY
+            )
+            test -z "$(git status --porcelain --untracked-files=no)"
+          done
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          out=Path(os.environ["RUNNER_TEMP"])/"abba"
+          baseline=None
+          for label in ("A1","B1","B2","A2"):
+              root=ET.parse(out/f"{label}.xml")
+              cases=root.findall(".//testcase")
+              keys=sorted((c.attrib["classname"],c.attrib["name"]) for c in cases)
+              assert cases and all(c.find("failure") is None and c.find("error") is None and c.find("skipped") is None for c in cases)
+              if baseline is None: baseline=keys
+              assert keys==baseline
+              print(label,len(cases),root.find(".//testsuite").attrib["time"],(out/f"{label}.time").read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numilog-isbn-abba
+          path: ${{ runner.temp }}/abba
