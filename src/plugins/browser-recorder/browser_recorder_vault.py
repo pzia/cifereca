@@ -14,8 +14,12 @@ import fcntl
 from cifereca.plugin_api.capture_vault import (
     EncryptedCaptureVault, RetentionPlan, SessionWriter, VaultError,
     MAGIC, LABEL_MAGIC, MAX_FILE, MAX_LABEL_FILE, MAX_SESSIONS,
-    MAX_VAULT_BYTES, MIN_STAGING_AGE_SECONDS, _ID, _STAGE, _STATES,
-    _key, _aead,
+    MAX_VAULT_BYTES, MIN_STAGING_AGE_SECONDS,
+    CAPTURE_SESSION_ID_PATTERN as _ID,
+    CAPTURE_STAGING_PATTERN as _STAGE,
+    CAPTURE_SESSION_STATES as _STATES,
+    derive_capture_archive_key as _key,
+    capture_archive_aead as _aead,
 )
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
