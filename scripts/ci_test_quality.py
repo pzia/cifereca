@@ -56,6 +56,48 @@ def equality(left, right):
     return isinstance(left, (ast.Name, ast.Constant)) and dump(left) == dump(right)
 
 
+def delegated_oracle(tree, fn):
+    """Recognize direct, unshadowed module helper calls; not proof of execution."""
+    if not isinstance(fn, ast.FunctionDef):
+        return False
+    bindings = Counter(n.name for n in tree.body
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    helpers = {n.name: n for n in tree.body
+               if isinstance(n, ast.FunctionDef) and bindings[n.name] == 1
+               and not n.decorator_list and not n.name.startswith("test")}
+    # Conservatively exclude any other binding or import of a helper name.
+    shadowed = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
+                and isinstance(n.ctx, (ast.Store, ast.Del))}
+    shadowed.update(n.arg for n in ast.walk(fn) if isinstance(n, ast.arg))
+    shadowed.update(n.asname or n.name.split(".")[0] for n in ast.walk(tree)
+                    if isinstance(n, ast.alias))
+    shadowed.update(n.name for n in ast.walk(fn)
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    for stmt in fn.body:
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            continue
+        target = stmt.value.func
+        if not isinstance(target, ast.Name) or target.id in shadowed:
+            continue
+        helper = helpers.get(target.id)
+        if helper is None:
+            continue
+        # A direct nonconstant assert or a pytest.raises/warns context.
+        for node in helper.body:
+            if isinstance(node, ast.Assert) and not isinstance(node.test, ast.Constant):
+                if not (isinstance(node.test, ast.Compare) and len(node.test.ops) == 1
+                        and isinstance(node.test.ops[0], (ast.Eq, ast.Is))
+                        and equality(node.test.left, node.test.comparators[0])):
+                    return True
+            if isinstance(node, ast.With) and any(
+                isinstance(item.context_expr, ast.Call)
+                and call_name(item.context_expr) in {"pytest.raises", "pytest.warns"}
+                for item in node.items
+            ):
+                return True
+    return False
+
+
 def analyze(path: str, source: str) -> dict[str, Any]:
     tree = ast.parse(source, filename=path)
     findings = []
@@ -112,7 +154,8 @@ def analyze(path: str, source: str) -> dict[str, Any]:
                 if weak:
                     signal("sole_weak_shape_assertion", n)
         if not assertions:
-            signal("no_recognized_assertion", fn)
+            signal("delegated_oracle_review" if delegated_oracle(tree, fn)
+                   else "no_recognized_assertion", fn)
         # Exact normalized AST, not alpha-renaming. Preserve parameters and
         # decorators; identical bodies in different fixture/package scopes
         # remain candidates rather than interchangeable cases.
