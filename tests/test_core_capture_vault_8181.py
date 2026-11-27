@@ -45,7 +45,7 @@ class FixtureVault(EncryptedCaptureVault):
 
 def test_codec_independent_encrypted_restart_and_delete(tmp_path):
     pytest.importorskip("cryptography")
-    key = "fictional-test-key-for-core-storage"
+    key = b"x" * 32
     path = tmp_path / "vault"
     writer = FixtureVault(path).begin(key)
     writer.save("fictional-private-capture", "completed", force=True)
@@ -57,7 +57,7 @@ def test_codec_independent_encrypted_restart_and_delete(tmp_path):
     restarted = FixtureVault(path)
     assert restarted.open(sid, key).payload == "fictional-private-capture"
     with pytest.raises(VaultError):
-        restarted.open(sid, "different-fictional-key")
+        restarted.open(sid, b"y" * 32)
     restarted.set_label(sid, key, "fictional label")
     assert restarted.get_label(sid, key) == "fictional label"
     with pytest.raises(VaultError):

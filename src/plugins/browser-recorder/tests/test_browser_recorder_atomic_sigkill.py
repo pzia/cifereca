@@ -122,14 +122,13 @@ def test_sigkill_after_ciphertext_fsync_never_loses_last_commit_or_leaks(
         finally:
             restored.trace.destroy()
         assert vault.get_label(sidlist[0], KEY) == ""
-    assert vault.prune_staging(confirmed=True) == (0, 0)
+    assert vault.auto_prune(KEY, older_than_days=90, pinned=lambda *_: False) == (0, 0)
     staged = [x for x in files if x.suffix in {".part", ".labelpart"}]
     assert len(staged) == 1
     old = time.time() - MIN_STAGING_AGE_SECONDS - 3600
     os.utime(staged[0], (old, old))
     assert vault.staging_summary()[2] == 1
-    count, size = vault.prune_staging(confirmed=True)
-    assert count == 1 and size > 36
+    assert vault.auto_prune(KEY, older_than_days=90, pinned=lambda *_: False) == (0, 0)
     assert not staged[0].exists()
     assert vault.staging_summary() == (0, 0, 0)
     if capture is not None:

@@ -61,7 +61,7 @@ def test_no_disk_before_explicit_consent_and_encrypted_reopen(tmp_path):
     vault = FixtureVault(directory)
     assert vault.list_ids() == ()
     assert not directory.exists()
-    with pytest.raises(VaultError, match="vault_passphrase_required"):
+    with pytest.raises(VaultError, match="vault_key_unavailable"):
         vault.begin("short")
     assert not directory.exists()
     writer = vault.begin(PASSPHRASE)

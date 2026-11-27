@@ -6,7 +6,6 @@ This extraction alone does not provide that service or its authorization.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from hashlib import sha256
 from datetime import datetime, timezone, timedelta
 import fcntl
@@ -16,7 +15,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
-from time import monotonic, time
+from time import monotonic
 
 MAGIC = b"CFRVLT01"
 LABEL_MAGIC = b"CFRLBL01"
@@ -36,33 +35,17 @@ class VaultError(Exception):
         super().__init__(code)
 
 
-def _valid_key_material(value) -> bool:
-    return ((type(value) is bytes and len(value) == 32)
-            or (type(value) is str and 12 <= len(value) <= 1024))
-
-
-def _key(passphrase: str | bytes, salt: bytes) -> bytes:
-    if type(passphrase) is bytes and len(passphrase) == 32:
-        # Random installation key, not a low-entropy password. Use the same
-        # per-record salt with standard HKDF; no expensive password scan.
-        try:
-            from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-            return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt,
-                        info=b"cifereca.capture-vault/v1").derive(passphrase)
-        except ImportError as exc:
-            raise VaultError("vault_crypto_unavailable") from exc
-    if not _valid_key_material(passphrase):
-        raise VaultError("vault_passphrase_required")
+def _key(master_key: bytes, salt: bytes) -> bytes:
+    """Derive a per-record key from the installation's random 256-bit key."""
+    if type(master_key) is not bytes or len(master_key) != 32:
+        raise VaultError("vault_key_unavailable")
     try:
-        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-        return Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(
-            passphrase.encode("utf-8")
-        )
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt,
+                    info=b"cifereca.capture-vault/v1").derive(master_key)
     except ImportError as exc:
         raise VaultError("vault_crypto_unavailable") from exc
-    except (ValueError, UnicodeError) as exc:
-        raise VaultError("vault_passphrase_required") from exc
 
 
 def _aead():
@@ -71,23 +54,6 @@ def _aead():
         return AESGCM
     except ImportError as exc:
         raise VaultError("vault_crypto_unavailable") from exc
-
-
-@dataclass(frozen=True, repr=False)
-class RetentionPlan:
-    """Ephemeral authenticated deletion preview; never persisted to disk.
-
-    Fingerprints bind user's consent to *exact* encrypted source and label
-    snapshots. Do not include HTTP contents, origins, or names in this object.
-    """
-    older_than_days: int
-    cutoff_utc: str
-    fingerprints: tuple[tuple[str, str, str | None], ...]
-    total_bytes: int
-
-    @property
-    def count(self) -> int:
-        return len(self.fingerprints)
 
 
 class EncryptedCaptureVault:
@@ -179,50 +145,6 @@ class EncryptedCaptureVault:
         except OSError as exc:
             raise VaultError("vault_unsafe_file") from exc
 
-    def staging_summary(self) -> tuple[int, int, int]:
-        """Opaque (count, bytes, age-eligible count); never write or decrypt."""
-        if not self.path.exists() and not self.path.is_symlink():
-            return (0, 0, 0)
-        fd = self._open_dir(create=False)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH)
-            rows = self._staging(fd)
-            now = time()
-            return (len(rows), sum(info.st_size for _, info in rows),
-                    sum(now - info.st_mtime >= MIN_STAGING_AGE_SECONDS
-                        for _, info in rows))
-        except OSError as exc:
-            raise VaultError("vault_unsafe_file") from exc
-        finally:
-            os.close(fd)
-
-    def prune_staging(self, *, confirmed: bool = False) -> tuple[int, int]:
-        """Only manually delete stale encrypted .part/.labelpart, never sessions.
-
-        Minimum age 24 h; directory-wide lock coordinates with writers and
-        deletion. Any unsafe file aborts before the first mutation.
-        """
-        if confirmed is not True:
-            raise VaultError("vault_confirmation_required")
-        fd = self._open_dir(create=False)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            rows = self._staging(fd)
-            now = time()
-            eligible = [(name, info) for name, info in rows
-                        if now - info.st_mtime >= MIN_STAGING_AGE_SECONDS]
-            for name, _ in eligible:
-                os.unlink(name, dir_fd=fd)
-            if eligible:
-                os.fsync(fd)
-            return len(eligible), sum(info.st_size for _, info in eligible)
-        except VaultError:
-            raise
-        except OSError as exc:
-            raise VaultError("vault_unsafe_file") from exc
-        finally:
-            os.close(fd)
-
     def list_ids(self) -> tuple[str, ...]:
         """Opaque random IDs only; never leak site, book or account metadata."""
         if not self.path.exists() and not self.path.is_symlink():
@@ -248,9 +170,9 @@ class EncryptedCaptureVault:
             raise VaultError("vault_label_invalid")
         return value
 
-    def get_label(self, session_id: str, passphrase: str) -> str:
+    def get_label(self, session_id: str, master_key: bytes) -> str:
         """Read AEAD sidecar after authenticating the immutable capture."""
-        session = self.open(session_id, passphrase)
+        session = self.open(session_id, master_key)
         self._release(session)
         fd = self._open_dir(create=False)
         try:
@@ -283,7 +205,7 @@ class EncryptedCaptureVault:
         salt = data[8:24]
         nonce = data[24:36]
         try:
-            plaintext = _aead()(_key(passphrase, salt)).decrypt(
+            plaintext = _aead()(_key(master_key, salt)).decrypt(
                 nonce, data[36:], LABEL_MAGIC + salt + nonce
                 + bytes.fromhex(session_id),
             )
@@ -291,7 +213,7 @@ class EncryptedCaptureVault:
         except Exception as exc:
             raise VaultError("vault_label_invalid") from exc
 
-    def set_label(self, session_id: str, passphrase: str, label: str, *, guard=None) -> None:
+    def set_label(self, session_id: str, master_key: bytes, label: str, *, guard=None) -> None:
         """Atomic, separately encrypted metadata; never change .cbrv."""
         label = self._label_value(label)
         # Authentication must occur *under* the same directory lock as
@@ -299,7 +221,7 @@ class EncryptedCaptureVault:
         # could remove the archive after the check and this method would
         # resurrect an orphan encrypted name for a deleted session.
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
-        encrypted = _aead()(_key(passphrase, salt)).encrypt(
+        encrypted = _aead()(_key(master_key, salt)).encrypt(
             nonce, label.encode("utf-8"),
             LABEL_MAGIC + salt + nonce + bytes.fromhex(session_id),
         )
@@ -314,7 +236,7 @@ class EncryptedCaptureVault:
             # Authenticate source and any prior name while holding the
             # exclusive lock, before checking quotas or allocating staging.
             # Reject missing/altered archives and forged label sidecars.
-            self.get_label(session_id, passphrase)
+            self.get_label(session_id, master_key)
             if guard is not None:
                 guard(fd)
             try:
@@ -353,52 +275,6 @@ class EncryptedCaptureVault:
             raise VaultError("vault_write_failed") from exc
         finally:
             os.close(fd)
-
-    def unlocked_index(self, passphrase: str) -> tuple[tuple[dict, ...], int]:
-        """Read an opt-in private session index, never persist an index file.
-
-        No filename or ordinary list view exposes an origin, book, date or
-        status. Each summary comes from a fully AEAD-authenticated session,
-        after verifying the supplied passphrase; locked/tampered sessions do
-        not block other, independently decryptable sessions. Call this API
-        in a worker, as scrypt may take seconds across many sessions.
-        """
-        if not _valid_key_material(passphrase):
-            raise VaultError("vault_passphrase_required")
-        ids = self.list_ids()
-        if len(ids) > MAX_SESSIONS:
-            raise VaultError("vault_limit")
-        summaries = []
-        unavailable = 0
-        for identity in ids:
-            try:
-                item = self.open(identity, passphrase)
-            except VaultError:
-                unavailable += 1
-                continue
-            try:
-                summary = item.private_summary()
-                # A forged/invalid sidecar does not poison other sessions.
-                try:
-                    summary["label"] = self.get_label(identity, passphrase)
-                except VaultError:
-                    summary["label"] = ""
-                    summary["label_unavailable"] = True
-                summaries.append(summary)
-            finally:
-                self._release(item)
-        summaries.sort(key=lambda entry: (
-            entry["saved_at"], entry["id"]
-        ), reverse=True)
-        return tuple(summaries), unavailable
-
-    @staticmethod
-    def _retention_days(days: int) -> int:
-        # The UI supplies a fixed selection, never a user-controlled path or
-        # an arbitrary date string. Partial/interrupted remain excluded.
-        if type(days) is not int or days not in {30, 90, 180, 365}:
-            raise VaultError("vault_retention_invalid")
-        return days
 
     @staticmethod
     def _retention_date(raw: str) -> datetime:
@@ -452,114 +328,6 @@ class EncryptedCaptureVault:
         return ((sid, sha256(capture).hexdigest(),
                  sha256(label).hexdigest() if label is not None else None),
                 len(capture) + (len(label) if label is not None else 0))
-
-    def retention_preview(self, passphrase: str, older_than_days: int,
-                          *, now: datetime | None = None) -> RetentionPlan:
-        """Preview only *completed* authenticated older sessions; no writes.
-
-        Wrong keys and partial/interrupted sessions are never candidates.
-        Reject unsafe/corrupt files rather than guessing whether to delete.
-        """
-        days = self._retention_days(older_than_days)
-        if not _valid_key_material(passphrase):
-            raise VaultError("vault_passphrase_required")
-        now = (now if now is not None else datetime.now(timezone.utc))
-        if not isinstance(now, datetime) or now.tzinfo is None:
-            raise VaultError("vault_retention_invalid")
-        cutoff = now.astimezone(timezone.utc) - timedelta(days=days)
-        fd = self._open_dir(create=False)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH)
-            ids = self.list_ids()
-            if len(ids) > MAX_SESSIONS:
-                raise VaultError("vault_limit")
-            rows, total = [], 0
-            for sid in ids:
-                try:
-                    stored = self.open(sid, passphrase)
-                except VaultError as exc:
-                    if str(exc) == "vault_unlock_failed":
-                        continue  # another passphrase is not authorization
-                    raise
-                try:
-                    if (stored.recovery_status != "completed"
-                            or self._retention_date(stored.saved_at) >= cutoff):
-                        continue
-                    pair, size = self._retention_fingerprint(fd, sid)
-                    # A label is user-private AEAD metadata, not an arbitrary
-                    # encrypted blob that the retention planner may discard.
-                    # Even a size/mode-valid sidecar with a different key,
-                    # corrupt tag or swapped session AAD must fail closed.
-                    if pair[2] is not None:
-                        self.get_label(sid, passphrase)
-                    rows.append(pair)
-                    total += size
-                finally:
-                    self._release(stored)
-            return RetentionPlan(days, cutoff.isoformat(),
-                                 tuple(sorted(rows)), total)
-        finally:
-            os.close(fd)
-
-    def retention_apply(self, plan: RetentionPlan, passphrase: str, *,
-                        confirmed: bool = False) -> tuple[int, int]:
-        """Apply ONLY the exact preview after explicit independent consent.
-
-        Validate every entry under the writer lock before the first unlink.
-        Any replaced snapshot/label, unsafe link, wrong key or expired
-        preview aborts entirely. No background/automatic retention.
-        """
-        if confirmed is not True:
-            raise VaultError("vault_confirmation_required")
-        if type(plan) is not RetentionPlan:
-            raise VaultError("vault_retention_invalid")
-        days = self._retention_days(plan.older_than_days)
-        cutoff = self._retention_date(plan.cutoff_utc)
-        if (not 0 < len(plan.fingerprints) <= MAX_SESSIONS
-                or type(plan.total_bytes) is not int
-                or plan.total_bytes <= 0):
-            raise VaultError("vault_retention_invalid")
-        utc_now = datetime.now(timezone.utc)
-        # Plans are only valid for 10 minutes after the requested cutoff,
-        # never for a past or future date. No silently evolving candidates.
-        proposed_at = cutoff + timedelta(days=days)
-        if not timedelta(0) <= utc_now - proposed_at <= timedelta(minutes=10):
-            raise VaultError("vault_retention_expired")
-        fd = self._open_dir(create=False)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            seen, total = set(), 0
-            for sid, digest, label_digest in plan.fingerprints:
-                if (sid in seen or type(digest) is not str
-                        or len(digest) != 64):
-                    raise VaultError("vault_retention_invalid")
-                seen.add(sid)
-                actual, size = self._retention_fingerprint(fd, sid)
-                if actual != (sid, digest, label_digest):
-                    raise VaultError("vault_retention_changed")
-                if label_digest is not None:
-                    self.get_label(sid, passphrase)
-                session = self.open(sid, passphrase)
-                try:
-                    if (session.recovery_status != "completed"
-                            or self._retention_date(session.saved_at) >= cutoff):
-                        raise VaultError("vault_retention_changed")
-                finally:
-                    self._release(session)
-                total += size
-            if total != plan.total_bytes:
-                raise VaultError("vault_retention_changed")
-            # Full preflight passed. No page can silently trigger this call.
-            for sid, _digest, label_digest in plan.fingerprints:
-                self._unlink_capture(fd, sid, label_digest is not None)
-            os.fsync(fd)
-            return len(seen), total
-        except VaultError:
-            raise
-        except OSError as exc:
-            raise VaultError("vault_unsafe_file") from exc
-        finally:
-            os.close(fd)
 
     @staticmethod
     def _unlink_capture(fd, sid, has_label):
@@ -618,6 +386,11 @@ class EncryptedCaptureVault:
                 selected.append((sid, label, size))
                 total -= size
                 count -= 1
+            if reserve_session and (total + reserve_bytes > self.max_vault_bytes
+                                    or count + 1 > MAX_SESSIONS):
+                # If pinned/recent partial captures block admission, do not
+                # delete a prefix of otherwise valid sessions for no benefit.
+                raise VaultError("vault_limit")
             for name, _ in stale:
                 os.unlink(name, dir_fd=fd)
             for sid, label, _ in selected:
@@ -630,10 +403,10 @@ class EncryptedCaptureVault:
         finally:
             os.close(fd)
 
-    def begin(self, passphrase: str):
+    def begin(self, master_key: bytes):
         """Explicit action *before* capture; fail closed before Chromium runs."""
         salt = secrets.token_bytes(16)
-        key = _key(passphrase, salt)
+        key = _key(master_key, salt)
         _aead()
         fd = self._open_dir(create=True)
         try:
@@ -647,7 +420,7 @@ class EncryptedCaptureVault:
         finally:
             os.close(fd)
 
-    def open(self, session_id: str, passphrase: str) :
+    def open(self, session_id: str, master_key: bytes) :
         if type(session_id) is not str or not _ID.fullmatch(session_id):
             raise VaultError("vault_invalid")
         fd = self._open_dir(create=False)
@@ -675,7 +448,7 @@ class EncryptedCaptureVault:
         salt = data[len(MAGIC):len(MAGIC) + 16]
         nonce = data[len(MAGIC) + 16:len(MAGIC) + 28]
         ciphertext = data[len(MAGIC) + 28:]
-        key = _key(passphrase, salt)
+        key = _key(master_key, salt)
         try:
             raw = _aead()(key).decrypt(
                 nonce, ciphertext, MAGIC + salt + nonce + bytes.fromhex(session_id),
@@ -684,13 +457,13 @@ class EncryptedCaptureVault:
             raise VaultError("vault_unlock_failed") from exc
         return self._decode(raw, session_id)
 
-    def delete(self, session_id: str, passphrase: str, *, confirmed=False):
+    def delete(self, session_id: str, master_key: bytes, *, confirmed=False):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
         fd = self._open_dir(create=False)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            session = self.open(session_id, passphrase)
+            session = self.open(session_id, master_key)
             self._release(session)
             try:
                 sidecar = os.stat(

@@ -44,8 +44,6 @@ def test_renaming_encrypts_metadata_and_preserves_original_capture(tmp_path):
     assert not any(suffix in {".zip", ".json", ".har"}
                    for suffix in (f.suffix for f in vault.path.iterdir()))
     assert vault.get_label(sid, KEY) == LABEL
-    index, failures = vault.unlocked_index(KEY)
-    assert failures == 0 and index[0]["label"] == LABEL
     assert sha256(capture.read_bytes()).hexdigest() == original_sha
     vault.set_label(sid, KEY, "Autre nom — privé")
     assert vault.get_label(sid, KEY) == "Autre nom — privé"
@@ -82,10 +80,7 @@ def test_wrong_password_and_tamper_fail_closed_without_data_loss(tmp_path):
         vault.set_label(sid, KEY, "overwrite impossible")
     assert capture.read_bytes() == original
     assert sidecar.read_bytes() != cipher
-    index, failures = vault.unlocked_index(KEY)
-    assert failures == 0
-    assert index[0]["label"] == ""
-    assert index[0]["label_unavailable"] is True
+    assert vault.open(sid, KEY).recovery_status == "completed"
     sidecar.unlink()
     # Symlinks are neither read nor replaced by authenticated metadata API.
     foreign = tmp_path / "other"
