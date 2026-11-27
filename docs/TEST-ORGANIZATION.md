@@ -85,11 +85,23 @@ La couverture utile est répartie entre :
 
 L'ancien `test_kobo_vault.py` n'est pas présent dans le tree actif.
 
+## Rationalisation Core 0.9.21 — capitalisation du 27 novembre 2026
+
+Le plan historique [#103](https://github.com/pzia/cifereca/issues/103), incluant [#102](https://github.com/pzia/cifereca/issues/102), a été livré par les PR [#104](https://github.com/pzia/cifereca/pull/104), [#107](https://github.com/pzia/cifereca/pull/107), [#106](https://github.com/pzia/cifereca/pull/106) et [#109](https://github.com/pzia/cifereca/pull/109). Ne pas restaurer `test_core_0921.py` en bloc : les lots ont été distribués dans les tests spécialisés. La livraison historique n'établit pas à elle seule la couverture actuelle.
+
+Relecture des sources de tests au commit `e8ed298116e57d44645c37cd3fa7ad91e1e9077e` (sans nouvelle exécution des suites) :
+
+- [Inventaire ADEPT](../tests/test_adept_inventory_binding.py) : binding unique attesté et profils explicitement résolus, refus des ambiguïtés et inventaires partiels, conservation du binding et du fichier si l'entrée disparaît, revalidation de l'état returned, aucun appel d'inventaire si artefact absent ou verrou occupé, réutilisation de l'inventaire par combinaison de profils lors du batch.
+- [Retour ADEPT](../tests/test_adept_return.py) : les anciens critères de confirmation par refresh d'inventaire, retour non vérifié ou acquisition inconnue sont historiques. Depuis la décision [#4048](https://github.com/pzia/cifereca/issues/4048), la restitution volontaire est retirée : refus `loan_return_removed` avant accès runtime ou mutation, lookup inerte, conservation de l'artefact et de l'état historique. Ne pas réintroduire une restitution pour satisfaire un ancien test.
+- [UI ADEPT](../tests/test_adept_ui_contract.py) : réconciliation depuis le détail sur worker ; l'ancienne action de retour et son message de confirmation sont retirés, sans retirer la réconciliation. Aucun succès de retour ne doit être fabriqué.
+- [Kobo guard](../tests/test_kobo_backup_guard.py) : les six critères historiques étaient blocage du fichier non lié, permission explicite sans écrasement, exclusion des autres identités et des fichiers absents du blocage, conservation du backup lié complet (`unchanged`), scan préalable. L'ancien exécuteur W2 est désormais retiré ; les tests relus protègent cette absence et l'absence de mutation des candidats locaux hostiles, pas la réactivation de ces six chemins. L'admission et la publication A→B suivent le [contrat canonique](ARCHITECTURE.md) : preuve de présence exacte, consentement et contrôles frais, non-écrasement et séparation des profils ; ne pas restaurer un veto legacy sur la seule présence locale similaire. Les suites de publication atomique/reprise sont la référence pour le parcours canonique.
+
+Les invariants historiques devenus obsolètes sont conservés comme décisions datées, non comme spécification exécutable. Le module historique est absent du tree relu.
+
 ## Chantier historique encore à analyser
 
 La chaîne historique suivante reste un chantier de triage, **sans restauration transitive** :
 
-- `test_core_0921.py` ;
 - `test_core_0923.py` ;
 - `test_core_0925.py` ;
 - `test_core_0927.py` ;
