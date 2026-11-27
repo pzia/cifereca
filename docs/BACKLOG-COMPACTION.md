@@ -33,10 +33,11 @@ Schéma v1 fermé (exemple fictif, SHA et dates à remplacer) :
   "repository": "pzia/cifereca",
   "pilot_issue": 999,
   "main_sha": "<40 hex>",
-  "baseline_sha": "<40 hex>",
+  "baseline_sha": "8921002d1a5b9e0a4a0f0f592dbb6d669a283f4c",
   "created_at": "2026-11-27T12:00:00Z",
   "expires_at": "2026-11-27T13:00:00Z",
   "semantic_review": "Qualification humaine/Backlog des éléments préservés et références entrantes connues.",
+  "retained_issues": [{"number": 456, "snapshot_sha256": "<64 hex>"}],
   "issues": [{
     "number": 123,
     "snapshot_sha256": "<64 hex>",
@@ -48,13 +49,18 @@ Schéma v1 fermé (exemple fictif, SHA et dates à remplacer) :
 ```
 
 Les snapshots incluent métadonnées et tous les commentaires paginés ; tout
-écart détecté refuse le plan. Les références textuelles explicites du corpus
-doivent rester présentes. Ce filtre ne prouve ni équivalence sémantique ni
-absence de liens entrants inconnus. La revue Backlog reste obligatoire.
-Le rapport compare le corpus initial et projeté (issues + neuf fichiers
-d'instructions + ce runbook, y compris le plan conservé). Tokens estimés =
-octets UTF-8 / 4 arrondis au supérieur, pas un tokenizer. Journal futur et
-effets réels non comptés : aucun gain net réel attesté.
+écart détecté refuse le plan. Jusqu'à trois issues canoniques supplémentaires
+peuvent être référencées dans retained_issues (lecture seule, ouvertes ou
+closes, jamais PR) ; leurs empreintes sont vérifiées avant et après. Une
+réécriture seule est admissible avec remove_comments vide si le corps change.
+Les références explicites du corpus doivent rester présentes ; les liens
+connus vers des commentaires à supprimer provoquent un refus. Cela ne prouve
+ni équivalence sémantique ni absence de liens entrants inconnus. Revue Backlog
+obligatoire. Baseline documentaire fixe : SHA initial du P0. Corpus comparable :
+cibles + issues canoniques + neuf instructions + registre #3913 + ce runbook ;
+le plan et tous ses commentaires existants sont comptés en surcoût. Tokens
+estimés = octets UTF-8 / 4 arrondis au supérieur. Journal futur, autres frais de
+pilotage et effets réels non comptés : aucun gain net réel attesté.
 
 ## Frontière de sécurité restant à établir
 

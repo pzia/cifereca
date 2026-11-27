@@ -8,7 +8,7 @@ from scripts import backlog_compaction as c
 
 NOW = dt.datetime(2026, 11, 27, 12, 0, tzinfo=dt.timezone.utc)
 HEAD = "a" * 40
-BASE = "b" * 40
+BASE = c.BASELINE
 
 class API:
     def __init__(self):
@@ -16,6 +16,8 @@ class API:
                       "comments": 1, "labels": [{"name": "P2"}]}
         self.comments = [{"id": 8, "body": "Repeated text " * 1000}]
         self.pilot = {"number": 999, "state": "open", "body": "", "comments": 0}
+        self.retained = {"number": 42, "state": "open", "body": "Canonical evidence #42", "comments": 0}
+        self.pilot_comments = []
         self.calls = []
 
     def get(self, path):
@@ -24,6 +26,12 @@ class API:
             return dict(self.issue)
         if path == "/issues/999":
             return dict(self.pilot)
+        if path == "/issues/42":
+            return dict(self.retained)
+        if path == "/issues/999/comments?per_page=100&page=1":
+            return list(self.pilot_comments)
+        if path == "/issues/42/comments?per_page=100&page=1":
+            return []
         if path == "/issues/123/comments?per_page=100&page=1":
             return list(self.comments[:100])
         if path == "/issues/123/comments?per_page=100&page=2":
@@ -43,6 +51,7 @@ class Tests(unittest.TestCase):
                      "created_at": "2026-11-27T11:00:00Z",
                      "expires_at": "2026-11-27T13:00:00Z",
                      "semantic_review": "Reviewed separately; not certified by the CLI.",
+                     "retained_issues": [],
                      "issues": [{"number": 123, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 123)),
                                  "body_after": "Evidence #42", "remove_comments": [8],
                                  "rationale": "Repeated text"}]}
@@ -82,9 +91,59 @@ class Tests(unittest.TestCase):
             self.validate()
 
     def test_open_or_pr(self):
+        original = dict(self.api.issue)
         for key, value in (("state", "open"), ("pull_request", {})):
-            self.api.issue[key] = value
-            with self.assertRaises(c.Refusal):
+            with self.subTest(key=key):
+                self.api.issue = dict(original, **{key: value})
+                with self.assertRaisesRegex(c.Refusal, "unexpected issue state" if key == "state" else "not a repository issue"):
+                    self.validate()
+
+    def test_wrong_baseline(self):
+        self.plan["baseline_sha"] = HEAD
+        with self.assertRaises(c.Refusal):
+            self.validate()
+
+    def test_body_only_with_retained_canonical_evidence(self):
+        self.plan["issues"][0].update(body_after="Consolidated", remove_comments=[])
+        self.plan["retained_issues"] = [{"number": 42, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 42, closed=None))}]
+        result = self.validate()
+        self.assertEqual(result["retained_issues"], [42])
+        self.assertFalse(result["destruction_enabled"])
+        self.api.retained["body"] = "Changed"
+        with self.assertRaisesRegex(c.Refusal, "retained issue drift"):
+            self.validate()
+
+    def test_reference_to_removed_comment(self):
+        link = "https://github.com/pzia/cifereca/issues/123#issuecomment-8"
+        self.api.retained["body"] += " " + link
+        self.plan["retained_issues"] = [{"number": 42, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 42, closed=None))}]
+        with self.assertRaisesRegex(c.Refusal, "known reference to deleted comment"):
+            self.validate()
+
+    def test_pilot_comments_count_as_overhead(self):
+        first = self.validate()
+        self.api.pilot_comments = [{"id": 88, "body": "é" * 50}]
+        self.api.pilot["comments"] = 1
+        second = self.validate()
+        self.assertEqual(second["projected_after_with_plan"]["bytes"] - first["projected_after_with_plan"]["bytes"], 100)
+
+    def test_noop_body_only(self):
+        self.plan["issues"][0].update(remove_comments=[])
+        with self.assertRaisesRegex(c.Refusal, "empty change proposal"):
+            self.validate()
+
+    def test_second_snapshot_drift(self):
+        original = self.api.get
+        calls = 0
+        def get(path):
+            nonlocal calls
+            if path == "/issues/123/comments?per_page=100&page=1":
+                calls += 1
+                if calls == 2:
+                    self.api.comments[0]["body"] += " new"
+            return original(path)
+        with patch.object(self.api, "get", side_effect=get):
+            with self.assertRaisesRegex(c.Refusal, "snapshot drift"):
                 self.validate()
 
     def test_unknown_field(self):

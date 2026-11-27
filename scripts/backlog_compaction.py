@@ -14,12 +14,15 @@ from collections import Counter
 
 REPO = "pzia/cifereca"
 API = "https://api.github.com/repos/" + REPO
+BASELINE = "8921002d1a5b9e0a4a0f0f592dbb6d669a283f4c"
 DOCS = ("AGENTS.md", *(".agents/roles/" + n + ".md" for n in
         ("README", "backlog", "cicd", "core", "focus", "plugins", "ux")),
-        "docs/AGENT-DELIVERY-POLICY.md", "docs/BACKLOG-COMPACTION.md")
+        "docs/AGENT-DELIVERY-POLICY.md", "docs/CORE-P1-3913-DIAGNOSTIC-TOOLS.md",
+        "docs/BACKLOG-COMPACTION.md")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 REFERENCE = re.compile(r"https?://[^\s<>()\]\`]+|(?<![\w/])#\d+\b")
+COMMENT_REF = re.compile(r"(?:issuecomment-|/issues/comments/)([0-9]+)\b")
 MAX_PLAN = 64000
 MAX_PAGES = 20
 
@@ -101,12 +104,13 @@ def issue_data(api, n, closed=True):
     issue = api.get(path)
     require(type(issue) is dict and issue.get("number") == n
             and "pull_request" not in issue, "not a repository issue")
-    require(issue.get("state") == ("closed" if closed else "open"), "unexpected issue state")
+    states = ("open", "closed") if closed is None else (("closed",) if closed else ("open",))
+    require(issue.get("state") in states, "unexpected issue state")
     require(type(issue.get("body")) is str or issue.get("body") is None, "invalid issue body")
     return issue
 
-def snapshot(api, n):
-    first = issue_data(api, n)
+def snapshot(api, n, closed=True):
+    first = issue_data(api, n, closed=closed)
     comments = []
     for page in range(1, MAX_PAGES + 1):
         batch = api.get("/issues/%d/comments?per_page=100&page=%d" % (n, page))
@@ -121,7 +125,7 @@ def snapshot(api, n):
         require(type(c) is dict and type(c.get("body")) is str, "invalid comment")
         ids.append(number(c.get("id")))
     require(len(set(ids)) == len(ids), "duplicate comment during pagination")
-    last = issue_data(api, n)
+    last = issue_data(api, n, closed=closed)
     require(first == last and len(comments) == first.get("comments"), "issue changed during scan")
     # Hash entire REST snapshots: fail conservatively on metadata or content drift.
     return {"issue": first, "comments": sorted(comments, key=lambda c: c["id"])}
@@ -187,10 +191,14 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
             and sha256(raw) == expected, "plan digest mismatch")
     plan = strict_json(raw)
     exact_keys(plan, ("version", "repository", "pilot_issue", "main_sha", "baseline_sha",
-                      "created_at", "expires_at", "issues", "semantic_review"))
+                      "created_at", "expires_at", "issues", "retained_issues", "semantic_review"))
     require(type(plan["version"]) is int and plan["version"] == 1
-            and plan["repository"] == REPO and plan["pilot_issue"] == number(pilot)
-            and pilot != 8195 and plan["main_sha"] == current, "plan context mismatch")
+            and plan["repository"] == REPO and number(plan["pilot_issue"]) == number(pilot)
+            and pilot != 8195 and plan["main_sha"] == current
+            and plan["baseline_sha"] == BASELINE, "plan context mismatch")
+    pilot_before = snapshot(api, pilot, closed=False)
+    pilot_fingerprint = fingerprint(pilot_before)
+    require((pilot_before["issue"]["body"] or "").encode("utf-8") == raw, "pilot plan changed")
     now = now or dt.datetime.now(dt.timezone.utc)
     created, expires = timestamp(plan["created_at"]), timestamp(plan["expires_at"])
     require(created <= now < expires <= created + dt.timedelta(hours=24), "plan expired or not current")
@@ -205,35 +213,52 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
     before_docs = docs_at(plan["baseline_sha"])
     after_docs = docs_at(current)
     before, after = list(before_docs.values()), list(after_docs.values())
-    snapshots = []
+    retained = plan["retained_issues"]
+    require(type(retained) is list and len(retained) <= 3, "too many retained issues")
+    for entry in retained:
+        exact_keys(entry, ("number", "snapshot_sha256"))
+    retained_numbers = [number(entry["number"]) for entry in retained]
+    require(len(set(retained_numbers)) == len(retained_numbers)
+            and not set(retained_numbers) & set(numbers + [pilot, 8195]), "overlapping retained issue")
+    for entry in retained:
+        snap = snapshot(api, entry["number"], closed=None)
+        require(entry["snapshot_sha256"] == fingerprint(snap), "retained issue drift")
+        before.extend(issue_texts(snap))
+        after.extend(issue_texts(snap))
+    removed_ids = set()
     for entry in entries:
         snap = snapshot(api, entry["number"])
-        snapshots.append(snap)
         require(entry["snapshot_sha256"] == fingerprint(snap), "snapshot drift")
         require(type(entry["body_after"]) is str and bool(entry["body_after"].strip())
                 and len(entry["body_after"].encode("utf-8")) <= MAX_PLAN
                 and type(entry["rationale"]) is str and bool(entry["rationale"].strip()),
                 "missing synthesis or rationale")
         ids = entry["remove_comments"]
-        require(type(ids) is list and bool(ids), "empty deletion proposal")
+        require(type(ids) is list, "invalid deletion list")
+        require(bool(ids) or entry["body_after"] != (snap["issue"]["body"] or ""), "empty change proposal")
         for value in ids:
             number(value)
         require(len(set(ids)) == len(ids) and set(ids) <= {c["id"] for c in snap["comments"]},
                 "unknown or duplicate deletion target")
+        removed_ids.update(ids)
         before.extend(issue_texts(snap))
         after.extend([entry["body_after"], *(c["body"] for c in snap["comments"] if c["id"] not in ids)])
     refs_before = set(REFERENCE.findall("\n".join(before)))
     refs_after = set(REFERENCE.findall("\n".join(after)))
     require(refs_before <= refs_after, "explicit reference missing from retained corpus")
+    cited_ids = {int(n) for n in COMMENT_REF.findall("\n".join(before + after + issue_texts(pilot_before)))}
+    require(not removed_ids & cited_ids, "known reference to deleted comment")
     # Recheck the whole bounded corpus, including its plan, before reporting.
-    for entry, snap in zip(entries, snapshots):
-        require(fingerprint(snapshot(api, entry["number"])) == fingerprint(snap), "snapshot drift")
-    require((issue_data(api, pilot, closed=False)["body"] or "").encode("utf-8") == raw,
-            "pilot plan changed")
-    old, new = metrics(before), metrics(after + [raw.decode("utf-8")])
-    # Count the entire retained plan as overhead; journal and actual effects are not measured yet.
+    for entry in entries:
+        require(fingerprint(snapshot(api, entry["number"])) == entry["snapshot_sha256"], "snapshot drift")
+    for entry in retained:
+        require(fingerprint(snapshot(api, entry["number"], closed=None)) == entry["snapshot_sha256"], "retained issue drift")
+    require(fingerprint(snapshot(api, pilot, closed=False)) == pilot_fingerprint, "pilot plan changed")
+    old, new = metrics(before), metrics(after + issue_texts(pilot_before))
+    # Count the entire pilot issue as overhead; future journal and other control-issue overhead are not measured yet.
     return {"status": "STRUCTURAL_VALIDATION_ONLY", "plan_sha256": expected,
-            "main_sha": current, "issues": numbers, "before": old, "projected_after_with_plan": new,
+            "main_sha": current, "issues": numbers, "retained_issues": retained_numbers,
+            "before": old, "projected_after_with_plan": new,
             "projected_gain": {k: old[k] - new[k] for k in old},
             "journal_included": False, "semantic_equivalence_proven": False,
             "destruction_enabled": False}
