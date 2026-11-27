@@ -189,6 +189,12 @@ class Tests(unittest.TestCase):
             c.expected_prefix(manifest, 3)
 
     def test_lot_multiple_batches_and_replay(self):
+        self.exercise_lot(partial=False)
+
+    def test_lot_partial_prefix_recovery(self):
+        self.exercise_lot(partial=True)
+
+    def exercise_lot(self, partial):
         master = self.staging_issue()
         master["body"] = "<!-- backlog-master-lot-v1: 999 ; 42 ; public -->"
         lot = dict(master, number=999, id=999, title=c.LOT_TITLE+"123", labels=[],
@@ -214,22 +220,57 @@ class Tests(unittest.TestCase):
             comments[n].append(value)
             issues[n]["comments"] += 1
             return dict(value)
+        writes = []
+        interrupted = partial
         def replace_body(n, body):
+            writes.append((n, None))
             issues[n]["body"] = body
         def replace_comment(cid, body):
+            if interrupted and len(writes) == 3:
+                raise c.Refusal("simulated interruption")
+            writes.append((42, cid))
             next(x for x in comments[42] if x["id"] == cid)["body"] = body
         stage = Stage()
         with patch.object(self.api,"get",side_effect=get), patch.object(self.api,"mark",side_effect=mark), patch.object(self.api,"replace_body",side_effect=replace_body), patch.object(self.api,"replace_comment",side_effect=replace_comment):
-            report = c.consolidate(self.api,stage,dict(lot),HEAD,clock=lambda:NOW)
-            self.assertEqual((report["status"],report["cursor"],report["total"]),("LOT_PENDING",10,25))
-            original = c.strict_json(stage.raw)
-            self.assertEqual(len(original["snapshots"][0]["comments"]),24)
-            def control(n, cursor):
+            def control(n, cursor, applied=None):
                 data = {"version":1,"p0":999,"stage_sha":STAGE,"manifest_sha256":c.sha256(stage.raw),"main_sha":HEAD,"cursor":cursor}
+                if applied is not None:
+                    data.update(version=2, applied=applied)
                 issues[n] = dict(lot,number=n,id=n,title=c.CONTINUE_TITLE+"999",
                                  body=c.encode(data).decode(),comments=0)
                 comments[n] = []
                 return dict(issues[n])
+            if partial:
+                with self.assertRaisesRegex(c.Refusal, "simulated interruption"):
+                    c.consolidate(self.api,stage,dict(lot),HEAD,clock=lambda:NOW)
+                interrupted = False
+                self.assertEqual(len(writes),3)
+                self.assertEqual(len(comments[999]),1)
+                self.assertTrue(comments[999][0]["body"].startswith(c.START))
+                for wrong in (2,4,11):
+                    with self.assertRaises(c.Refusal):
+                        c.continue_lot(self.api,stage,control(770+wrong,0,wrong),HEAD)
+                    self.assertEqual(len(writes),3)
+                resume = control(776,0,3)
+                prior = comments[42][3]["body"]
+                comments[42][3]["body"] = c.compact_text(prior,999)
+                with self.assertRaisesRegex(c.Refusal,"divergent"):
+                    c.continue_lot(self.api,stage,resume,HEAD)
+                comments[42][3]["body"] = "external edit"
+                with self.assertRaisesRegex(c.Refusal,"divergent"):
+                    c.continue_lot(self.api,stage,resume,HEAD)
+                comments[42][3]["body"] = prior
+                self.assertEqual(len(writes),3)
+                report = c.continue_lot(self.api,stage,resume,HEAD)
+                with self.assertRaises(c.Refusal):
+                    c.continue_lot(self.api,stage,resume,HEAD)
+                self.assertEqual(len(writes),10)
+                self.assertEqual(len(set(writes)),10)
+            else:
+                report = c.consolidate(self.api,stage,dict(lot),HEAD,clock=lambda:NOW)
+            self.assertEqual((report["status"],report["cursor"],report["total"]),("LOT_PENDING",10,25))
+            original = c.strict_json(stage.raw)
+            self.assertEqual(len(original["snapshots"][0]["comments"]),24)
             first = control(777,10)
             report = c.continue_lot(self.api,stage,first,HEAD)
             self.assertEqual((report["status"],report["cursor"]),("LOT_PENDING",20))
@@ -241,8 +282,39 @@ class Tests(unittest.TestCase):
             self.assertTrue(comments[999][-1]["body"].startswith(c.DONE))
             self.assertEqual(issues[42]["state_reason"],"not_planned")
             self.assertEqual(stage.published,1)
+            self.assertEqual(len(writes),25)
+            self.assertEqual(len(set(writes)),25)
             with self.assertRaises(c.Refusal):
                 c.continue_lot(self.api,stage,second,HEAD)
+
+    def test_snapshot_retries_only_stable_timestamp_drift(self):
+        self.staging_issue()
+        original = self.api.get
+        old = self.api.issue["updated_at"]
+        new = "2026-11-27T12:00:01Z"
+        for change in ("timestamp", "body", "comment", "regression"):
+            reads = 0
+            self.api.issue["updated_at"] = old
+            def get(path):
+                nonlocal reads
+                value = original(path)
+                if path == "/issues/123":
+                    reads += 1
+                    if reads > 1:
+                        value["updated_at"] = new if change != "regression" else "2026-11-27T11:59:59Z"
+                        if change == "body":
+                            value["body"] = "external edit"
+                if change == "comment" and "/comments?" in path and reads >= 3:
+                    value[0]["body"] = "external edit"
+                return value
+            with self.subTest(change=change), patch.object(self.api,"get",side_effect=get):
+                if change == "timestamp":
+                    self.assertEqual(c.snapshot(self.api,123)["issue"]["updated_at"],new)
+                    self.assertEqual(reads,4)
+                else:
+                    with self.assertRaises(c.Refusal):
+                        c.snapshot(self.api,123)
+        self.assertEqual(self.api.writes,[])
 
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
