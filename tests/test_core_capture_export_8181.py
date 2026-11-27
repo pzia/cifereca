@@ -44,3 +44,23 @@ def test_zip_rejects_oversized_input_and_output(tmp_path):
     with pytest.raises(VaultError, match="private_zip_limit"):
         write_capture_zip(dest, b"x" * 17, confirmed=True, max_bytes=16)
     assert not dest.exists()
+
+
+def test_shared_writer_refuses_intermediate_symlink_and_strict_unsafe_directory(tmp_path):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    nested = actual / "nested"
+    nested.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(VaultError, match="private_zip_write_failed"):
+        write_capture_zip(alias / "nested" / "test.zip", b"fixture", confirmed=True, max_bytes=4096)
+    assert not list(nested.iterdir())
+    nested.chmod(0o777)
+    try:
+        with pytest.raises(VaultError, match="private_zip_destination"):
+            write_capture_zip(nested / "test.zip", b"fixture", confirmed=True, max_bytes=4096,
+                              require_safe_parent=True)
+    finally:
+        nested.chmod(0o700)
+    assert not list(nested.iterdir())

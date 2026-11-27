@@ -51,6 +51,11 @@ def test_http_archive_consent_restart_and_current_binary_policy(tmp_path, monkey
         assert destination.stat().st_mode & 0o777 == 0o600
         with ZipFile(destination) as archive:
             index = json.loads(archive.read("index.json"))
+            from hashlib import sha256
+            kit = json.loads(archive.read("plugin-dev-kit/manifest.json"))
+            assert "plugin-dev-kit/PROVIDER-DEVELOPMENT.md" in archive.namelist()
+            for item in kit["files"]:
+                assert sha256(archive.read(item["path"])).hexdigest() == item["sha256"]
             first, second = index["exchanges"]
             assert first["response_body"]["state"] == "binary_excluded"
             assert "blob" not in first["response_body"]

@@ -9,22 +9,19 @@ from __future__ import annotations
 import hashlib
 from html import escape
 from html.parser import HTMLParser
-import io
 import json
 import math
 import os
 from pathlib import Path
 import re
 import secrets
-import stat
 from xml.etree import ElementTree as ET
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
-from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 from browser_recorder_devkit import core_contract_kit
-from browser_recorder_download import _open_parent_without_symlinks
+from cifereca.plugin_api.capture_vault import VaultError, build_capture_zip, write_capture_zip
 from browser_recorder_http import _BODY_REASONS, _valid_auth_schema, _AUTH_SCHEMA_REASONS, _auth_flow, _url_origin
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
@@ -582,22 +579,17 @@ def _public_kit_pin_scan_members(kit: dict[str, bytes]) -> dict[str, bytes]:
 def _zip_bytes(members: dict[str, bytes]) -> bytes:
     if len(members) > MAX_MEMBERS or sum(len(x) for x in members.values()) > MAX_UNCOMPRESSED:
         raise RecorderError("bundle_limit")
-    stream = io.BytesIO()
-    with ZipFile(stream, "w", compression=ZIP_DEFLATED, compresslevel=6) as zipfile:
-        for name, body in sorted(members.items()):
-            if (not re.fullmatch(r"[A-Za-z0-9_.\-/]{1,110}", name)
-                    or ".." in name or name.startswith("/")
-                    or not isinstance(body, bytes)):
-                raise RecorderError("bundle_invalid_member")
-            info = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = ZIP_DEFLATED
-            info.create_system = 3
-            info.external_attr = (stat.S_IFREG | 0o600) << 16
-            zipfile.writestr(info, body)
-    result = stream.getvalue()
-    if len(result) > MAX_ZIP_BYTES:
-        raise RecorderError("bundle_limit")
-    return result
+    for name, body in members.items():
+        if (not re.fullmatch(r"[A-Za-z0-9_.\-/]{1,110}", name)
+                or ".." in name or name.startswith("/")
+                or not isinstance(body, bytes)):
+            raise RecorderError("bundle_invalid_member")
+    try:
+        return build_capture_zip(members, max_bytes=MAX_ZIP_BYTES)
+    except VaultError as exc:
+        raise RecorderError("bundle_limit" if exc.args[0] == "private_zip_limit"
+                            else "bundle_invalid_member") from None
+
 
 
 class ReviewedBundlePlan:
@@ -648,32 +640,11 @@ class ReviewedBundlePlan:
         ).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(4) + ".zip"
         if not _FILENAME.fullmatch(name):
             raise RecorderError("bundle_invalid_filename")
-        folder_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                        | getattr(os, "O_NOFOLLOW", 0))
-        flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                 | getattr(os, "O_NOFOLLOW", 0))
         try:
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            dir_fd = os.open(directory, folder_flags)
-            try:
-                fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
-                try:
-                    with os.fdopen(fd, "wb") as stream:
-                        stream.write(self._blob)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                except BaseException:
-                    # No incomplete artifact may masquerade as an exported
-                    # archive after a disk-full/flush/fsync interruption.
-                    # Unlink using the same no-follow directory descriptor.
-                    try:
-                        os.unlink(name, dir_fd=dir_fd)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                os.close(dir_fd)
-        except OSError:
+            write_capture_zip((directory / name).absolute(), self._blob,
+                              confirmed=True, max_bytes=MAX_ZIP_BYTES)
+        except (OSError, VaultError):
             raise RecorderError("save_failed") from None
         return name
 
@@ -695,37 +666,13 @@ class ReviewedBundlePlan:
                 or ".." in name or ".." in path.parts
                 or path.parent.is_symlink()):
             raise RecorderError("bundle_invalid_filename")
-        flags = (
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
         try:
-            # Reject symlinks in *every* chosen parent component, not only
-            # the final directory. This helper never visits network sites.
-            folder = _open_parent_without_symlinks(path.parent)
-            try:
-                info = os.fstat(folder)
-                if (not stat.S_ISDIR(info.st_mode)
-                        or info.st_uid != os.getuid()
-                        or stat.S_IMODE(info.st_mode) & 0o022):
-                    raise RecorderError("unsafe_directory")
-                output = os.open(name, flags, 0o600, dir_fd=folder)
-                try:
-                    with os.fdopen(output, "wb") as stream:
-                        stream.write(self._blob)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.fsync(folder)
-                except BaseException:
-                    try:
-                        os.unlink(name, dir_fd=folder)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                os.close(folder)
-        except OSError:
-            raise RecorderError("save_failed") from None
+            write_capture_zip(path, self._blob, confirmed=True,
+                              max_bytes=MAX_ZIP_BYTES, require_safe_parent=True)
+        except VaultError as exc:
+            code = exc.args[0]
+            raise RecorderError("unsafe_directory" if code == "private_zip_destination"
+                                else "save_failed") from None
         return name
 
 def prepare_reviewed_zip(review) -> ReviewedBundlePlan:

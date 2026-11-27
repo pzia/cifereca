@@ -43,24 +43,40 @@ def build_capture_zip(members: dict[str, bytes], *, max_bytes: int,
 
 
 
+def _open_parent(directory: Path):
+    # Reject symlinks in every component and keep the directory FD through
+    # exclusive publication. A normal user-selected 0755 folder is permitted.
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in directory.parts[1:]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def write_capture_zip(destination: Path, payload: bytes, *, confirmed=False,
-                      max_bytes: int) -> int:
+                      max_bytes: int, require_safe_parent=False) -> int:
     """Exclusive private local write, only after explicit confirmation."""
     if confirmed is not True:
         raise VaultError("private_zip_confirmation_required")
     destination = Path(destination)
-    if not destination.is_absolute() or destination.suffix.lower() != ".zip":
+    if (not destination.is_absolute() or destination.suffix.lower() != ".zip"
+            or ".." in destination.parts):
         raise VaultError("private_zip_destination")
     if type(payload) is not bytes or len(payload) > max_bytes:
         raise VaultError("private_zip_limit")
     folder_fd = None
     try:
-        folder_fd = os.open(
-            destination.parent, os.O_RDONLY | os.O_DIRECTORY
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
+        folder_fd = _open_parent(destination.parent)
         info = os.fstat(folder_fd)
-        if not stat.S_ISDIR(info.st_mode):
+        if (not stat.S_ISDIR(info.st_mode)
+                or (require_safe_parent and (info.st_uid != os.getuid()
+                                            or stat.S_IMODE(info.st_mode) & 0o022))):
             raise VaultError("private_zip_destination")
         temporary = ".cifereca-export-" + secrets.token_hex(16)
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -75,7 +91,7 @@ def write_capture_zip(destination: Path, payload: bytes, *, confirmed=False,
                     dst_dir_fd=folder_fd, follow_symlinks=False)
             published = True
             os.fsync(folder_fd)
-        except Exception:
+        except BaseException:
             if published:
                 try:
                     os.unlink(destination.name, dir_fd=folder_fd)

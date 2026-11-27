@@ -423,6 +423,7 @@ class _DiagnosticsPort(_Port):
             payload = project_archived_http_zip(
                 row.payload, include_binary=HTTP_TRACE.status()["include_binary"],
                 source_session_ref=row.summary.source_session_ref,
+                include_kit=True,
             )
         except Exception as exc:
             raise VaultError("vault_invalid") from exc

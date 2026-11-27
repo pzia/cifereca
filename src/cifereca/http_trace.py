@@ -309,7 +309,7 @@ class HTTPTraceCapture:
 HTTP_TRACE_ZIP_LIMIT = 63 * 1024 * 1024
 
 
-def build_http_trace_zip(snapshot):
+def build_http_trace_zip(snapshot, *, include_kit=False):
     from .core.capture_export import build_capture_zip
     members = {}
     for entry in snapshot["exchanges"]:
@@ -320,11 +320,22 @@ def build_http_trace_zip(snapshot):
             if content is not None:
                 members[name] = content
     members["index.json"] = json.dumps(snapshot, ensure_ascii=True, indent=2).encode()
+    if include_kit:
+        from .core.capture_devkit import core_contract_kit
+        kit = core_contract_kit()
+        if any(name in members or not name.startswith("plugin-dev-kit/") for name in kit):
+            raise ValueError("invalid_http_archive_kit")
+        members.update(kit)
+        members["README.txt"] = (
+            "PRIVATE CIFERECA HTTP TRACE — RAW credentials and URLs may be present.\n"
+            "Local explicit export only; review before sharing. No network replay.\n"
+            "Use plugin-dev-kit/PROVIDER-DEVELOPMENT.md for the offline Core contracts.\n"
+        ).encode("utf-8")
     return build_capture_zip(members, max_bytes=HTTP_TRACE_ZIP_LIMIT,
                              compression=zipfile.ZIP_STORED)
 
 
-def project_archived_http_zip(payload, *, include_binary, source_session_ref):
+def project_archived_http_zip(payload, *, include_binary, source_session_ref, include_kit=False):
     """Authenticate index/blob consistency and reapply the current binary policy."""
     if type(payload) is not bytes or len(payload) > HTTP_TRACE_ZIP_LIMIT:
         raise ValueError("invalid_http_archive")
@@ -372,11 +383,12 @@ def project_archived_http_zip(payload, *, include_binary, source_session_ref):
                 _project_body_policy(entry)
         if names != expected:
             raise ValueError("invalid_http_archive")
-    if include_binary:
+    if include_binary and not include_kit:
         # Bodies deliberately omitted when archived cannot be recovered.
         return payload
-    snapshot["include_binary"] = False
-    return build_http_trace_zip(snapshot)
+    if not include_binary:
+        snapshot["include_binary"] = False
+    return build_http_trace_zip(snapshot, include_kit=include_kit)
 
 
 class _Exchange:
