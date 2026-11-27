@@ -573,7 +573,7 @@ class TaskRunner:
             if trace_kind in {
                 "borrow", "transfer", "acsm-import", "acsm-stage",
                 "lender-local-send", "lender-placement-check",
-                "borrow-verification", "loan-acquisition", "loan-renew", "materialize",
+                "borrow-verification", "loan-acquisition", "loan-renew", "materialize", "reader-sync",
             }:
                 return "failed"
             legacy = getattr(self, "_source_sync_outcome", None)

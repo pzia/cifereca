@@ -1153,7 +1153,9 @@ def main() -> int:
                         "profile_b", "profile_a", "finish",
                         "native_fixture", "native_configuration",
                         "native_send", "native_conflict", "native_confirmation", "native_cancellation",
-                        "native_copy", "native_idempotence", "native_removal",
+                        "native_copy", "native_copy_admission", "native_copy_progress",
+                        "native_copy_navigation", "native_copy_result", "native_copy_observation",
+                        "native_idempotence", "native_removal",
                         "native_usb_a", "native_usb_b", "native_usb_isolation",
                     })
                     phase = report_data.get("closed_failure_phase")

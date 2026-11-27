@@ -39,7 +39,9 @@ STAGES = frozenset({
     "execute_cancel", "execute_confirm", "execute_result",
     "profile_b", "profile_a", "native_fixture", "native_configuration",
     "native_send", "native_conflict", "native_confirmation", "native_cancellation",
-    "native_copy", "native_idempotence", "native_removal",
+    "native_copy", "native_copy_admission", "native_copy_progress",
+    "native_copy_navigation", "native_copy_result", "native_copy_observation",
+    "native_idempotence", "native_removal",
     "native_usb_a", "native_usb_b", "native_usb_isolation", "finish",
 })
 
@@ -747,22 +749,30 @@ def main() -> int:
                         callback(*args)
                         if args[0] == 0:
                             entered.set()
-                            release.wait(5)
+                            release.wait(12)
                     return original_admit(broker, **(kwargs | {"progress": progress}))
                 with patch.object(type(facade), "admit_delta", admit):
                     try:
+                        if not cancel:
+                            phase[0] = "native_copy_admission"
                         dialog = sync_dialog()
                         dialog.emit("response", "sync")
+                        if not cancel:
+                            phase[0] = "native_copy_progress"
                         wait(entered.is_set)
                         assert window._reader_sync_active
                         if cancel:
                             header("reader-sync-cancel").emit("clicked")
                         else:
+                            phase[0] = "native_copy_navigation"
                             window.navigate("library")
-                            wait(lambda: "0/1 fichiers" in window.busy_label.get_text())
+                            wait(lambda: "0/1 fichiers" in window.busy_label.get_text()
+                                 and window.busy_revealer.get_reveal_child())
                             assert window.view_stack.get_visible_child_name() == "library"
                     finally:
                         release.set()
+                    if not cancel:
+                        phase[0] = "native_copy_result"
                     wait(lambda: not getattr(window, "_reader_sync_active", False))
 
             phase[0] = "native_cancellation"
@@ -773,7 +783,8 @@ def main() -> int:
 
             phase[0] = "native_copy"
             run_held(cancel=False)
-            assert final.read_bytes() == local.read_bytes() == payload
+            assert final.is_file() and final.read_bytes() == local.read_bytes() == payload
+            phase[0] = "native_copy_observation"
             assert intent()["observed_state"] == "present"
             assert intent()["last_observed_at"] is not None
             assert db.device_placement_get("reader-a", artifact_id) == offline_intent
