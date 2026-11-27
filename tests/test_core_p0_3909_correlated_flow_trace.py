@@ -186,7 +186,10 @@ def test_trace_sink_failure_is_non_blocking(monkeypatch):
         ProviderRightsScope("I", "P", "C", "A"),
         "E", "R", "loan", "loans",
     )
+    calls = []
     def broken(*args, **kwargs):
+        calls.append(True)
         raise RuntimeError("logger not available")
     monkeypatch.setattr("cifereca.core.canonical_flow_trace._LOG.info", broken)
     trace.emit(source, "receipt", "start")  # no crash, no grant
+    assert calls == [True]
