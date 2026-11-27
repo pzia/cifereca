@@ -30,25 +30,48 @@ La suppression de la ref ne garantit pas la purge physique des objets GitHub,
 ni des copies externes. Le gain logique et le gain physique sont distincts.
 Le contenu ne doit pas être publié dans les logs, artefacts ou historique main.
 
-## État de livraison
+## Exécution et réception
 
-Le workflow déclenche actuellement une prévalidation en lecture seule lors
-de la fermeture completed d'un P0 déclaré. Il vérifie l'identité, le corpus,
-la stabilité des snapshots et le SHA courant, puis crée, relit et supprime
-une référence orpheline dans un dépôt bare local temporaire. Aucun transfert
-distant ni nettoyage GitHub n'est activé. L'ancien apply est désactivé dans
-le CLI et le workflow ; ses primitives sont conservées provisoirement pour
-réutilisation ou retrait après réception. Audit manuel en lecture seule.
-Les tests hors ligne sont lancés avant la prévalidation.
+Le workflow dédié, sur fermeture completed pzia et première tentative,
+publie le manifeste dans une branche orpheline via Git avec bail
+d'absence ; relecture depuis un dépôt vide avant toute mutation.
+Ne jamais merger le staging. Les deux nettoyeurs de branches excluent
+ce namespace, y compris les suppressions forcées.
 
-## Réception à compléter
+Le journal START (SHA-256 et commit) précède les mutations. Les textes
+réellement raccourcissables sont remplacés par des renvois déterministes
+au P0 en conservant les références explicites, les identifiants des
+commentaires et les métadonnées. Aucun commentaire ni issue supprimé.
+Pilote : dix commentaires modifiables au maximum ; gain contextuel positif
+après START et DONE. Vérifier main, le corpus et le staging avant chaque
+mutation, relire chaque résultat. Toute erreur arrête sans reprise
+automatique ; garder le staging, y compris après échec partiel.
+Fenêtre REST non atomique ; gel procédural du corpus obligatoire.
+Expiration 24 h, aucun rerun. Le dispatch manuel est lecture seule.
 
-Publication distante et relecture indépendante, anti-rejeu durable, gel,
-préservation des liens et preuves, contrôle de chaque mutation, arrêt sûr
-et nettoyage limité. Ne jamais nettoyer avant transfert distant vérifié.
-La capitalisation à la demande par les LLM des rôles propriétaires doit
-relire les manifestes, intégrer les connaissances dans les documents/skills
-canoniques, réceptionner les changements sur main et autoriser la purge
-logique du staging traité. Conserver un journal minimal de réception.
-Distinguer clôture fonctionnelle, consolidation, capitalisation, purge et
-gain global ; aucun PASS implicite. Recette synthétique puis pilote réel.
+## Capitalisation différée
+
+Sur demande, les LLM des rôles propriétaires inventorient
+`staging/backlog/p0-*`, lisent les manifestes, vérifient les empreintes
+et mutualisent les connaissances dans les documents/skills canoniques.
+Les preuves uniques non capitalisables restent accessibles durablement
+avant purge ; sans destination sûre, conserver le staging. Backlog
+réceptionne la couverture sémantique complète, puis ferme completed sous
+pzia un contrôle sans label ni assignation, titre `Capitalisation #8195 — N`,
+corps JSON :
+
+```json
+{"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","evidence":[{"path":"AGENTS.md","sha256":"<sha256>"}],"semantic_review":true}
+```
+
+Le workflow vérifie le contrôle, DONE, le manifeste et les documents
+sur main. La revue sémantique est déclarative, pas une preuve par le CLI.
+Journal persistant avant suppression de la ref avec bail sur le commit
+exact ; pas de purge physique garantie. Si échec, inventaire et reprise
+explicite par CI/CD, jamais rerun. Aucun chiffrement, aucune clé.
+
+Distinguer clôture fonctionnelle, consolidation, capitalisation et purge.
+Mesurer caractères, octets et tokens estimés ; inclure staging, nouvelles
+synthèses, documents et journaux dans le gain global. Recettes synthétique
+puis réelle, exact HEAD ; pas de réception globale avant preuve des deux
+parcours. Le stockage physique GitHub reste hors garantie.

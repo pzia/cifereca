@@ -33,22 +33,23 @@ jobs:
           set -euo pipefail
           python3 scripts/backlog_compaction.py audit --issues="$ISSUES"
 
-  staging-preview:
+  closure:
     if: >-
       github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' &&
       github.event_name == 'issues' && github.event.action == 'closed' &&
       github.run_attempt == 1 && github.actor == 'pzia' && github.triggering_actor == 'pzia' &&
       github.event.sender.id == 11092036 && github.event.issue.state_reason == 'completed' &&
-      contains(github.event.issue.labels.*.name, 'P0') &&
-      contains(github.event.issue.body, '<!-- backlog-staging-v1:')
+      ((contains(github.event.issue.labels.*.name, 'P0') &&
+        contains(github.event.issue.body, '<!-- backlog-staging-v1:')) ||
+       startsWith(github.event.issue.title, 'Capitalisation #8195 — '))
     concurrency:
       group: backlog-compaction
       cancel-in-progress: false
     permissions:
-      contents: read
-      issues: read
+      contents: write
+      issues: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -56,7 +57,7 @@ jobs:
           persist-credentials: false
       - name: Offline safety tests
         run: python3 -m unittest discover -s tests -p test_backlog_compaction.py
-      - name: Collect and verify orphan staging locally (no mutation)
+      - name: Verify staging and consolidate or purge
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/backlog_compaction.py stage-preview
+        run: python3 scripts/backlog_compaction.py closure
