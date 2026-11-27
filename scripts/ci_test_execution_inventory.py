@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 try:
@@ -86,6 +87,7 @@ def make_execution_report(
     capture: ExecutionCapture, manifest: dict[str, dict[str, str]],
     *, suite: str, source_sha: str | None, exit_code: int,
     clean_head: bool, selection_scoped: bool = False,
+    wall_duration_seconds: float | None = None,
 ) -> dict[str, Any]:
     if capture.duplicate_phases:
         raise ValueError("duplicate_execution_phase")
@@ -152,6 +154,7 @@ def make_execution_report(
         "count_attempted": sum(bool(row["attempted"]) for row in records),
         "count_executed": sum(bool(row["called"]) for row in records),
         "outcomes": {status: totals[status] for status in OUTCOMES},
+        "wall_duration_seconds": wall_duration_seconds,
         "reported_phase_duration_seconds": round(
             sum(row["duration_seconds"] for row in records), 6
         ),
@@ -245,10 +248,12 @@ def main(argv: list[str] | None = None) -> int:
     before_sha, before_clean = _git_state(ROOT)
     import pytest
     capture = ExecutionCapture()
+    started = time.perf_counter()
     exit_code = int(pytest.main(
         ["-q", *(args.nodeid if args.nodeid else [args.suite])],
         plugins=[capture],
     ))
+    elapsed = time.perf_counter() - started
     after_sha, after_clean = _git_state(ROOT)
     try:
         report = make_execution_report(
@@ -256,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             source_sha=before_sha if before_sha == after_sha else None,
             clean_head=before_clean and after_clean,
             exit_code=exit_code, selection_scoped=bool(args.nodeid),
+            wall_duration_seconds=round(elapsed, 6),
         )
         write_verified_execution(report, args.output)
     except ValueError as exc:
