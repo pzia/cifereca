@@ -125,3 +125,51 @@ def test_public_branch_does_not_rebind_or_infer_native_occurrences(harness, monk
     assert not native_lender_roster_current(service, roster)
     assert execute(service, roster, selected)["status"] == "blocked"
     assert a.actions == b.actions == 0
+
+
+@pytest.mark.parametrize("selected_owner", ["default", "bob"])
+def test_native_c_roster_includes_reader_and_uses_ordinary_selected_path(harness, monkeypatch, selected_owner):
+    service, alex, bob, a, b, c = setup(harness, monkeypatch)
+    own = replace(alex, identity_id="default", credential_id="card-default")
+    service.accounts.append(own)
+    identity = service.config.identity("default")
+    identity["primary_paris_connection_id"] = own.credential_id
+    service.config.upsert_identity(identity)
+    service.config.upsert_provider_account({
+        "id": own.credential_id, "provider": "paris",
+        "identity_id": "default", "enabled": True,
+    })
+    direct = install(service, own)
+    direct.outcome = "borrower:primary"
+    own_row = retain(service, direct, own)
+    roster = discover(service, c)
+    assert roster is not None and len(roster.rows) == 1
+    assert roster.rows[0]._notice is own_row
+    first, second = retain(service, a, alex), retain(service, b, bob)
+    roster = discover(service, c)
+    assert roster is not None and len(roster.rows) == 3
+    assert {id(row._notice) for row in roster.rows} == {id(own_row), id(first), id(second)}
+    assert a.actions == b.actions == direct.actions == 0
+    selected = next(row for row in roster.rows if row.lender_identity_id == selected_owner)
+    result = execute(service, roster, selected)
+    assert result["status"] == "confirmed"
+    assert (a.actions, b.actions, direct.actions) == ((0, 0, 1) if selected_owner == "default" else (0, 1, 0))
+    assert service.storage.loan_borrow_state(borrow_claim_key(selected._account, selected._notice))["status"] == "confirmed"
+    assert execute(service, roster, selected)["status"] in {"blocked", "verification_unavailable"}
+    assert (a.actions, b.actions, direct.actions) == ((0, 0, 1) if selected_owner == "default" else (0, 1, 0))
+
+
+def test_native_reader_choice_respects_direct_primary_policy(harness, monkeypatch):
+    service, alex, bob, a, b, c = setup(harness, monkeypatch)
+    own = replace(alex, identity_id="default", credential_id="card-default")
+    service.accounts.append(own)
+    session = install(service, own)
+    own_row = retain(service, session, own)
+    # The configured primary points elsewhere. The native occurrence is
+    # descriptive, not a bypass of the ordinary direct account policy.
+    identity = service.config.identity("default")
+    identity["primary_paris_connection_id"] = "other-credential"
+    service.config.upsert_identity(identity)
+    assert discover(service, c) is None
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(borrow_claim_key(own, own_row)) is None

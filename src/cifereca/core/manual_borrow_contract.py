@@ -146,7 +146,7 @@ def manual_borrow_action_available(
 def manual_borrow_action(
     service, item: SearchResult, *, expected_identity_id: str,
     confirmed: bool = False, expected_context_epoch: int | None = None,
-    expected_account=None,
+    expected_account=None, additional_scope_current=None,
 ) -> dict[str, object]:
     """Route only into Core's existing one-shot manual_borrow, never borrow()."""
     from .manual_library_borrow import manual_borrow
@@ -159,7 +159,8 @@ def manual_borrow_action(
 
     def still_bound() -> bool:
         return (
-            resolved_manual_borrow_policy(service, item) == policy
+            (additional_scope_current is None or additional_scope_current() is True)
+            and resolved_manual_borrow_policy(service, item) == policy
             and _selected_primary_source_current(
                 service, item, expected_identity_id, policy,
             ) is True

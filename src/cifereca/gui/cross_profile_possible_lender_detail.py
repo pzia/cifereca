@@ -101,6 +101,7 @@ def append_possible_lender_summary(panel, item: SearchResult, *,
             return (possible_lender_matches(
                 row, row._notice if native is not None else item,
                 requesting_identity_id=identity_id,
+                **({"include_requester": True} if native is not None else {}),
             ) and (row._session is None or possible_lender_session_matches(
                 row, row._session,
             )))
@@ -141,7 +142,8 @@ def append_possible_lender_summary(panel, item: SearchResult, *,
                     )
                     for i, row in enumerate(rows, 1)
                 ]
-                panel._group("Emprunt avec un autre profil · information", details)
+                panel._group("Emprunt sur et avec · information" if native is not None
+                             else "Emprunt avec un autre profil · information", details)
                 # GTK may synchronously notify and navigate during the group
                 # append. Never install a choice under a new route.
                 if (not scope_current() or not render_current()
