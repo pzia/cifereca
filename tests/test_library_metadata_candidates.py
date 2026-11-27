@@ -61,8 +61,9 @@ class MetadataCandidateTests(unittest.TestCase):
         self.assertNotIn('9780306406157', summary)
 
     def test_cross_profile_duplicate_is_not_local_ambiguity(self):
-        elsewhere = self.root.parent/'PRIVATE_FOREIGN_EPUB'
-        elsewhere.mkdir()
+        foreign = tempfile.TemporaryDirectory(prefix='PRIVATE_FOREIGN_EPUB-')
+        self.addCleanup(foreign.cleanup)
+        elsewhere = Path(foreign.name)
         epub(elsewhere/'PRIVATE_OTHER.epub', identifier='urn:isbn:9780306406157')
         inventory = scan_identity_roots({
             'alice': (self.root,), 'bob': (elsewhere,),
