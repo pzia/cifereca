@@ -27,6 +27,8 @@ MAX_PLAN = 64000
 MAX_PAGES = 20
 MAX_REMOVALS = 10
 CONSUMED = "BACKLOG-COMPACTION-CONSUMED v1 "
+CONTROL_TITLE = "Contrôle compactage #8195 — "
+OWNER_ID = 11092036
 
 class Refusal(Exception):
     """Fixed diagnostic only; never include issue or plan contents."""
@@ -208,7 +210,7 @@ def timestamp(value):
     except ValueError:
         raise Refusal("invalid UTC time") from None
 
-def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=None):
+def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=None, authorization=None):
     require(type(raw) is bytes and 0 < len(raw) <= MAX_PLAN, "invalid plan size")
     require(type(expected) is str and bool(DIGEST.fullmatch(expected))
             and sha256(raw) == expected, "plan digest mismatch")
@@ -224,7 +226,9 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
     closure = plan["closure_p0"]
     if closure is not None:
         number(closure)
-    pilot_before = snapshot(api, pilot, closed=False)
+    pilot_before = snapshot(api, pilot, closed=authorization is not None)
+    if authorization is not None:
+        require(closed_control(pilot_before["issue"]) == authorization, "control closure changed")
     pilot_fingerprint = fingerprint(pilot_before)
     require(not any(c["body"].startswith(CONSUMED) for c in pilot_before["comments"]),
             "pilot already consumed")
@@ -297,7 +301,7 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
         require(fingerprint(snapshot(api, entry["number"])) == entry["snapshot_sha256"], "snapshot drift")
     for entry in retained:
         require(fingerprint(snapshot(api, entry["number"], closed=None)) == entry["snapshot_sha256"], "retained issue drift")
-    require(fingerprint(snapshot(api, pilot, closed=False)) == pilot_fingerprint, "pilot plan changed")
+    require(fingerprint(snapshot(api, pilot, closed=authorization is not None)) == pilot_fingerprint, "pilot plan changed")
     old, new = metrics(before), metrics(after + issue_texts(pilot_before))
     # Count the entire pilot issue as overhead; document savings are measured separately
     # at closure and never recredited to each execution.
@@ -311,17 +315,50 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
 
 def apply_context(env, current):
     require(all(env.get(k) == v for k, v in {
-        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "GITHUB_ACTIONS": "true",
         "GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": current, "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_ACTOR": "pzia", "GITHUB_ACTOR_ID": "11092036",
         "GITHUB_TRIGGERING_ACTOR": "pzia",
         "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main",
-    }.items()), "apply requires first manual pzia run on main")
+    }.items()) and env.get("GITHUB_EVENT_NAME") in ("workflow_dispatch", "issues"),
+            "apply requires first authorized pzia run on main")
     run = env.get("GITHUB_RUN_ID", "")
     require(bool(re.fullmatch(r"[1-9]\d{0,19}", run)), "invalid run id")
     return run
 
+
+def closed_control(issue):
+    require(type(issue) is dict and "pull_request" not in issue
+            and issue.get("state") == "closed" and issue.get("state_reason") == "completed"
+            and type(issue.get("title")) is str and issue["title"].startswith(CONTROL_TITLE)
+            and issue.get("user", {}).get("id") == OWNER_ID
+            and issue.get("user", {}).get("login") == "pzia"
+            and issue.get("labels") == [] and issue.get("assignees") == []
+            and issue.get("milestone") is None
+            and type(issue.get("body")) is str, "not a dedicated closed control")
+    closed_at = issue.get("closed_at")
+    timestamp(closed_at)
+    raw = issue["body"].encode("utf-8")
+    require(0 < len(raw) <= MAX_PLAN, "invalid control body")
+    return (number(issue.get("number")), sha256(raw), closed_at, issue["title"])
+
+def closure_authorization(event):
+    require(type(event) is dict and event.get("action") == "closed"
+            and event.get("repository", {}).get("full_name") == REPO
+            and event.get("sender", {}).get("id") == OWNER_ID
+            and event.get("sender", {}).get("login") == "pzia", "unauthorized closure event")
+    return closed_control(event.get("issue"))
+
+def event_authorization(env):
+    require(env.get("GITHUB_EVENT_NAME") == "issues", "not a closure event")
+    try:
+        with open(env.get("GITHUB_EVENT_PATH", ""), "rb") as stream:
+            raw = stream.read(1024 * 1024 + 1)
+    except OSError:
+        raise Refusal("cannot read closure event") from None
+    require(len(raw) <= 1024 * 1024, "closure event too large")
+    return closure_authorization(strict_json(raw))
 
 def expected_change(before, after, *, body=None, remove=None, marker=None):
     """Only permit our expected body/comment mutation and server timestamps."""
@@ -345,9 +382,9 @@ def expected_change(before, after, *, body=None, remove=None, marker=None):
             "unexpected post-mutation state; stop")
 
 
-def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock=None):
+def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock=None, authorization=None):
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
-    report = validate_plan(raw, expected, pilot, current, api, docs_at=docs_at, now=clock())
+    report = validate_plan(raw, expected, pilot, current, api, docs_at=docs_at, now=clock(), authorization=authorization)
     plan = strict_json(raw)
     entries = plan["issues"]
     targets = {e["number"]: e["snapshot_sha256"] for e in entries}
@@ -363,7 +400,7 @@ def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock
         ref = api.get("/git/ref/heads/main")
         require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
                 "main changed during execution")
-        states = {n: snapshot(api, n, closed=False if n == pilot else None if n in retained else True)
+        states = {n: snapshot(api, n, closed=(authorization is not None) if n == pilot else None if n in retained else True)
                   for n in expected_states}
         require(all(fingerprint(states[n]) == digest for n, digest in expected_states.items()),
                 "corpus changed during execution")
@@ -374,7 +411,7 @@ def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock
         return states
 
     def verify(n, before, **change):
-        after = snapshot(api, n, closed=False if n == pilot else True)
+        after = snapshot(api, n, closed=(authorization is not None) if n == pilot else True)
         expected_change(before, after, **change)
         expected_states[n] = fingerprint(after)
 
@@ -415,9 +452,14 @@ def main(argv=None):
     parser.add_argument("--plan-sha256")
     args = parser.parse_args(argv)
     try:
+        authorization = None
         if args.mode == "apply":
             # Refuse local invocations before Git or network access.
             run = apply_context(os.environ, os.environ.get("GITHUB_SHA", ""))
+            if os.environ.get("GITHUB_EVENT_NAME") == "issues":
+                require(args.pilot is None and args.plan_sha256 is None, "closure inputs forbidden")
+                authorization = event_authorization(os.environ)
+                args.pilot, args.plan_sha256 = authorization[:2]
         current = head()
         if args.mode == "apply":
             apply_context(os.environ, current)
@@ -430,9 +472,9 @@ def main(argv=None):
                       "documents": doc_report(doc_texts(current)), "destruction_enabled": False}
         else:
             pilot = number(args.pilot)
-            raw = (issue_data(api, pilot, closed=False)["body"] or "").encode("utf-8")
+            raw = (issue_data(api, pilot, closed=authorization is not None)["body"] or "").encode("utf-8")
             if args.mode == "apply":
-                result = apply_plan(raw, args.plan_sha256, pilot, current, api, run)
+                result = apply_plan(raw, args.plan_sha256, pilot, current, api, run, authorization=authorization)
             else:
                 result = validate_plan(raw, args.plan_sha256, pilot, current, api)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

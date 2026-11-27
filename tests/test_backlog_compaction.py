@@ -327,6 +327,55 @@ class Tests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(c.Refusal):
                 c.apply_context(dict(env, **{key: "invalid"}), HEAD)
 
+    def closure(self):
+        raw = c.encode(self.plan)
+        self.api.pilot.update(state="closed", state_reason="completed",
+                              title=c.CONTROL_TITLE + "synthetic", labels=[], assignees=[],
+                              milestone=None, closed_at="2026-11-27T12:00:00Z",
+                              user={"id": c.OWNER_ID, "login": "pzia"}, body=raw.decode())
+        event = {"action": "closed", "repository": {"full_name": c.REPO},
+                 "sender": {"id": c.OWNER_ID, "login": "pzia"}, "issue": dict(self.api.pilot)}
+        return raw, event
+
+    def test_closed_control_apply_and_replay(self):
+        raw, event = self.closure()
+        auth = c.closure_authorization(event)
+        def apply():
+            return c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
+                                docs_at=docs, clock=lambda: NOW, authorization=auth)
+        self.assertEqual(apply()["status"], "APPLIED_BOUNDED_PLAN")
+        with self.assertRaisesRegex(c.Refusal, "pilot already consumed"):
+            apply()
+        self.assertEqual(self.api.writes, [("consume", 999), ("delete", 8)])
+
+    def test_closed_control_refuses_ordinary_or_changed_event(self):
+        raw, event = self.closure()
+        auth = c.closure_authorization(event)
+        for key, value in (("title", "ordinary"), ("state", "open"), ("state_reason", "not_planned"),
+                           ("labels", [{"name": "P0"}]), ("user", {"id": 2, "login": "pzia"})):
+            with self.subTest(key=key), self.assertRaises(c.Refusal):
+                c.closure_authorization(dict(event, issue=dict(event["issue"], **{key: value})))
+        for key, value in (("action", "reopened"), ("sender", {"id": 2, "login": "pzia"}),
+                           ("repository", {"full_name": "other/repo"})):
+            with self.subTest(key=key), self.assertRaises(c.Refusal):
+                c.closure_authorization(dict(event, **{key: value}))
+        self.api.pilot["closed_at"] = "2026-11-27T12:00:01Z"
+        with self.assertRaisesRegex(c.Refusal, "control closure changed"):
+            c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
+                         docs_at=docs, clock=lambda: NOW, authorization=auth)
+        self.assertEqual(self.api.writes, [])
+
+    def test_closed_control_body_binding(self):
+        raw, event = self.closure()
+        auth = c.closure_authorization(event)
+        self.plan["semantic_review"] += " changed"
+        changed = c.encode(self.plan)
+        self.api.pilot["body"] = changed.decode()
+        with self.assertRaisesRegex(c.Refusal, "control closure changed"):
+            c.apply_plan(changed, c.sha256(changed), 999, HEAD, self.api, "123",
+                         docs_at=docs, clock=lambda: NOW, authorization=auth)
+        self.assertEqual(self.api.writes, [])
+
     def test_mutation_endpoint_injection(self):
         api = c.WriteAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:

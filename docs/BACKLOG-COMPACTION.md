@@ -21,17 +21,22 @@ python3 -m unittest discover -s tests -p test_backlog_compaction.py
 python3 scripts/backlog_compaction.py validate --pilot 999 --plan-sha256 <empreinte>
 ```
 
-Le [workflow dédié](../.github/workflows/backlog-compaction.yml), exclusivement
-workflow_dispatch sur main, offre ces deux opérations et apply. Ce dernier
-nécessite premier run pzia, SHA exact, plan autorisé et revue Backlog.
+Le [workflow dédié](../.github/workflows/backlog-compaction.yml), sur main, offre ces deux opérations et apply via workflow_dispatch. Apply peut
+également être déclenché par fermeture du contrôle dédié (arbitrage #8195).
+Premier run pzia, SHA exact, plan autorisé et revue Backlog obligatoires.
 Aucun autre workflow modifié ; aucun secret supplémentaire. Permissions
 contents:read/issues:read pour audit, contents:read/issues:write pour apply.
 Aucun rerun, même après échec. Pas d'appel apply depuis un poste local.
-Le connecteur actuel n'expose pas workflow_dispatch : déclenchement via
-l'interface GitHub avec les entrées exactes. Recette réelle de test à
+Le connecteur n'expose pas workflow_dispatch. Backlog crée un contrôle sans
+label, assignation ni milestone, titre préfixé `Contrôle compactage #8195 — `,
+écrit puis relit le JSON exact, vérifie empreinte et main, et ferme avec motif
+completed sous pzia. L'événement fournit numéro, empreinte du corps et date
+de fermeture ; l'exécuteur les compare au REST courant. Une fermeture ordinaire
+est ignorée. Ne jamais rouvrir ni modifier un contrôle fermé ; après refus,
+nouveau contrôle. Dispatch manuel possible sur un contrôle ouvert. Recette réelle de test à
 réceptionner avant tout pilote historique (maximum trois issues closes).
 
-Issue de pilotage dédiée ouverte, usage unique, distincte de #8195, des cibles
+Issue de pilotage dédiée (ouverte pour dispatch, close pour événement), usage unique, distincte de #8195, des cibles
 et des canoniques. Corps JSON brut, SHA-256 des octets UTF-8 exacts.
 Schéma v2 fermé (exemple fictif, SHA et dates à remplacer) :
 

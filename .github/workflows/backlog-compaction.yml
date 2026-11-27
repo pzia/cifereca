@@ -1,6 +1,8 @@
 name: Backlog compaction
 
 on:
+  issues:
+    types: [closed]
   workflow_dispatch:
     inputs:
       mode:
@@ -26,13 +28,9 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: backlog-compaction
-  cancel-in-progress: false
-
 jobs:
   audit:
-    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.mode != 'apply'
+    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.mode != 'apply'
     permissions:
       contents: read
       issues: read
@@ -63,7 +61,17 @@ jobs:
           esac
 
   apply:
-    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.actor == 'pzia' && github.triggering_actor == 'pzia' && inputs.mode == 'apply'
+    if: >-
+      github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 && github.actor == 'pzia' && github.triggering_actor == 'pzia' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.mode == 'apply') ||
+       (github.event_name == 'issues' && github.event.action == 'closed' &&
+        startsWith(github.event.issue.title, 'Contrôle compactage #8195 — ') &&
+        github.event.issue.user.id == 11092036 && github.event.sender.id == 11092036 &&
+        github.event.issue.state_reason == 'completed'))
+    concurrency:
+      group: backlog-compaction
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -89,4 +97,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/backlog_compaction.py apply --pilot="$PILOT" --plan-sha256="$PLAN_SHA256"
+          if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
+            python3 scripts/backlog_compaction.py apply
+          else
+            python3 scripts/backlog_compaction.py apply --pilot="$PILOT" --plan-sha256="$PLAN_SHA256"
+          fi
