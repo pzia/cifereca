@@ -1,14 +1,9 @@
-"""P1 #2854: one-operation USB *copy* admission review, non-executable.
+"""Non-executable local placement and exact consent review (#4983).
 
-Neither a local SHA, declared reader formats, a canonical source reference,
-an acquisition entitlement nor a DRM-free-looking file grants USB-copy rights.
-An independent trusted Core rights resolver must re-attest explicit permission
-for this exact source/artifact/profile/volume, separately from the user's
-short-lived, scoped confirmation. This review never writes, stores a token,
-calls providers, or authorizes a later transfer.
-
-The future executor must revalidate BOTH rights and confirmation under its
-exclusive lock, in addition to the physical SHA/mount/target/receipt guards.
+The verified local placement is the admission boundary. Historical callers
+that explicitly supply a rights witness still use the legacy review below;
+the production reader broker never supplies or manufactures one.
+All physical source, destination and transaction guards remain mandatory.
 """
 from __future__ import annotations
 

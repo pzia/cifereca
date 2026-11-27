@@ -144,6 +144,14 @@ class ReaderUsbExecutionBrokerImpl:
                 or not current()):
             return False
         try:
+            for row in self.service.storage.device_bindings():
+                if row.get("device_id") == scope.device_id:
+                    continue
+                metadata = row.get("metadata") or {}
+                if metadata.get("reader_transport") == "local":
+                    other = Path(metadata["local_root"])
+                    if mountpoint.is_relative_to(other) or other.is_relative_to(mountpoint):
+                        return False
             proof = observe_linux_usb_mount(
                 identity_id=scope.identity_id, binding=scope.binding,
                 mountpoint=mountpoint,

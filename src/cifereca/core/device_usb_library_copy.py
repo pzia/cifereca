@@ -22,8 +22,8 @@ def execute_usb_library_copy(
 ) -> UsbCopyExecution:
     """Compose Core's live source guard, fresh inventory and supervised write.
 
-    Only a trusted Core caller provides the rights verifier and durable
-    journal. The whole managed area is reviewed under the volume lock before
+    Only a trusted Core caller provides the durable journal and live scope.
+    Local copies need no independent rights verifier. The whole managed area is reviewed under the volume lock before
     consuming consent, so moved books are detected as well as name collisions.
     """
     if journal is None:

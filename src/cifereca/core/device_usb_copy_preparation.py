@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from .device_usb_copy_admission import (
     UsbCopyAdmission, UsbCopyConsent, UsbCopyRightsEvidence,
-    review_usb_copy_admission,
+    review_usb_copy_admission, review_usb_local_copy_admission,
 )
 from .device_usb_copy_provenance import resolve_live_usb_copy_right
 from .device_usb_dry_run import _scope, inspect_usb_dry_run
@@ -19,8 +19,8 @@ from .device_usb_reader_formats import declared_usb_reader_formats
 def prepare_usb_copy(
     *, storage: Any, identity_id: str, device_id: str, artifact_id: str,
     identity_root: Path, mountpoint: Path,
-    consent: UsbCopyConsent | None, rights: UsbCopyRightsEvidence | None,
-    policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
+    consent: UsbCopyConsent | None, rights: UsbCopyRightsEvidence | None = None,
+    policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None = None,
     now: int | None = None,
 ) -> UsbCopyAdmission:
     """Combine the physical dry run, canonical provenance, policy and consent.
@@ -39,9 +39,10 @@ def prepare_usb_copy(
         raise ValueError("invalid USB copy preparation request")
     if type(consent) is not UsbCopyConsent:
         return blocked("copy_confirmation_required")
-    if type(rights) is not UsbCopyRightsEvidence:
+    if (rights is not None and type(rights) is not UsbCopyRightsEvidence
+            or rights is None and policy_verifier is not None):
         return blocked("copy_rights_unverified")
-    if not callable(policy_verifier):
+    if rights is not None and not callable(policy_verifier):
         return blocked("copy_live_rights_resolver_unavailable")
 
     try:
@@ -82,7 +83,7 @@ def prepare_usb_copy(
         # exact-target content review above. It is merely evidence for the
         # separate live policy and consent checks.
         checked_at = int(time.time()) if now is None else now
-        result = review_usb_copy_admission(
+        review_args = dict(
             identity_id=identity_id, binding=binding, artifact=artifact,
             local=UsbLocalArtifact(identity_id, digest, verified=True),
             selected_format=artifact["media_format"],
@@ -91,20 +92,28 @@ def prepare_usb_copy(
                 identity_id=identity_id, device_id=device_id,
                 usb_fingerprint=fingerprint, binding=binding,
             ),
-            rights=rights, consent=consent, now=checked_at,
-            live_rights_resolver=lambda witness: resolve_live_usb_copy_right(
-                storage, witness, policy_verifier=policy_verifier, now=checked_at,
-            ),
+            consent=consent, now=checked_at,
         )
+        if rights is None:
+            result = review_usb_local_copy_admission(**review_args)
+        else:
+            result = review_usb_copy_admission(
+                **review_args, rights=rights,
+                live_rights_resolver=lambda witness: resolve_live_usb_copy_right(
+                    storage, witness, policy_verifier=policy_verifier, now=checked_at,
+                ),
+            )
         if result.status != "review":
             return result
         if (_scope(storage, identity_id, device_id) != original
                 or storage.artifact_get(artifact_id) != artifact):
             return blocked("copy_scope_changed")
         finished_at = int(time.time()) if now is None else now
-        deadlines = [consent.expires_at, rights.valid_until]
-        if rights.loan_expires_at is not None:
-            deadlines.append(rights.loan_expires_at)
+        deadlines = [consent.expires_at]
+        if rights is not None:
+            deadlines.append(rights.valid_until)
+            if rights.loan_expires_at is not None:
+                deadlines.append(rights.loan_expires_at)
         if (finished_at < checked_at or finished_at >= min(deadlines)
                 or not 0 <= finished_at - inspected.observed_at <= 300):
             return blocked("copy_review_expired")

@@ -142,6 +142,8 @@ def synchronize_usb_reader(
                 copied += 1
             else:
                 failed += 1
+                if result.status == "recovery_required":
+                    break
         else:
             if (type(consent) is not UsbRemovalConsent
                     or consent.artifact_id != row.artifact_id
@@ -162,6 +164,8 @@ def synchronize_usb_reader(
                 removed += 1
             else:
                 failed += 1
+                if result.status == "recovery_required":
+                    break
 
     # An earlier Core removal review may have refused an operation because
     # the originating GTK selection was revoked *during* inode hashing.

@@ -189,6 +189,8 @@ def observe_linux_usb_mount(
         return None
     if metadata.get("reader_transport") == "local":
         return _observe_local_reader(identity_id, binding, mountpoint)
+    if metadata.get("reader_transport") not in (None, "usb") or fingerprint.startswith("local-"):
+        return None
     try:
         # A user-controlled symlink (or an aliasing ancestor) must not change
         # the inspected root after obtaining a binding for a different path.
@@ -253,13 +255,20 @@ def _observe_local_reader(identity_id, binding, mountpoint):
     try:
         if mountpoint.resolve(strict=True) != mountpoint:
             return None
-        fd = os.open(mountpoint, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open("/", flags)
         try:
+            for component in mountpoint.parts[1:]:
+                child = os.open(component, flags, dir_fd=fd)
+                os.close(fd)
+                fd = child
             info = os.fstat(fd)
             mount_id = _fd_mount_id(fd)
             if (mount_id is None or metadata.get("local_inode") != info.st_ino
                     or metadata.get("local_device") != info.st_dev
-                    or mountpoint.lstat().st_ino != info.st_ino):
+                    or (mountpoint.lstat().st_dev, mountpoint.lstat().st_ino)
+                        != (info.st_dev, info.st_ino)):
+
                 return None
             return LinuxUsbMount(
                 identity_id, binding["device_id"], metadata["usb_fingerprint"],

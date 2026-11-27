@@ -39,7 +39,7 @@ def prepare_usb_live_source(
     """Pin an exact source and give the supervisor a fresh, read-only guard.
 
     The trusted Core caller supplies the selected profile, its generation,
-    and the independent rights policy. It separately runs target preparation.
+    and optionally a legacy independent rights policy. It separately runs target preparation.
     Neither this value nor a positive revalidation consumes the consent
     or enables writing without the supervisor and its durable journal.
     """
