@@ -16,8 +16,8 @@ pytest.importorskip("cryptography")
 
 import cifereca.core.capture_vault as vault_api
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import (
-    MIN_STAGING_AGE_SECONDS, PrivateSessionVault, VaultError,
+from capture_engine_fixture import (
+    MIN_STAGING_AGE_SECONDS, FixtureVault, VaultError,
 )
 
 KEY = "FICTIONAL-ENCRYPTED-LEFTOVERS-SECRET-2026"
@@ -25,7 +25,7 @@ ORIGIN = "https://fixture-only-books.example.org"
 
 
 def _session(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin(KEY)
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
@@ -50,7 +50,7 @@ def _orphan(vault, sid, ext, *, old=True):
 
 
 def test_staging_preview_missing_does_not_create_directory(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "missing")
+    vault = FixtureVault(tmp_path / "missing")
     assert vault.staging_summary() == (0, 0, 0)
     assert not vault.path.exists()
     with pytest.raises(VaultError, match="vault_confirmation_required"):

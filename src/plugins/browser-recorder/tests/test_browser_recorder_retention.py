@@ -12,7 +12,7 @@ pytest.importorskip("cryptography")
 
 import browser_recorder_vault as v
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 
 PASSWORD = "FICTIONAL-SESSION-RETENTION-KEY-2026"
 OTHER = "SEPARATE-FICTIONAL-RETENTION-KEY-2026"
@@ -51,7 +51,7 @@ def capture_bytes(vault):
 
 
 def test_preview_does_nothing_and_requires_fresh_consent(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     old = session(vault, tmp_path, monkeypatch, age_days=130,
                   label="Ancienne fiction privée")
     young = session(vault, tmp_path, monkeypatch, age_days=10)
@@ -93,7 +93,7 @@ def test_preview_does_nothing_and_requires_fresh_consent(tmp_path, monkeypatch):
 
 
 def test_replaced_source_or_label_aborts_whole_batch(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     one = session(vault, tmp_path, monkeypatch, age_days=150, label="old title")
     two = session(vault, tmp_path, monkeypatch, age_days=200)
     preview = vault.retention_preview(PASSWORD, 90)
@@ -107,7 +107,7 @@ def test_replaced_source_or_label_aborts_whole_batch(tmp_path, monkeypatch):
 
 
 def test_expired_preview_and_no_empty_bulk_action(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     session(vault, tmp_path, monkeypatch, age_days=120)
     empty = vault.retention_preview(PASSWORD, 180)
     assert empty.count == 0
@@ -126,7 +126,7 @@ def test_expired_preview_and_no_empty_bulk_action(tmp_path, monkeypatch):
 
 
 def test_symlink_or_hardlinked_label_blocks_all_deletion(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     first = session(vault, tmp_path, monkeypatch, age_days=130,
                     label="FICTIONAL LABEL")
     second = session(vault, tmp_path, monkeypatch, age_days=160)
@@ -152,7 +152,7 @@ def test_symlink_or_hardlinked_label_blocks_all_deletion(tmp_path, monkeypatch):
 
 
 def test_unrelated_orphan_chiffre_is_never_pruned_by_retention(tmp_path, monkeypatch):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     sid = session(vault, tmp_path, monkeypatch, age_days=200)
     ciphertext = (vault.path / (sid + ".cbrv")).read_bytes()
     staging = vault.path / ("." + sid + "-feedfeedfeedfeed.part")
@@ -167,7 +167,7 @@ def test_unrelated_orphan_chiffre_is_never_pruned_by_retention(tmp_path, monkeyp
 def test_corrupted_encrypted_label_cannot_be_previsualized_or_deleted(
     tmp_path, monkeypatch,
 ):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     first = session(vault, tmp_path, monkeypatch, age_days=170,
                     label="PRIVATE-FICTIONAL-LABEL")
     second = session(vault, tmp_path, monkeypatch, age_days=175)
@@ -190,7 +190,7 @@ def test_corrupted_encrypted_label_cannot_be_previsualized_or_deleted(
 def test_replaced_label_from_other_session_fails_aad_authentication(
     tmp_path, monkeypatch,
 ):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     first = session(vault, tmp_path, monkeypatch, age_days=190,
                     label="FICTIONAL_FIRST_LABEL")
     second = session(vault, tmp_path, monkeypatch, age_days=210,

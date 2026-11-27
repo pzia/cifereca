@@ -1022,7 +1022,7 @@ def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
 def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
     fake_bookstore, monkeypatch, tmp_path, prefer_identity, accept_compressed,
 ):
-    from browser_recorder_vault import PrivateSessionVault
+    from capture_engine_fixture import FixtureVault
     from browser_recorder_private_zip import save_session_llm_zip
     server, stop, calls = fake_bookstore
     origin = f"http://127.0.0.1:{server.server_port}"
@@ -1033,7 +1033,7 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
     import browser_recorder_zip as zip_module
     monkeypatch.setattr(http_recorder, "site_origin", local)
     monkeypatch.setattr(zip_module, "site_origin", local)
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin("SYNTHETIC-IDENTITY-VAULT-PASSWORD")
     trace = http_recorder.record_http(
         origin + "/negotiation", stop, max_seconds=25,
@@ -1098,7 +1098,7 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
 def test_real_chromium_static_flood_retains_ten_json_and_late_post(
     fake_bookstore, monkeypatch, tmp_path,
 ):
-    from browser_recorder_vault import PrivateSessionVault
+    from capture_engine_fixture import FixtureVault
     server, stop, calls = fake_bookstore
     origin = f"http://127.0.0.1:{server.server_port}"
     original = http_recorder.site_origin
@@ -1108,7 +1108,7 @@ def test_real_chromium_static_flood_retains_ten_json_and_late_post(
     import browser_recorder_zip as zipped
     monkeypatch.setattr(http_recorder, "site_origin", local)
     monkeypatch.setattr(zipped, "site_origin", local)
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     writer = vault.begin("FICTIONAL-ASSET-FLOOD-PASSWORD")
     summaries = []
     trace = http_recorder.record_http(

@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("cryptography")
 
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 
 PRIMARY = "FICTITIOUS-INDEX-SECRET-2026"
 OTHER = "FICTITIOUS-ANOTHER-SECRET-2026"
@@ -29,7 +29,7 @@ def _record(vault, password, state, number):
 
 
 def test_private_index_requires_unlock_and_isolates_other_keys(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     assert vault.list_ids() == ()
     assert not vault.path.exists()
     one = _record(vault, PRIMARY, "completed", 1)
@@ -56,7 +56,7 @@ def test_private_index_requires_unlock_and_isolates_other_keys(tmp_path):
 
 
 def test_invalid_session_does_not_destroy_valid_index_rows(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     good = _record(vault, PRIMARY, "completed", 10)
     corrupt = _record(vault, PRIMARY, "completed", 11)
     path = vault.path / (corrupt + ".cbrv")
@@ -73,7 +73,7 @@ def test_invalid_session_does_not_destroy_valid_index_rows(tmp_path):
 def test_snapshot_replacement_counts_only_final_encrypted_bytes(tmp_path, monkeypatch):
     import cifereca.core.capture_vault as vault_api
 
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
         1, "GET", ORIGIN + "/catalog", status=200,

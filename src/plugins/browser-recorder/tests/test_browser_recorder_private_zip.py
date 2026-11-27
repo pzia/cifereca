@@ -1,6 +1,6 @@
-"""P0 #2698: encrypted diagnostic export is separate from reviewed public ZIP.
+"""#8181: explicit private ZIP is separate from reviewed public ZIP.
 
-Independent AES-256-GCM/Scrypt implementation verifies interoperability.
+Independent standard-library ZIP reader verifies interoperability.
 Only fictional identifiers, never a real provider or account.
 """
 from __future__ import annotations
@@ -12,14 +12,12 @@ from zipfile import ZipFile
 import pytest
 
 pytest.importorskip("cryptography")
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from browser_recorder_devkit import core_contract_kit
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault, VaultError
+from capture_engine_fixture import FixtureVault, VaultError
 from browser_recorder_private_zip import (
-    MAGIC, save_private_zip, decrypt_private_zip, save_session_llm_zip,
+    save_session_llm_zip,
 )
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
@@ -31,7 +29,7 @@ TOKEN = "FAKE_TOKEN_IN_JSON_FOR_SECURITY_TEST"
 
 
 def stored(tmp_path):
-    vault = PrivateSessionVault(tmp_path / "vault")
+    vault = FixtureVault(tmp_path / "vault")
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
         1, "POST", ORIGIN + "/login?AccountId=" + ACCOUNT,
@@ -56,34 +54,18 @@ def stored(tmp_path):
     return vault, vault.open(writer.session_id, PASSPHRASE)
 
 
-def independent_decrypt(encrypted):
-    """No Cifereca decrypt function used: published format only."""
-    salt, nonce = encrypted[8:24], encrypted[24:36]
-    key = Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(
-        PASSPHRASE.encode("utf-8")
-    )
-    return AESGCM(key).decrypt(nonce, encrypted[36:], MAGIC + salt + nonce)
-
-
 def test_explicit_private_export_and_external_read(tmp_path):
     vault, session = stored(tmp_path)
     folder = tmp_path / "chosen"
     folder.mkdir(mode=0o700)
     with pytest.raises(VaultError, match="private_zip_confirmation_required"):
-        save_private_zip(session, folder, PASSPHRASE)
+        save_session_llm_zip(session, folder / 'chosen.zip')
     assert not list(folder.iterdir())
     source = (tmp_path / "vault" / (session.session_id + ".cbrv")).read_bytes()
-    filename = save_private_zip(session, folder, PASSPHRASE, confirmed=True)
-    assert filename.endswith(".brzip")
-    result = folder / filename
+    result = folder / "chosen.zip"
+    save_session_llm_zip(session, result, confirmed=True)
     assert result.stat().st_mode & 0o777 == 0o600
-    raw = result.read_bytes()
-    assert raw.startswith(MAGIC)
-    for value in (ACCOUNT, TOKEN, ORIGIN, PASSPHRASE):
-        assert value.encode("utf-8") not in raw
-    unwrapped = independent_decrypt(raw)
-    assert unwrapped == decrypt_private_zip(raw, PASSPHRASE)
-    with ZipFile(BytesIO(unwrapped)) as zip_file:
+    with ZipFile(result) as zip_file:
         assert zip_file.testzip() is None
         names = set(zip_file.namelist())
         assert {"README.txt", "trace.json",
@@ -115,7 +97,7 @@ def test_explicit_private_export_and_external_read(tmp_path):
     preview = prepare_reviewed_zip(review).preview()
     joined = "\n".join(item["text"] for item in preview["members"])
     assert ACCOUNT not in joined and TOKEN not in joined
-    assert not any(path.suffix == ".zip" for path in folder.iterdir())
+    assert list(folder.glob("*.zip")) == [result]
     session.trace.destroy()
 
 
@@ -166,7 +148,7 @@ def test_simple_llm_export_works_in_0755_folder_without_second_secret(tmp_path):
         save_session_llm_zip(session, downloads / "no-extension", confirmed=True)
     session.trace.destroy()
 
-def test_missing_public_core_kit_blocks_both_private_zip_exports(tmp_path, monkeypatch):
+def test_missing_public_core_kit_blocks_private_zip_export(tmp_path, monkeypatch):
     """A missing packaged guide must not produce an incomplete LLM ZIP."""
     import browser_recorder_private_zip as private_zip
     from browser_recorder import RecorderError
@@ -181,48 +163,14 @@ def test_missing_public_core_kit_blocks_both_private_zip_exports(tmp_path, monke
     )
     with pytest.raises(VaultError, match="private_zip_kit_unavailable"):
         save_session_llm_zip(session, clear, confirmed=True)
-    with pytest.raises(VaultError, match="private_zip_kit_unavailable"):
-        save_private_zip(session, output, PASSPHRASE, confirmed=True)
     assert not clear.exists()
     assert not list(output.iterdir())
     assert len(vault.list_ids()) == 1
     session.trace.destroy()
 
 
-def test_wrong_key_and_tampering_not_accepted(tmp_path):
-    _, session = stored(tmp_path)
-    folder = tmp_path / "chosen"
-    folder.mkdir(mode=0o700)
-    filename = save_private_zip(session, folder, PASSPHRASE, confirmed=True)
-    raw = (folder / filename).read_bytes()
-    with pytest.raises(VaultError, match="private_zip_unlock_failed"):
-        decrypt_private_zip(raw, "FICTIONAL-WRONG-PASSPHRASE")
-    with pytest.raises(VaultError, match="private_zip_unlock_failed"):
-        decrypt_private_zip(raw[:-1] + bytes((raw[-1] ^ 1,)), PASSPHRASE)
-    session.trace.destroy()
-
-
-def test_destination_must_be_preselected_private_and_no_overwrite(tmp_path):
-    _, session = stored(tmp_path)
-    nonprivate = tmp_path / "shared"
-    nonprivate.mkdir(mode=0o755)
-    with pytest.raises(VaultError, match="private_zip_directory"):
-        save_private_zip(session, nonprivate, PASSPHRASE, confirmed=True)
-    missing = tmp_path / "missing"
-    with pytest.raises(VaultError, match="private_zip_write_failed"):
-        save_private_zip(session, missing, PASSPHRASE, confirmed=True)
-    assert not missing.exists()
-    symlink = tmp_path / "link"
-    symlink.symlink_to(nonprivate, target_is_directory=True)
-    with pytest.raises(VaultError, match="private_zip_write_failed"):
-        save_private_zip(session, symlink, PASSPHRASE, confirmed=True)
-    assert not list(nonprivate.iterdir())
-    session.trace.destroy()
-
-
-
 # Standalone reader deliberately imports no package named cifereca/browser_recorder.
-# Only Python stdlib, cryptography and the published CFRZIP01 envelope are used.
+# Only Python stdlib and the explicitly selected local ZIP are used.
 _EXTERNAL_READER = r"""
 import io
 import json
@@ -232,17 +180,7 @@ from zipfile import ZipFile
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-raw = Path(sys.argv[1]).read_bytes()
-secret = sys.stdin.buffer.readline().rstrip(b"\n")
-assert raw.startswith(b"CFRZIP01"), "private envelope signature"
-salt, nonce, body = raw[8:24], raw[24:36], raw[36:]
-try:
-    key = Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(secret)
-    clear = AESGCM(key).decrypt(nonce, body, b"CFRZIP01" + salt + nonce)
-except Exception:
-    raise SystemExit(17)  # closed external error, no ciphertext dump
-
-with ZipFile(io.BytesIO(clear)) as archive:
+with ZipFile(sys.argv[1]) as archive:
     assert archive.testzip() is None
     names = set(archive.namelist())
     assert {"README.txt", "trace.json",
@@ -280,44 +218,38 @@ def test_private_zip_reopened_in_isolated_external_python_with_no_plugin_import(
     vault, source = stored(tmp_path)
     output = tmp_path / "operator-chosen-private-directory"
     output.mkdir(mode=0o700)
-    encrypted_name = save_private_zip(
-        source, output, PASSPHRASE, confirmed=True,
-    )
-    protected = output / encrypted_name
+    protected = output / "session.zip"
+    save_session_llm_zip(source, protected, confirmed=True)
     assert protected.stat().st_mode & 0o777 == 0o600
     capture = vault.path / (source.session_id + ".cbrv")
     before = capture.read_bytes()
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)  # forbid relying on plugin source directory
 
-    def external_read(secret, path):
+    def external_read(path):
         return subprocess.run(
             [sys.executable, "-I", "-c", _EXTERNAL_READER, str(path)],
-            input=(secret + "\n").encode("utf-8"),
+            stdin=subprocess.DEVNULL,
             cwd=tmp_path, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25,
             check=False,
         )
 
-    good = external_read(PASSPHRASE, protected)
+    good = external_read(protected)
     assert good.returncode == 0
     assert good.stdout == b"EXTERNAL_PRIVATE_FIXTURE_OK\n"
     assert good.stderr == b""
     for private in (ACCOUNT, TOKEN, ORIGIN, PASSPHRASE):
         assert private.encode("utf-8") not in good.stdout
-        assert private.encode("utf-8") not in protected.read_bytes()
-    bad = external_read("FICTIONAL-INVALID-PRIVATE-ZIP-PASSWORD", protected)
-    assert bad.returncode == 17
-    assert bad.stdout == b"" and bad.stderr == b""
-    altered = output / "tampered.brzip"
+        assert private.encode("utf-8") not in before
+    # A truncated ZIP is not accepted by an independent reader.
+    altered = output / "tampered.zip"
     raw = protected.read_bytes()
-    altered.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
-    altered.chmod(0o600)
-    invalid = external_read(PASSPHRASE, altered)
-    assert invalid.returncode == 17
-    assert invalid.stdout == b"" and invalid.stderr == b""
+    altered.write_bytes(raw[:len(raw)//2])
+    invalid = external_read(altered)
+    assert invalid.returncode != 0 and not invalid.stdout
     assert capture.read_bytes() == before
     assert len(vault.list_ids()) == 1
-    assert not list(output.glob("*.zip"))
+    assert set(output.glob("*.zip")) == {protected, altered}
     assert not list(output.glob("*.json"))
     source.trace.destroy()

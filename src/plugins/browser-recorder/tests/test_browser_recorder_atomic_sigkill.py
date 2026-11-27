@@ -15,8 +15,8 @@ import time
 import pytest
 pytest.importorskip("cryptography")
 
-from browser_recorder_vault import (
-    PrivateSessionVault, MAGIC, LABEL_MAGIC, MIN_STAGING_AGE_SECONDS,
+from capture_engine_fixture import (
+    FixtureVault, MAGIC, LABEL_MAGIC, MIN_STAGING_AGE_SECONDS,
 )
 
 KEY = "FICTIONAL-ATOMIC-SIGKILL-PASSPHRASE-2026"
@@ -27,10 +27,10 @@ _CHILD = r"""
 import os, signal, sys
 from pathlib import Path
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-import browser_recorder_vault as vault_api
+import capture_engine_fixture as vault_api
 
 directory, passphrase, origin, private, case = sys.argv[1:]
-vault = vault_api.PrivateSessionVault(Path(directory))
+vault = vault_api.FixtureVault(Path(directory))
 writer = vault.begin(passphrase)
 trace = PrivateHttpTrace((origin,))
 trace.exchanges.append(PrivateExchange(
@@ -70,7 +70,7 @@ def _crash(tmp_path, case):
     directory = tmp_path / "vault"
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
-        (str(Path(__file__).resolve().parents[1]),
+        (str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[1]),
          env.get("PYTHONPATH", ""))
     )
     child = subprocess.run(
@@ -81,7 +81,7 @@ def _crash(tmp_path, case):
     )
     assert child.returncode == -signal.SIGKILL
     assert child.stdout == child.stderr == ""
-    vault = PrivateSessionVault(directory)
+    vault = FixtureVault(directory)
     return vault, list(directory.iterdir())
 
 

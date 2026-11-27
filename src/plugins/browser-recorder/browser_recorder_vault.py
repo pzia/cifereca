@@ -9,20 +9,14 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from cifereca.plugin_api.capture_vault import CaptureScope
 import json
-# Existing fault-injection tests exercise the shared OS/fcntl modules.
-import os
-import fcntl
+import re
 
-from cifereca.plugin_api.capture_vault import (
-    EncryptedCaptureVault, RetentionPlan, SessionWriter, VaultError,
-    MAGIC, LABEL_MAGIC, MAX_FILE, MAX_LABEL_FILE, MAX_SESSIONS,
-    MAX_VAULT_BYTES, MIN_STAGING_AGE_SECONDS,
-    CAPTURE_SESSION_ID_PATTERN as _ID,
-    CAPTURE_STAGING_PATTERN as _STAGE,
-    CAPTURE_SESSION_STATES as _STATES,
-    derive_capture_archive_key as _key,
-    capture_archive_aead as _aead,
-)
+from cifereca.plugin_api.capture_vault import VaultError
+
+# Recorder's independent codec bound and format; no storage/key interface.
+MAX_FILE = 3 * 1024 * 1024
+_ID = re.compile(r"^[0-9a-f]{32}$")
+_STATES = frozenset(("recording", "completed", "interrupted"))
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
     PrivateExchange, PrivateHttpTrace, _BODY_REASONS,
@@ -228,7 +222,7 @@ class StoredSession:
         return "partial" if self.state == "recording" else self.state
 
     def private_summary(self) -> dict[str, object]:
-        """Visible *only after explicit user unlock*; never for Diagnostics.
+        """Visible in the authorized private panel; never for Diagnostics.
 
         saved_at is the timestamp of the LAST durable snapshot, not the
         beginning of the browsing session.
@@ -246,21 +240,6 @@ class StoredSession:
         return (f"StoredSession(state={self.recovery_status!r}, "
                 f"exchanges={len(self.trace.exchanges)})")
 
-
-
-class PrivateSessionVault(EncryptedCaptureVault):
-    """Browser Recorder codec adapter; no storage or cryptography here."""
-
-    _encode = staticmethod(_record)
-    _decode = staticmethod(_unrecord)
-
-    @staticmethod
-    def _release(stored):
-        stored.trace.destroy()
-
-    @staticmethod
-    def _mark_sealed(trace, session_id):
-        trace.vault_session_id = session_id
 
 
 class RecorderVault:
