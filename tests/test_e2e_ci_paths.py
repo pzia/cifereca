@@ -87,3 +87,20 @@ def test_focus_7812_main_replays_exact_integrated_c_actions_and_facets():
         assert any(fnmatchcase(path, pattern) for pattern in patterns), path
     assert not any(fnmatchcase("README.md", pattern) for pattern in patterns)
     assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in content
+
+
+def test_main_replays_every_pr_e2e_path_and_no_extra_paths():
+    content = WORKFLOW.read_text(encoding="utf-8")
+    block = re.search(
+        r"(?m)^  push:\n    branches: \[main\]\n    paths:\n((?:      - '[^']+'\n)+)",
+        content,
+    )
+    assert block, "E2E main trigger must stay path-scoped"
+    patterns = tuple(re.findall(r"      - '([^']+)'", block.group(1)))
+    assert patterns == e2e_pull_request_patterns()
+    assert len(patterns) == len(set(patterns)), "Duplicate path filter"
+    # The receipt is now covered by e2e/** rather than a one-off entry.
+    assert any(fnmatchcase("e2e/notice_c_automated_receipt.py", p) for p in patterns)
+    # Push must select the full suite, not a PR diff or manual scenario.
+    assert 'if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then' in content
+    assert 'scripts/ci-select-e2e.py --full --github-output' in content
