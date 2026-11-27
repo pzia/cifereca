@@ -1,0 +1,55 @@
+name: P0 8216 specialized reception
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-specialized-reception.yml'
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . 'pytest>=8,<9' 'Pillow>=10,<12' 'cryptography>=42,<48' apsw
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          export TMPDIR="$RUNNER_TEMP/isolated-tmp"
+          mkdir -p "$TMPDIR"
+          python -m pip freeze
+          git fetch origin focus/8216-isolate-foreign-epub
+          test "$(git rev-parse FETCH_HEAD)" = 5b1ab2c45d284a8195e146235623f48d33e76a2e
+          node=tests/test_library_metadata_candidates.py::MetadataCandidateTests::test_cross_profile_duplicate_is_not_local_ambiguity
+          python -m pytest -q "$node"
+          set +e
+          python -m pytest -q "$node"
+          rc=$?
+          set -e
+          test "$rc" = 1
+          git checkout FETCH_HEAD -- tests/test_library_metadata_candidates.py
+          python -m pytest -q "$node"
+          python -m pytest -q "$node"
+          python -m pytest -q -rs --junitxml="$RUNNER_TEMP/specialized.xml" \
+            tests/test_core_p0_5843_adept_local_diagnostic.py::test_live_wal_is_read_without_writing_source_sidecars \
+            tests/test_core_p0_2380_utc_timestamps.py::test_legacy_local_log_publishes_utc_and_does_not_invent_task_ref \
+            tests/test_core_p0_2565_safe_walker.py::test_symlinked_root_ancestor_directory_and_file_never_cross_scope \
+            tests/test_core_p0_3185_normalize_source_nofollow.py::test_special_file_replacing_book_cannot_be_normalized \
+            tests/test_core_p0_4979_stable_epub_fallback.py::test_fifo_is_refused_without_waiting_for_a_writer \
+            tests/test_core_p0_5069_delegated_updater_lock.py::test_core_delegation_allows_child_without_unlocking_competing_process \
+            tests/test_settings_diagnostic_callbacks.py::test_raw_settings_export_rejects_symlink_without_touching_target
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          cases=ET.parse(os.path.join(os.environ["RUNNER_TEMP"],"specialized.xml")).findall(".//testcase")
+          assert len(cases)==7 and all(len(c)==0 for c in cases), "specialized cases must actually pass"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: specialized-reception
+          path: ${{ runner.temp }}/specialized.xml
