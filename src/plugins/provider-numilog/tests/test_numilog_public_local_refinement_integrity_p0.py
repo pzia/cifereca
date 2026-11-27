@@ -5,6 +5,7 @@ real HTTP, ownership, loan claims, library download, or ACSM access.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,24 +19,30 @@ HTML = (Path(__file__).parent / "fixtures" / "public_search_jefferson_20261016.h
 URL = "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson"
 
 
-def page():
+@pytest.fixture(scope="module")
+def parsed_page():
     p = parse_public_search(HTML, URL)
     return replace(
         p, items=tuple(replace(row, source_provider="numilog-catalog") for row in p.items)
     )
 
 
+@pytest.fixture
+def page(parsed_page):
+    return deepcopy(parsed_page)
+
+
 @pytest.mark.parametrize("field", ["title", "author", "publisher", "format_label"])
 @pytest.mark.parametrize("query", ["!!!", "---", "…", "£€$", "  +  = ", "\u0301"])
-def test_punctuation_or_combining_only_filter_must_not_match_every_row(field, query):
+def test_punctuation_or_combining_only_filter_must_not_match_every_row(field, query, page):
     with pytest.raises(ProviderCapabilityError, match="invalid_local_filter") as error:
-        refine_loaded_public_page(page(), **{field: query})
+        refine_loaded_public_page(page, **{field: query})
     assert "jefferson" not in str(error.value)
 
 
 @pytest.mark.parametrize("value", ["JeFfErSoN", "Jean-Claude", "école"])
-def test_meaningful_normalized_filter_remains_usable(value):
-    result = refine_loaded_public_page(page(), title=value)
+def test_meaningful_normalized_filter_remains_usable(value, page):
+    result = refine_loaded_public_page(page, title=value)
     assert result.scope == "loaded_public_page_only"
     assert result.loaded_count == 20
     assert result.public_unfiltered_total == 242
@@ -63,14 +70,14 @@ def replace_metadata(row, **changes):
     lambda p: replace(p, complete="true"),
     lambda p: replace(p, total_results=19),
 ])
-def test_mixed_pages_or_unqualified_result_counters_are_not_proven(mutate):
-    forged = mutate(page())
+def test_mixed_pages_or_unqualified_result_counters_are_not_proven(mutate, page):
+    forged = mutate(page)
     with pytest.raises(ProviderCapabilityError, match="unverified_local_page"):
         refine_loaded_public_page(forged, author="Mourlevat")
 
 
-def test_positive_refinement_preserves_page_coverage_and_identity():
-    p = page()
+def test_positive_refinement_preserves_page_coverage_and_identity(page):
+    p = page
     result = refine_loaded_public_page(p, author="Mourlevat")
     assert result.loaded_count == len(p.items)
     assert result.public_unfiltered_total == p.total_results
