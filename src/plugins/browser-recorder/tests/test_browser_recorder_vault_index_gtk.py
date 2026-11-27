@@ -1,4 +1,4 @@
-"""Real GTK4 offline session-index unlock and cancelled async delivery."""
+"""Real GTK4 common-vault session index, restart, pins and cancelled delivery."""
 from __future__ import annotations
 
 import pytest
@@ -9,7 +9,9 @@ from gi.repository import GLib, Gtk  # noqa: E402
 
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
 from browser_recorder_review_ui import PrivateReviewPanel
-from browser_recorder_vault import PrivateSessionVault
+from browser_recorder_vault import RecorderVault
+from cifereca.core.capture_vault_service import CoreCaptureVault
+from cifereca.plugin_api.capture_vault import CaptureScope, VaultError
 
 ORIGIN = "https://synthetic-library.example.org"
 KEY = "ONLY-FICTIONAL-VISIBLE-METADATA-KEY"
@@ -43,7 +45,7 @@ class Tasks:
 
     def submit(self, fn, *, kind, label):
         assert kind == "browser-recorder"
-        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée", "Nettoyer les résidus chiffrés", "Prévisualiser la rétention du coffre", "Appliquer la rétention consentie"}
+        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée", "Modifier l\'épingle du coffre"}
         self.handle = Handle(fn)
         return self.handle
 
@@ -58,31 +60,37 @@ def flush():
 
 def populate(vault):
     ids = []
-    for index, passphrase in enumerate((KEY, KEY, OTHER)):
+    for i, state in enumerate(("completed", "recording", "interrupted")):
         trace = PrivateHttpTrace((ORIGIN,))
         trace.exchanges.append(PrivateExchange(
-            1, "GET", ORIGIN + "/catalog?private_id=FICTIONAL-" + str(index),
+            1, "GET", ORIGIN + "/catalog?private_id=FICTIONAL-" + str(i),
             status=200,
         ))
-        writer = vault.begin(passphrase)
-        writer.save(trace, "completed" if index != 1 else "recording",
-                    force=True)
+        writer = vault.begin(consented=True)
+        writer.save(trace, state, force=True)
         ids.append(writer.session_id)
         trace.destroy()
     return ids
 
 
+def core_fixture(tmp_path):
+    return CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                            authorize_scope=lambda *_: True)
+
+
 def panel_fixture(tmp_path):
     Gtk.init()
-    vault = PrivateSessionVault(tmp_path / "vault")
-    ids = populate(vault)
+    initial = core_fixture(tmp_path)
+    ids = populate(RecorderVault(initial.for_plugin("ui.page.browser-recorder")))
+    initial.close()
+    core = core_fixture(tmp_path)
+    vault = RecorderVault(core.for_plugin("ui.page.browser-recorder"))
     site = Gtk.Entry()
     site.set_text(ORIGIN)
     consent = Gtk.CheckButton()
     tasks = Tasks()
     panel = PrivateReviewPanel(
-        Gtk, GLib, tasks, site, consent, lambda: False,
-        vault_directory=vault.path,
+        Gtk, GLib, tasks, site, consent, lambda: False, vault=vault,
     )
     window = Gtk.Window()
     window.set_default_size(1024, 768)
@@ -91,327 +99,102 @@ def panel_fixture(tmp_path):
     window.set_child(scroll)
     window.present()
     flush()
-    return panel, tasks, window, vault, ids
+    return panel, tasks, window, core, ids
 
 
-def test_gtk_metadata_stays_opaque_until_unlock_then_reveals_private_labels(tmp_path):
-    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+def test_gtk_restart_lists_and_reopens_without_unlock(tmp_path):
+    panel, tasks, window, core, ids = panel_fixture(tmp_path)
     try:
+        for name in ("vault_passphrase", "vault_open_button", "vault_close_button",
+                     "sessions_unlock", "_vault_secret"):
+            assert not hasattr(panel, name)
         panel.sessions_refresh.emit("clicked")
-        flush()
-        assert "3 archives chiffrées trouvées" in panel.status.get_label()
-        assert ORIGIN not in panel.status.get_label()
-        assert all(ORIGIN not in panel.session_list.get_active_text()
-                   for _ in range(1))
-        panel.vault_passphrase.set_text(KEY)
-        panel.sessions_unlock.emit("clicked")
-        assert tasks.handle is not None
         assert panel.is_scanning()
-        assert panel.vault_passphrase.get_text() == ""
-        assert not panel.sessions_unlock.get_sensitive()
         assert not panel.start.get_sensitive()
+        assert not panel.private_export_button.get_sensitive()
         tasks.handle.finish()
-        # The worker is finished, but GTK has not delivered its result yet.
-        # Export/unlock must remain disabled until the idle callback commits.
-        assert tasks.handle.done()
-        assert panel.is_scanning()
-        assert not panel.sessions_unlock.get_sensitive()
-        assert "Déchiffrement local" in panel.status.get_label()
+        assert panel.is_scanning()  # until GTK idle delivery
         flush()
         assert not panel.is_scanning()
-        assert "2 sessions déverrouillées" in panel.status.get_label()
-        assert "1 indisponibles" in panel.status.get_label()
-        for identity in ids:
-            panel.session_list.set_active_id(identity)
-            label = panel.session_list.get_active_text()
-            assert label is not None
-            if identity == ids[2]:
-                assert "verrouillée/illisible" in label and ORIGIN not in label
-            else:
-                assert ORIGIN in label
-                assert "échanges" in label
-        panel.session_list.set_active_id(ids[1])
-        assert "partial" in panel.session_list.get_active_text()
-        panel.session_list.set_active_id(ids[0])
-        assert "completed" in panel.session_list.get_active_text()
-        assert vault.list_ids() and len(vault.list_ids()) == 3
+        assert "3 sessions chiffrées" in panel.status.get_label()
+        for i, sid in enumerate(ids):
+            panel.session_list.set_active_id(sid)
+            assert ORIGIN in panel.session_list.get_active_text()
+            assert ("completed", "partial", "interrupted")[i] in panel.session_list.get_active_text()
+            panel.sessions_open.emit("clicked")
+            assert panel._trace.vault_session_id == sid
         assert not list(tmp_path.rglob("*.zip"))
         panel.session_list.set_active_id(ids[0])
         panel.session_name.set_text("Mon parcours fictif privé")
-        panel.vault_passphrase.set_text(KEY)
         panel.sessions_rename.emit("clicked")
-        assert panel.is_scanning()
-        assert panel.session_name.get_text() == ""
-        assert panel.vault_passphrase.get_text() == ""
         tasks.handle.finish()
         flush()
-        assert not panel.is_scanning()
-        assert vault.get_label(ids[0], KEY) == "Mon parcours fictif privé"
-        # Opaque after rename; explicit unlock is needed again.
-        assert ORIGIN not in panel.session_list.get_active_text()
-        panel.vault_passphrase.set_text(KEY)
-        panel.sessions_unlock.emit("clicked")
         tasks.handle.finish()
         flush()
-        panel.session_list.set_active_id(ids[0])
         assert "Mon parcours fictif privé" in panel.session_list.get_active_text()
+        panel.sessions_pin.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        tasks.handle.finish()
+        flush()
+        assert "épinglée" in panel.session_list.get_active_text()
+        panel.sessions_unpin.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        tasks.handle.finish()
+        flush()
+        assert "épinglée" not in panel.session_list.get_active_text()
+        panel.sessions_delete.emit("clicked")
+        assert len(panel.vault.sessions()) == 3
+        panel.delete_confirm.set_active(True)
+        panel.sessions_delete.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        assert len(panel.vault.sessions()) == 2
     finally:
         panel.destroy()
+        core.close()
         window.close()
         flush()
 
 
-def test_open_close_vault_reuses_one_master_and_wipes_private_review(tmp_path):
-    """Native GTK4: explicit unlock once, multiple operations, explicit lock.
-
-    No real provider, browser or upload. Wrong passwords never open the vault;
-    locking cannot delete existing encrypted sessions.
-    """
-    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+def test_gtk_key_loss_refuses_read_and_new_capture(tmp_path):
+    panel, tasks, window, core, ids = panel_fixture(tmp_path)
     try:
         panel.sessions_refresh.emit("clicked")
-        assert panel._vault_secret is None
-        assert panel.vault_open_button.get_sensitive()
-        assert not panel.vault_close_button.get_sensitive()
-        before = {
-            sid: (vault.path / (sid + ".cbrv")).read_bytes() for sid in ids
-        }
-
-        panel.vault_passphrase.set_text("WRONG-FICTIONAL-VAULT-SECRET")
-        panel.vault_open_button.emit("clicked")
-        assert panel.is_scanning()
         tasks.handle.finish()
         flush()
-        assert panel._vault_secret is None
-        assert "Ouverture refusée" in panel.status.get_label()
-        assert not panel.vault_close_button.get_sensitive()
-        assert panel.vault_passphrase.get_text() == ""
-
-        panel.vault_passphrase.set_text(KEY)
-        panel.vault_open_button.emit("clicked")
-        assert panel.is_scanning()
-        tasks.handle.finish()
-        flush()
-        assert panel._vault_secret is not None
-        master_buffer = panel._vault_secret
-        assert panel.vault_passphrase.get_text() == ""
-        assert "OUVERT" in panel.vault_state.get_label()
-        assert panel.vault_close_button.get_sensitive()
-        assert not panel.vault_open_button.get_sensitive()
-        assert not panel.vault_passphrase.get_sensitive()
-
-        # Reopen two distinct archives and rename the first without ever
-        # typing the password again.
-        for sid in ids[:2]:
-            panel.session_list.set_active_id(sid)
-            panel.sessions_open.emit("clicked")
-            flush()
-            assert panel._trace.vault_session_id == sid
-            assert panel.vault_passphrase.get_text() == ""
         panel.session_list.set_active_id(ids[0])
-        panel.session_name.set_text("Session coffre ouvert")
-        panel.sessions_rename.emit("clicked")
-        assert panel.is_scanning()
-        tasks.handle.finish()
-        flush()
-        assert vault.get_label(ids[0], KEY) == "Session coffre ouvert"
-        assert panel.vault_passphrase.get_text() == ""
-
-        panel.vault_close_button.emit("clicked")
-        flush()
-        assert panel._vault_secret is None
-        assert all(value == 0 for value in master_buffer)
-        assert "FERMÉ" in panel.vault_state.get_label()
-        assert not panel.vault_close_button.get_sensitive()
-        assert panel.vault_open_button.get_sensitive()
-        assert panel._trace is None and panel._review is None
-        assert panel.session_list.get_active_id() is None
-        assert panel.vault_passphrase.get_text() == ""
-        assert not panel.current_private_export_button.get_sensitive()
-        assert before == {
-            sid: (vault.path / (sid + ".cbrv")).read_bytes() for sid in ids
-        }
-
-        # Opening again requires the password; no file re-encryption.
-        panel.vault_passphrase.set_text(KEY)
-        panel.vault_open_button.emit("clicked")
-        tasks.handle.finish()
-        flush()
-        assert panel._vault_secret is not None
-        assert "OUVERT" in panel.vault_state.get_label()
+        (tmp_path / "keys" / "key").unlink()
+        panel.sessions_open.emit("clicked")
+        assert "Ouverture refusée" in panel.status.get_label()
+        assert panel._trace is None
+        with pytest.raises(VaultError, match="vault_key_unavailable"):
+            panel.vault.begin(consented=True)
+        assert not (tmp_path / "keys" / "key").exists()
+        assert len(list((tmp_path / "vault").glob("*.cbrv"))) == 3
     finally:
         panel.destroy()
+        core.close()
         window.close()
         flush()
-    assert panel._vault_secret is None
 
 
 def test_scanning_completion_after_page_destroy_cannot_reveal_session(tmp_path):
-    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
-    panel.sessions_refresh.emit("clicked")
-    panel.vault_passphrase.set_text(KEY)
-    panel.sessions_unlock.emit("clicked")
-    assert panel.is_scanning()
-    panel.destroy()
-    tasks.handle.finish()
-    flush()
-    assert len(vault.list_ids()) == 3
-    assert panel.vault_passphrase.get_text() == ""
-    window.close()
-    flush()
-
-
-
-def test_gtk_orphan_preview_never_deletes_without_distinct_confirmation(tmp_path):
-    import os
-    import time
-    from browser_recorder_vault import MIN_STAGING_AGE_SECONDS
-
-    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
-    try:
-        source = vault.path / (ids[0] + ".cbrv")
-        ciphertext = source.read_bytes()
-        staged = vault.path / ("." + ids[0] + "-abcdef0123456789.part")
-        staged.write_bytes(ciphertext)
-        staged.chmod(0o600)
-        old = time.time() - MIN_STAGING_AGE_SECONDS - 100
-        os.utime(staged, (old, old))
-        before = {identity: (vault.path / (identity + ".cbrv")).read_bytes()
-                  for identity in ids}
-        assert not panel.staging_prune.get_sensitive()
-        panel.staging_inspect.emit("clicked")
-        assert "1 résidus chiffrés" in panel.status.get_label()
-        assert "1 nettoyables" in panel.status.get_label()
-        assert staged.exists()
-        panel.prune_staging()  # Bypass disabled button: still fails closed.
-        assert staged.exists() and not panel.is_scanning()
-        assert "confirmation" in panel.status.get_label()
-        panel.staging_confirm.set_active(True)
-        assert panel.staging_prune.get_sensitive()
-        panel.staging_prune.emit("clicked")
-        assert not panel.staging_confirm.get_active()
-        assert panel.is_scanning()
-        assert not panel.sessions_open.get_sensitive()
-        tasks.handle.finish()
-        flush()
-        assert not staged.exists()
-        assert "1 résidus chiffrés anciens nettoyés" in panel.status.get_label()
-        assert not panel.is_scanning()
-        assert before == {
-            identity: (vault.path / (identity + ".cbrv")).read_bytes()
-            for identity in ids
-        }
-    finally:
-        panel.destroy()
-        window.close()
-        flush()
-
-
-
-def test_gtk_retention_never_deletes_without_confirm_and_fresh_unlock(
-    tmp_path, monkeypatch,
-):
-    import browser_recorder_vault as vault_api
-    from datetime import datetime, timedelta, timezone
-
-    panel, tasks, window, vault, original_ids = panel_fixture(tmp_path)
-    # One strictly fictional completed capture is 140 days old.
-    old = datetime.now(timezone.utc) - timedelta(days=140)
-    original_datetime = vault_api.datetime
-
-    class OldDate(original_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return old if tz is not None else old.replace(tzinfo=None)
-
-    writer = vault.begin(KEY)
-    trace = PrivateHttpTrace((ORIGIN,))
-    trace.exchanges.append(PrivateExchange(
-        1, "GET", ORIGIN + "/old?account=FICTIONAL_ACCOUNT_44",
-        status=200,
-    ))
-    with monkeypatch.context() as m:
-        m.setattr(vault_api, "datetime", OldDate)
-        writer.save(trace, "completed", force=True)
-    trace.destroy()
-    previous = {x: (vault.path / (x + ".cbrv")).read_bytes()
-                for x in original_ids}
+    panel, tasks, window, core, ids = panel_fixture(tmp_path)
     try:
         panel.sessions_refresh.emit("clicked")
-        assert len(vault.list_ids()) == 4
-        assert not panel.retention_apply_button.get_sensitive()
-        panel.retention_age.set_active_id("90")
-        panel.vault_passphrase.set_text(KEY)
-        panel.retention_preview_button.emit("clicked")
-        assert tasks.handle is not None and panel.is_scanning()
-        assert panel.vault_passphrase.get_text() == ""
-        assert not panel.retention_apply_button.get_sensitive()
-        tasks.handle.finish()
-        flush()
-        assert not panel.is_scanning()
-        assert "1 sessions TERMINÉES" in panel.status.get_label()
-        assert writer.session_id in vault.list_ids()
-        panel.apply_retention()  # must refuse without consent.
-        assert writer.session_id in vault.list_ids()
-        panel.retention_confirm.set_active(True)
-        flush()
-        assert panel.retention_apply_button.get_sensitive()
-        panel.vault_passphrase.set_text(KEY)
-        panel.retention_apply_button.emit("clicked")
         assert panel.is_scanning()
-        assert not panel.retention_confirm.get_active()
-        assert panel.vault_passphrase.get_text() == ""
+        panel.destroy()
         tasks.handle.finish()
         flush()
-        assert writer.session_id not in vault.list_ids()
-        assert len(vault.list_ids()) == 3
-        assert previous == {x: (vault.path / (x + ".cbrv")).read_bytes()
-                            for x in original_ids}
-        assert not panel.retention_apply_button.get_sensitive()
-        assert not list(tmp_path.rglob("*.zip"))
+        assert panel.session_list.get_active_id() is None
+        assert panel._private_labels == {}
+        assert ORIGIN not in panel.status.get_label()
     finally:
-        panel.destroy()
+        core.close()
         window.close()
         flush()
-
-
-def test_gtk_retention_changed_duration_invalidates_preview(tmp_path, monkeypatch):
-    import browser_recorder_vault as vault_api
-    from datetime import datetime, timedelta, timezone
-
-    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
-    old = datetime.now(timezone.utc) - timedelta(days=160)
-    original_datetime = vault_api.datetime
-
-    class OldDate(original_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return old if tz is not None else old.replace(tzinfo=None)
-
-    writer = vault.begin(KEY)
-    trace = PrivateHttpTrace((ORIGIN,))
-    with monkeypatch.context() as m:
-        m.setattr(vault_api, "datetime", OldDate)
-        writer.save(trace, "completed", force=True)
-    trace.destroy()
-    try:
-        panel.vault_passphrase.set_text(KEY)
-        panel.retention_preview_button.emit("clicked")
-        tasks.handle.finish()
-        flush()
-        assert panel._retention_plan.count == 1
-        panel.retention_confirm.set_active(True)
-        assert panel.retention_apply_button.get_sensitive()
-        panel.retention_age.set_active_id("365")
-        assert panel._retention_plan is None
-        assert not panel.retention_confirm.get_active()
-        assert not panel.retention_apply_button.get_sensitive()
-        assert writer.session_id in vault.list_ids()
-    finally:
-        panel.destroy()
-        window.close()
-        flush()
-
 
 
 def test_gtk_manual_download_chooser_requires_actual_operator_selection(
@@ -502,6 +285,7 @@ def test_gtk_manual_download_chooser_requires_actual_operator_selection(
         assert not list(tmp_path.glob("*.acsm"))  # chooser ≠ write
     finally:
         panel.destroy()
+        vault.close()
         window.close()
         flush()
 
@@ -556,5 +340,6 @@ def test_gtk_closing_page_cancels_pending_manual_download_chooser(
         assert not list(tmp_path.glob("*.acsm"))
     finally:
         panel.destroy()
+        vault.close()
         window.close()
         flush()
