@@ -1,0 +1,48 @@
+name: P0 8216 method ABBA
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-method-abba.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 546ee29fd3902762642e27402e4fb6af2440776a
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . pytest Pillow cryptography
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/src"
+          git fetch origin focus/8216-cache-method-compile
+          test "$(git rev-parse FETCH_HEAD)" = c6a98c44d5cf5cce4b7b1829c7daf0bd565d9481
+          path=tests/test_core_p0_5833_adept_detail_core_pin.py
+          for label in A1 B1 B2 A2; do
+            case "$label" in A*) git checkout 546ee29fd3902762642e27402e4fb6af2440776a -- "$path";; B*) git checkout FETCH_HEAD -- "$path";; esac
+            /usr/bin/time -p -o "$RUNNER_TEMP/$label.time" python -m pytest -q "$path" --junitxml="$RUNNER_TEMP/$label.xml"
+          done
+          python - <<'PY'
+          import os, pathlib, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          reference=None
+          for label in ("A1","B1","B2","A2"):
+              cases=ET.parse(root/(label+".xml")).findall(".//testcase")
+              ids=sorted((c.attrib["classname"],c.attrib["name"]) for c in cases)
+              assert ids and all(len(c)==0 for c in cases)
+              if reference is None: reference=ids
+              assert ids==reference
+              print(label,len(ids),sum(float(c.attrib["time"]) for c in cases),(root/(label+".time")).read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: method-abba
+          path: |
+            ${{ runner.temp }}/*.xml
+            ${{ runner.temp }}/*.time
