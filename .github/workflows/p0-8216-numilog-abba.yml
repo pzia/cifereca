@@ -1,0 +1,54 @@
+name: P0 8216 Numilog ABBA
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-numilog-abba.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: f8e235c2075389fe5c090c84d6d814fd12ffba5a
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . pytest httpx packaging Pillow PyMuPDF
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin focus/8216-numilog-page-fixture
+          test "$(git rev-parse FETCH_HEAD)" = 2eeffc456289a57046c19d46c634faffbb16a340
+          export PYTHONPATH="$PWD/src"
+          out="$RUNNER_TEMP/abba"
+          mkdir -p "$out"
+          path=src/plugins/provider-numilog/tests/test_numilog_public_local_refinement_integrity_p0.py
+          for label in A1 B1 B2 A2; do
+            case "$label" in A*) sha=f8e235c2075389fe5c090c84d6d814fd12ffba5a;; B*) sha=2eeffc456289a57046c19d46c634faffbb16a340;; esac
+            git checkout "$sha" -- "$path"
+            (cd src/plugins/provider-numilog; /usr/bin/time -p -o "$out/$label.time" python -m pytest -q "tests/${path##*/}" --junitxml="$out/$label.xml" --durations=0)
+            cat "$out/$label.time"
+          done
+          python - <<'PY'
+          import os, pathlib, xml.etree.ElementTree as ET
+          p=pathlib.Path(os.environ["RUNNER_TEMP"])/"abba"
+          rows={}
+          for label in ("A1","B1","B2","A2"):
+              cases=ET.parse(p/(label+".xml")).findall(".//testcase")
+              assert len(cases)==39
+              assert all(not list(c) for c in cases)
+              rows[label]=({(c.attrib["classname"],c.attrib["name"]) for c in cases},sum(float(c.attrib["time"]) for c in cases),float((p/(label+".time")).read_text().split()[1]))
+          assert all(r[0]==rows["A1"][0] for r in rows.values())
+          for k,v in rows.items(): print(k,"junit",v[1],"wall",v[2])
+          for i in (1,2):
+              a=(rows["A1"][i]+rows["A2"][i])/2
+              b=(rows["B1"][i]+rows["B2"][i])/2
+              print("mean",i,a,b,"gain",a-b)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numilog-abba
+          path: ${{ runner.temp }}/abba
