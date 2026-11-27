@@ -65,6 +65,8 @@ Privilégier l'édition d'un ticket existant à la création de doublons ; comme
 
 ## Sortie des tickets sans attente manuelle
 
+À la clôture P0, coordonner la [consolidation Backlog](../../docs/AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0) après gel du corpus ; Backlog qualifie/autorise, CI/CD exécute.
+
 - Le méta-rôle `focus` réutilise la [politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md) : quand Core/Plugins ont apporté les preuves suffisantes, annoncer une nouvelle étape où focus adopte `cicd` pour fusion et clôture, ou transmettre la PR à un autre cicd si utile. Ne pas imposer de recette GTK implicite au propriétaire utilisateur ; `ux` / `simulation` reste indépendant et exclu de focus.
 - Après clôture, ne pas rouvrir pour « UX non testé par l'utilisateur » ; transmettre les contrôles terrain utiles à l'audit `backlog` ou à un `ux` indépendant. Une vraie défaillance sera traitée par issue rouverte ou nouvelle issue selon le périmètre.
 - Lors de l'analyse `Next`, vérifier **également les PR prêtes à merger et les issues encore ouvertes malgré un merge**, afin de résorber le stock de livraison plutôt que multiplier des implémentations non intégrées.

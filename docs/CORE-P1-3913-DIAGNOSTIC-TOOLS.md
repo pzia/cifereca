@@ -33,6 +33,8 @@ preuve d'exécution d'un compte fournisseur authentifié.
 
 **Suivi d’intégration AST #5048 (classe T, lecture seule) :** `scripts/ci_agent_d_ast_progress.py` — `python3 -m scripts.ci_agent_d_ast_progress rapport-actuel.json --baseline rapport-base.json`. Compare les inventaires canoniques déjà produits par fichier, fonction et signature AST. Lit les rapports JSON locaux et écrit le résultat sur la sortie standard, sans ouvrir le Core ni une session fournisseur. Les écarts de signatures restent des indices à examiner.
 
+**Compactage Backlog #8195 (lecture seule audit/validate ; classe M pour apply)** : `scripts/backlog_compaction.py` — administration GitHub bornée, apply uniquement via workflow manuel pzia avec plan consommé, synthèses vérifiées avant suppression de commentaires. Backlog qualifie et autorise ; CI/CD exécute. Voir [contrat](BACKLOG-COMPACTION.md).
+
 ## Légende : effets réels, pas étiquettes marketing
 
 | Classe | Sens | Effet à anticiper |
