@@ -2,8 +2,8 @@
 
 The test deliberately SIGKILLs the Playwright/Python process group while HTTP
 capture is active. Only the last AES-GCM snapshot may be recovered. A separate
-explicit encrypted diagnostic export is checked by an independent reader.
-No real provider, person, account, upload or plaintext ZIP is involved.
+explicit local ZIP export is checked by an independent reader.
+No real provider, person, account, upload or automatic ZIP is involved.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from threading import Event
 from urllib.parse import urlsplit
 
 import browser_recorder_http as capture
-from browser_recorder_vault import PrivateSessionVault
+from browser_recorder_vault import RecorderVault
 from browser_recorder import site_origin as actual_origin
 
 origin = sys.argv[1]
@@ -58,7 +58,10 @@ def exact_fixture(value):
 # Only this test's random-port localhost origin bypasses HTTPS validation.
 # The production code and other hosts retain the regular policy.
 capture.site_origin = exact_fixture
-writer = PrivateSessionVault(Path(sys.argv[2])).begin(sys.argv[3])
+from cifereca.core.capture_vault_service import CoreCaptureVault
+root = Path(sys.argv[2])
+core = CoreCaptureVault(root, root.parent / "keys", authorize_scope=lambda *_: True)
+writer = RecorderVault(core.for_plugin("ui.page.browser-recorder")).begin(consented=True)
 capture.record_http(
     origin + "/catalog", Event(),
     vault_writer=writer, max_seconds=30,
@@ -69,7 +72,7 @@ capture.record_http(
         (str(SOURCE), env.get("PYTHONPATH", ""))
     )
     process = subprocess.Popen(
-        [sys.executable, "-c", child_code, origin, str(folder), PASSPHRASE],
+        [sys.executable, "-c", child_code, origin, str(folder)],
         env=env, cwd=tmp_path, stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         start_new_session=True,
@@ -111,9 +114,12 @@ capture.record_http(
         return actual_origin(value)
 
     monkeypatch.setattr(capture, "site_origin", exact_fixture)
-    from browser_recorder_vault import PrivateSessionVault, MAGIC
-    vault = PrivateSessionVault(folder)
-    ids = vault.list_ids()
+    from browser_recorder_vault import RecorderVault
+    from cifereca.core.capture_vault import MAGIC
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    core = CoreCaptureVault(folder, tmp_path / "keys", authorize_scope=lambda *_: True)
+    vault = RecorderVault(core.for_plugin("ui.page.browser-recorder"))
+    ids = [row.capture_id for row in vault.sessions()]
     assert len(ids) == 1
     path = folder / (ids[0] + ".cbrv")
     before = path.read_bytes()
@@ -122,7 +128,7 @@ capture.record_http(
     assert ACCOUNT.encode() not in before
     assert TOKEN.encode() not in before
     assert not list(folder.glob("*.har")) and not list(folder.glob("*.part"))
-    restored = vault.open(ids[0], PASSPHRASE)
+    restored = vault.read(ids[0])
     try:
         assert restored.state == "recording"
         assert restored.recovery_status == "partial"
@@ -143,29 +149,19 @@ capture.record_http(
         }
         assert sha256(path.read_bytes()).digest() == sha256(before).digest()
         assert not list(folder.glob("*.zip"))
-        # #2698: recovery is also usable if public review/projection fails.
-        # Export only on this explicit synthetic user decision, to a separate
-        # 0700 folder, with a distinct passphrase. Never write plaintext ZIP.
-        from browser_recorder_private_zip import save_private_zip
-        destination = tmp_path / "chosen-private-export"
-        destination.mkdir(mode=0o700)
-        export_key = "FICTIONAL-RECOVERED-SESSION-EXPORT-KEY-2026"
-        name = save_private_zip(restored, destination, export_key, confirmed=True)
-        output = destination / name
+        # Recovered raw capture is exportable only after explicit Save As.
+        from browser_recorder_private_zip import save_session_llm_zip
+        output = tmp_path / "chosen-private-export.zip"
+        with pytest.raises(Exception, match="private_zip_confirmation_required"):
+            save_session_llm_zip(restored, output)
+        assert not output.exists()
+        save_session_llm_zip(restored, output, confirmed=True)
         assert output.stat().st_mode & 0o777 == 0o600
         reader = r'''
 import sys, json
-from io import BytesIO
-from pathlib import Path
 from zipfile import ZipFile
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 expected = json.load(sys.stdin)
-data = Path(sys.argv[1]).read_bytes()
-assert data[:8] == b"CFRZIP01"
-key = Scrypt(salt=data[8:24], length=32, n=2**15, r=8, p=1).derive(expected["key"].encode())
-plain = AESGCM(key).decrypt(data[24:36], data[36:], data[:36])
-with ZipFile(BytesIO(plain)) as archive:
+with ZipFile(sys.argv[1]) as archive:
     assert archive.testzip() is None
     observed = json.loads(archive.read("trace.json"))
 assert observed["state"] == "recording"
@@ -174,13 +170,14 @@ assert observed["exchanges"] == expected["exchanges"]
 '''
         child = subprocess.run(
             [sys.executable, "-I", "-c", reader, str(output)],
-            input=json.dumps({"key": export_key, "exchanges": [
+            input=json.dumps({"exchanges": [
                 asdict(entry) for entry in restored.trace.exchanges
             ]}), text=True, capture_output=True, timeout=15,
         )
         assert child.returncode == 0, "Independent private export verification failed"
         assert not child.stdout and not child.stderr
         assert path.read_bytes() == before
-        assert not list(destination.glob("*.zip"))
+        assert list(tmp_path.glob("*.zip")) == [output]
     finally:
         restored.trace.destroy()
+        core.close()

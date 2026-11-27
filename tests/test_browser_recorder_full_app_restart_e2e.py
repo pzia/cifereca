@@ -45,7 +45,7 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
 ):
     pytest.importorskip("cryptography")
     from cifereca.core import CiferecaCore
-    from cifereca.paths import data_dir
+    from cifereca.paths import data_dir, config_dir
     from scripts.plugin_packaging import build_plugin_zip
 
     # Running these real sessions is already covered by the separate three
@@ -63,7 +63,8 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
     monkeypatch.setenv("GDK_BACKEND", "x11")
     monkeypatch.setenv("GSETTINGS_BACKEND", "memory")
     env = dict(os.environ)
-    vault_dir = data_dir() / "plugins" / "data" / PLUGIN_ID / "private-sessions"
+    vault_dir = data_dir() / "capture-vault-v1"
+    key_dir = config_dir() / "capture-secrets"
     packager_output = tmp_path / "build"
     packager_output.mkdir(mode=0o700)
     package_zip = build_plugin_zip(PLUGIN_SOURCE, packager_output)
@@ -88,11 +89,14 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
     # put the checked-out plugin source on the child's import path.
     sys.path.insert(0, str(installed_root))
     from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-    from browser_recorder_vault import PrivateSessionVault
-    vault = PrivateSessionVault(vault_dir)
+    from browser_recorder_vault import RecorderVault
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    vault_core = CoreCaptureVault(vault_dir, key_dir, authorize_scope=lambda *_: True)
+    request.addfinalizer(vault_core.close)
+    vault = RecorderVault(vault_core.for_plugin(PLUGIN_ID))
     originals = {}
     for n in range(3):
-        writer = vault.begin(PASSWORD)
+        writer = vault.begin(consented=True)
         trace = PrivateHttpTrace((ORIGIN,))
         trace.exchanges.append(PrivateExchange(
             1, "GET", ORIGIN + "/catalog?n=" + str(n)
@@ -113,7 +117,7 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
             (vault_dir / (writer.session_id + ".cbrv")).read_bytes()
         ).hexdigest()
     assert len(originals) == 3
-    assert set(vault.list_ids()) == set(originals)
+    assert {row.capture_id for row in vault.sessions()} == set(originals)
 
     # New OS interpreter, full Cifereca startup, Adw.Application, real Core
     # storage open, real MainWindow, plugin startup from installed package.
@@ -213,13 +217,13 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
         assert b"TRACE shutdown app.run end" in logs
         assert b"Fatal GTK GUI error" not in logs
         launches.append(logs)
-        assert set(vault.list_ids()) == set(originals)
+        assert {row.capture_id for row in vault.sessions()} == set(originals)
         assert {
             sid: sha256((vault_dir / (sid + ".cbrv")).read_bytes()).hexdigest()
             for sid in originals
         } == originals
         for sid in originals:
-            item = vault.open(sid, PASSWORD)
+            item = vault.read(sid)
             assert item.recovery_status == "completed"
             assert len(item.trace.exchanges) == 2
             item.trace.destroy()
