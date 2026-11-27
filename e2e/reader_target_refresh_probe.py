@@ -39,7 +39,8 @@ STAGES = frozenset({
     "execute_cancel", "execute_confirm", "execute_result",
     "profile_b", "profile_a", "native_fixture", "native_configuration",
     "native_send", "native_conflict", "native_confirmation", "native_cancellation",
-    "native_copy", "native_idempotence", "native_removal", "finish",
+    "native_copy", "native_idempotence", "native_removal",
+    "native_usb_a", "native_usb_b", "native_usb_isolation", "finish",
 })
 
 
@@ -547,12 +548,17 @@ def main() -> int:
     def native_grouped_receipt():
         """Real GTK widgets, TaskRunner, Core broker, SQLite and local FS.
 
-        Keep the two legacy USB bindings offline. Inject only the resolved
-        production storage.target service into the isolated no-plugin registry;
-        do not replace the real broker, scanner, executor or worker queue.
+        Start with the two USB bindings offline, then connect two synthetic
+        block volumes on real directories. Only Linux discovery/attestation
+        is simulated for those volumes. The pseudo-reader keeps native Linux
+        attestation. Resolve the production storage.target in the isolated
+        no-plugin registry; broker, scanner, executor and queue stay real.
         """
+        from contextlib import ExitStack
+        from dataclasses import replace
+        from importlib import import_module
         from threading import Event
-        from time import sleep
+        from time import sleep, time
         from types import SimpleNamespace
         from unittest.mock import patch
         import runpy
@@ -589,7 +595,7 @@ def main() -> int:
         assert {row["device_id"] for row in db.device_bindings()} == {
             "reader-a", "reader-b", device}
         context = GLib.MainContext.default()
-        deadline = monotonic() + 33
+        deadline = min(state["deadline"], monotonic() + 42)
 
         def wait(predicate):
             limit = min(deadline, monotonic() + 6)
@@ -626,7 +632,10 @@ def main() -> int:
             sync = header("reader-sync-delta")
             wait(sync.get_sensitive)
             sync.emit("clicked")
-            return wait(lambda: getattr(window, "_reader_sync_dialog", None))
+            def mapped_dialog():
+                dialog = getattr(window, "_reader_sync_dialog", None)
+                return dialog if dialog is not None and dialog.get_mapped() else None
+            return wait(mapped_dialog)
 
         def intent():
             return db.device_placement_get(device, artifact_id)
@@ -651,10 +660,10 @@ def main() -> int:
             assert intent() is None
 
             phase[0] = "native_send"
-            def menu_choices():
+            def menu_choices(item=entry):
                 window.navigate("library")
-                window._render_library([entry])
-                assert window.library_page.select_key("reader-book")
+                window._render_library([item])
+                assert window.library_page.select_key(item["key"])
                 # Force the actual selection controller to rebuild its action
                 # lease even when the library's row key has not changed.
                 window._library_selected(window.library_page.selection.get_selected_item())
@@ -802,6 +811,177 @@ def main() -> int:
             assert local.read_bytes() == payload and third.read_bytes() == b"untouched"
             assert db.device_placements(device_id="reader-b") == []
             report["checks"]["native_confirmed_remove_preserves_source_and_third_party"] = True
+
+            # Reuse the two actual USB bindings from the earlier fixture.
+            # Supply only the kernel/udev evidence at the same seam as the
+            # existing USB real-filesystem acceptance tests. Keep live inode,
+            # mount ID, directory FDs, source SHA, staging and journal checks.
+            from cifereca.core import device_usb_mount as mount_ops
+            from cifereca.core import device_usb_discovery as discovery
+            real_attest = mount_ops.observe_linux_usb_mount
+            usb_roots = {}
+            pins = {}
+            connected = set()
+            for owner, reader in (("alice", "reader-a"), ("bob", "reader-b")):
+                volume_root = work / ("synthetic-volume-" + owner)
+                volume_root.mkdir()
+                fd = os.open(volume_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    info = os.fstat(fd)
+                    mount_id = mount_ops._fd_mount_id(fd)
+                    assert mount_id is not None
+                    pins[reader] = (info.st_dev, info.st_ino, mount_id)
+                finally:
+                    os.close(fd)
+                usb_roots[reader] = (owner, "uuid-" + owner + "-0001", volume_root)
+                db.device_usb_reader_formats_set(identity_id=owner, device_id=reader,
+                    usb_fingerprint=usb_roots[reader][1], supported_formats=("epub",))
+
+            def attest(*, identity_id, binding, mountpoint):
+                reader = binding.get("device_id")
+                if reader not in usb_roots:
+                    return real_attest(identity_id=identity_id, binding=binding,
+                                       mountpoint=mountpoint)
+                owner, fp, volume_root = usb_roots[reader]
+                if (reader not in connected or identity_id != owner
+                        or binding.get("identity_id") != owner
+                        or binding.get("enabled") is not True
+                        or binding.get("metadata", {}).get("usb_fingerprint") != fp
+                        or mountpoint != volume_root):
+                    return None
+                fd = os.open(volume_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    info = os.fstat(fd)
+                    mount_id = mount_ops._fd_mount_id(fd)
+                    if (info.st_dev, info.st_ino, mount_id) != pins[reader]:
+                        return None
+                    return mount_ops.LinuxUsbMount(owner, reader, fp, volume_root,
+                        "ext4", os.major(info.st_dev), os.minor(info.st_dev),
+                        int(time()), mount_id)
+                finally:
+                    os.close(fd)
+
+            def discover():
+                results = []
+                for reader in sorted(connected):
+                    owner, fp, volume_root = usb_roots[reader]
+                    proof = attest(identity_id=owner, binding=db.device_binding_get(reader),
+                                   mountpoint=volume_root)
+                    if proof is not None:
+                        results.append(discovery.MountedUsbVolume(fp, volume_root,
+                            proof.filesystem, "Synthetic USB", None, proof.major,
+                            proof.minor, proof.mount_id))
+                return tuple(results)
+
+            def switch_profile(owner, item):
+                window.service.select_identity(owner)
+                window._identity_context_generation += 1
+                window._account_context_generation += 1
+                window.navigate("readers")
+                window._library_entries_cache = [item]
+                window._render_readers()
+                assert window._reader_scope_identity == owner
+
+            def setup_usb(reader):
+                connected.add(reader)
+                select_reader(reader)
+                header("reader-setup-directory").emit("clicked")
+                setup_dialog = dialog_with_heading("Initialiser le dossier géré ?")
+                setup_dialog.emit("response", "setup")
+                folder = usb_roots[reader][2] / "Books" / "Cifereca"
+                wait(lambda: folder.is_dir() and "initialisé" in window._reader_status_label.get_text())
+                other = folder / "third-party.txt"
+                other.write_bytes(b"untouched " + reader.encode("ascii"))
+                return folder, other
+
+            def sync_real(reader):
+                dialog = sync_dialog()
+                assert "1 envoi(s)" in dialog.get_body()
+                dialog.emit("response", "sync")
+                wait(lambda: not getattr(window, "_reader_sync_active", False))
+                saved = db.device_placement_get(reader, artifact_id)
+                target = usb_roots[reader][2] / saved["target_relative_path"]
+                assert saved["observed_state"] == "present"
+                assert target.read_bytes() == payload
+                return target
+
+            with ExitStack() as stack:
+                # The functions are imported by value in these Core modules.
+                # All other code, including independent target scan, executes.
+                for name in (
+                    "device_usb_mount", "device_usb_execution_broker",
+                    "device_usb_managed_scan", "device_usb_target_preflight",
+                    "device_usb_live_source", "device_usb_removal_execute",
+                    "device_usb_removal_review",
+                ):
+                    module = import_module("cifereca.core." + name)
+                    stack.enter_context(patch.object(module, "observe_linux_usb_mount", attest))
+                stack.enter_context(patch.object(discovery, "discover_linux_usb_volumes", discover))
+
+                phase[0] = "native_usb_a"
+                _, third_a = setup_usb("reader-a")
+                assert db.device_placement_get("reader-a", artifact_id)["desired_state"] == "keep"
+                usb_a = sync_real("reader-a")
+                assert third_a.read_bytes() == b"untouched reader-a"
+                assert not final.exists() and intent()["observed_state"] == "missing"
+                report["checks"]["native_reconnected_usb_a_real_copy"] = True
+
+                phase[0] = "native_usb_b"
+                bob_root = configured_identity_roots(core.config, "bob")["bob"][0]
+                bob_root.mkdir(parents=True, exist_ok=True)
+                bob_source = bob_root / "fixture.epub"
+                bob_source.write_bytes(payload)
+                bob_placement = db.placement_put({
+                    "artifact_id": artifact_id, "path": str(bob_source),
+                    "identity_id": "bob", "provider_id": "local",
+                    "source_item_id": "bob-reader-book", "state": "present", "metadata": {},
+                })
+                bob_entry = dict(entry, key="bob-reader-book", identity_id="bob",
+                                 placement_id=bob_placement)
+                switch_profile("bob", bob_entry)
+                assert window._reader_device_ids == ("reader-b",)
+                menu, choices = menu_choices(bob_entry)
+                assert "usb-intent:keep:reader-b" in choices
+                assert "usb-intent:keep:reader-a" not in choices
+                assert "usb-intent:keep:" + device not in choices
+                wait(choices["usb-intent:keep:reader-b"].get_mapped)
+                choices["usb-intent:keep:reader-b"].emit("clicked")
+                bob_wish = db.device_placement_get("reader-b", artifact_id)
+                assert bob_wish["desired_state"] == "keep" and bob_wish["observed_state"] == "unknown"
+                menu.get_popover().popdown()
+                window.navigate("readers")
+                window._library_entries_cache = [bob_entry]
+                window._render_readers()
+                _, third_b = setup_usb("reader-b")
+                usb_b = sync_real("reader-b")
+                assert usb_a.read_bytes() == usb_b.read_bytes() == payload
+                report["checks"]["native_usb_b_real_copy_same_sha_other_profile"] = True
+
+                phase[0] = "native_usb_isolation"
+                switch_profile("alice", entry)
+                select_reader("reader-a")
+                assert window.readers_page.select_key("reader-book")
+                # Remove A's real USB copy through both GTK confirmations,
+                # leaving the same SHA on B and all local/third-party files.
+                remove = wait(mapped_intent_button)
+                remove.emit("clicked")
+                wish_dialog = wait(lambda: getattr(window, "_reader_intent_dialog", None))
+                wish_dialog.emit("response", "remove")
+                assert usb_a.exists() and usb_b.exists()
+                dialog = sync_dialog()
+                assert "1 retrait(s)" in dialog.get_body()
+                assert any(isinstance(widget, Gtk.Label) and digest + ".epub" in widget.get_text()
+                           for widget in walk(dialog.get_extra_child()))
+                dialog.emit("response", "sync")
+                wait(lambda: not getattr(window, "_reader_sync_active", False))
+                assert not usb_a.exists()
+                assert db.device_placement_get("reader-a", artifact_id)["observed_state"] == "missing"
+                assert usb_b.read_bytes() == bob_source.read_bytes() == local.read_bytes() == payload
+                assert db.device_placement_get("reader-b", artifact_id)["observed_state"] == "present"
+                assert third_a.read_bytes() == b"untouched reader-a"
+                assert third_b.read_bytes() == b"untouched reader-b"
+                assert third.read_bytes() == b"untouched"
+                report["checks"]["native_three_real_destinations_and_cross_profile_removal_isolation"] = True
         finally:
             manager.services = original_services
 
