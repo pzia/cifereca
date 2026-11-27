@@ -37,6 +37,13 @@ MAX_PIN_DAYS = 30
 MAX_PINS = 16
 
 
+def validate_retention_policy(days, volume):
+    if (type(days) is not int or not 1 <= days <= 365
+            or type(volume) is not int or not MIN_VOLUME_BYTES <= volume <= DEFAULT_VOLUME_BYTES):
+        raise VaultError("vault_retention_invalid")
+    return days, volume
+
+
 def _metadata(value):
     if not value:
         return "", ""
@@ -190,11 +197,7 @@ class CoreCaptureVault:
         self._maintenance = None
 
     def _policy(self):
-        days, volume = self._policy_source()
-        if (type(days) is not int or not 1 <= days <= 365
-                or type(volume) is not int or not MIN_VOLUME_BYTES <= volume <= DEFAULT_VOLUME_BYTES):
-            raise VaultError("vault_retention_invalid")
-        return days, volume
+        return validate_retention_policy(*self._policy_source())
 
     def maintain(self, *, reserve=False, reserve_bytes=None, now=None):
         with self._lock:

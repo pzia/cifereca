@@ -266,6 +266,13 @@ class DiagnosticsHttpPolicyBroker(Protocol):
 
 
 @runtime_checkable
+class DiagnosticsCaptureRetentionBroker(Protocol):
+    """Optional Core-owned common capture retention settings."""
+    def capture_retention_policy(self) -> Mapping[str, int]: ...
+    def set_capture_retention_policy(self, days: int, volume_bytes: int) -> Mapping[str, int]: ...
+
+
+@runtime_checkable
 class LibraryNamingBroker(Protocol):
     def preview(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str: ...
 

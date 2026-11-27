@@ -1262,6 +1262,7 @@ class PrivateReviewPanel:
 
         def deliver(ok, rows):
             self._private_labels.clear()
+            self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
             self.session_list.remove_all()
             if not ok:
                 self.status.set_label("Coffre commun inaccessible : clé, archive ou permissions.")

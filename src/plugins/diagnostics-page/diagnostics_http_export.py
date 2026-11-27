@@ -199,7 +199,11 @@ class HTTPTraceExport:
                 if self.archive_source is None:
                     self.broker.export_http_trace(destination)
                 else:
-                    if self._source() != source:
+                    # The worker must not read GTK selection widgets.
+                    # Selection changes invalidate the immutable source token
+                    # on the GTK thread; the broker reports current policy.
+                    if (self._chosen_source != source
+                            or self._status().get("include_binary") != source[1]):
                         return False
                     self.vault.export_http_archive(source[0], destination, confirmed=True)
                 return True
@@ -293,6 +297,27 @@ class HTTPVaultArchive:
         self.pin.connect("clicked", lambda *_: self._pin(True))
         self.unpin.connect("clicked", lambda *_: self._pin(False))
         self.delete.connect("clicked", self._delete)
+        self.retention_days = self.retention_mib = self.retention_apply = None
+        if (callable(getattr(broker, "capture_retention_policy", None))
+                and callable(getattr(broker, "set_capture_retention_policy", None))):
+            try:
+                policy = broker.capture_retention_policy()
+                self.retention_days = gtk.SpinButton.new_with_range(1, 365, 1)
+                self.retention_mib = gtk.SpinButton.new_with_range(8, 128, 1)
+                self.retention_days.set_value(policy["days"])
+                self.retention_mib.set_value(policy["volume_bytes"] / (1024 * 1024))
+                self.retention_apply = gtk.Button(label="Appliquer les limites de rétention du coffre")
+                for widget in (
+                    gtk.Label(label="Rétention automatique : durée en jours", xalign=0),
+                    self.retention_days,
+                    gtk.Label(label="Volume du coffre en Mio (les épingles restent bornées)", xalign=0),
+                    self.retention_mib,
+                    self.retention_apply,
+                ):
+                    container.append(widget)
+                self.retention_apply.connect("clicked", self._apply_retention)
+            except Exception:
+                self.retention_days = self.retention_mib = self.retention_apply = None
         self._controls()
 
     def _selected(self):
@@ -311,6 +336,10 @@ class HTTPVaultArchive:
         self.unpin.set_sensitive(selected)
         self.delete_confirm.set_sensitive(selected)
         self.delete.set_sensitive(selected and self.delete_confirm.get_active())
+        if self.retention_apply is not None:
+            self.retention_days.set_sensitive(idle)
+            self.retention_mib.set_sensitive(idle)
+            self.retention_apply.set_sensitive(idle)
         self.exporter.refresh()
 
     def _selection_changed(self, *_):
@@ -382,6 +411,15 @@ class HTTPVaultArchive:
             self._submit("Modifier l’épingle HTTP",
                          lambda: self.vault.pin(self.scope, sid, pinned=pinned, confirmed=True),
                          lambda _: self._list(preferred=sid))
+
+    def _apply_retention(self, *_):
+        days = self.retention_days.get_value_as_int()
+        volume = self.retention_mib.get_value_as_int() * 1024 * 1024
+        self._submit(
+            "Configurer la rétention du coffre",
+            lambda: self.broker.set_capture_retention_policy(days, volume),
+            lambda _: self.status.set_label("Limites de rétention enregistrées ; purge automatique."),
+        )
 
     def _delete(self, *_):
         sid = self._selected()

@@ -73,6 +73,11 @@ def preserve_http_capture_preference(data, *, current):
         diagnostics = {}
         data["diagnostics"] = diagnostics
     diagnostics["http_capture_include_binary"] = http_capture_include_binary(current)
+    # These settings are immediate Core-owned preferences as well. A Settings
+    # dialog opened before their modification must not overwrite them.
+    diagnostics["capture_retention_days"] = current.get("diagnostics.capture_retention_days", 90)
+    diagnostics["capture_retention_bytes"] = current.get(
+        "diagnostics.capture_retention_bytes", 128 * 1024 * 1024)
     return data
 
 
@@ -354,7 +359,9 @@ def project_archived_http_zip(payload, *, include_binary, source_session_ref):
                     if body.get("blob") != name or name not in names:
                         raise ValueError("invalid_http_archive")
                     data = archive.read(name)
-                    if (len(data) != body.get("stored_bytes")
+                    if (type(body.get("observed_bytes")) is not int
+                            or len(data) > body["observed_bytes"]
+                            or len(data) != body.get("stored_bytes")
                             or hashlib.sha256(data).hexdigest() != body.get("sha256")):
                         raise ValueError("invalid_http_archive")
                     expected.add(name)
