@@ -39,14 +39,15 @@ jobs:
           report = {"selected_shards": sorted(selected), "missing_shards": sorted(set(range(8))-selected), "refs": refs, "shards": {}, "totals": {}}
           inventories = {a: subprocess.check_output(["git","ls-tree","-r","--name-only",sha,"tests"],text=True).splitlines() for a,sha in refs.items()}
           def junit(path):
-              cases = ET.parse(path).findall(".//testcase")
+              tree = ET.parse(path)
+              cases = tree.findall(".//testcase")
               keys = [(c.get("classname"),c.get("name")) for c in cases]
               assert all(all(k) for k in keys)
               def state(c):
                   return next((s for s in ("error","failure","skipped") if c.find(s) is not None),"passed")
               counts = collections.Counter(zip(keys,map(state,cases)))
               assert not any(s in ("error","failure") for _,s in counts), path
-              return counts, sum(float(c.get("time","0")) for c in cases)
+              return counts, sum(float(c.get("time","0")) for c in cases), sum(float(t.get("time","0")) for t in tree.findall(".//testsuite"))
           def serial(counter):
               return [{"class":k[0],"name":k[1],"status":s,"count":n} for (k,s),n in sorted(counter.items())]
           def arcpath(p):
@@ -66,16 +67,21 @@ jobs:
                   expected = {p for p in inventories[arm] if p.endswith(".py") and pathlib.PurePosixPath(p).name.startswith("test") and int(hashlib.sha256(p.encode()).hexdigest(),16)%8==shard}
                   listed = (folder/f"{arm}.files").read_text().splitlines()
                   assert set(listed)==expected and len(listed)==len(expected), (arm,shard)
-                  plain, jt = junit(folder/f"{arm}.plain.xml")
-                  cov, ct = junit(folder/f"{arm}.coverage.xml")
+                  plain, jt, pt = junit(folder/f"{arm}.plain.xml")
+                  cov, ct, cst = junit(folder/f"{arm}.coverage.xml")
                   assert plain == cov, (arm,shard,"plain/coverage mismatch")
                   assert not set(allcases[arm]) & set(plain), (arm,shard,"cross-shard duplicate")
                   allcases[arm].update(plain)
                   parsed[arm] = plain
                   stats = collections.Counter()
                   for (_,s),n in plain.items(): stats[s]+=n
-                  timings = {kind:float(next(line.split()[1] for line in (folder/f"{arm}.{kind}.time").read_text().splitlines() if line.startswith("real "))) for kind in ("plain","coverage")}
-                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings}
+                  timings = {}
+                  for kind in ("plain","coverage"):
+                      clock = folder/f"{arm}.{kind}.time"
+                      timings[kind] = float(next(line.split()[1] for line in clock.read_text().splitlines() if line.startswith("real "))) if clock.is_file() else None
+                  if any(v is None for v in timings.values()):
+                      print("MISSING external wall clock",arm,shard,timings)
+                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings,"pytest_suite_seconds":{"plain":pt,"coverage":cst}}
                   totals[arm].update(stats)
                   dbpath = folder/f"{arm}.coverage"
                   con = sqlite3.connect(dbpath.as_uri()+"?mode=ro",uri=True)
@@ -87,7 +93,7 @@ jobs:
               rec["added_or_changed_status"] = serial(parsed["B"]-parsed["A"])
               print("SHARD",shard, json.dumps(rec))
           for arm in refs:
-              report["totals"][arm] = {"cases":dict(totals[arm]),"runner_seconds":{k:sum(r[arm]["wall_seconds"][k] for r in report["shards"].values()) for k in ("plain","coverage")},"distinct_arcs":aggregate.execute("SELECT count(*) FROM arcs WHERE arm=?",(arm,)).fetchone()[0]}
+              report["totals"][arm] = {"cases":dict(totals[arm]),"runner_seconds":{k:sum(r[arm]["wall_seconds"][k] for r in report["shards"].values()) if all(r[arm]["wall_seconds"][k] is not None for r in report["shards"].values()) else None for k in ("plain","coverage")},"pytest_suite_seconds":{k:sum(r[arm]["pytest_suite_seconds"][k] for r in report["shards"].values()) for k in ("plain","coverage")},"distinct_arcs":aggregate.execute("SELECT count(*) FROM arcs WHERE arm=?",(arm,)).fetchone()[0]}
           # Only compare line-number arcs on byte-identical source files.
           trees = {}
           for arm,sha in refs.items():
