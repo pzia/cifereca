@@ -40,11 +40,19 @@ def test_scoped_broker_restart_and_fail_closed_key_loss(tmp_path):
     assert b"instance-a" not in stored_file.read_bytes()
     assert b.sessions(SCOPE_A) == ()
     assert a.sessions(SCOPE_B) == ()
+    before = stored_file.read_bytes()
     for port, scope in ((b, SCOPE_A), (a, SCOPE_B)):
         with pytest.raises(VaultError, match="vault_scope_denied"):
             port.read(scope, sid)
         with pytest.raises(VaultError, match="vault_scope_denied"):
             port.delete(scope, sid, confirmed=True)
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.set_label(scope, sid, "forbidden")
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.pin(scope, sid, pinned=True, confirmed=True)
+    assert stored_file.read_bytes() == before
+    assert a.read(SCOPE_A, sid).summary.label == ""
+    assert not a.read(SCOPE_A, sid).summary.pinned_until
     a = service(tmp_path).for_plugin(RECORDER)
     assert a.read(SCOPE_A, sid).payload == b"fictional private HTTP observation"
     assert a.sessions(SCOPE_A)[0].source_session_ref == "fictional-session"

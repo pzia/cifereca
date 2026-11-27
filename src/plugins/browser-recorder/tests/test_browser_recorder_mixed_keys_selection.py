@@ -1,4 +1,4 @@
-"""Common vault: Recorder cannot enumerate or open Diagnostics sessions."""
+"""Recorder review cannot enumerate or open sessions outside its scope."""
 from types import SimpleNamespace as NS
 from hashlib import sha256
 
@@ -11,12 +11,15 @@ import browser_recorder_review_ui as review_ui
 from test_browser_recorder_review_ui import FakeTasks, Gtk, GLib, ORIGIN, new_test_vault
 
 
-def test_other_producer_never_listed_or_opened(tmp_path):
+def test_other_scope_never_listed_or_opened(tmp_path):
     pytest.importorskip("cryptography")
     core, vault = new_test_vault(tmp_path)
-    other = core.for_plugin("ui.page.diagnostics")
-    foreign = other.begin(CaptureScope(), "fixture-diagnostics", consented=True)
-    foreign.save(b"fictional diagnostics", "completed", force=True)
+    # A different account scope of the same producer; cross-producer isolation
+    # is tested at the Core broker boundary, not by coupling plugin suites.
+    other = core.for_plugin("ui.page.browser-recorder")
+    scope = CaptureScope("fixture", "instance", "account", "identity")
+    foreign = other.begin(scope, "fixture-other-scope", consented=True)
+    foreign.save(b"fictional scoped capture", "completed", force=True)
     foreign_path = tmp_path / "vault" / (foreign.capture_id + ".cbrv")
     before = sha256(foreign_path.read_bytes()).digest()
     trace = PrivateHttpTrace((ORIGIN,))
