@@ -36,7 +36,8 @@ def make_session(credential, username, *, mode="full"):
     def handler(request):
         calls.append((request.method, request.url.host, request.url.path))
         if str(request.url) == ACTIVITY:
-            if mode == "direct" or request.headers.get("cookie") == "reader=synthetic":
+            if (mode == "direct" or request.headers.get("cookie") == "reader=synthetic"
+                    or (mode == "no-saml" and ("POST", "authentification.bnf.fr", "/login") in calls)):
                 return httpx.Response(200, text=ACT, headers={"content-type": "text/html"})
             return httpx.Response(302, headers={
                 "location": "https://idppub.bnf.fr/idp/profile/SAML2/Redirect/SSO"})
