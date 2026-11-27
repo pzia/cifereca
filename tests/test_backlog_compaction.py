@@ -135,6 +135,33 @@ class Tests(unittest.TestCase):
                 c.collect_closure(self.api, event, HEAD)
         self.assertEqual(self.api.writes, [])
 
+    def test_closed_members_any_priority_or_reason(self):
+        event = self.staging_issue()
+        event["body"] = self.api.issue["body"] = "<!-- backlog-staging-v1: 42 ; public -->"
+        original = self.api.get
+        for reason in ("completed", "not_planned", "duplicate", None):
+            for labels in ([], [{"name": "P0"}], [{"name": "P2"}, {"name": "PU"}]):
+                child = dict(self.api.issue, number=42, id=42, body="Historical evidence",
+                             comments=0, state_reason=reason, labels=labels)
+                def get(path):
+                    if "/sub_issues?" in path:
+                        return []
+                    if path == "/issues/42":
+                        return dict(child)
+                    return original(path)
+                with self.subTest(reason=reason, labels=labels), patch.object(self.api, "get", side_effect=get):
+                    manifest = c.collect_closure(self.api, event, HEAD)
+                    self.assertEqual(manifest["snapshots"][0]["issue"]["state_reason"], reason)
+                    self.assertEqual(manifest["snapshots"][0]["issue"]["labels"], sorted(l["name"] for l in labels))
+                    child["state"] = "open"
+                    with self.assertRaisesRegex(c.Refusal, "unexpected issue state"):
+                        c.collect_closure(self.api, event, HEAD)
+                    child["state"] = "closed"
+                    child["body"] = "Corpus transféré — P0 #99 (consolidation #8195)."
+                    with self.assertRaisesRegex(c.Refusal, "already transferred"):
+                        c.collect_closure(self.api, event, HEAD)
+        self.assertEqual(self.api.writes, [])
+
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:
