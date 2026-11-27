@@ -20,7 +20,9 @@ from ..models import Account
 from ..providers.base import ProviderDescriptor
 from .book_cover_projection import CoverDocumentScope
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
-from .notice_c_cover_index import _db_key, _decode, is_canonical_cover_document
+from .notice_c_cover_index import (
+    _db_key, _decode, canonical_cover_document_ref, is_canonical_cover_document,
+)
 from .notice_cover_repository import _checked_source_state, _opaque_key
 from .search_orchestration import SearchReadScope
 from .notice_c_authenticated_web_retention import (
@@ -66,6 +68,28 @@ def _native_reader_scope(scope, service):
             and type(scope.source_epoch) is int and scope.source_epoch >= 0)
 
 
+def _catalogue_principal(state, descriptor, account, session_epoch):
+    """Optional opaque proof of one independently authenticated principal.
+
+    This is equality of documented login identity, not authorization or
+    cross-profile account selection. Read initialized memory only; no
+    provider callback, credential read, network or durable fingerprint.
+    """
+    scheme = descriptor.authenticated_catalogue_principal_scheme_v1
+    if (type(scheme) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", scheme) is None):
+        return None
+    item = state.get("_authenticated_catalogue_principal_v1")
+    if (type(item) is not tuple or len(item) != 4
+            or type(item[0]) is not str or item[0] != scheme
+            or type(session_epoch) not in (int, str)
+            or type(item[1]) is not type(session_epoch) or item[1] != session_epoch
+            or type(account) is not Account or item[2] is not account
+            or type(item[3]) is not bytes or len(item[3]) != 32):
+        return None
+    return item[3]
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _Binding:
     document: CoverDocumentScope
@@ -74,6 +98,7 @@ class _Binding:
     descriptor: ProviderDescriptor
     connection_epoch: int
     session_epoch: int | str | None
+    principal: bytes | None = field(default=None, repr=False)
 
     def current(self, service, scope):
         try:
@@ -99,6 +124,9 @@ class _Binding:
                 and state.get("connected") is True and state.get("_closed") is not True
                 and type(state.get("_epoch")) is type(self.session_epoch)
                 and state.get("_epoch") == self.session_epoch
+                and type(self.principal) in (bytes, type(None))
+                and _catalogue_principal(state, self.descriptor, self.account,
+                                         self.session_epoch) == self.principal
                 and exact(self.account)
                 and sum(exact(a) for a in accounts) == 1
                 and sum(a is self.account for a in accounts) == 1
@@ -156,7 +184,8 @@ def _capture(service, scope, doc):
         )
         if not _epoch(connection) or not valid_generation:
             return None
-        binding = _Binding(doc, candidates[0], session, descriptor, connection, session_epoch)
+        binding = _Binding(doc, candidates[0], session, descriptor, connection, session_epoch,
+                           _catalogue_principal(state, descriptor, candidates[0], session_epoch))
         return binding if binding.current(service, scope) else None
     except Exception:
         return None
@@ -232,6 +261,7 @@ def _read(service, document, bindings):
             return None, ()
         canonical = _decode(row[0], document)
         pairs = []
+        seen_native_principals = set()
         members = {m.source_ref: m for m in canonical.sources}
         for binding in bindings:
             doc = binding.document
@@ -253,6 +283,21 @@ def _read(service, document, bindings):
             except (ValueError, TypeError, KeyError, AttributeError):
                 continue
             for url in links:
+                # Deduplicate only SAME proven native resource, SAME
+                # authenticated principal, SAME stable link. Both exact
+                # bindings remain in the menu's revalidation set. Never
+                # lend authority from the other declaration or owner.
+                proof = member.relation_proof_id
+                if (type(binding.principal) is bytes and len(binding.principal) == 32
+                        and re.fullmatch(r"private-catalogue:[0-9a-f]{64}", proof) is not None
+                        and canonical_cover_document_ref(
+                            "edition:" + proof.split(":", 1)[1]) == document):
+                    equivalence = (doc.provider_id,
+                                   binding.descriptor.authenticated_catalogue_principal_scheme_v1,
+                                   binding.principal, proof, url)
+                    if equivalence in seen_native_principals:
+                        continue
+                    seen_native_principals.add(equivalence)
                 choice_id = sha256(json.dumps(
                     ["authenticated-web.v1", document.source_key, canonical.epoch,
                      doc.source_key, member.source_revision, url],
