@@ -4077,6 +4077,7 @@ class Storage:
     def device_usb_reader_formats_set(
         self, *, identity_id: str, device_id: str,
         usb_fingerprint: str, supported_formats: tuple[str, ...],
+        preferred_format: str | None = None,
     ) -> str:
         """Persist a reader's *declared* formats for its exact bound volume.
 
@@ -4094,7 +4095,10 @@ class Storage:
                 or len(supported_formats) > len(_SUFFIX)
                 or any(type(value) is not str or value not in _SUFFIX
                        for value in supported_formats)
-                or len(set(supported_formats)) != len(supported_formats)):
+                or len(set(supported_formats)) != len(supported_formats)
+                or (preferred_format is not None and (
+                    type(preferred_format) is not str or preferred_format not in supported_formats
+                ))):
             raise ValueError("USB reader format declaration invalid")
         if (not 8 <= len(usb_fingerprint) <= 128
                 or any(char not in
@@ -4119,6 +4123,10 @@ class Storage:
                 changed["reader_formats"] = list(supported_formats)
             else:
                 changed.pop("reader_formats", None)
+            if preferred_format is None:
+                changed.pop("reader_preferred_format", None)
+            else:
+                changed["reader_preferred_format"] = preferred_format
             if changed != metadata:
                 db.execute(
                     "UPDATE device_bindings SET metadata_json=?,updated_at=? "
@@ -4176,9 +4184,19 @@ class Storage:
             )
         return placement_id
 
+    def device_usb_send_choice(self, *, identity_id: str, device_id: str,
+                               source_placement_id: str) -> tuple:
+        """One exact existing wish or new preferred local Artifact; no writes."""
+        from .core.device_usb_send_choice import select_reader_send
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN")
+            return select_reader_send(self, db, identity_id=identity_id, device_id=device_id,
+                                      source_placement_id=source_placement_id)
+
     def device_usb_intent_set(
         self, *, identity_id: str, device_id: str, artifact_id: str,
-        desired_state: str,
+        desired_state: str, source_placement_id: str | None = None,
+        expected_send_choice: tuple | None = None,
     ) -> str:
         """Store a user-declared USB intention; never touch device/files.
 
@@ -4204,6 +4222,15 @@ class Storage:
             ).fetchone()
             if binding is None or binding[0] != identity_id:
                 raise ValueError("device intent requires exact bound identity")
+            if source_placement_id is not None or expected_send_choice is not None:
+                from .core.device_usb_send_choice import select_reader_send
+                if (desired_state != "keep" or type(source_placement_id) is not str
+                        or type(expected_send_choice) is not tuple
+                        or len(expected_send_choice) != 4
+                        or expected_send_choice[0] != artifact_id
+                        or select_reader_send(self, db, identity_id=identity_id, device_id=device_id,
+                            source_placement_id=source_placement_id) != expected_send_choice):
+                    raise ValueError("reader send choice changed")
             current = db.execute(
                 "SELECT device_placement_id,metadata_json FROM device_placements "
                 "WHERE device_id=? AND artifact_id=?",

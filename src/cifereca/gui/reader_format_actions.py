@@ -48,6 +48,9 @@ def request_reader_formats(window, *, Gtk, Adw=None) -> None:
         if "reader_formats" in metadata and declaration is None:
             raise ValueError("reader_formats_corrupt")
         selected = set(declaration.supported_formats) if declaration else set()
+        preferred = metadata.get("reader_preferred_format")
+        if preferred is not None and (type(preferred) is not str or preferred not in selected):
+            raise ValueError("reader_preference_invalid")
     except (ValueError, TypeError, KeyError, OSError, AttributeError):
         if _still_current(window, scope):
             window.show_error(
@@ -66,7 +69,9 @@ def request_reader_formats(window, *, Gtk, Adw=None) -> None:
         window, "Formats de la liseuse",
         "Cochez uniquement les formats que vous déclarez compatibles avec "
         "cet appareil et ce volume USB. Ils ne sont pas vérifiés : aucun "
-        "droit de copie, scan ni transfert n'est autorisé par ce réglage.",
+        "droit de copie, scan ni transfert n'est autorisé par ce réglage. "
+        "Le format préféré vaut pour les prochains ajouts, parmi les variantes locales "
+        "existantes. Les souhaits et copies déjà réservés ne sont jamais remplacés.",
     )
     fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     controls = {}
@@ -75,6 +80,12 @@ def request_reader_formats(window, *, Gtk, Adw=None) -> None:
         checkbox.set_active(fmt in selected)
         fields.append(checkbox)
         controls[fmt] = checkbox
+    fields.append(Gtk.Label(label="Format préféré des prochains ajouts", xalign=0))
+    preference_values = (None,) + tuple(fmt for fmt, _ in _FORMATS)
+    preference = Gtk.DropDown.new_from_strings(
+        ["Fichier sélectionné (pas de préférence)"] + [title for _, title in _FORMATS])
+    preference.set_selected(preference_values.index(preferred))
+    fields.append(preference)
     dialog.set_extra_child(fields)
     dialog.add_response("cancel", "Annuler")
     dialog.add_response("confirm", "Enregistrer")
@@ -103,11 +114,18 @@ def request_reader_formats(window, *, Gtk, Adw=None) -> None:
             formats = tuple(
                 fmt for fmt, _title in _FORMATS if controls[fmt].get_active()
             )
+            index = preference.get_selected()
+            if type(index) is not int or not 0 <= index < len(preference_values):
+                raise ValueError("reader_preference_invalid")
+            preferred_format = preference_values[index]
+            if preferred_format is not None and preferred_format not in formats:
+                raise ValueError("reader_preference_not_compatible")
             if not current():
                 return
             storage.device_usb_reader_formats_set(
                 identity_id=identity_id, device_id=device_id,
                 usb_fingerprint=fingerprint, supported_formats=formats,
+                preferred_format=preferred_format,
             )
             if current():
                 window._render_readers()

@@ -388,6 +388,9 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             + ", ".join(value.upper() for value in declared.supported_formats)
             if declared else "Formats liseuse non déclarés"
         )
+        preferred = binding["metadata"].get("reader_preferred_format")
+        if declared and preferred in declared.supported_formats:
+            format_summary += " · Préférence prochains ajouts : " + preferred.upper()
         window._reader_status_label.set_label(
             f"{snapshot.total_local} livre(s) visibles · "
             f"{snapshot.wanted_keep} à mettre · "

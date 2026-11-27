@@ -112,6 +112,7 @@ def synchronize_usb_reader(
         return UsbSyncResult("blocked")
     copied = removed = pending = failed = 0
     processed = copied_bytes = 0
+    recovery_stop = False
     total = sum(row.action in ("upload_candidate", "remove_candidate") for row in preview.rows)
     def notify():
         if progress is not None:
@@ -124,12 +125,27 @@ def synchronize_usb_reader(
     def interrupted():
         return UsbSyncResult("cancelled", copied=copied, removed=removed,
                              pending=pending + total - processed, failed=failed)
-    notify()
-    for row in preview.rows:
+    def scope_stop():
         if stopped():
             return interrupted()
         if check_cancelled is not None:
-            check_cancelled()
+            try:
+                check_cancelled()
+            except Exception:
+                # A revocation after a committed item must not erase that
+                # receipt from the batch result. Never continue or scan
+                # under a revoked execution scope.
+                if stopped():
+                    return interrupted()
+                return UsbSyncResult("partial" if copied or removed else "blocked",
+                    copied=copied, removed=removed, pending=pending + total - processed,
+                    failed=failed, observed=False)
+        return None
+    notify()
+    for row in preview.rows:
+        halted = scope_stop()
+        if halted is not None:
+            return halted
         if row.action not in ("upload_candidate", "remove_candidate"):
             if row.action not in ("none", "up_to_date", "noop", "skip"):
                 pending += 1
@@ -145,6 +161,8 @@ def synchronize_usb_reader(
                     or (authorization is None and policy_verifier is not None)
                     or type(placement_id) is not str or not placement_id):
                 pending += 1
+                processed += 1
+                notify()
                 continue
             result = execute_usb_library_copy(
                 storage=storage, journal=journal, lock_root=lock_root,
@@ -168,12 +186,17 @@ def synchronize_usb_reader(
             else:
                 failed += 1
                 if result.status == "recovery_required":
+                    processed += 1
+                    notify()
+                    recovery_stop = True
                     break
         else:
             if (type(consent) is not UsbRemovalConsent
                     or consent.artifact_id != row.artifact_id
                     or consent.identity_id != identity_id or consent.device_id != device_id):
                 pending += 1
+                processed += 1
+                notify()
                 continue
             def removal_profile() -> tuple[str, int]:
                 profile = current_profile()
@@ -190,6 +213,9 @@ def synchronize_usb_reader(
             else:
                 failed += 1
                 if result.status == "recovery_required":
+                    processed += 1
+                    notify()
+                    recovery_stop = True
                     break
 
         processed += 1
@@ -200,8 +226,9 @@ def synchronize_usb_reader(
     # the originating GTK selection was revoked *during* inode hashing.
     # That refusal is not permission to persist a fresh observation under a
     # now-stale reader selection. Recheck before any SQLite observation write.
-    if check_cancelled is not None:
-        check_cancelled()
+    halted = scope_stop()
+    if halted is not None:
+        return halted
     # Even an all-noop delta updates the canonical observed timestamp after
     # a successful physical scan; a copy receipt alone is not presence.
     verification = record_verified_usb_observation(
@@ -209,6 +236,8 @@ def synchronize_usb_reader(
         mountpoint=mountpoint,
     )
     observed = verification.status == "recorded"
+    if recovery_stop:
+        pending += total - processed
     if not observed:
         failed += 1
     return UsbSyncResult(

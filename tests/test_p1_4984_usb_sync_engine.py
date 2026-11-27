@@ -129,3 +129,26 @@ def test_noop_still_persists_verified_observation(copy, tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "record_verified_usb_observation",
                         lambda **_: SimpleNamespace(status="recorded"))
     assert engine.synchronize_usb_reader(**call).observed is True
+
+
+def test_revocation_after_completed_copy_keeps_counts_and_refuses_observation(copy, tmp_path, monkeypatch):
+    args, _, _, _ = copy
+    consent = args["consent"]
+    call = _arguments(tmp_path, consent, args["rights"])
+    monkeypatch.setattr(engine, "inspect_usb_dry_run", lambda **_: UsbDryRun(
+        consent.identity_id, consent.device_id, "scanned", True, 1,
+        (_row(consent.artifact_id, "upload_candidate"),),
+    ))
+    monkeypatch.setattr(engine, "SqliteUsbOperationJournal", lambda _: object())
+    revoked = [False]
+    def committed(**_):
+        revoked[0] = True
+        return UsbCopyExecution("completed", "committed")
+    def check():
+        if revoked[0]:
+            raise ValueError("revoked")
+    monkeypatch.setattr(engine, "execute_usb_library_copy", committed)
+    monkeypatch.setattr(engine, "record_verified_usb_observation",
+                        lambda **_: pytest.fail("revoked scope cannot observe"))
+    result = engine.synchronize_usb_reader(**call, check_cancelled=check)
+    assert result == engine.UsbSyncResult("partial", copied=1, observed=False)

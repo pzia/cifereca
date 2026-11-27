@@ -48,6 +48,7 @@ class ActivityEntry:
             'source-sync': 'Synchronisation d’une source',
             'opening-sync': 'Synchronisation au démarrage',
             'deep-sync': 'Vérification de la bibliothèque',
+            'reader-sync': 'Synchronisation de liseuse',
             'borrow': 'Emprunt',
             'obtain': 'Obtention d’un livre',
             'loan-acquisition': 'Obtention ACSM',

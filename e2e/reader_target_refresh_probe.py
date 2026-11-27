@@ -53,6 +53,15 @@ COPY_VERDICTS = frozenset({
     "copy_worker_timeout",
     "copy_result_unclassified",
     "copy_completed_physical_mismatch",
+    "copy_delivery_timeout",
+    "copy_result_count_mismatch",
+    "copy_sync_receipt_mismatch",
+    "usb_scan_unverified",
+    "usb_scope_changed",
+    "usb_observation_unavailable",
+    "usb_complete_scan_observed_only",
+    "observation_not_reached",
+    "observation_result_unclassified",
     "usb_copy_source_unverified",
     "usb_copy_directory_unavailable",
     "usb_copy_request_invalid",
@@ -799,10 +808,12 @@ def main() -> int:
             from cifereca.core.device_usb_copy_supervisor import UsbCopyExecution
             from cifereca.core.device_usb_sync_engine import UsbSyncResult
             original_copy = sync_engine.execute_usb_library_copy
+            original_observe = sync_engine.record_verified_usb_observation
+            from cifereca.core.device_usb_observation_record import UsbRecordedObservation
 
             def run_held(*, cancel):
                 entered, release = Event(), Event()
-                copy_verdicts, sync_verdicts = [], []
+                copy_verdicts, sync_verdicts, observations = [], [], []
 
                 def observed_copy(**kwargs):
                     outcome = original_copy(**kwargs)
@@ -810,16 +821,33 @@ def main() -> int:
                         copy_verdicts.append(outcome)
                     return outcome
 
+                def observed_scan(**kwargs):
+                    outcome = original_observe(**kwargs)
+                    if type(outcome) is UsbRecordedObservation:
+                        observations.append(outcome)
+                    return outcome
+
                 def closed_verdict():
-                    if copy_verdicts:
-                        outcome = copy_verdicts[-1]
-                        if outcome.status != "completed":
-                            return (outcome.reason if outcome.reason in COPY_VERDICTS
-                                    else "copy_result_unclassified")
-                        return "copy_completed_physical_mismatch"
+                    if copy_verdicts and copy_verdicts[-1].status != "completed":
+                        reason = copy_verdicts[-1].reason
+                        return reason if reason in COPY_VERDICTS else "copy_result_unclassified"
                     if sync_verdicts:
-                        candidate = "sync_" + sync_verdicts[-1].status
-                        return candidate if candidate in COPY_VERDICTS else "copy_result_unclassified"
+                        result = sync_verdicts[-1]
+                        if result.status != "completed":
+                            if observations and observations[-1].status != "recorded":
+                                reason = observations[-1].reason
+                                return reason if reason in COPY_VERDICTS else "observation_result_unclassified"
+                            if copy_verdicts and not observations:
+                                return "observation_not_reached"
+                            candidate = "sync_" + result.status
+                            return candidate if candidate in COPY_VERDICTS else "copy_result_unclassified"
+                        if result != UsbSyncResult("completed", copied=1, observed=True):
+                            return "copy_sync_receipt_mismatch"
+                        if len(copy_verdicts) != 1:
+                            return "copy_result_count_mismatch"
+                        if not final.is_file() or final.read_bytes() != payload:
+                            return "copy_completed_physical_mismatch"
+                        return "sync_completed"
                     return "copy_not_reached"
                 def admit(broker, **kwargs):
                     callback = kwargs["progress"]
@@ -836,7 +864,8 @@ def main() -> int:
                         return result
                     return execute
                 with (patch.object(type(facade), "admit_delta", admit),
-                      patch.object(sync_engine, "execute_usb_library_copy", observed_copy)):
+                      patch.object(sync_engine, "execute_usb_library_copy", observed_copy),
+                      patch.object(sync_engine, "record_verified_usb_observation", observed_scan)):
                     try:
                         if not cancel:
                             phase[0] = "native_copy_admission"
@@ -862,7 +891,7 @@ def main() -> int:
                         wait(lambda: not getattr(window, "_reader_sync_active", False), seconds=12)
                     except AssertionError:
                         if not cancel:
-                            report["closed_copy_result"] = (closed_verdict() if sync_verdicts
+                            report["closed_copy_result"] = ("copy_delivery_timeout" if sync_verdicts
                                                             else "copy_worker_timeout")
                         raise
                 if cancel:
@@ -873,6 +902,7 @@ def main() -> int:
                     assert len(sync_verdicts) == 1 and sync_verdicts[0] == UsbSyncResult(
                         "completed", copied=1, observed=True)
                     assert len(copy_verdicts) == 1 and copy_verdicts[0].status == "completed"
+                    assert len(observations) == 1 and observations[0].status == "recorded"
 
             phase[0] = "native_cancellation"
             run_held(cancel=True)
@@ -882,7 +912,9 @@ def main() -> int:
 
             phase[0] = "native_copy"
             run_held(cancel=False)
-            assert final.is_file() and final.read_bytes() == local.read_bytes() == payload
+            if not (final.is_file() and final.read_bytes() == local.read_bytes() == payload):
+                report["closed_copy_result"] = "copy_completed_physical_mismatch"
+                raise AssertionError("Native copy bytes differ")
             phase[0] = "native_copy_observation"
             assert intent()["observed_state"] == "present"
             assert intent()["last_observed_at"] is not None

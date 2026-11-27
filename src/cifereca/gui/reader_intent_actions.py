@@ -62,8 +62,20 @@ def append_reader_intent_action(window, detail, book: ReaderLibraryBook, *,
         getattr(window, "_reader_selection_generation", None),
     )
     route_token = getattr(window, "_route_display_token", None)
+    choice = None
     if book.desired_state == "none":
         wished, caption = "keep", "Mettre sur cette liseuse"
+        try:
+            choice = storage.device_usb_send_choice(identity_id=identity_id, device_id=device_id,
+                                                    source_placement_id=book.placement_id)
+        except (ValueError, TypeError, AttributeError, OSError):
+            return False
+        # The existing derivative has its own row for removal or cancellation.
+        # Do not silently introduce a duplicate source wish from this row.
+        if choice[3] is not None:
+            return False
+        if choice[0] != book.artifact_id:
+            caption += " · " + choice[2].upper()
     elif book.desired_state == "keep":
         wished, caption = "remove", "Préparer le retrait…"
     else:
@@ -131,15 +143,27 @@ def append_reader_intent_action(window, detail, book: ReaderLibraryBook, *,
                     or not current()):
                 raise ValueError("reader_intent_scope_changed")
             # A transactional Core storage operation; it does not touch USB.
+            chosen_artifact = book.artifact_id
+            choice_args = {}
+            if choice is not None:
+                if live_binding != binding or storage.device_usb_send_choice(
+                    identity_id=identity_id, device_id=device_id,
+                    source_placement_id=book.placement_id) != choice:
+                    raise ValueError("reader send choice changed")
+                chosen_artifact = choice[0]
+                if choice[1] != book.placement_id:
+                    service.local_book_path(choice[1], identity_id=identity_id)
+                choice_args = {"source_placement_id": book.placement_id,
+                               "expected_send_choice": choice}
             storage.device_usb_intent_set(
                 identity_id=identity_id, device_id=device_id,
-                artifact_id=book.artifact_id, desired_state=wished,
+                artifact_id=chosen_artifact, desired_state=wished, **choice_args,
             )
             if wished == "keep":
                 reserve = getattr(storage, "device_usb_reserve_pending_target", None)
                 if callable(reserve):
                     reserve(identity_id=identity_id, device_id=device_id,
-                            artifact_id=book.artifact_id)
+                            artifact_id=chosen_artifact)
         except Exception:
             if current():
                 window.show_error(
