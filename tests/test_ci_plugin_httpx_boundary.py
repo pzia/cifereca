@@ -40,18 +40,19 @@ def test_core_service_types_errors_and_url_parsing_are_allowed(source):
     assert violations_in_source(source,Path('provider/example.py'))==[]
 
 
-def test_tests_are_excluded_and_only_exact_recorder_package_is_excepted(tmp_path):
+def test_tests_are_excluded_but_recorder_http_stacks_are_checked(tmp_path):
     files={'provider/good.py':'from cifereca.plugin_api import HTTPX_TRANSPORT',
            'provider/tests/mock.py':'import httpx; httpx.Client()',
            'browser-recorder/native.py':'import requests',
+           'browser-recorder/navigation.py':'from playwright.sync_api import sync_playwright',
            'browser-recorder-other/bad.py':'import requests'}
     for relative,content in files.items():
         path=tmp_path/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(content)
     failures,checked,excepted=check_repository(tmp_path)
-    assert checked==2 and excepted==1
-    assert {str(row.path) for row in failures}=={'browser-recorder-other/bad.py'}
-    assert set(AUTONOMOUS_PACKAGES)=={'browser-recorder'}
-    assert 'Browser Recorder' in (ROOT/AUTONOMOUS_PACKAGES['browser-recorder']).read_text()
+    assert checked==4 and excepted==0
+    assert {str(row.path) for row in failures}=={'browser-recorder/native.py', 'browser-recorder-other/bad.py'}
+    assert not AUTONOMOUS_PACKAGES
+    assert 'Browser Recorder' in (ROOT/'docs/HTTP-TRACE.md').read_text()
 
 
 def test_unparseable_production_file_is_not_silently_skipped():

@@ -189,7 +189,7 @@ def _provider_method_name(name: str, providers: set[str]) -> list[str]:
 
 
 def _aliased_getattr_provider_calls(
-    tree: ast.Module, providers: set[str],
+    tree: ast.Module, providers: set[str], make_row=None,
 ) -> list[dict[str, object]]:
     """Detect a unique local getattr alias later invoked as a provider action.
 
@@ -260,13 +260,48 @@ def _aliased_getattr_provider_calls(
                    and isinstance(node.func, ast.Name)
                    and node.func.id == variable
                    and node.lineno > stmt.lineno for node in nodes):
-                findings.append({"line": stmt.lineno, "providers": sorted(matched)})
+                findings.append(make_row(stmt, sorted(matched)) if make_row else
+                                {"line": stmt.lineno, "providers": sorted(matched)})
     return findings
 
 
-def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
+def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS, *, structural: bool = False) -> dict[str, list[dict[str, object]]]:
     """Inventory imports, provider comparisons and executable dispatch maps."""
     tree = ast.parse(content)
+    parents = {child: (node, field)
+               for node in ast.walk(tree)
+               for field, value in ast.iter_fields(node)
+               for child in (value if isinstance(value, list) else [value])
+               if isinstance(child, ast.AST)} if structural else {}
+
+    def row(node: ast.AST, matched: list[str], **extra) -> dict[str, object]:
+        result = {"line": node.lineno, "providers": matched, **extra}
+        if structural:
+            # Structural identity is local to the executable owner and control
+            # branch, not to source line offsets or an aggregate vendor count.
+            context = []
+            cursor = node
+            while cursor in parents:
+                parent, field = parents[cursor]
+                if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    context.append((type(parent).__name__, parent.name))
+                elif isinstance(parent, (ast.If, ast.While, ast.IfExp)):
+                    context.append((type(parent).__name__, field, ast.dump(parent.test)))
+                elif isinstance(parent, (ast.For, ast.AsyncFor)):
+                    context.append((type(parent).__name__, field, ast.dump(parent.iter)))
+                elif isinstance(parent, ast.Match):
+                    context.append(("Match", field, ast.dump(parent.subject)))
+                elif isinstance(parent, ast.match_case):
+                    context.append(("case", field, ast.dump(parent.pattern)))
+                elif isinstance(parent, (ast.Try, ast.TryStar)):
+                    context.append((type(parent).__name__, field))
+                cursor = parent
+            result["signature"] = json.dumps(
+                [list(reversed(context)), ast.dump(node), extra], sort_keys=True,
+                ensure_ascii=True,
+            )
+        return result
+
     names = set(providers)
     constants = _immutable_provider_constants(tree, names)
     module_constants = _immutable_import_module_constants(tree)
@@ -320,14 +355,13 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             if attribute.casefold() in names:
                 matched_dynamic = sorted(set(matched_dynamic) | {attribute.casefold()})
             if matched_dynamic:
-                dynamic_calls.append({"line": node.lineno,
-                                      "providers": matched_dynamic})
+                dynamic_calls.append(row(node, matched_dynamic))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             # Examples: service.sync_kobo_backup(), service.bnf_borrow().
             # Do not treat attribute reads or descriptor metadata as calls.
             matched_methods = _provider_method_name(node.func.attr, names)
             if matched_methods:
-                method_calls.append({"line": node.lineno, "providers": matched_methods})
+                method_calls.append(row(node, matched_methods))
         # Only immediately invoked keyed lookups can prove executable
         # dispatch. Metadata reads and uninvoked .get calls stay neutral.
         if isinstance(node, ast.Call):
@@ -348,14 +382,14 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             else:
                 matched = set()
             if matched:
-                calls.append({"line": node.lineno, "providers": sorted(matched)})
+                calls.append(row(node, sorted(matched)))
         if isinstance(node, ast.Dict):
             matched = _dispatch_table_literal(
                 node, providers=names, functions=functions,
                 constants=constants, hint=id(node) in dispatch_hints,
             )
             if matched:
-                tables.append({"line": node.lineno, "providers": matched})
+                tables.append(row(node, matched))
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
@@ -398,20 +432,20 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             matched = sorted({provider for part in parts for provider in import_names
                               if part == provider or part.startswith(provider + "_")})
             if matched:
-                imports.append({"line": node.lineno, "module": module, "providers": matched})
+                imports.append(row(node, matched, module=module))
         if isinstance(node, ast.Compare):
             values = [node.left, *node.comparators]
             matches = sorted(set().union(*(
                 _literal_providers(value, names, constants) for value in values
             )))
             if matches:
-                dispatches.append({"line": node.lineno, "providers": matches})
+                dispatches.append(row(node, matches))
         if isinstance(node, ast.Match):
             for case in node.cases:
                 matched = sorted(_match_providers(case.pattern, names, constants))
                 if matched:
-                    dispatches.append({"line": case.pattern.lineno, "providers": matched})
-    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names))
+                    dispatches.append(row(case.pattern, matched))
+    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names, row))
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),

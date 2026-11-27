@@ -2,7 +2,7 @@
 
 Compare committed Git objects at the PR's exact base and head. No checkout,
 provider import, network call, local-library read or persistent write.
-Existing debt may decrease, but must not grow per file/provider/kind.
+Existing debt may decrease, but new structural signatures must not appear.
 """
 from __future__ import annotations
 
@@ -35,9 +35,20 @@ def added_signals(
     old_source: str, new_source: str,
     providers: tuple[str, ...] = DEFAULT_PROVIDERS,
 ) -> dict[tuple[str, str], int]:
-    old, new = signal_counts(old_source, providers), signal_counts(new_source, providers)
-    return {key: count - old[key] for key, count in sorted(new.items())
-            if count > old[key]}
+    def signatures(source: str) -> Counter[tuple[str, str, str]]:
+        return Counter(
+            (kind, provider, row["signature"])
+            for kind, rows in inspect_source(source, providers, structural=True).items()
+            for row in rows
+            for provider in row["providers"]
+        )
+    delta = signatures(new_source) - signatures(old_source)
+    # Keep the existing report contract, but compare structural multisets
+    # before aggregating. Removed debt cannot pay for a new decision.
+    counts: Counter[tuple[str, str]] = Counter()
+    for (kind, provider, _signature), count in delta.items():
+        counts[(kind, provider)] += count
+    return dict(sorted(counts.items()))
 
 
 def _git(root: Path, *args: str, missing_ok: bool = False) -> bytes:

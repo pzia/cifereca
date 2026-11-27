@@ -336,3 +336,28 @@ def test_manifest_source_id_coupling_is_rejected_at_exact_git_head(tmp_path):
             f"comparisons:{full_id}": 1,
         },
     }
+
+
+def test_same_provider_count_cannot_compensate_for_changed_decision():
+    old = "if source == 'kobo':\n    pass\n"
+    new = "if account == 'kobo':\n    pass\n"
+    assert added_signals(old, new) == {("comparisons", "kobo"): 1}
+
+
+def test_moved_decision_within_file_has_new_owner():
+    old = "def first(source):\n    return source == 'kobo'\n"
+    new = "def second(source):\n    return source == 'kobo'\n"
+    assert added_signals(old, new) == {("comparisons", "kobo"): 1}
+    assert added_signals(old, "\n# comment\n" + old) == {}
+
+
+def test_same_provider_call_replacement_is_not_paid_by_removed_call():
+    old = "service.kobo_read()\n"
+    new = "service.kobo_write()\n"
+    assert added_signals(old, new) == {("provider_method_calls", "kobo"): 1}
+
+
+def test_identical_condition_moved_to_other_control_branch():
+    old = "if enabled:\n    x = source == 'kobo'\n"
+    new = "if enabled:\n    pass\nelse:\n    x = source == 'kobo'\n"
+    assert added_signals(old, new) == {("comparisons", "kobo"): 1}

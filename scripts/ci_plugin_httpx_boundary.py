@@ -2,7 +2,7 @@
 """Reject autonomous HTTP stacks in production plugins (#3315).
 
 Static import/constructor check, not a sandbox or a universal network detector.
-Tests are excluded; Browser Recorder is the one documented autonomous package.
+Tests are excluded. Browser Recorder's Playwright navigation is not an HTTP stack exemption.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AUTONOMOUS_PACKAGES = {"browser-recorder": "docs/HTTP-TRACE.md"}
+AUTONOMOUS_PACKAGES = {}  # No package-wide exemption; see docs/HTTP-TRACE.md.
 _STACKS = ("urllib.request", "urllib2", "requests", "aiohttp", "urllib3", "http.client")
 _HTTPX_CONSTRUCTORS = {"Client", "AsyncClient", "HTTPTransport", "AsyncHTTPTransport",
                        "BaseTransport", "AsyncBaseTransport"}
@@ -103,9 +103,6 @@ def check_repository(root):
         if any(part in {"tests", "__pycache__", ".venv", "build", "dist"} or part.startswith(".")
                for part in relative.parts):
             continue
-        if relative.parts[0] in AUTONOMOUS_PACKAGES:
-            excepted += 1
-            continue
         checked += 1
         if path.is_symlink():
             findings.append(Violation(relative, 0, "uncheckable_symlink"))
@@ -128,7 +125,7 @@ def main(argv=None):
         print(f"{row.path}:{row.line}: {row.target}: use the Core HTTPX_TRANSPORT service")
     if findings:
         return 1
-    print(f"HTTPX boundary OK: {checked} production files; {excepted} Browser Recorder files excepted (docs/HTTP-TRACE.md)")
+    print(f"HTTPX boundary OK: {checked} production files; {excepted} package-wide exceptions (docs/HTTP-TRACE.md)")
     return 0
 
 

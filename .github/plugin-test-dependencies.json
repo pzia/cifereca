@@ -9,7 +9,13 @@
     "epub_optimizer",
     "home-page",
     "literary-criticism",
+    "maintenance-derived-variants",
     "maintenance-library-audit",
+    "maintenance-library-organizer",
+    "maintenance-local-origin",
+    "maintenance-page",
+    "metadata-age-standard",
+    "provider-biblioaccess",
     "provider-bnf-catalogue",
     "provider-bnf-pret",
     "provider-gallica",
@@ -20,6 +26,7 @@
     "provider-reference",
     "recommendations",
     "runtime-kobo-adept",
+    "storage-usb",
     "transport-http"
   ],
   "dependencies": {
@@ -40,6 +47,12 @@
     ],
     "diagnostics-page": [
       "runtime-kobo-adept"
+    ],
+    "maintenance-page": [
+      "maintenance-derived-variants",
+      "maintenance-library-audit",
+      "maintenance-library-organizer",
+      "maintenance-local-origin"
     ]
   }
 }

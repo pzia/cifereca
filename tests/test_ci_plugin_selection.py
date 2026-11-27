@@ -1471,3 +1471,11 @@ class PluginSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_current_repository_graph_covers_every_package():
+    graph, audited = selector.dependency_graph(ROOT)
+    assert audited == set(graph)
+    assert len(graph) >= 28
+    assert {"maintenance-derived-variants", "maintenance-library-audit",
+            "maintenance-library-organizer", "maintenance-local-origin"} <= graph["maintenance-page"]
