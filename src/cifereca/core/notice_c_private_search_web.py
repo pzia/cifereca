@@ -460,6 +460,12 @@ def persist_authenticated_search_rows(service, rows, *, identity_id):
                         target, proof_id = (relation if relation is not None else (
                             obs.key.edition_id, "private-self:" + _coordinate_digest(doc.source_key),
                         ))
+                        # Factor only identical complete native documentary
+                        # bytes after the same-call parse and relation are admitted.
+                        # Neither account equivalence nor a second writer is inferred.
+                        if relation is not None and packet is not None:
+                            from .notice_cover_repository import share_native_private_documentary_txn
+                            share_native_private_documentary_txn(db, source, edition=target)
                         canonical = _persist_consolidated_cover_source_txn(
                             db, canonical_edition_id=target, source=source,
                             relation_proof_id=proof_id,
