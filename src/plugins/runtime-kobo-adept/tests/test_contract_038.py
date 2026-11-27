@@ -12,7 +12,8 @@ class Contract040Tests(unittest.TestCase):
     def test_manifest_explicit_negotiation_fields(self):
         data = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(data.get("manifest"), 1)
-        self.assertEqual(data.get("package", {}).get("plugin_api"), ">=1.4,<2")
+        # The typed runtime status port was introduced in Plugin API 1.4.9.
+        self.assertEqual(data.get("package", {}).get("plugin_api"), ">=1.4.9,<2")
         self.assertTrue(data.get("plugins"))
         package_version = data["package"]["version"]
         for plugin in data["plugins"]:
