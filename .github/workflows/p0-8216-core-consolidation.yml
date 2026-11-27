@@ -42,14 +42,17 @@ jobs:
               tree = ET.parse(path)
               cases = tree.findall(".//testcase")
               keys = [(c.get("classname"),c.get("name")) for c in cases]
-              assert all(all(k) for k in keys)
+              assert all(k[1] for k in keys), (str(path),"missing JUnit testcase name")
+              # Pytest emits collection-skip records with an empty classname.
+              # Keep the original attribute values (including missing vs empty).
+
               def state(c):
                   return next((s for s in ("error","failure","skipped") if c.find(s) is not None),"passed")
               counts = collections.Counter(zip(keys,map(state,cases)))
               assert not any(s in ("error","failure") for _,s in counts), path
               return counts, sum(float(c.get("time","0")) for c in cases), sum(float(t.get("time","0")) for t in tree.findall(".//testsuite"))
           def serial(counter):
-              return [{"class":k[0],"name":k[1],"status":s,"count":n} for (k,s),n in sorted(counter.items())]
+              return [{"class":k[0],"name":k[1],"status":s,"count":n} for (k,s),n in sorted(counter.items(),key=lambda item:repr(item[0]))]
           def arcpath(p):
               p = p.replace(chr(92),"/")
               if "/src/cifereca/" in p:
@@ -69,8 +72,15 @@ jobs:
                   assert set(listed)==expected and len(listed)==len(expected), (arm,shard)
                   plain, jt, pt = junit(folder/f"{arm}.plain.xml")
                   cov, ct, cst = junit(folder/f"{arm}.coverage.xml")
-                  assert plain == cov, (arm,shard,"plain/coverage mismatch")
-                  assert not set(allcases[arm]) & set(plain), (arm,shard,"cross-shard duplicate")
+                  if plain != cov:
+                      report.setdefault("identity_mismatches",[]).append({"arm":arm,"shard":shard,"plain_only":serial(plain-cov),"coverage_only":serial(cov-plain)})
+                  overlap = set(k for k,_ in allcases[arm]) & set(k for k,_ in plain)
+                  if overlap:
+                      report.setdefault("cross_shard_collisions",[]).append({"arm":arm,"shard":shard,"keys":sorted(overlap,key=repr)})
+                  incomplete = collections.Counter({(k,s):n for (k,s),n in plain.items() if not k[0]})
+                  repeated = collections.Counter({(k,s):n for (k,s),n in plain.items() if n>1})
+                  if incomplete:
+                      print("INCOMPLETE CLASSNAME",arm,shard,json.dumps(serial(incomplete)))
                   allcases[arm].update(plain)
                   parsed[arm] = plain
                   stats = collections.Counter()
@@ -81,7 +91,7 @@ jobs:
                       timings[kind] = float(next(line.split()[1] for line in clock.read_text().splitlines() if line.startswith("real "))) if clock.is_file() else None
                   if any(v is None for v in timings.values()):
                       print("MISSING external wall clock",arm,shard,timings)
-                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings,"pytest_suite_seconds":{"plain":pt,"coverage":cst}}
+                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings,"pytest_suite_seconds":{"plain":pt,"coverage":cst},"incomplete_classname":serial(incomplete),"repeated_junit_keys":serial(repeated),"plain_coverage_equal":plain==cov}
                   totals[arm].update(stats)
                   dbpath = folder/f"{arm}.coverage"
                   con = sqlite3.connect(dbpath.as_uri()+"?mode=ro",uri=True)
@@ -110,6 +120,8 @@ jobs:
           (root/"core-consolidation.json").write_text(json.dumps(report,indent=2))
           print("TOTAL",json.dumps(report["totals"]))
           print("PARTIAL ONLY",report["missing_shards"])
+          if report.get("identity_mismatches") or report.get("cross_shard_collisions"):
+              raise SystemExit("Unresolved JUnit identity mismatches or collisions; report retained")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
