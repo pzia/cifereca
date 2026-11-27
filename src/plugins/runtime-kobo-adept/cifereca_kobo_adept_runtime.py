@@ -18,7 +18,7 @@ from cifereca_kobo_adept_loan_envelope import attested_readonly_loans_list
 import cifereca.plugin_api as plugin_api
 from cifereca.plugin_api import (
     ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
-    PluginContext, UserFacingError,
+    PluginContext, RuntimeStatusSnapshot, UserFacingError,
 )
 
 
@@ -902,7 +902,15 @@ class KoboAdeptRuntime:
             return dict(cached)
         # probe_core returns strictly filtered flags; never expose raw CLI
         # responses, command arguments, paths, stdout or diagnostics.
-        probe = self.probe_core()
+        result = self._project_acquisition_capabilities(self.probe_core())
+        # Only cache successful, resolved probes. Missing executable/plugin
+        # must be visible immediately after an activation or installation.
+        if result.get('available') is True:
+            self._public_acquisition_cache = dict(result)
+            self._public_acquisition_cache_at = now
+        return result
+
+    def _project_acquisition_capabilities(self, probe):
         if type(probe) is not dict:
             return {}
         contract = probe.get('contract')
@@ -959,12 +967,70 @@ class KoboAdeptRuntime:
             'modes': modes,
             'formats': formats,
         }
-        # Only cache successful, resolved probes. Missing executable/plugin
-        # must be visible immediately after an activation or installation.
-        if available:
-            self._public_acquisition_cache = dict(result)
-            self._public_acquisition_cache_at = now
         return result
+
+    def runtime_status(self, *, full: bool = False) -> RuntimeStatusSnapshot:
+        """Translate our own protocol once into the generic descriptive port."""
+        if not self.available():
+            return RuntimeStatusSnapshot(
+                available=False, minimum_supported_contract=self.required_contract,
+                details={"configured_command": self.configured_command(),
+                         "resolved_executable": None, "capabilities": {}},
+            )
+        probe = self.probe() if full else self.probe_core()
+        facts = self._project_acquisition_capabilities(probe)
+        if not facts or facts["available"] is not True:
+            return RuntimeStatusSnapshot(
+                available=False, minimum_supported_contract=self.required_contract,
+                details={"capabilities": {}, "resolved_executable": None},
+            )
+        modes = facts["modes"]
+        delegated = "kobo_delegated" in modes
+        capabilities = facts["capabilities"]
+        download = capabilities.get("download")
+        download = download if type(download) is dict else {}
+        delegated_facts = download.get("kobo")
+        delegated_facts = delegated_facts if type(delegated_facts) is dict else {}
+        declared = probe["contract"].get("capabilities")
+        declared = declared if type(declared) is list else []
+        version = facts["contract_version"]
+        status_error = probe.get("status_error")
+        status_error_code = status_error.get("code") if type(status_error) is dict else None
+        blocking = status_error if full and status_error_code == "config_error" else None
+        details = {
+            "software_version": facts["software_version"] or probe["contract"].get("version", ""),
+            "capabilities": capabilities,
+            "declared_capabilities": declared,
+            "strict_json_stdout": bool((version or 0) >= 7 or "strict_json_stdout" in declared),
+            "resolved_executable": probe.get("resolved_executable"),
+            "resolved_update_executable": probe.get("resolved_update_executable"),
+            "probe_timings_ms": probe.get("probe_timings_ms") or {},
+            "contract_error": probe.get("contract_error"),
+            "capabilities_error": probe.get("capabilities_error"),
+            "status_error": status_error,
+            "config_paths": probe.get("config_paths"),
+            "config_paths_error": probe.get("config_paths_error"),
+            "update_status": probe.get("update_status"),
+            "update_status_error": probe.get("update_status_error"),
+            "status": probe.get("status") or {},
+            "error": probe.get("contract_error") or probe.get("capabilities_error") or blocking,
+        }
+        return RuntimeStatusSnapshot(
+            available=True,
+            compatible=facts["compatible"],
+            operational=facts["operational"] and not bool(blocking),
+            download_available=bool(modes),
+            acsm_available="adobe_adept" in modes,
+            delegated_available=delegated,
+            pinned_delivery_candidate=delegated and delegated_facts.get("pinned_delivery_candidate") is True,
+            separate_content_keys_replay=delegated and delegated_facts.get("separate_content_keys_replay") is True,
+            protected_content_available="kobo_kdrm" in modes,
+            formats=tuple(value.strip().lower() for value in facts["formats"]
+                          if type(value) is str and value.strip()),
+            contract_version=version,
+            minimum_supported_contract=self.required_contract,
+            details=details,
+        )
 
     def probe(self):
         return self.probe_core()
