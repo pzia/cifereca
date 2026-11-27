@@ -123,6 +123,26 @@ Après `LOT_PENDING`, fermer sous pzia un contrôle sans label ni assignation no
 
 La reprise reconstruit le préfixe déterministe depuis le manifeste intégral, vérifie
 le journal exact, tous les textes, les relations et le maître, puis exécute au plus dix
-écritures nouvelles. Un ancien curseur, un écart ou une tranche partiellement appliquée
-sans journal entraîne un refus sûr ; conserver le staging et qualifier manuellement.
+écritures nouvelles. Un ancien curseur ou un écart entraîne un refus sûr.
+
+Après interruption d'une tranche avant son journal PROGRESS ou DONE, conserver
+le staging et le gel. Backlog qualifie le préfixe déjà appliqué, puis ferme sous
+pzia un nouveau contrôle de même titre, avec JSON exact (version 2) :
+
+```json
+{"version":2,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","cursor":0,"applied":3}
+```
+
+`cursor` est le dernier curseur journalisé (0 pour START seul) ; `applied` est
+le nombre total de mutations effectivement appliquées, entre ce curseur et
+la fin de sa tranche. Le workflow vérifie séparément le journal et le préfixe
+intégral, le maître, les identités, les dates monotones des éléments modifiés,
+les relations et les empreintes. Il ne rejoue aucune mutation : il termine
+uniquement la tranche interrompue (journal seul si elle était complète).
+Une divergence, un trou, une ancienne autorisation ou une mutation hors tranche
+est refusé. Les métadonnées non présentes dans le manifeste restent à revoir
+par Backlog. Une lecture REST instable sur le seul horodatage de l'issue peut
+être relue intégralement, au plus trois scans, sans accepter d'autre dérive ;
+le snapshot renvoyé reste exact, non normalisé.
+
 DONE seulement après la dernière tranche. Aucun rerun, aucune purge avant DONE.
