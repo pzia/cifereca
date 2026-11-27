@@ -14,7 +14,7 @@ import time
 import pytest
 pytest.importorskip("cryptography")
 
-import browser_recorder_vault as vault_api
+import cifereca.core.capture_vault as vault_api
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
 from browser_recorder_vault import (
     MIN_STAGING_AGE_SECONDS, PrivateSessionVault, VaultError,

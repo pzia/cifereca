@@ -71,7 +71,7 @@ def test_invalid_session_does_not_destroy_valid_index_rows(tmp_path):
 
 
 def test_snapshot_replacement_counts_only_final_encrypted_bytes(tmp_path, monkeypatch):
-    import browser_recorder_vault as vault_api
+    import cifereca.core.capture_vault as vault_api
 
     vault = PrivateSessionVault(tmp_path / "vault")
     trace = PrivateHttpTrace((ORIGIN,))
