@@ -919,6 +919,7 @@ class LibraryService:
         from copy import deepcopy
         from .identities.directory_migration import DirectoryMigration, DirectoryMigrationError
         from .core.destructive_cleanup_settings import preserve_destructive_cleanup_setting
+        from .http_trace import preserve_http_capture_preference
         old_data = deepcopy(self.config.data)
         draft = deepcopy(self.config); draft.data = deepcopy(data)
         rows = draft.get("identities", [])
@@ -939,8 +940,9 @@ class LibraryService:
                 plan = engine.plan(rows)
                 # General Settings drafts are never authority to change or
                 # restore the dedicated destructive-maintenance preference.
-                self.config.data = preserve_destructive_cleanup_setting(
-                    deepcopy(data), current=self.config,
+                self.config.data = preserve_http_capture_preference(
+                    preserve_destructive_cleanup_setting(deepcopy(data), current=self.config),
+                    current=self.config,
                 )
                 self.config.set("identities", plan["new_identities"])
                 if plan["changes"]:
@@ -960,8 +962,9 @@ class LibraryService:
         except Exception:
             pending = engine.pending()
             if not pending or pending["state"] == "planned":
-                self.config.data = preserve_destructive_cleanup_setting(
-                    old_data, current=self.config,
+                self.config.data = preserve_http_capture_preference(
+                    preserve_destructive_cleanup_setting(old_data, current=self.config),
+                    current=self.config,
                 )
             else:
                 self.config.set("identities", pending["new_identities"])

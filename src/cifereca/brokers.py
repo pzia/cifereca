@@ -1925,6 +1925,34 @@ class DiagnosticsBrokerImpl:
         return support_report_text(self.service, verbose=verbose)
 
 
+class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
+    """Immediate preference write, only supplied to the Diagnostics page."""
+
+    def set_http_trace_include_binary(self, value: bool) -> bool:
+        from copy import deepcopy
+        from .http_trace import HTTP_TRACE, HTTP_CAPTURE_INCLUDE_BINARY
+        from .locking import InterProcessLock
+        from .paths import acquisition_lock_file
+        if type(value) is not bool:
+            raise ValueError("http_capture_preference_invalid")
+        with InterProcessLock(acquisition_lock_file()):
+            cfg = self.service.config
+            draft = deepcopy(cfg)
+            draft.set(HTTP_CAPTURE_INCLUDE_BINARY, value)
+            draft.save()
+            cfg.data = draft.data
+            HTTP_TRACE.set_include_binary(value)
+        return value
+
+
+class DiagnosticsBrokerFactory(DiagnosticsBrokerImpl):
+    """Do not publish the preference writer or the scoping factory to others."""
+
+    def for_plugin(self, plugin_id: str, *, trusted: bool = False):
+        cls = DiagnosticsPageBrokerImpl if plugin_id == "ui.page.diagnostics" else DiagnosticsBrokerImpl
+        return cls(self.service)
+
+
 @dataclass(slots=True)
 class LibraryNamingBrokerImpl:
     service: Any
@@ -1961,7 +1989,7 @@ def build_public_brokers(service: Any, *, task_admission=None) -> dict[str, obje
         "runtime.capabilities": RuntimeCapabilitiesBrokerImpl(service),
         "adept.profiles": AdeptProfileBrokerImpl(service),
         "adept.loans": AdeptLoanBrokerImpl(service),
-        "diagnostics": DiagnosticsBrokerImpl(service),
+        "diagnostics": DiagnosticsBrokerFactory(service),
         "httpx": HTTPX_TRANSPORT,
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,

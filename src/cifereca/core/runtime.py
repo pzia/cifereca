@@ -71,6 +71,8 @@ class CiferecaCore:
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
+        from ..http_trace import HTTP_TRACE, http_capture_include_binary
+        HTTP_TRACE.set_include_binary(http_capture_include_binary(config))
         if notice_age_desktop_config is True:
             if (notice_age_registry is not None or notice_age_search_scope is not None
                     or notice_work_admission is None or no_plugins):
