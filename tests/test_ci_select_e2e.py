@@ -464,6 +464,8 @@ class SelectionTests(unittest.TestCase):
             "native_conflict", "native_confirmation", "native_cancellation",
             "native_copy", "native_idempotence", "native_removal",
             "native_usb_a", "native_usb_b", "native_usb_isolation",
+            "native_usb_discovery", "native_usb_setup_dialog", "native_usb_setup_result",
+            "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation",
         ):
             self.assertIn(f'"{phase}"', runner)
             self.assertIn(f'"{phase}"', source)

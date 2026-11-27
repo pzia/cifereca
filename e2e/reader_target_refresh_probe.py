@@ -42,7 +42,9 @@ STAGES = frozenset({
     "native_copy", "native_copy_admission", "native_copy_progress",
     "native_copy_navigation", "native_copy_result", "native_copy_observation",
     "native_idempotence", "native_removal",
-    "native_usb_a", "native_usb_b", "native_usb_isolation", "finish",
+    "native_usb_a", "native_usb_b", "native_usb_isolation",
+    "native_usb_discovery", "native_usb_setup_dialog", "native_usb_setup_result",
+    "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation", "finish",
 })
 
 
@@ -639,6 +641,12 @@ def main() -> int:
         assert type(facade) is ReaderUsbExecutionBrokerImpl
         manager._brokers["reader.usb"] = facade
         preview_actions._discover_mounted_binding = production["discover"]
+        # The earlier synthetic single-book exercise may have loaded a GTK
+        # action module while its discovery shim was installed. Restore the
+        # production function in every native entry point, including aliases.
+        from cifereca.gui import reader_local_actions, reader_sync_actions
+        reader_local_actions._discover_mounted_binding = production["discover"]
+        reader_sync_actions._discover_mounted_binding = production["discover"]
         transport = runpy.run_path(str(ROOT / "src/plugins/storage-usb/cifereca_storage_usb.py"))[
             "UsbMassStorageTarget"]()
         original_services = manager.services
@@ -1026,22 +1034,76 @@ def main() -> int:
                 assert window._reader_scope_identity == owner
 
             def setup_usb(reader):
+                phase[0] = "native_usb_discovery"
                 connected.add(reader)
                 select_reader(reader)
-                header("reader-setup-directory").emit("clicked")
+                owner, fp, volume_root = usb_roots[reader]
+                # Independently check the same production discovery entry
+                # point before opening the native confirmation. It is not
+                # an authorization: setup still re-discovers in its worker.
+                volume = production["discover"](storage=db, identity_id=owner,
+                    device_id=reader, fingerprint=fp)
+                assert type(volume) is discovery.MountedUsbVolume
+                assert volume.mountpoint == volume_root
+                phase[0] = "native_usb_setup_dialog"
+                button = header("reader-setup-directory")
+                wait(button.get_sensitive)
+                button.emit("clicked")
                 setup_dialog = dialog_with_heading("Initialiser le dossier géré ?")
+                phase[0] = "native_usb_setup_result"
                 setup_dialog.emit("response", "setup")
-                folder = usb_roots[reader][2] / "Books" / "Cifereca"
-                wait(lambda: folder.is_dir() and "initialisé" in window._reader_status_label.get_text())
+                folder = volume_root / "Books" / "Cifereca"
+                wait(lambda: button.get_sensitive() and (
+                    "initialisé" in window._reader_status_label.get_text()
+                    or "Initialisation refusée" in window._reader_status_label.get_text()))
+                assert folder.is_dir()
+                assert "initialisé" in window._reader_status_label.get_text()
                 other = folder / "third-party.txt"
                 other.write_bytes(b"untouched " + reader.encode("ascii"))
                 return folder, other
 
             def sync_real(reader):
+                phase[0] = "native_usb_preview"
                 dialog = sync_dialog()
                 assert "1 envoi(s)" in dialog.get_body()
-                dialog.emit("response", "sync")
-                wait(lambda: not getattr(window, "_reader_sync_active", False))
+                results, copies = [], []
+                def capture_copy(**kwargs):
+                    outcome = original_copy(**kwargs)
+                    copies.append(outcome)
+                    return outcome
+                def capture_admit(broker, **kwargs):
+                    operation = original_admit(broker, **kwargs)
+                    def execute():
+                        result = operation()
+                        results.append(result)
+                        return result
+                    return execute
+                with (patch.object(type(facade), "admit_delta", capture_admit),
+                      patch.object(sync_engine, "execute_usb_library_copy", capture_copy)):
+                    phase[0] = "native_usb_admission"
+                    dialog.emit("response", "sync")
+                    assert window._reader_sync_active
+                    phase[0] = "native_usb_copy_result"
+                    try:
+                        wait(lambda: not getattr(window, "_reader_sync_active", False), seconds=12)
+                    except AssertionError:
+                        report["closed_copy_result"] = ("copy_delivery_timeout" if results
+                                                        else "copy_worker_timeout")
+                        raise
+                if len(copies) != 1:
+                    report["closed_copy_result"] = "copy_result_count_mismatch"
+                elif type(copies[0]) is not UsbCopyExecution:
+                    report["closed_copy_result"] = "copy_result_unclassified"
+                elif copies[0].status != "completed":
+                    reason = copies[0].reason
+                    report["closed_copy_result"] = (reason if reason in COPY_VERDICTS
+                                                    else "copy_result_unclassified")
+                elif results != [UsbSyncResult("completed", copied=1, observed=True)]:
+                    report["closed_copy_result"] = "copy_sync_receipt_mismatch"
+                assert len(copies) == 1 and type(copies[0]) is UsbCopyExecution
+                assert copies[0].status == "completed"
+                assert results == [UsbSyncResult("completed", copied=1, observed=True)]
+                phase[0] = "native_usb_observation"
                 saved = db.device_placement_get(reader, artifact_id)
                 target = usb_roots[reader][2] / saved["target_relative_path"]
                 assert saved["observed_state"] == "present"

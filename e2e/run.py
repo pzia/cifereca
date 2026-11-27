@@ -1157,6 +1157,8 @@ def main() -> int:
                         "native_copy_navigation", "native_copy_result", "native_copy_observation",
                         "native_idempotence", "native_removal",
                         "native_usb_a", "native_usb_b", "native_usb_isolation",
+                        "native_usb_discovery", "native_usb_setup_dialog", "native_usb_setup_result",
+                        "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation",
                     })
                     phase = report_data.get("closed_failure_phase")
                     if type(phase) is str and phase in closed_phases:
