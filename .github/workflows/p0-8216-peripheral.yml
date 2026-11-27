@@ -1,0 +1,58 @@
+name: P0 8216 peripheral and mutation evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-peripheral.yml'
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [simulation, scripts, e2e-review, mutations]
+    env:
+      SUITE: ${{ matrix.suite }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . "pytest>=8,<9" "pytest-cov>=6,<8" "Pillow>=10,<12" "cryptography>=42,<48" "PyMuPDF>=1.26,<2"
+      - name: Run isolated evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "4fd07df843b9d940746bbfe962a1877eec15d431"
+          out="$RUNNER_TEMP/evidence"
+          mkdir -p "$out"
+          git rev-parse HEAD > "$out/sha.txt"
+          python -m pip freeze > "$out/dependencies.txt"
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          if [[ "$SUITE" == mutations ]]; then
+            python -m scripts.ci_security_mutation_campaign --closure --json | tee "$out/mutations.json"
+          else
+            case "$SUITE" in
+              simulation) target=simulation/tests; source=simulation ;;
+              scripts) target=scripts; source=scripts ;;
+              e2e-review) target=e2e; source=e2e ;;
+            esac
+            /usr/bin/time -p -o "$out/plain.time" python -m pytest -q "$target" --junitxml="$out/plain.xml" --durations=0 | tee "$out/plain.log"
+            export COVERAGE_FILE="$out/.coverage"
+            /usr/bin/time -p -o "$out/coverage.time" python -m pytest -q "$target" --cov="$source" --cov-branch --cov-context=test --cov-report= --junitxml="$out/coverage.xml" | tee "$out/coverage.log"
+            python -m coverage json --show-contexts -o "$out/coverage.json"
+          fi
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: peripheral-${{ matrix.suite }}
+          path: ${{ runner.temp }}/evidence
+          include-hidden-files: true
+          retention-days: 7
