@@ -188,6 +188,62 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(c.Refusal, "cursor"):
             c.expected_prefix(manifest, 3)
 
+    def test_lot_multiple_batches_and_replay(self):
+        master = self.staging_issue()
+        master["body"] = "<!-- backlog-master-lot-v1: 999 ; 42 ; public -->"
+        lot = dict(master, number=999, id=999, title=c.LOT_TITLE+"123", labels=[],
+                   assignees=[], comments=0, body="<!-- backlog-lot-v1: 123 ; 42 ; public -->")
+        child = dict(master, number=42, id=42, labels=[{"name":"P2"}],
+                     state_reason="not_planned", body="Historical #123 " * 100, comments=24)
+        template = self.api.comments[0]
+        issues = {123: dict(master, comments=0), 999: lot, 42: child}
+        comments = {123: [], 999: [], 42: [dict(template, id=1000+i) for i in range(24)]}
+        def get(path):
+            if path == "/git/ref/heads/main":
+                return {"ref":"refs/heads/main","object":{"sha":HEAD}}
+            parts = path.split("/")
+            n = int(parts[2])
+            if len(parts) == 3:
+                return dict(issues[n])
+            if parts[3].startswith("sub_issues?"):
+                return []
+            return [dict(x) for x in comments[n]]
+        def mark(n, body):
+            value = dict(template, id=2000+len(comments[n]), body=body,
+                         user={"id":41898282,"login":"github-actions[bot]"})
+            comments[n].append(value)
+            issues[n]["comments"] += 1
+            return dict(value)
+        def replace_body(n, body):
+            issues[n]["body"] = body
+        def replace_comment(cid, body):
+            next(x for x in comments[42] if x["id"] == cid)["body"] = body
+        stage = Stage()
+        with patch.object(self.api,"get",side_effect=get), patch.object(self.api,"mark",side_effect=mark), patch.object(self.api,"replace_body",side_effect=replace_body), patch.object(self.api,"replace_comment",side_effect=replace_comment):
+            report = c.consolidate(self.api,stage,dict(lot),HEAD,clock=lambda:NOW)
+            self.assertEqual((report["status"],report["cursor"],report["total"]),("LOT_PENDING",10,25))
+            original = c.strict_json(stage.raw)
+            self.assertEqual(len(original["snapshots"][0]["comments"]),24)
+            def control(n, cursor):
+                data = {"version":1,"p0":999,"stage_sha":STAGE,"manifest_sha256":c.sha256(stage.raw),"main_sha":HEAD,"cursor":cursor}
+                issues[n] = dict(lot,number=n,id=n,title=c.CONTINUE_TITLE+"999",
+                                 body=c.encode(data).decode(),comments=0)
+                comments[n] = []
+                return dict(issues[n])
+            first = control(777,10)
+            report = c.continue_lot(self.api,stage,first,HEAD)
+            self.assertEqual((report["status"],report["cursor"]),("LOT_PENDING",20))
+            with self.assertRaises(c.Refusal):
+                c.continue_lot(self.api,stage,first,HEAD)
+            second = control(778,20)
+            report = c.continue_lot(self.api,stage,second,HEAD)
+            self.assertEqual((report["status"],report["cursor"]),("STAGED_AND_COMPACTED",25))
+            self.assertTrue(comments[999][-1]["body"].startswith(c.DONE))
+            self.assertEqual(issues[42]["state_reason"],"not_planned")
+            self.assertEqual(stage.published,1)
+            with self.assertRaises(c.Refusal):
+                c.continue_lot(self.api,stage,second,HEAD)
+
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:
