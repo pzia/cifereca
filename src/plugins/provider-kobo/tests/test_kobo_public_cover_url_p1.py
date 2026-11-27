@@ -158,17 +158,16 @@ def test_nested_percent_encoded_controls_never_become_public_cover_urls(unsafe):
         assert private not in public
 
 
-@pytest.mark.parametrize("cover", (
-    "https://cdn.example/cover%20name.jpg",
-    "https://cdn.example/cover%2520name.jpg",
-    "https://cdn.example/cover%25name.jpg",
-    "https://cdn.example/cover%GG.jpg",
-    "/covers/book%20name.jpg",
+@pytest.mark.parametrize("cover,expected", (
+    ("https://cdn.example/cover%20name.jpg", "https://cdn.example/cover%20name.jpg"),
+    ("https://cdn.example/cover%2520name.jpg", "https://cdn.example/cover%2520name.jpg"),
+    ("https://cdn.example/cover%25name.jpg", "https://cdn.example/cover%25name.jpg"),
+    ("https://cdn.example/cover%GG.jpg", "https://cdn.example/cover%GG.jpg"),
+    ("/covers/book%20name.jpg", "https://vault.example/covers/book%20name.jpg"),
 ))
-def test_benign_percent_encoded_cover_paths_remain_valid(cover):
+def test_benign_percent_encoded_cover_paths_remain_valid(cover, expected):
     catalog = _catalog()
-    expected = catalog.cover_url({"cover_url": cover})
-    assert expected is not None
+    assert catalog.cover_url({"cover_url": cover}) == expected
     projected = catalog.normalize_item({"product_id": "edition", "cover_url": cover})
     assert projected.thumbnail_url == expected
 
