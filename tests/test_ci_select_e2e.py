@@ -458,6 +458,24 @@ class SelectionTests(unittest.TestCase):
         assert 'report_data.get("closed_failure_phase")' in runner
         assert 'type(phase) is str and phase in closed_phases' in runner
         assert '"profile_b", "profile_a", "finish"' in runner
+        # The additional native acceptance phases stay explicitly allowlisted.
+        for phase in (
+            "native_fixture", "native_configuration", "native_send",
+            "native_conflict", "native_confirmation", "native_cancellation",
+            "native_copy", "native_idempotence", "native_removal",
+            "native_usb_a", "native_usb_b", "native_usb_isolation",
+            "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_lease", "native_usb_b_naming_commit", "native_usb_b_naming_storage", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
+            "native_usb_discovery",
+            "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation",
+        ):
+            self.assertIn(f'"{phase}"', runner)
+            self.assertIn(f'"{phase}"', source)
+        # Physical USB hardware is deliberately not emulated: the fixture
+        # only detects disposable roots through the real local FS proof.
+        self.assertIn('local_binding = dict(binding, metadata=local_proofs[reader])', source)
+        self.assertIn('proof = real_attest(identity_id=owner, binding=local_binding,', source)
+        self.assertIn('third_a = connect_usb("reader-a")', source)
+        self.assertIn('third_b = connect_usb("reader-b")', source)
         assert '"closed_failure_phase"] = phase[0]' in source
         assert '"reservation_commit"' in source
         assert 'reserve_deadline[0] = monotonic() + 5.0' in source
@@ -468,6 +486,13 @@ class SelectionTests(unittest.TestCase):
         assert 'bar.overflow_popover.popup()' in source
         assert 'bar.overflow_button.get_mapped()' in source
         assert "P1_4985_GTK_CLOSED_STAGE=" in source
+        # The real Core verdict is captured, never replaced with a fake
+        # success, and the runner emits only independently closed codes.
+        assert 'outcome = original_copy(**kwargs)' in source
+        assert 'result = operation()' in source
+        assert 'type(verdict) is str and verdict in closed_copy_verdicts' in runner
+        assert 'P1_4985_CLOSED_COPY_RESULT=' in runner
+        assert 'report_data.get("closed_copy_result")' in runner
 
     def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
         self.assertEqual(mod.READER_TARGET_GTK, (
@@ -498,6 +523,14 @@ class SelectionTests(unittest.TestCase):
         ):
             self.assertIn(invariant, source)
         self.assertIn("no_plugins=True", source)
+        for invariant in (
+            "native_three_real_destinations_and_cross_profile_removal_isolation",
+            "native_usb_b_real_copy_same_sha_other_profile",
+            "native_reconnected_usb_a_real_copy",
+            "native_real_copy_observe_progress_across_navigation",
+            "ReaderUsbExecutionBrokerImpl", "UsbMassStorageTarget",
+        ):
+            self.assertIn(invariant, source)
 
     def test_p1_6077_real_gtk_reader_inspection_is_a_scoped_and_honest_probe(self):
         self.assertEqual(mod.READER_INSPECTION_GTK, (

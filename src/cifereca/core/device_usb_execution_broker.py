@@ -394,9 +394,61 @@ class ReaderUsbExecutionBrokerImpl:
         except Exception:
             return False
 
+    def prepare_delta(self, *, identity_id: str, device_id: str,
+                      mountpoint: Path, mount_key: tuple):
+        """Read-only exact candidate snapshot for a subsequent user decision."""
+        from .device_usb_preview import _relative, _sha
+        scope = self._scope(identity_id, device_id)
+        if scope is None or not self._mount_attested(scope, mountpoint, mount_key=mount_key):
+            return None
+        storage = self.service.storage
+        before = deepcopy(storage.device_placements(device_id=device_id))
+        report = self.preview(identity_id=identity_id, device_id=device_id,
+                              mountpoint=mountpoint)
+        if report.status != "scanned" or not report.scan_attested or report.executable:
+            return None
+        if any(row.reason in ("target_batch_capacity_insufficient", "target_space_insufficient")
+               for row in report.rows):
+            # Preserve the read-only anomaly report; no executable item may
+            # be offered when the complete batch cannot fit.
+            if (storage.device_placements(device_id=device_id) != before
+                    or not self._mount_attested(scope, mountpoint, mount_key=mount_key)):
+                return None
+            return report, ()
+        intents = {row["artifact_id"]: row for row in before}
+        items = []
+        for row in report.rows:
+            if row.action not in ("upload_candidate", "remove_candidate"):
+                continue
+            intent = intents.get(row.artifact_id)
+            if (not intent or not row.artifact_id.startswith("sha256:")
+                    or not _sha(row.artifact_id[7:])
+                    or not _relative(intent.get("target_relative_path"))):
+                return None
+            if row.action == "upload_candidate":
+                artifact = storage.artifact_get(row.artifact_id)
+                if (not artifact or type(artifact.get("media_format")) is not str
+                        or type(artifact.get("size")) is not int or artifact["size"] < 0):
+                    return None
+                items.append((row.artifact_id, intent["target_relative_path"],
+                              artifact["media_format"], None, artifact["size"]))
+            else:
+                operation = self.completed_copy_operation(identity_id=identity_id,
+                    device_id=device_id, artifact_id=row.artifact_id)
+                if operation is None:
+                    return None
+                items.append((row.artifact_id, intent["target_relative_path"], None,
+                              operation, 0))
+        if (storage.device_placements(device_id=device_id) != before
+                or not self._mount_attested(scope, mountpoint, mount_key=mount_key)):
+            return None
+        return report, tuple(items)
+
     def admit_delta(
         self, *, identity_id: str, device_id: str, confirmations: tuple,
         mountpoint: Path, expected_profile_epoch: int, mount_key: tuple,
+        cancelled: Callable[[], bool] | None = None,
+        progress: Callable[[int, int, int], None] | None = None,
     ) -> Callable[[], UsbSyncResult]:
         """Capture a single explicitly confirmed exact delta, then run once.
 
@@ -485,6 +537,8 @@ class ReaderUsbExecutionBrokerImpl:
         lock, used = Lock(), [False]
 
         def check():
+            if cancelled is not None and cancelled():
+                raise RuntimeError("reader_delta_cancelled")
             if (not all(c.confirmed_at <= int(time.time()) < c.expires_at
                         for c in confirmed.values())
                     or not self._mount_attested(scope, mountpoint,
@@ -512,10 +566,10 @@ class ReaderUsbExecutionBrokerImpl:
                         plugin_manager=manager, plugin_id="storage.usb",
                         registry_generation=generation, confirmations=confirmed,
                         rights={}, policy_verifier=None, check_cancelled=check,
-                        exact_delta=True,
+                        exact_delta=True, cancelled=cancelled, progress=progress,
                     )
             except Exception:
-                return UsbSyncResult("blocked")
+                return UsbSyncResult("cancelled" if cancelled is not None and cancelled() else "blocked")
         return work
 
     def execute_one(

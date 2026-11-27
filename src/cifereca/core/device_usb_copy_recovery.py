@@ -16,7 +16,7 @@ from .device_usb_file_commit import (
 from .device_usb_mount import LinuxUsbMount
 from .device_usb_preview import _relative, _sha
 from .device_usb_target_preflight import _MAX_FILE_BYTES, _target_aliases
-from .device_usb_variant_review import _SUFFIX
+from .device_usb_target_name import usb_target_name_matches
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +49,7 @@ def _valid_names(staged_name: str, target: str, digest: str, size: int) -> bool:
     return (
         type(staged_name) is str and _STAGE_NAME.fullmatch(staged_name) is not None
         and _relative(target) and "/" in target and _sha(digest)
-        and PurePosixPath(target).name in {digest + suffix for suffix in _SUFFIX.values()}
+        and usb_target_name_matches(PurePosixPath(target).name, digest)
         and type(size) is int and 0 < size <= _MAX_FILE_BYTES
     )
 

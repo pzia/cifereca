@@ -284,3 +284,51 @@ def test_legacy_preference_preview_pins_owner_and_no_headless_implicit_read(tmp_
         assert read.preferred_artifact("book-1", identity_id="id1") is not None
     finally:
         service.storage.close()
+
+
+def test_reader_preference_selects_existing_exact_profile_variant_only(tmp_path):
+    service, source, (pid_a, pid_b), transformer, execution = _two_profiles(tmp_path)
+    db = service.storage
+    try:
+        # Use the existing Core publication path to produce an exact
+        # derived OriginLink, then a different format declaration in this
+        # SQLite-only selection fixture. This is not a content/transfer test.
+        derived = execution.execute_transform(_request(source, "id1", pid_a), control=Control())
+        row = db.artifact_get(derived.artifact_id)
+        db.artifact_put({**row, "media_format": "kepub"})
+        for owner in ("id1", "id2"):
+            db.device_usb_binding_declare(identity_id=owner, device_id="reader-" + owner,
+                usb_fingerprint="fixture-" + owner, label=owner, enabled=True)
+            db.device_usb_reader_formats_set(identity_id=owner, device_id="reader-" + owner,
+                usb_fingerprint="fixture-" + owner, supported_formats=("epub", "kepub"),
+                preferred_format="kepub")
+        def select(owner, pid):
+            return db.device_usb_send_choice(identity_id=owner, device_id="reader-" + owner,
+                                             source_placement_id=pid)
+        a = select("id1", pid_a)
+        b = select("id2", pid_b)
+        assert a[0] == derived.artifact_id and a[2:] == ("kepub", None)
+        assert b == (source.artifact_id, pid_b, "epub", None)
+        assert db.device_placements() == []
+        db.device_usb_intent_set(identity_id="id1", device_id="reader-id1",
+            artifact_id=a[0], desired_state="keep", source_placement_id=pid_a,
+            expected_send_choice=a)
+        target = db.device_usb_reserve_pending_target(identity_id="id1", device_id="reader-id1",
+                                                       artifact_id=a[0])
+        assert target.endswith(".kepub.epub")
+        old = db.device_placement_get("reader-id1", a[0])
+        db.device_usb_reader_formats_set(identity_id="id1", device_id="reader-id1",
+            usb_fingerprint="fixture-id1", supported_formats=("epub", "kepub"), preferred_format="epub")
+        assert select("id1", pid_a) == (*a[:3], "keep")
+        assert db.device_placement_get("reader-id1", a[0]) == old
+        assert db.device_placement_get("reader-id1", source.artifact_id) is None
+        assert db.device_placements(device_id="reader-id2") == []
+        assert transformer.transform_calls == 1
+        with pytest.raises(ValueError):
+            db.device_usb_intent_set(identity_id="id1", device_id="reader-id1",
+                artifact_id=a[0], desired_state="keep", source_placement_id=pid_a,
+                expected_send_choice=a)
+        assert Path(db.placement_get(pid_a)["path"]).read_bytes() == b"book-data"
+        assert Path(db.placement_get(pid_b)["path"]).read_bytes() == b"book-data"
+    finally:
+        db.close()

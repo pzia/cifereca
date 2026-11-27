@@ -84,7 +84,7 @@ def test_none_to_keep_is_only_a_user_wish_and_repaints(tmp_path):
     assert intent["desired_state"] == "keep"
     assert intent["observed_state"] == "unknown"
     assert intent["last_observed_at"] is None
-    assert intent["target_relative_path"] is None
+    assert intent["target_relative_path"] == "Books/Cifereca/" + book["artifact_id"][7:] + ".epub"
     assert intent["metadata"] == {"intent_identity_id": "alice"}
     assert "Aucun fichier transféré ou supprimé" in window._reader_status_label.label
     assert window._reader_items[book["key"]].desired_state == "keep"

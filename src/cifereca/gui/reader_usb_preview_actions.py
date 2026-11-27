@@ -94,6 +94,15 @@ def _discover_mounted_binding(*, storage, identity_id: str, device_id: str,
                 or exact_bindings[0].get("identity_id") != identity_id
                 or exact_bindings[0].get("device_id") != device_id):
             return None
+        if binding["metadata"].get("reader_transport") == "local":
+            root = Path(binding["metadata"].get("local_root", ""))
+            proof = observe_linux_usb_mount(identity_id=identity_id, binding=binding,
+                                            mountpoint=root)
+            if type(proof) is not LinuxUsbMount:
+                return None
+            return MountedUsbVolume(fingerprint, root, proof.filesystem,
+                                    binding.get("label") or "Liseuse locale", None,
+                                    proof.major, proof.minor, proof.mount_id)
         volumes = discover_linux_usb_volumes()
         if (type(volumes) is not tuple or len(volumes) > 128
                 or any(type(item) is not MountedUsbVolume for item in volumes)):

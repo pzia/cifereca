@@ -151,3 +151,24 @@ def test_headless_window_without_feedback_widgets_still_records_exactly_once():
     assert 7 in window._finished_task_ids
     assert "history" in actions
     assert "reduce" not in actions
+
+
+
+def test_reader_progress_survives_navigation_tasks_and_is_revoked_on_finish():
+    window, _ = make_window()
+    task_started(window, 1, 1, "Synchroniser la liseuse…", 1, "reader-sync")
+    message = "Synchronisation : 0/1 fichiers · 0 octets copiés."
+    task_progress(window, message, task_id=1)
+    assert window.busy_label.label == "En cours · " + message
+    task_started(window, 2, 2, "Bibliothèque", 0, "library")
+    assert window.busy_label.label == "En cours · 2 opérations · " + message
+    task_progress(window, "Bibliothèque 50 %", task_id=2)
+    assert window.busy_label.label == "En cours · 2 opérations · " + message
+    task_finished(window, 2, 1, "Bibliothèque", True, None)
+    assert window.busy_label.label == "En cours · " + message
+    task_started(window, 3, 2, "Recherche", 0, "search")
+    task_finished(window, 1, 1, "Synchroniser la liseuse…", True, None)
+    assert window.busy_label.label == "En cours · Recherche"
+    task_progress(window, message, task_id=1)
+    assert window.busy_label.label == "En cours · Recherche"
+    assert window.activity_feedback.get(1).label == "Synchroniser la liseuse…"

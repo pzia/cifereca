@@ -18,6 +18,7 @@ from . import device_usb_mount as linux_mount
 from .device_usb_mount import LinuxUsbMount, observe_linux_usb_mount
 from .device_usb_preview import _relative, _sha
 from .device_usb_variant_review import _SUFFIX
+from .device_usb_target_name import usb_target_name_matches
 
 
 _MAX_ENTRIES = 10000
@@ -97,14 +98,15 @@ def preflight_usb_target(
             or type(fmt) is not str or fmt not in _SUFFIX
             or artifact.get("kind") != "file"):
         return _blocked("target_artifact_unverified")
-    expected_path = managed + "/" + digest + _SUFFIX[fmt]
+    expected_path = intention.get("target_relative_path") if isinstance(intention, Mapping) else None
     if (not _relative(expected_path) or not isinstance(intention, Mapping)
             or intention.get("device_id") != binding["device_id"]
             or intention.get("artifact_id") != artifact_id
             or intention.get("desired_state") != "keep"
             or type(intention.get("metadata")) is not dict
             or intention["metadata"].get("intent_identity_id") != identity_id
-            or intention.get("target_relative_path") != expected_path):
+            or expected_path.rpartition("/")[0] != managed
+            or not usb_target_name_matches(expected_path.rpartition("/")[2], digest, fmt)):
         return _blocked("target_intention_unverified")
 
     # All three are mandatory: an actual UUID block device, opened pinned
@@ -142,7 +144,7 @@ def preflight_usb_target(
                     or linux_mount._fd_mount_id(child) != first.mount_id):
                 return _blocked("target_directory_unverified")
         before = os.fstat(current)
-        name = digest + _SUFFIX[fmt]
+        name = expected_path.rpartition("/")[2]
         aliases = _target_aliases(current, name)
         if aliases is None:
             return _blocked("target_directory_unbounded")

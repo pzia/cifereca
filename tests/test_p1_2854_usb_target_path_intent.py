@@ -248,3 +248,29 @@ def test_pinned_target_persists_without_creating_usb_observations(tmp_path):
     assert row["target_relative_path"] == "Books/Cifereca/book.epub"
     assert row["observed_state"] == "unknown"
     assert row["last_observed_at"] is None
+
+
+
+def test_reader_naming_changes_future_reservations_only_and_is_profile_scoped(tmp_path):
+    db = _db(tmp_path)
+    first, source = _owned_book(db, tmp_path, payload=b"first")
+    old_target = db.device_usb_reserve_pending_target(identity_id="alice", device_id="usb-alice",
+                                                      artifact_id=first)
+    assert old_target == "Books/Cifereca/" + first[7:] + ".epub"
+    db.device_usb_directory_set(identity_id="alice", device_id="usb-alice",
+        fingerprint="uuid-alice-001", target_directory="Books/Cifereca", target_naming="source")
+    second, source2 = _owned_book(db, tmp_path, payload=b"second")
+    named = db.device_usb_reserve_pending_target(identity_id="alice", device_id="usb-alice",
+                                                 artifact_id=second)
+    assert named == "Books/Cifereca/" + source2.stem + "--" + second[7:] + ".epub"
+    assert db.device_placement_get("usb-alice", first)["target_relative_path"] == old_target
+    assert db.device_binding_get("usb-bob")["metadata"] == {"usb_fingerprint": "uuid-bob-001"}
+    assert source.read_bytes() == b"first" and source2.read_bytes() == b"second"
+    third, _ = _owned_book(db, tmp_path, payload=b"third")
+    with pytest.raises(ValueError):
+        db.device_usb_target_set(identity_id="alice", device_id="usb-alice", artifact_id=third,
+            target_relative_path="Books/Cifereca/forged--" + third[7:] + ".epub")
+    assert db.device_placement_get("usb-alice", third)["target_relative_path"] is None
+    with pytest.raises(ValueError):
+        db.device_usb_directory_set(identity_id="bob", device_id="usb-alice",
+            fingerprint="uuid-alice-001", target_directory="Books/Cifereca", target_naming="sha256")

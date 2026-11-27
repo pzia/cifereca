@@ -98,7 +98,10 @@ def build_library_usb_intents(
                        "0123456789._:-" for char in fingerprint)):
             continue
         try:
-            placed = storage.device_placement_get(device_id, artifact_id)
+            choice = storage.device_usb_send_choice(
+                identity_id=identity_id, device_id=device_id, source_placement_id=placement_id)
+            selected_artifact, selected_placement, selected_format, selected_state = choice
+            placed = storage.device_placement_get(device_id, selected_artifact)
         except Exception:
             return None
         if placed is not None:
@@ -109,7 +112,7 @@ def build_library_usb_intents(
                     or placed["metadata"].get("intent_identity_id") != identity_id):
                 return None
         desired = placed.get("desired_state") if placed is not None else None
-        if desired not in (None, "keep", "remove"):
+        if desired not in (None, "keep", "remove") or desired != selected_state:
             return None
         label = _safe_device_label(binding, ordinal)
         label_state = {
@@ -120,15 +123,17 @@ def build_library_usb_intents(
         status_rows.append((
             label,
             label_state + " · Présence actuelle non confirmée"
-            + (" · Appareil désactivé" if binding.get("enabled") is not True else ""),
+            + (" · Appareil désactivé" if binding.get("enabled") is not True else "")
+            + (" · Variante : " + selected_format.upper()
+               if selected_artifact != artifact_id else ""),
         ))
-        devices.append((device_id, label, desired, fingerprint))
+        devices.append((device_id, label, desired, fingerprint, choice, binding))
     if not devices:
         return None
-    menu = Gtk.MenuButton(label="Liseuses…")
+    menu = Gtk.MenuButton(label="Envoyer à")
     menu._cifereca_action_id = "usb-intents"
     menu.set_tooltip_text(
-        "Enregistrer Mettre/Retirer comme souhaits ; aucune copie ou suppression USB."
+        "Préparer un envoi ; retirer un livre depuis le détail Liseuses."
     )
     popover = Gtk.Popover()
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -137,13 +142,18 @@ def build_library_usb_intents(
     box.set_margin_start(8)
     box.set_margin_end(8)
     generation = getattr(window, "_identity_context_generation", None)
+    route = getattr(window, "_route_display_token", None)
+    epoch = getattr(service, "_account_context_epoch", None)
 
     def still_current(button) -> bool:
         if (getattr(window, "_closed", False)
                 or getattr(getattr(service, "current_identity", None),
                            "identity_id", None) != identity_id
                 or getattr(window, "_identity_context_generation", None)
-                           != generation):
+                           != generation
+                or getattr(window, "_route_display_token", None) is not route
+                or getattr(service, "_account_context_epoch", None) != epoch
+                or getattr(menu, "_cifereca_action_context_revoked", False)):
             return False
         root = getattr(button, "get_root", None)
         if callable(root) and root() is None:
@@ -154,7 +164,8 @@ def build_library_usb_intents(
         return True
 
     def clicked(button, *, device_id: str, desired: str,
-                fingerprint: str) -> None:
+                fingerprint: str, previous: str | None, choice: tuple,
+                expected_binding: dict) -> None:
         if not still_current(button):
             return
         try:
@@ -172,22 +183,30 @@ def build_library_usb_intents(
             if (type(live) is not dict
                     or live.get("identity_id") != identity_id
                     or type(live_meta) is not dict
-                    or live_meta.get("usb_fingerprint") != fingerprint):
+                    or live_meta.get("usb_fingerprint") != fingerprint
+                    or live != expected_binding):
                 raise ValueError("device binding changed")
-            # A stale 'remove' button must not create an intention for a
-            # previously unmanaged file. Storage validates original owner
-            # under BEGIN IMMEDIATE again.
-            if desired == "remove":
-                saved = storage.device_placement_get(device_id, artifact_id)
-                if (type(saved) is not dict
-                        or saved.get("desired_state") != "keep"
-                        or type(saved.get("metadata")) is not dict
-                        or saved["metadata"].get("intent_identity_id") != identity_id):
-                    raise ValueError("previous device intent changed")
+            if storage.device_usb_send_choice(identity_id=identity_id, device_id=device_id,
+                    source_placement_id=placement_id) != choice:
+                raise ValueError("reader send choice changed")
+            selected_artifact, selected_placement, _fmt, _state = choice
+            if selected_placement != placement_id:
+                service.local_book_path(selected_placement, identity_id=identity_id)
+            saved = storage.device_placement_get(device_id, selected_artifact)
+            if ((saved.get("desired_state") if type(saved) is dict else None) != previous
+                    or (saved is not None and
+                        (saved.get("metadata") or {}).get("intent_identity_id") != identity_id)):
+                raise ValueError("previous device intent changed")
             storage.device_usb_intent_set(
                 identity_id=identity_id, device_id=device_id,
-                artifact_id=artifact_id, desired_state=desired,
+                artifact_id=selected_artifact, desired_state=desired,
+                source_placement_id=placement_id, expected_send_choice=choice,
             )
+            if desired == "keep":
+                reserve = getattr(storage, "device_usb_reserve_pending_target", None)
+                if callable(reserve):
+                    reserve(identity_id=identity_id, device_id=device_id,
+                            artifact_id=selected_artifact)
         except Exception:
             if still_current(button):
                 window.show_error(
@@ -200,10 +219,12 @@ def build_library_usb_intents(
                 "Souhait de liseuse enregistré. Aucun fichier n’a été transféré ou supprimé."
             )
 
-    for device_id, label, desired, fingerprint in devices:
-        next_state = "remove" if desired == "keep" else "keep"
-        action = "Retirer de " if next_state == "remove" else "Mettre sur "
-        button = Gtk.Button(label=action + label)
+    for device_id, label, desired, fingerprint, choice, binding in devices:
+        next_state = "keep"
+        if desired == "keep":
+            continue
+        button = Gtk.Button(label="Mettre sur " + label + (
+            " · " + choice[2].upper() if choice[0] != artifact_id else ""))
         button._cifereca_action_id = "usb-intent:" + next_state + ":" + device_id
         button.add_css_class("flat")
         button.set_tooltip_text(
@@ -212,16 +233,18 @@ def build_library_usb_intents(
         button.connect(
             "clicked",
             lambda clicked_button, device_id=device_id, state=next_state,
-                   fingerprint=fingerprint:
+                   fingerprint=fingerprint, previous=desired, choice=choice, binding=binding:
                 clicked(clicked_button, device_id=device_id, desired=state,
-                        fingerprint=fingerprint),
+                        fingerprint=fingerprint, previous=previous, choice=choice,
+                        expected_binding=binding),
         )
         box.append(button)
     popover.set_child(box)
     menu.set_popover(popover)
+    menu._cifereca_send_choices = box
     if callable(getattr(detail, "add_group", None)):
         detail.add_group("Liseuses · intentions", status_rows)
-    return menu
+    return menu if any(row[2] != "keep" for row in devices) else None
 
 
 __all__ = ["build_library_usb_intents"]

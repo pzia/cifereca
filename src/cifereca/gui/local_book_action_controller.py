@@ -437,7 +437,22 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
             sending[0] = False
             raise
 
-    if len(eligible) == 1:
+    from .library_usb_intents import build_library_usb_intents
+    usb = build_library_usb_intents(
+        window, detail, Gtk=Gtk,
+        placement_id=placement_id, identity_id=identity_id,
+    )
+    if usb is not None:
+        choices = usb._cifereca_send_choices
+        for target in eligible:
+            choice = Gtk.Button(label=str(target.label))
+            choice.add_css_class("flat")
+            choice._cifereca_action_id = "send-local:" + target.identity_id
+            choice.connect("clicked", lambda clicked, target_id=target.identity_id:
+                           queue_send(clicked, target_id, parent=usb))
+            choices.append(choice)
+        buttons.append(usb)
+    elif len(eligible) == 1:
         target = eligible[0]
         button = window.action_button(
             'Envoyer à ' + target.label, 'document-send-symbolic',
@@ -488,12 +503,15 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 detail={'code': 'artifact_targets_unavailable'},
             )
         if route_targets:
-            menu = Gtk.MenuButton(label='Envoyer vers…')
-            menu._cifereca_action_id = 'artifact-routing'
-            menu.set_tooltip_text('Envoyer cet artefact vers une cible de stockage compatible')
-            popover = Gtk.Popover()
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            box.set_margin_top(8); box.set_margin_bottom(8); box.set_margin_start(8); box.set_margin_end(8)
+            menu = usb if usb is not None else Gtk.MenuButton(label='Envoyer vers…')
+            if usb is None:
+                menu._cifereca_action_id = 'artifact-routing'
+                menu.set_tooltip_text('Envoyer cet artefact vers une cible de stockage compatible')
+                popover = Gtk.Popover()
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                box.set_margin_top(8); box.set_margin_bottom(8); box.set_margin_start(8); box.set_margin_end(8)
+            else:
+                box = usb._cifereca_send_choices
             for target in route_targets:
                 target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
                 target_button.add_css_class('flat')
@@ -532,14 +550,6 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                         failed, control=_button,
                         priority=TaskPriority.USER_ACTION, kind='artifact-route')
                 target_button.connect('clicked', route); box.append(target_button)
-            popover.set_child(box); menu.set_popover(popover); buttons.append(menu)
-    # P1 #2854: optional declarative USB actions for a proven local file.
-    # They write only desired_state and never call the storage routing broker.
-    from .library_usb_intents import build_library_usb_intents
-    usb = build_library_usb_intents(
-        window, detail, Gtk=Gtk,
-        placement_id=placement_id, identity_id=identity_id,
-    )
-    if usb is not None:
-        buttons.append(usb)
+            if usb is None:
+                popover.set_child(box); menu.set_popover(popover); buttons.append(menu)
     detail.add_actions(buttons)

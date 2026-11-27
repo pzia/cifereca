@@ -15,8 +15,8 @@ from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
 
-FILTERS = ("all", "to_send", "to_remove", "without_intent")
-FILTER_LABELS = ("Tous", "À mettre", "À retirer", "Sans intention")
+FILTERS = ("all", "to_send", "to_remove", "without_intent", "last_present", "anomalies")
+FILTER_LABELS = ("Tous", "À mettre", "À retirer", "Sans intention", "Dernier état présent", "À vérifier")
 
 
 def build_readers_page(window, *, Gtk, MasterDetailPage):
@@ -112,6 +112,58 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_usb_preview(window, button, Gtk=Gtk)
     inspect.connect("clicked", examine_clicked)
     page.header_actions.append(inspect)
+    sync = Gtk.Button(label="Synchroniser")
+    sync._cifereca_action_id = "reader-sync-delta"
+    sync.set_tooltip_text("Examiner puis confirmer les changements du lecteur sélectionné.")
+    def sync_clicked(button):
+        from .reader_sync_actions import request_reader_sync
+        request_reader_sync(window, button)
+    sync.connect("clicked", sync_clicked)
+    page.header_actions.append(sync)
+    cancel = Gtk.Button.new_from_icon_name("process-stop-symbolic")
+    cancel._cifereca_action_id = "reader-sync-cancel"
+    cancel.set_tooltip_text("Interrompre la synchronisation en cours.")
+    def cancel_clicked(_button):
+        event = getattr(window, "_reader_sync_cancel", None)
+        if event is not None:
+            event.set()
+            window._reader_status_label.set_label("Interruption demandée…")
+    cancel.connect("clicked", cancel_clicked)
+    page.header_actions.append(cancel)
+    local = Gtk.Button.new_from_icon_name("folder-new-symbolic")
+    local._cifereca_action_id = "reader-local-pair"
+    local.set_tooltip_text("Associer un dossier existant comme liseuse locale.")
+    def local_clicked(_button):
+        from .reader_local_actions import request_local_reader
+        request_local_reader(window, Gtk=Gtk)
+    local.connect("clicked", local_clicked)
+    page.header_actions.append(local)
+    setup = Gtk.Button.new_from_icon_name("folder-symbolic")
+    setup._cifereca_action_id = "reader-setup-directory"
+    setup.set_tooltip_text("Initialiser explicitement le dossier géré.")
+    def setup_clicked(button):
+        from .reader_local_actions import request_reader_setup
+        request_reader_setup(window, button)
+    setup.connect("clicked", setup_clicked)
+    page.header_actions.append(setup)
+    directory = Gtk.Button.new_from_icon_name("folder-documents-symbolic")
+    directory._cifereca_action_id = "reader-directory-config"
+    directory.set_tooltip_text("Configurer le dossier géré et le nommage des prochains ajouts.")
+    def directory_clicked(_button):
+        from .reader_local_actions import request_reader_directory
+        request_reader_directory(window, Gtk=Gtk)
+    directory.connect("clicked", directory_clicked)
+    page.header_actions.append(directory)
+    forget = Gtk.Button.new_from_icon_name("list-remove-symbolic")
+    forget._cifereca_action_id = "reader-forget"
+    forget.set_tooltip_text("Dissocier la liseuse sans supprimer de fichiers.")
+    def forget_clicked(_button):
+        from .reader_local_actions import request_reader_forget
+        request_reader_forget(window)
+    forget.connect("clicked", forget_clicked)
+    page.header_actions.append(forget)
+
+
     pair = Gtk.Button.new_from_icon_name("list-add-symbolic")
     pair._cifereca_action_id = "reader-usb-pair"
     pair.set_tooltip_text(
@@ -336,6 +388,9 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             + ", ".join(value.upper() for value in declared.supported_formats)
             if declared else "Formats liseuse non déclarés"
         )
+        preferred = binding["metadata"].get("reader_preferred_format")
+        if declared and preferred in declared.supported_formats:
+            format_summary += " · Préférence prochains ajouts : " + preferred.upper()
         window._reader_status_label.set_label(
             f"{snapshot.total_local} livre(s) visibles · "
             f"{snapshot.wanted_keep} à mettre · "

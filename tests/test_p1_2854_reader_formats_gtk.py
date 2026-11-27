@@ -23,7 +23,23 @@ class Check:
         return self.active
 
 
-GUI = NS(Orientation=NS(VERTICAL=1), Box=Group, CheckButton=Check)
+class Dropdown:
+    @classmethod
+    def new_from_strings(cls, values):
+        obj = cls()
+        obj.values = values
+        obj.selected = 0
+        return obj
+
+    def set_selected(self, index):
+        self.selected = index
+
+    def get_selected(self):
+        return self.selected
+
+
+GUI = NS(Orientation=NS(VERTICAL=1), Box=Group, CheckButton=Check,
+         Label=lambda **kw: NS(**kw), DropDown=Dropdown)
 ADW = NS(MessageDialog=Dialog)
 
 
@@ -43,8 +59,9 @@ def open_dialog(window):
     assert dialog is not None and dialog.presented
     assert dialog.responses == {"cancel": "Annuler", "confirm": "Enregistrer"}
     assert "aucun" in dialog.description
-    boxes = dialog.extra.children
+    boxes = dialog.extra.children[:4]
     assert [box.label for box in boxes] == ["EPUB", "KEPUB", "FXL-KEPUB", "PDF"]
+    assert isinstance(dialog.extra.children[-1], Dropdown)
     return dialog, boxes
 
 
@@ -181,3 +198,28 @@ def test_editor_disabled_without_active_identity(tmp_path):
     request_reader_formats(window, Gtk=GUI, Adw=ADW)
     assert db.device_bindings() == old
     assert not window.errors
+
+
+def test_preference_explicit_and_never_retargets_existing_wishes(tmp_path):
+    db, window = rig(tmp_path)
+    before = deepcopy(db.device_placements())
+    dialog, boxes = open_dialog(window)
+    boxes[0].set_active(True)
+    boxes[3].set_active(True)
+    dialog.extra.children[-1].set_selected(4)
+    dialog.respond("confirm")
+    metadata = db.device_binding_get("reader-alice")["metadata"]
+    assert metadata["reader_formats"] == ["epub", "pdf"]
+    assert metadata["reader_preferred_format"] == "pdf"
+    assert db.device_placements() == before
+    again, boxes = open_dialog(window)
+    assert again.extra.children[-1].get_selected() == 4
+    boxes[3].set_active(False)
+    again.respond("confirm")
+    assert db.device_binding_get("reader-alice")["metadata"] == metadata
+    assert window.errors
+    last, _ = open_dialog(window)
+    last.extra.children[-1].set_selected(0)
+    last.respond("confirm")
+    assert "reader_preferred_format" not in db.device_binding_get("reader-alice")["metadata"]
+    assert db.device_placements() == before

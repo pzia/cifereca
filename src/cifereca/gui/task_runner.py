@@ -442,6 +442,15 @@ class TaskRunner:
 
     def _business_outcome(self, value: Any, kind: str) -> str:
         """One exact Core receipt for worker metrics and GTK task feedback."""
+        if kind == "reader-sync":
+            from ..core.device_usb_sync_engine import UsbSyncResult
+            if type(value) is not UsbSyncResult:
+                return "failed"
+            if value.status in ("cancelled", "blocked", "pending", "partial"):
+                return value.status
+            if value.status == "completed" and value.observed is True and not value.failed and not value.pending:
+                return "success"
+            return "failed"
         if kind == "borrow":
             return self._borrow_outcome(value)
         if kind == "transfer":
@@ -543,7 +552,7 @@ class TaskRunner:
             "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send", "lender-placement-check",
             "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification", "loan-renew",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
-            "identity", "maintenance-inspection",
+            "identity", "maintenance-inspection", "reader-sync",
         } else "other"
         def classify_business(value: Any) -> str:
             """Use the exact TaskRunner classifier; isolated submit adapters
@@ -564,7 +573,7 @@ class TaskRunner:
             if trace_kind in {
                 "borrow", "transfer", "acsm-import", "acsm-stage",
                 "lender-local-send", "lender-placement-check",
-                "borrow-verification", "loan-acquisition", "loan-renew", "materialize",
+                "borrow-verification", "loan-acquisition", "loan-renew", "materialize", "reader-sync",
             }:
                 return "failed"
             legacy = getattr(self, "_source_sync_outcome", None)
@@ -770,7 +779,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync", "reader-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -900,6 +909,10 @@ class TaskRunner:
                     if trace_kind == "loan-renew" and business_status == "blocked"
                     else "Prolongation non confirmée"
                     if trace_kind == "loan-renew"
+                    else "Synchronisation de liseuse interrompue ; réussites conservées"
+                    if trace_kind == "reader-sync" and business_status == "cancelled"
+                    else "Synchronisation de liseuse partielle ; présence à vérifier"
+                    if trace_kind == "reader-sync" and business_status == "partial"
                     else "Synchronisation déjà en cours" if business_status == "busy"
                     else "Synchronisation en attente de livraison" if business_status == "pending"
                     else "Synchronisation bloquée" if business_status == "blocked"
@@ -924,7 +937,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync", "reader-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
@@ -1008,11 +1021,12 @@ class TaskRunner:
             # its final GTK receipt even under sustained repaint/progress
             # traffic. This priority is bound to the generic task contract,
             # never the provider ID; unrelated task kinds retain idle order.
-            # Expedited GTK materialization delivery belongs solely to the
-            # supplier-neutral Core kind; unknown/retired names stay generic.
+            # The grouped reader job also survives navigation. Its terminal
+            # callback releases the application-wide active flag, including
+            # partial or cancelled outcomes. Both are closed Core task kinds.
             normal_priority = (
                 getattr(GLib, "PRIORITY_DEFAULT", None)
-                if trace_kind == "source-materialize" else None
+                if trace_kind in {"source-materialize", "reader-sync"} else None
             )
             if normal_priority is None:
                 # Headless adapters implementing the legacy GLib seam keep

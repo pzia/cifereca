@@ -239,6 +239,8 @@ def test_revoked_selection_after_removal_refusal_skips_durable_observation(
         engine, "record_verified_usb_observation",
         lambda **_: pytest.fail("cancelled UI must never persist presence"),
     )
-    with pytest.raises(RuntimeError, match="reader_selection_revoked"):
-        engine.synchronize_usb_reader(**data)
+    # The batch now returns a closed receipt even when revocation follows
+    # a failed operation. This must not permit a durable observation.
+    result = engine.synchronize_usb_reader(**data)
+    assert result == engine.UsbSyncResult("blocked", failed=1, observed=False)
     assert state == {"revoked": True, "checks": 2}

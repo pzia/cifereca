@@ -37,7 +37,8 @@ def test_local_directory_binding_is_exclusive_and_replacement_refused(tmp_path):
         db.device_local_reader_declare(**args)
 
 
-def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monkeypatch):
+@pytest.mark.parametrize("target_naming", ["sha256", "source"])
+def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monkeypatch, target_naming):
     from hashlib import sha256
     from time import time
     from types import SimpleNamespace as NS
@@ -77,9 +78,23 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                                      usb_fingerprint=fingerprint, supported_formats=("epub",))
     db.device_usb_intent_set(identity_id="alice", device_id="local-a",
                              artifact_id=artifact, desired_state="keep")
-    target = "Books/Cifereca/" + digest + ".epub"
-    db.device_usb_target_set(identity_id="alice", device_id="local-a",
-                             artifact_id=artifact, target_relative_path=target)
+    db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                fingerprint=fingerprint, target_directory="Reading/Library",
+                                target_naming=target_naming)
+    managed = root / "Reading" / "Library"
+    target = "Reading/Library/" + ("book--" if target_naming == "source" else "") + digest + ".epub"
+    assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
+                                                artifact_id=artifact) == target
+    # Naming changes only future wishes; the previously pinned destination
+    # remains executable with exactly the same bytes and managed receipt.
+    db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                fingerprint=fingerprint, target_directory="Reading/Library",
+                                target_naming="sha256" if target_naming == "source" else "source")
+    assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
+                                                artifact_id=artifact) == target
+    with pytest.raises(ValueError):
+        db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                    fingerprint=fingerprint, target_directory="Other")
     # Actual production storage.target service; no fake USB/mount or policy.
     plugin_file = Path(__file__).resolve().parents[1] / "src/plugins/storage-usb/cifereca_storage_usb.py"
     transport = runpy.run_path(str(plugin_file))["UsbMassStorageTarget"]()
@@ -106,13 +121,30 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
     assert managed.is_dir()
     third_party = managed / "third-party.txt"
     third_party.write_bytes(b"untouched")
+    from cifereca.gui.reader_usb_preview_actions import _discover_mounted_binding
+    found = _discover_mounted_binding(storage=db, identity_id="alice",
+                                      device_id="local-a", fingerprint=fingerprint)
+    assert found.selection_key() == mount_key
+    report, candidates = facade.prepare_delta(identity_id="alice", device_id="local-a",
+                                              mountpoint=root, mount_key=mount_key)
+    assert report.rows[0].action == "upload_candidate"
+    assert candidates == ((artifact, target, "epub", None, len(payload)),)
+    cancelled = facade.admit_delta(identity_id="alice", device_id="local-a",
+                                confirmations=(consent,), mountpoint=root,
+                                expected_profile_epoch=3, mount_key=mount_key,
+                                cancelled=lambda: True)
+    assert cancelled().status == "cancelled"
+    assert not (root / target).exists()
+    updates = []
     worker = facade.admit_delta(identity_id="alice", device_id="local-a",
                                 confirmations=(consent,), mountpoint=root,
-                                expected_profile_epoch=3, mount_key=mount_key)
+                                expected_profile_epoch=3, mount_key=mount_key,
+                                progress=lambda *args: updates.append(args))
     final = root / target
     assert not final.exists()
     result = worker()
     assert result == UsbSyncResult("completed", copied=1, observed=True)
+    assert updates == [(0, 1, 0), (1, 1, len(payload))]
     assert worker().status == "blocked"
     assert final.read_bytes() == source.read_bytes() == payload
     journal = SqliteUsbOperationJournal(db)
@@ -123,9 +155,31 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                              artifact_id=artifact, desired_state="remove")
     removal = UsbRemovalConsent("alice", "local-a", fingerprint, artifact, digest, target,
                                 consent.operation_id, "b" * 32, now, now + 240)
-    worker = facade.admit_delta(identity_id="alice", device_id="local-a",
-                                confirmations=(removal,), mountpoint=root,
-                                expected_profile_epoch=3, mount_key=mount_key)
-    assert worker() == UsbSyncResult("completed", removed=1, observed=True)
+    # Exercise the actual grouped GTK controller against Core and real
+    # files. Only GTK controls and the deterministic queue are test doubles.
+    from cifereca.gui.reader_sync_actions import request_reader_sync
+    from tests.test_p1_4985_gtk_supervised_removal import Runner, Dialog
+    from tests.test_p1_2854_readers_master_detail_page import FakeLabel
+    host = NS(service=service, plugin_manager=NS(broker=lambda _: facade),
+              _reader_selected_device_id="local-a", _reader_scope_identity="alice",
+              _reader_selection_generation=1, _route_display_token=object(),
+              _reader_status_label=FakeLabel(), runner=Runner(),
+              _render_readers=lambda: None)
+    dialogs = []
+    adw = NS(MessageDialog=NS(new=lambda *_: dialogs.append(Dialog()) or dialogs[-1]))
+    request_reader_sync(host, object(), Adw=adw)
+    host.runner.advance()
+    assert dialogs[-1].presented and final.exists()
+    dialogs[-1].answer("cancel")
+    assert not host.runner.jobs and final.exists()
+    request_reader_sync(host, object(), Adw=adw)
+    host.runner.advance()
+    dialogs[-1].answer("sync")
+    assert final.exists()
+    host.runner.advance()
+    assert "1 retiré(s)" in host._reader_status_label.label
     assert not final.exists()
+    assert source.read_bytes() == payload and third_party.read_bytes() == b"untouched"
+    db.device_usb_binding_forget(identity_id="alice", device_id="local-a", fingerprint=fingerprint)
+    assert db.device_binding_get("local-a") is None
     assert source.read_bytes() == payload and third_party.read_bytes() == b"untouched"

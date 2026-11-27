@@ -4077,6 +4077,7 @@ class Storage:
     def device_usb_reader_formats_set(
         self, *, identity_id: str, device_id: str,
         usb_fingerprint: str, supported_formats: tuple[str, ...],
+        preferred_format: str | None = None,
     ) -> str:
         """Persist a reader's *declared* formats for its exact bound volume.
 
@@ -4094,7 +4095,10 @@ class Storage:
                 or len(supported_formats) > len(_SUFFIX)
                 or any(type(value) is not str or value not in _SUFFIX
                        for value in supported_formats)
-                or len(set(supported_formats)) != len(supported_formats)):
+                or len(set(supported_formats)) != len(supported_formats)
+                or (preferred_format is not None and (
+                    type(preferred_format) is not str or preferred_format not in supported_formats
+                ))):
             raise ValueError("USB reader format declaration invalid")
         if (not 8 <= len(usb_fingerprint) <= 128
                 or any(char not in
@@ -4119,6 +4123,10 @@ class Storage:
                 changed["reader_formats"] = list(supported_formats)
             else:
                 changed.pop("reader_formats", None)
+            if preferred_format is None:
+                changed.pop("reader_preferred_format", None)
+            else:
+                changed["reader_preferred_format"] = preferred_format
             if changed != metadata:
                 db.execute(
                     "UPDATE device_bindings SET metadata_json=?,updated_at=? "
@@ -4176,9 +4184,19 @@ class Storage:
             )
         return placement_id
 
+    def device_usb_send_choice(self, *, identity_id: str, device_id: str,
+                               source_placement_id: str) -> tuple:
+        """One exact existing wish or new preferred local Artifact; no writes."""
+        from .core.device_usb_send_choice import select_reader_send
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN")
+            return select_reader_send(self, db, identity_id=identity_id, device_id=device_id,
+                                      source_placement_id=source_placement_id)
+
     def device_usb_intent_set(
         self, *, identity_id: str, device_id: str, artifact_id: str,
-        desired_state: str,
+        desired_state: str, source_placement_id: str | None = None,
+        expected_send_choice: tuple | None = None,
     ) -> str:
         """Store a user-declared USB intention; never touch device/files.
 
@@ -4204,6 +4222,15 @@ class Storage:
             ).fetchone()
             if binding is None or binding[0] != identity_id:
                 raise ValueError("device intent requires exact bound identity")
+            if source_placement_id is not None or expected_send_choice is not None:
+                from .core.device_usb_send_choice import select_reader_send
+                if (desired_state != "keep" or type(source_placement_id) is not str
+                        or type(expected_send_choice) is not tuple
+                        or len(expected_send_choice) != 4
+                        or expected_send_choice[0] != artifact_id
+                        or select_reader_send(self, db, identity_id=identity_id, device_id=device_id,
+                            source_placement_id=source_placement_id) != expected_send_choice):
+                    raise ValueError("reader send choice changed")
             current = db.execute(
                 "SELECT device_placement_id,metadata_json FROM device_placements "
                 "WHERE device_id=? AND artifact_id=?",
@@ -4248,9 +4275,120 @@ class Storage:
             )
             return placement_id
 
+    def device_usb_reserve_pending_target(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+    ) -> str | None:
+        """Reserve a pending keep wish using the canonical naming policy.
+
+        A refused proposal leaves the wish pending for review; no file is
+        touched. The existing target transaction owns collision/owner checks.
+        """
+        from .core.device_usb_target_proposal import propose_usb_target
+
+        intent = self.device_placement_get(device_id, artifact_id)
+        if not intent or intent.get("desired_state") != "keep":
+            return None
+        if intent.get("target_relative_path") is not None:
+            return intent["target_relative_path"]
+        artifact = self.artifact_get(artifact_id)
+        binding = self.device_binding_get(device_id)
+        if not artifact or not binding:
+            return None
+        try:
+            mode = (binding.get("metadata") or {}).get("reader_target_naming", "sha256")
+            source_path = None
+            if mode == "source":
+                with self._lock, self._connect() as db:
+                    paths = db.execute(
+                        "SELECT path FROM placements WHERE identity_id=? AND artifact_id=? "
+                        "AND state='present' LIMIT 2", (identity_id, artifact_id),
+                    ).fetchall()
+                if len(paths) != 1:
+                    return None
+                source_path = paths[0][0]
+            proposal = propose_usb_target(
+                identity_id=identity_id, binding=binding, intention=intent,
+                artifact=artifact, selected_format=artifact.get("media_format"),
+                other_intentions=self.device_placements(device_id=device_id),
+                source_path=source_path,
+            )
+            self.device_usb_target_set(
+                identity_id=identity_id, device_id=device_id, artifact_id=artifact_id,
+                target_relative_path=proposal.target_relative_path,
+                expected_target_naming=mode,
+            )
+            return proposal.target_relative_path
+        except ValueError:
+            return None
+
+    def device_usb_directory_set(
+        self, *, identity_id: str, device_id: str, fingerprint: str,
+        target_directory: str, target_naming: str | None = None,
+    ) -> None:
+        """Change layout before reservation; naming applies to future wishes."""
+        from .core.device_usb_preview import _relative
+        from .core.device_usb_target_name import NAMING_MODES
+        if target_naming is not None and (
+            type(target_naming) is not str or target_naming not in NAMING_MODES
+        ):
+            raise ValueError("invalid reader naming mode")
+        if not _relative(target_directory):
+            raise ValueError("invalid managed directory")
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10))
+        for component in target_directory.split("/"):
+            if (component.endswith((".", " "))
+                    or len(component.encode("utf-8")) > 255
+                    or any(char in '<>:"|?*' for char in component)
+                    or component.split(".")[0].upper() in reserved):
+                raise ValueError("invalid managed directory component")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id, metadata_json, target_directory FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if (row is None or row[0] != identity_id
+                    or (self._json_load(row[1]) or {}).get("usb_fingerprint") != fingerprint):
+                raise ValueError("reader association changed")
+            metadata = self._json_load(row[1])
+            if type(metadata) is not dict:
+                raise ValueError("reader association changed")
+            if row[2] != target_directory and db.execute(
+                "SELECT 1 FROM device_placements WHERE device_id=? AND "
+                "(target_relative_path IS NOT NULL OR last_observed_at IS NOT NULL) LIMIT 1",
+                (device_id,),
+            ).fetchone() is not None:
+                raise ValueError("existing destinations require explicit migration")
+            changed = dict(metadata)
+            if target_naming == "sha256":
+                changed.pop("reader_target_naming", None)
+            elif target_naming == "source":
+                changed["reader_target_naming"] = target_naming
+            if row[2] == target_directory and changed == metadata:
+                return
+            db.execute("UPDATE device_bindings SET target_directory=?,metadata_json=?,updated_at=? WHERE device_id=?",
+                       (target_directory, self._json_dump(changed), int(time.time()), device_id))
+
+    def device_usb_binding_forget(
+        self, *, identity_id: str, device_id: str, fingerprint: str,
+    ) -> None:
+        """Forget a scoped association and wishes, never destination bytes."""
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id, metadata_json FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if (row is None or row[0] != identity_id
+                    or (self._json_load(row[1]) or {}).get("usb_fingerprint") != fingerprint):
+                raise ValueError("reader association changed")
+            db.execute("DELETE FROM device_placements WHERE device_id=?", (device_id,))
+            db.execute("DELETE FROM device_bindings WHERE device_id=?", (device_id,))
+
     def device_usb_target_set(
         self, *, identity_id: str, device_id: str, artifact_id: str,
-        target_relative_path: str,
+        target_relative_path: str, expected_target_naming: str | None = None,
     ) -> str:
         """Pin the destination of an *existing* USB keep intention only.
 
@@ -4283,7 +4421,7 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             binding = db.execute(
-                "SELECT identity_id,target_directory FROM device_bindings "
+                "SELECT identity_id,target_directory,metadata_json FROM device_bindings "
                 "WHERE device_id=?", (device_id,),
             ).fetchone()
             if binding is None or binding[0] != identity_id:
@@ -4314,6 +4452,30 @@ class Storage:
                 raise ValueError("device target original path invalid")
             if desired != "keep":
                 raise ValueError("device target requires a keep intention")
+            # Bind a readable destination to the same current local Placement
+            # and per-reader choice in this transaction. Legacy arbitrary
+            # declarative paths are still non-executable unless they match
+            # the closed physical target grammar.
+            from .core.device_usb_target_name import usb_target_name, usb_target_format
+            binding_meta = self._json_load(binding[2])
+            mode = binding_meta.get("reader_target_naming", "sha256") if type(binding_meta) is dict else None
+            if expected_target_naming is not None and mode != expected_target_naming:
+                raise ValueError("reader naming changed")
+            artifact = db.execute("SELECT sha256,media_format FROM artifacts WHERE artifact_id=?",
+                                  (artifact_id,)).fetchone()
+            if artifact is not None:
+                digest, fmt = artifact
+                name = target_relative_path.rpartition("/")[2]
+                qualified_format = usb_target_format(name, digest)
+                if qualified_format is not None and name != usb_target_name(digest, qualified_format):
+                    sources = db.execute(
+                        "SELECT path FROM placements WHERE identity_id=? AND artifact_id=? "
+                        "AND state='present' LIMIT 2", (identity_id, artifact_id),
+                    ).fetchall()
+                    if (mode != "source" or fmt != qualified_format or len(sources) != 1
+                            or target_relative_path != managed + "/" + usb_target_name(
+                                digest, fmt, mode=mode, source_path=sources[0][0])):
+                        raise ValueError("reader named target source changed")
             if (observed_state != "unknown"
                     or last_observed_at is not None
                     or metadata != {"intent_identity_id": identity_id}):

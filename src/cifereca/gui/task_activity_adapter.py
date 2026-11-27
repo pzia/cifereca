@@ -9,6 +9,15 @@ from .task_state import register_task_start, register_task_finish
 from .task_progress_presentation import live_task_progress_label
 
 
+def _reader_progress(window):
+    """Keep the one admitted grouped reader job visible across navigation."""
+    tasks = window._active_tasks
+    for task_id, (_priority, label, kind) in tasks.items():
+        if kind == "reader-sync":
+            return live_task_progress_label(tasks, label, task_id=task_id)
+    return None
+
+
 def task_started(window, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
     if getattr(window, '_closed', False):return False
     if not register_task_start(
@@ -27,7 +36,7 @@ def task_started(window, task_id: int, count: int, label: str, priority: int, ki
         window.busy_label.set_visible(True)
         active_count = len(window._active_tasks)
         prefix = f"{active_count} opérations · " if active_count > 1 else ""
-        window.busy_label.set_label("En cours · " + prefix + str(label))
+        window.busy_label.set_label(_reader_progress(window) or "En cours · " + prefix + str(label))
         window.busy_revealer.set_reveal_child(True)
         window.busy_spinner.set_visible(True)
         window.busy_spinner.start()
@@ -38,7 +47,17 @@ def task_progress(window, label: str, *, task_id: int | None = None) -> bool:
     if getattr(window, "_closed", False):
         return False
     if hasattr(window, "busy_revealer") and window._active_tasks:
-        presentation = live_task_progress_label(window._active_tasks, label, task_id=task_id)
+        active = window._active_tasks
+        if task_id is not None and task_id not in active:
+            return False
+        if task_id is not None and active[task_id][2] == "reader-sync":
+            # Remember only task-correlated progress, not the last generic
+            # banner. The terminal history keeps the original title supplied
+            # separately by TaskRunner. A late task cannot restore this row.
+            priority, _old, kind = active[task_id]
+            active[task_id] = (priority, str(label), kind)
+        presentation = (_reader_progress(window) or
+                        live_task_progress_label(active, label, task_id=task_id))
         if presentation is not None:
             window.busy_label.set_visible(True)
             window.busy_label.set_label(presentation)
@@ -80,7 +99,7 @@ def task_finished(
         active_count = len(window._active_tasks)
         prefix = f"{active_count} opérations · " if active_count > 1 else ""
         window.busy_label.set_visible(True)
-        window.busy_label.set_label("En cours · " + prefix + next_label)
+        window.busy_label.set_label(_reader_progress(window) or "En cours · " + prefix + next_label)
         window.activity_dismiss.set_visible(False)
         window.busy_spinner.set_visible(True)
         window.busy_spinner.start()

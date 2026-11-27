@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..core.device_usb_preview import _relative, _sha
-from ..core.device_usb_variant_review import _SUFFIX
+from ..core.device_usb_target_name import usb_target_format
 
 
 _MAX_ROWS = 30000
 _MAX_DEVICES = 100000
-_FILTERS = frozenset({"all", "to_send", "to_remove", "without_intent"})
+_FILTERS = frozenset({"all", "to_send", "to_remove", "without_intent", "last_present", "anomalies"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,12 @@ def project_reader_library(
         }[desired]
         if (view_filter == "to_send" and desired != "keep"
                 or view_filter == "to_remove" and desired != "remove"
-                or view_filter == "without_intent" and desired != "none"):
+                or view_filter == "without_intent" and desired != "none"
+                or view_filter == "last_present" and last_known != "present"
+                or view_filter == "anomalies" and not (
+                    desired != "none" and (last_known == "unknown"
+                    or (desired == "keep" and last_known == "missing")
+                    or not row.get("target_relative_path")))):
             continue
         target = row.get("target_relative_path") if row is not None else None
         if not (managed_prefix and _relative(target) and target.startswith(managed_prefix)):
@@ -164,11 +169,8 @@ def project_reader_library(
         target_format = None
         digest = artifact_id.removeprefix("sha256:")
         if target is not None and digest != artifact_id and _sha(digest):
-            stem = managed_prefix + digest
-            target_format = next(
-                (name for name, suffix in _SUFFIX.items() if target == stem + suffix),
-                None,
-            )
+            if target.rpartition("/")[0] == managed:
+                target_format = usb_target_format(target.rpartition("/")[2], digest)
         thumb = entry.get("thumbnail_url")
         books.append(ReaderLibraryBook(
             key=key, artifact_id=artifact_id,

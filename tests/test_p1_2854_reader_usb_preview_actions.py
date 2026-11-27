@@ -145,9 +145,11 @@ def test_reader_page_wires_separate_inspection_from_ordinary_refresh(tmp_path):
     db, entries, host, actions = environment(tmp_path)
     # The built page is inert: no chooser or task has been allocated.
     buttons = host.readers_page.header_actions.children
-    assert len(buttons) == 5
+    assert len(buttons) == 11
     assert [getattr(button, "_cifereca_action_id", None) for button in buttons[1:]] == [
-        "reader-usb-dry-run", "reader-usb-pair", "reader-usb-formats",
+        "reader-usb-dry-run", "reader-sync-delta", "reader-sync-cancel",
+        "reader-local-pair", "reader-setup-directory", "reader-directory-config",
+        "reader-forget", "reader-usb-pair", "reader-usb-formats",
         "reader-usb-activation",
     ]
     assert all("clicked" in button.callbacks for button in buttons[1:])
