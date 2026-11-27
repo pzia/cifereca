@@ -292,7 +292,9 @@ def _read(service, document, bindings):
                         and re.fullmatch(r"private-catalogue:[0-9a-f]{64}", proof) is not None
                         and canonical_cover_document_ref(
                             "edition:" + proof.split(":", 1)[1]) == document):
-                    equivalence = (doc.provider_id, binding.principal, proof, url)
+                    equivalence = (doc.provider_id,
+                                   binding.descriptor.authenticated_catalogue_principal_scheme_v1,
+                                   binding.principal, proof, url)
                     if equivalence in seen_native_principals:
                         continue
                     seen_native_principals.add(equivalence)

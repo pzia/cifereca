@@ -151,7 +151,35 @@ def test_same_independently_authenticated_personal_account_retains_exact_authori
         assert len(menu_b.choices) == 1
         assert len(menu_a._bindings) == 2 and len(menu_b._bindings) == 1
         assert menu_b._bindings[0].principal == proofs[1][3]
-        assert len(read_consolidated_notice_cover(db, menu_a.document).sources) == 3
+        canonical = read_consolidated_notice_cover(db, menu_a.document)
+        assert len(canonical.sources) == 3
+        # The independently attested native catalogue bytes are stored
+        # ONCE, with three exact source envelopes (not three catalogues).
+        # Distinct accounts can observe identical descriptive bytes;
+        # that never grants an equivalent account or identical choice.
+        from cifereca.core.notice_cover_repository import (
+            _SHARED_PREFIX, _opaque_key, read_current_notice_cover,
+        )
+        from cifereca.core.notice_c_private_search_web import _source_key
+        from cifereca.core.notice_cover_projection import notice_cover_document_ref
+        from cifereca.core.notice_c_authenticated_web_retention import FIELD
+        documents = [notice_cover_document_ref(_source_key(row, owner))
+                     for row, owner in zip(rows, ("alice", "bob", "alice"))]
+        with db._lock, db._connect() as sql:
+            bodies = sql.execute("SELECT value FROM metadata WHERE key LIKE ?",
+                                 (_SHARED_PREFIX + "%",)).fetchall()
+            envelopes = [json.loads(sql.execute("SELECT value FROM metadata WHERE key=?",
+                                                (_opaque_key(doc),)).fetchone()[0])
+                         for doc in documents]
+        body, = [json.loads(row[0]) for row in bodies]
+        assert body["refs"] == sorted(doc.source_key for doc in documents)
+        assert FIELD not in json.loads(body["body"])
+        assert len({row["documentary_payload"]["digest"] for row in envelopes}) == 1
+        assert all("raw_json" not in row for row in envelopes)
+        observations = [read_current_notice_cover(db, doc) for doc in documents]
+        assert len({obs.observation.source_revision for obs in observations}) == 3
+        assert [row["documentary_payload"]["private_web"] for row in envelopes] == [
+            obs.observation.fields_copy()[FIELD] for obs in observations]
         assert not {c.choice_id for c in menu_a.choices} & {c.choice_id for c in menu_b.choices}
         assert resolve_authenticated_web_choice(
             service, menu_a, choice_id=menu_b.choices[0].choice_id) is None
