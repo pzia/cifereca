@@ -7,7 +7,7 @@ from .core import loan_provider_delivery
 from .core import loan_completion_receipt, loan_initial_receipt
 from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
-from .core import return_adept_orchestrator
+from .core import return_adept_orchestrator, runtime_status
 
 import logging
 import time
@@ -3377,15 +3377,7 @@ class LibraryService:
         return dict(getattr(service, "last_run_diagnostic", {}) or {})
 
     def kobo_adept_state(self, *, force: bool = False, full: bool = False) -> dict[str, Any]:
-        """Discover Kobo-Adept without putting heavy device probes on UI paths.
-
-        Contract v5+ makes ``capabilities --json`` a cheap environment probe
-        that does not inspect devices. Normal UI/backup paths therefore use only the
-        core contract+capabilities probe.  ``full=True`` is reserved for explicit
-        diagnostics and may additionally inspect status/config/update state.
-        """
-        # Cache only a resolved runtime probe. The cheap discovery failures
-        # below must be rechecked after a plugin activation or binary install.
+        """Read descriptive status from the installed runtime, not its wire protocol."""
         cache_seconds = 60
         now = time.monotonic()
         if (
@@ -3397,150 +3389,20 @@ class LibraryService:
         ):
             return dict(self._kobo_adept_state_cache)
 
+        # An explicit fresh read revokes the preceding cached status even
+        # when discovery or the native port now fails.
+        self._kobo_adept_state_cache = None
+        self._kobo_adept_state_cache_at = 0.0
         try:
             adapter = self._required_plugin_service("runtime.kobo-adept")
         except (ProviderConfigurationError, AttentionRequired):
-            # Adapter discovery can fail with executable paths, profile names
-            # or provider-controlled messages. Public runtime state must not
-            # echo raw exception text to Settings, Diagnostics or cache.
-            state = {
-                "available": False,
-                "compatible": False,
-                "operational": False,
-                "download_available": False,
-                "acsm_available": False,
-                "kobo_delegated_available": False,
-                "kobo_pinned_delivery_candidate": False,
-                "kobo_separate_content_keys_replay": False,
-                "kobo_kdrm_available": False,
-                "kobo_formats": [],
-                "contract_version": None,
-                "capabilities": {},
-                "configured_command": None,
-                "resolved_executable": None,
-                "minimum_supported_contract": 8,
-                "preferred_contract": 8,
-                "error": {"code": "runtime_plugin_unavailable", "message": "Runtime Kobo-ADEPT indisponible"},
-            }
-            # Do not cache a pre-activation missing runtime for 60 seconds.
-            # Plugin activation may finish moments after a startup/UI probe;
-            # the next broker read must be allowed to see the new service.
-            # This check is in-memory and never executes the vendor CLI.
-            return state
-        available = getattr(adapter, "available", None)
-        if callable(available) and not available():
-            state = {
-                "available": False, "compatible": False, "operational": False,
-                "download_available": False, "acsm_available": False,
-                "kobo_delegated_available": False, "kobo_pinned_delivery_candidate": False,
-                "kobo_separate_content_keys_replay": False, "kobo_kdrm_available": False,
-                "kobo_formats": [], "contract_version": None, "capabilities": {},
-                "configured_command": getattr(adapter, "configured_command", lambda: None)(),
-                "resolved_executable": None, "minimum_supported_contract": 8, "preferred_contract": 8,
-            }
-            # Do not cache a pre-activation missing runtime for 60 seconds.
-            # Plugin activation may finish moments after a startup/UI probe;
-            # the next broker read must be allowed to see the new service.
-            # This check is in-memory and never executes the vendor CLI.
-            return state
-        core_probe = getattr(adapter, "probe_core", None)
-        probe = adapter.probe() if full or core_probe is None else core_probe()
-        contract = probe.get("contract") if isinstance(probe, dict) else {}
-        runtime_caps = probe.get("capabilities") if isinstance(probe, dict) else {}
-        runtime_status = probe.get("status") if isinstance(probe, dict) else {}
-        contract = contract if isinstance(contract, dict) else {}
-        runtime_caps = runtime_caps if isinstance(runtime_caps, dict) else {}
-        runtime_status = runtime_status if isinstance(runtime_status, dict) else {}
-        try:
-            contract_version = int(contract.get("contract_version") or runtime_caps.get("contract_version") or runtime_status.get("contract_version") or 0)
-        except (TypeError, ValueError):
-            contract_version = 0
-        compatible = contract_version >= int(getattr(adapter, "required_contract", 8))
-        capabilities = runtime_caps.get("capabilities") if isinstance(runtime_caps.get("capabilities"), dict) else {}
-        download = capabilities.get("download") if isinstance(capabilities.get("download"), dict) else {}
-        http_download = download.get("http") if isinstance(download.get("http"), dict) else {}
-        acsm_download = download.get("acsm") if isinstance(download.get("acsm"), dict) else {}
-        kobo_download = download.get("kobo") if isinstance(download.get("kobo"), dict) else {}
-        declared = contract.get("capabilities") if isinstance(contract.get("capabilities"), list) else []
-        declared_names = {str(x) for x in declared}
-        acsm_available = bool(
-            bool(acsm_download.get("available")) or "download_acsm_adept" in declared_names
-        )
-        kobo_delegated_available = bool(
-            contract_version >= 8
-            and (bool(kobo_download.get("available")) or "download_kobo_delegated" in declared_names)
-        )
-        kobo_formats = [
-            str(value).strip().lower()
-            for value in (kobo_download.get("formats") or [])
-            if str(value).strip()
-        ] if isinstance(kobo_download.get("formats"), list) else []
-        kobo_pinned_delivery_candidate = bool(
-            kobo_delegated_available and kobo_download.get("pinned_delivery_candidate") is True
-        )
-        kobo_separate_content_keys_replay = bool(
-            kobo_delegated_available and kobo_download.get("separate_content_keys_replay") is True
-        )
-        kobo_drm = kobo_download.get("drm") if isinstance(kobo_download.get("drm"), dict) else {}
-        kdrm_cap = kobo_drm.get("KDRM") if isinstance(kobo_drm.get("KDRM"), dict) else kobo_drm.get("kdrm")
-        if isinstance(kdrm_cap, dict):
-            kobo_kdrm_available = bool(kdrm_cap.get("available"))
-        else:
-            # 0.13.2's additive capability example makes pinned delivery +
-            # separate key replay sufficient evidence of the new KDRM bridge,
-            # while older v8 runtimes normally expose drm.KDRM explicitly.
-            kobo_kdrm_available = bool(
-                kobo_pinned_delivery_candidate and kobo_separate_content_keys_replay
-            )
-        download_available = (
-            bool(http_download.get("available"))
-            or "download_http_epub_pdf" in declared_names
-            or acsm_available
-            or kobo_delegated_available
-        )
-        strict_json_stdout = bool(contract_version >= 7 or "strict_json_stdout" in declared_names)
-        contract_error = probe.get("contract_error")
-        capabilities_error = probe.get("capabilities_error")
-        status_error = probe.get("status_error")
-        status_error_code = str(status_error.get("code") or "") if isinstance(status_error, dict) else ""
-        # Contract v5 makes contract+capabilities authoritative for the normal
-        # integration path.  Full status/config probes are diagnostic only; an
-        # actual download will still return a structured config_error if needed.
-        blocking_status_error = status_error if full and status_error_code == "config_error" else None
-        core_error = contract_error or capabilities_error or blocking_status_error
-        state = {
-            "available": True,
-            "compatible": compatible,
-            "operational": bool(compatible and download_available and not blocking_status_error),
-            "download_available": download_available,
-            "acsm_available": acsm_available,
-            "kobo_delegated_available": kobo_delegated_available,
-            "kobo_pinned_delivery_candidate": kobo_pinned_delivery_candidate,
-            "kobo_separate_content_keys_replay": kobo_separate_content_keys_replay,
-            "kobo_kdrm_available": kobo_kdrm_available,
-            "kobo_formats": kobo_formats,
-            "minimum_supported_contract": int(getattr(adapter, "required_contract", 8)),
-            "preferred_contract": int(getattr(adapter, "required_contract", 8)),
-            "software_version": str(runtime_caps.get("software_version") or contract.get("version") or runtime_status.get("software_version") or ""),
-            "contract_version": contract_version or None,
-            "capabilities": capabilities,
-            "declared_capabilities": list(declared),
-            "strict_json_stdout": strict_json_stdout,
-            "resolved_executable": probe.get("resolved_executable"),
-            "resolved_update_executable": probe.get("resolved_update_executable"),
-            "probe_timings_ms": probe.get("probe_timings_ms") or {},
-            "contract_error": contract_error,
-            "capabilities_error": capabilities_error,
-            "status_error": status_error,
-            "config_paths": probe.get("config_paths"),
-            "config_paths_error": probe.get("config_paths_error"),
-            "update_status": probe.get("update_status"),
-            "update_status_error": probe.get("update_status_error"),
-            "status": runtime_status,
-            "error": core_error,
-        }
-        self._kobo_adept_state_cache = dict(state)
-        self._kobo_adept_state_cache_at = now
+            return runtime_status.unavailable_state()
+        state = runtime_status.read(adapter, full=full)
+        # Missing or malformed snapshots must not poison the first valid read
+        # after activation, executable installation or contract recovery.
+        if state.get("available") is True:
+            self._kobo_adept_state_cache = dict(state)
+            self._kobo_adept_state_cache_at = now
         return state
 
     def kobo_profiles(self) -> list[dict[str, Any]]:

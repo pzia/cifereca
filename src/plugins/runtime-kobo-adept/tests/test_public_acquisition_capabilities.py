@@ -79,3 +79,49 @@ def test_missing_executable_never_cached():
     assert runtime.acquisition_capabilities()["operational"] is False
     assert runtime.acquisition_capabilities()["available"] is False
     assert runtime.calls == 2
+
+
+def test_native_status_uses_one_probe_and_preserves_explicit_denial():
+    from cifereca.plugin_api import RUNTIME_STATUS_CONTRACT, RuntimeStatusSnapshot
+
+    runtime = _runtime(download={
+        "acsm": {"available": True},
+        "kobo": {"available": True, "formats": ["EPUB", "KEPUB"],
+                 "pinned_delivery_candidate": True,
+                 "separate_content_keys_replay": True,
+                 "drm": {"KDRM": {"available": False}}},
+    })
+    runtime.available = lambda: True
+    result = runtime.runtime_status()
+    assert type(result) is RuntimeStatusSnapshot
+    assert result.schema == RUNTIME_STATUS_CONTRACT
+    assert result.operational and result.acsm_available and result.delegated_available
+    assert result.pinned_delivery_candidate and result.separate_content_keys_replay
+    assert result.protected_content_available is False
+    assert result.formats == ("epub", "kepub")
+    assert runtime.calls == 1
+
+
+def test_native_status_missing_executable_never_probes():
+    runtime = _runtime(executable=False)
+    runtime.available = lambda: False
+    runtime.configured_command = lambda: ["<commande configurée>"]
+    result = runtime.runtime_status()
+    assert result.available is False and result.operational is False
+    assert runtime.calls == 0
+
+
+def test_native_status_full_probe_keeps_config_error_blocking_only_when_full():
+    runtime = _runtime(download={"acsm": {"available": True}})
+    runtime.available = lambda: True
+    old_probe = runtime.probe_core
+
+    def with_error():
+        payload = old_probe()
+        payload["status_error"] = {"code": "config_error"}
+        return payload
+
+    runtime.probe_core = with_error
+    assert runtime.runtime_status().operational is True
+    assert runtime.runtime_status(full=True).operational is False
+    assert runtime.calls == 2
