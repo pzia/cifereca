@@ -1,0 +1,117 @@
+name: P0 8216 isolated measurement
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-evidence.yml'
+permissions:
+  contents: read
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      suites: ${{ steps.matrix.outputs.suites }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+          persist-credentials: false
+      - id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          suites = ["core"] + sorted(p.name for p in Path("src/plugins").iterdir() if (p/"cifereca-plugin.json").is_file() and (p/"tests").is_dir())
+          print("suites="+json.dumps(suites))
+          PY
+  baseline:
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        suite: ${{ fromJSON(needs.discover.outputs.suites) }}
+    env:
+      SUITE: ${{ matrix.suite }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Dependencies
+        run: |
+          python -m pip install -e . "pytest>=8,<9" "pytest-cov>=6,<8" "Pillow>=10,<12" "cryptography>=42,<48" "PyMuPDF>=1.26,<2" "httpx>=0.28.1,<0.29" "packaging>=24,<26"
+      - name: Exact baseline and per-test coverage contexts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "4fd07df843b9d940746bbfe962a1877eec15d431"
+          out="$RUNNER_TEMP/evidence"
+          mkdir -p "$out"
+          python -m pip freeze > "$out/dependencies.txt"
+          git rev-parse HEAD > "$out/sha.txt"
+          export PYTHONPATH="$PWD/src"
+          if [[ "$SUITE" == core ]]; then
+            export PYTHONPATH="$PYTHONPATH:$PWD/src/plugins/provider-kobo"
+            target=tests
+            source="$PWD/src/cifereca"
+          else
+            cd "src/plugins/$SUITE"
+            target=tests
+            source="$PWD"
+          fi
+          /usr/bin/time -p -o "$out/plain-time.txt" python -m pytest -q "$target" --junitxml="$out/plain.xml" --durations=0 > "$out/plain.log" 2>&1
+          export COVERAGE_FILE="$out/.coverage"
+          /usr/bin/time -p -o "$out/coverage-time.txt" python -m pytest -q "$target" --cov="$source" --cov-branch --cov-context=test --cov-report= --junitxml="$out/coverage.xml" > "$out/coverage.log" 2>&1
+          python -m coverage json --show-contexts -o "$out/coverage.json"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baseline-${{ matrix.suite }}
+          path: ${{ runner.temp }}/evidence
+          include-hidden-files: true
+          retention-days: 7
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48" "pytest-xdist>=3.6,<4"
+      - name: Paired benchmark on same runner
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/paired"
+          mkdir -p "$out"
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          python -m pip freeze > "$out/dependencies.txt"
+          for label in before after after before; do
+            sha=4fd07df843b9d940746bbfe962a1877eec15d431
+            if [[ "$label" == after ]]; then sha=1c3d3330f1205dd23923b10ea1675b08e25d365c; fi
+            git checkout --detach "$sha"
+            test "$(git rev-parse HEAD)" = "$sha"
+            for mode in serial parallel; do
+              args=()
+              if [[ "$mode" == parallel ]]; then args=(-n 3 --dist=loadfile); fi
+              prefix="$(mktemp "$out/$label-$mode-XXXXXX")"
+              /usr/bin/time -p -o "$prefix.time" python -m pytest -q tests/test_core_p0_5975_business_coupling_ledger.py "${args[@]}" --durations=0 --junitxml="$prefix.xml" | tee "$prefix.log"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paired-5975
+          path: ${{ runner.temp }}/paired
+          retention-days: 7
