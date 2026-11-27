@@ -1,0 +1,113 @@
+name: P0 8216 Core evidence consolidation
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-consolidation.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46065388826
+          pattern: core-shard-[2356]
+          path: ${{ runner.temp }}/original
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46066816167
+          name: repaired-core-shard-0
+          path: ${{ runner.temp }}/repaired/core-shard-0
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          test "$(git rev-parse FETCH_HEAD)" = e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, sqlite3, subprocess, xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          refs = {"A": "4fd07df843b9d940746bbfe962a1877eec15d431", "B": "e8ed298116e57d44645c37cd3fa7ad91e1e9077e"}
+          selected = {0, 2, 3, 5, 6}
+          report = {"selected_shards": sorted(selected), "missing_shards": sorted(set(range(8))-selected), "refs": refs, "shards": {}, "totals": {}}
+          inventories = {a: subprocess.check_output(["git","ls-tree","-r","--name-only",sha,"tests"],text=True).splitlines() for a,sha in refs.items()}
+          def junit(path):
+              cases = ET.parse(path).findall(".//testcase")
+              keys = [(c.get("classname"),c.get("name")) for c in cases]
+              assert all(all(k) for k in keys)
+              def state(c):
+                  return next((s for s in ("error","failure","skipped") if c.find(s) is not None),"passed")
+              counts = collections.Counter(zip(keys,map(state,cases)))
+              assert not any(s in ("error","failure") for _,s in counts), path
+              return counts, sum(float(c.get("time","0")) for c in cases)
+          def serial(counter):
+              return [{"class":k[0],"name":k[1],"status":s,"count":n} for (k,s),n in sorted(counter.items())]
+          def arcpath(p):
+              p = p.replace(chr(92),"/")
+              if "/src/cifereca/" in p:
+                  return "src/cifereca/"+p.split("/src/cifereca/",1)[1]
+              return p
+          aggregate = sqlite3.connect(root/"union.sqlite")
+          aggregate.execute("CREATE TABLE arcs(arm TEXT,path TEXT,src INT,dst INT,PRIMARY KEY(arm,path,src,dst)) WITHOUT ROWID")
+          totals = {a:collections.Counter() for a in refs}
+          allcases = {a:collections.Counter() for a in refs}
+          for shard in sorted(selected):
+              folder = root/("repaired" if shard == 0 else "original")/f"core-shard-{shard}"
+              rec = report["shards"][str(shard)] = {}
+              parsed = {}
+              for arm in refs:
+                  expected = {p for p in inventories[arm] if p.endswith(".py") and pathlib.PurePosixPath(p).name.startswith("test") and int(hashlib.sha256(p.encode()).hexdigest(),16)%8==shard}
+                  listed = (folder/f"{arm}.files").read_text().splitlines()
+                  assert set(listed)==expected and len(listed)==len(expected), (arm,shard)
+                  plain, jt = junit(folder/f"{arm}.plain.xml")
+                  cov, ct = junit(folder/f"{arm}.coverage.xml")
+                  assert plain == cov, (arm,shard,"plain/coverage mismatch")
+                  assert not set(allcases[arm]) & set(plain), (arm,shard,"cross-shard duplicate")
+                  allcases[arm].update(plain)
+                  parsed[arm] = plain
+                  stats = collections.Counter()
+                  for (_,s),n in plain.items(): stats[s]+=n
+                  timings = {kind:float(next(line.split()[1] for line in (folder/f"{arm}.{kind}.time").read_text().splitlines() if line.startswith("real "))) for kind in ("plain","coverage")}
+                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings}
+                  totals[arm].update(stats)
+                  dbpath = folder/f"{arm}.coverage"
+                  con = sqlite3.connect(dbpath.as_uri()+"?mode=ro",uri=True)
+                  assert con.execute("select value from meta where key='has_arcs'").fetchone()[0]=="1"
+                  aggregate.executemany("INSERT OR IGNORE INTO arcs VALUES(?,?,?,?)", ((arm,arcpath(p),s,d) for p,s,d in con.execute("SELECT DISTINCT file.path,arc.fromno,arc.tono FROM arc JOIN file ON file.id=arc.file_id")))
+                  con.close()
+                  aggregate.commit()
+              rec["removed_or_changed_status"] = serial(parsed["A"]-parsed["B"])
+              rec["added_or_changed_status"] = serial(parsed["B"]-parsed["A"])
+              print("SHARD",shard, json.dumps(rec))
+          for arm in refs:
+              report["totals"][arm] = {"cases":dict(totals[arm]),"runner_seconds":{k:sum(r[arm]["wall_seconds"][k] for r in report["shards"].values()) for k in ("plain","coverage")},"distinct_arcs":aggregate.execute("SELECT count(*) FROM arcs WHERE arm=?",(arm,)).fetchone()[0]}
+          # Only compare line-number arcs on byte-identical source files.
+          trees = {}
+          for arm,sha in refs.items():
+              rows = subprocess.check_output(["git","ls-tree","-r",sha,"src/cifereca"],text=True).splitlines()
+              trees[arm] = {line.split("\t",1)[1]:line.split()[2] for line in rows}
+          same = {p for p,h in trees["A"].items() if trees["B"].get(p)==h}
+          aggregate.execute("CREATE TABLE same(path TEXT PRIMARY KEY)")
+          aggregate.executemany("INSERT INTO same VALUES(?)",((p,) for p in same))
+          for a,b in (("A","B"),("B","A")):
+              rows = aggregate.execute("SELECT x.path,count(*) FROM arcs x JOIN same USING(path) WHERE x.arm=? AND NOT EXISTS(SELECT 1 FROM arcs y WHERE y.arm=? AND y.path=x.path AND y.src=x.src AND y.dst=x.dst) GROUP BY x.path ORDER BY x.path",(a,b)).fetchall()
+              report[f"unchanged_source_arcs_{a}_only"] = dict(rows)
+          report["unmapped_arc_paths"] = [p for p, in aggregate.execute("SELECT DISTINCT path FROM arcs") if p not in trees["A"] and p not in trees["B"]]
+          aggregate.close()
+          (root/"core-consolidation.json").write_text(json.dumps(report,indent=2))
+          print("TOTAL",json.dumps(report["totals"]))
+          print("PARTIAL ONLY",report["missing_shards"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-consolidation-partial
+          path: ${{ runner.temp }}/core-consolidation.json
+          retention-days: 7
