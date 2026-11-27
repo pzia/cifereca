@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import threading
@@ -52,6 +53,137 @@ def _trace_active() -> bool:
     return diagnostics_level() == "trace"
 
 
+
+# #7263: classify transport bodies without decoding or eagerly reading streams.
+# Unknown types may retain a bounded prefix temporarily, never charge it to the
+# body/session budget until positively identified as text.
+HTTP_CAPTURE_INCLUDE_BINARY = "diagnostics.http_capture_include_binary"
+
+
+def http_capture_include_binary(config):
+    # Missing legacy preferences preserve the former opt-in Trace behaviour.
+    # An invalid explicitly saved value never implicitly enables binary capture.
+    return config.get(HTTP_CAPTURE_INCLUDE_BINARY, True) is True
+
+
+def preserve_http_capture_preference(data, *, current):
+    """An ordinary Settings draft cannot overwrite this immediate preference."""
+    diagnostics = data.get("diagnostics")
+    if type(diagnostics) is not dict:
+        diagnostics = {}
+        data["diagnostics"] = diagnostics
+    diagnostics["http_capture_include_binary"] = http_capture_include_binary(current)
+    return data
+
+
+_BODY_PROBE_BYTES = 512
+_EXCLUDED_STATES = frozenset(("binary_excluded", "body_type_unknown"))
+_TEXT_APPLICATIONS = frozenset((
+    "application/json", "application/xml", "application/javascript",
+    "application/x-javascript", "application/x-www-form-urlencoded",
+    "application/graphql", "application/yaml", "application/x-yaml",
+    "application/toml", "application/sql",
+))
+_BINARY_APPLICATIONS = frozenset((
+    "application/pdf", "application/epub+zip", "application/zip",
+    "application/gzip", "application/x-gzip", "application/x-7z-compressed",
+    "application/x-rar-compressed", "application/vnd.rar",
+    "application/x-tar", "application/x-bzip2", "application/x-xz",
+    "application/wasm", "application/vnd.amazon.ebook",
+))
+_BINARY_SIGNATURES = (
+    b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a",
+    b"%PDF-", b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08",
+    b"7z\xbc\xaf\x27\x1c", b"Rar!", b"\x7fELF", b"RIFF", b"ID3",
+    b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00",
+)
+
+
+def _header(meta, name):
+    if not isinstance(meta, dict):
+        return ""
+    values = [value for key, value in meta.get("headers", ())
+              if key.lower() == name]
+    return values[0] if values and all(value == values[0] for value in values) else ""
+
+
+def _mime(meta):
+    return _header(meta, "content-type").split(";", 1)[0].strip().lower()
+
+
+def _body_kind(meta, prefix, representation, *, final=False):
+    """Classify MIME first, then bounded signatures for ambiguous bodies."""
+    mime = _mime(meta)
+    disposition = _header(meta, "content-disposition").lower()
+    if (mime.startswith(("image/", "audio/", "video/", "font/"))
+            or mime in _BINARY_APPLICATIONS
+            or mime.endswith("+zip")
+            or re.search(r'\bfilename\*?\s*=\s*[^;\r\n]*\.(?:epub|pdf|zip|png|jpe?g|gif|webp|svg|mp[34]|7z|rar|gz|tar)(?=["\s;]|$)', disposition)):
+        return "binary"
+    if (mime.startswith("text/") or mime in _TEXT_APPLICATIONS
+            or mime.endswith(("+json", "+xml"))):
+        return "text"
+    # Compression of a declared textual entity is not a binary document.
+    # An ambiguous encoded transport cannot be safely sniffed as plaintext.
+    if (representation != "httpx_buffered_content"
+            and _header(meta, "content-encoding").strip().lower() not in ("", "identity")):
+        return "unknown"
+    if any(prefix.startswith(signature) for signature in _BINARY_SIGNATURES):
+        return "binary"
+    if not final and len(prefix) < _BODY_PROBE_BYTES:
+        return "pending"
+    if not prefix:
+        return "unknown"
+    if b"\x00" in prefix or any(byte < 32 and byte not in (9, 10, 13) for byte in prefix):
+        return "binary"
+    # With no trustworthy MIME, retain only recognisable documentary syntax.
+    # Arbitrary printable bytes are not proof that a document is text.
+    if prefix.lstrip(b"\xef\xbb\xbf \t\r\n").startswith((b"{", b"[", b"<")):
+        try:
+            prefix.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if not (not final and exc.end == len(prefix)
+                    and exc.reason == "unexpected end of data"):
+                return "unknown"
+        return "text"
+    return "unknown"
+
+
+def _exclude_body(body, meta, kind):
+    body.update(state="binary_excluded" if kind == "binary" else "body_type_unknown",
+                classification=kind, mime=_mime(meta), data=bytearray())
+
+
+def _project_body_policy(entry):
+    """Apply the current export choice to a copy, including historical bodies."""
+    for side in ("request", "response"):
+        body = entry[side + "_body"]
+        if body["state"] in _EXCLUDED_STATES or not body["observed_bytes"]:
+            continue
+        meta = entry.get(side)
+        kind = body.get("classification") or _body_kind(
+            meta, bytes(body["data"][:_BODY_PROBE_BYTES]), body["representation"],
+            final=len(body["data"]) < _BODY_PROBE_BYTES,
+        )
+        if kind != "text":
+            body["prior_state"] = body["state"]
+            _exclude_body(body, meta, kind)
+
+
+def http_body_member(body, filename):
+    """One compatible index/blob projection for both private ZIP exporters."""
+    record = {key: value for key, value in body.items() if key != "data"}
+    data = bytes(body["data"])
+    if body["state"] in _EXCLUDED_STATES:
+        if data:
+            raise ValueError("excluded_http_body_has_data")
+        record.update(stored_bytes=0)
+        return record, None
+    record.update(blob=filename, stored_bytes=len(data),
+                  sha256=hashlib.sha256(data).hexdigest())
+    return record, data
+
+
 class HTTPTraceCapture:
     """Thread-safe bounded RAM archive; it cannot survive a process restart.
 
@@ -61,10 +193,13 @@ class HTTPTraceCapture:
 
     def __init__(self, *, body_limit=2 * 1024 * 1024,
                  session_limit=32 * 1024 * 1024, exchange_limit=1000,
-                 metadata_limit=64 * 1024):
+                 metadata_limit=64 * 1024, include_binary=True):
         for value in (body_limit, session_limit, exchange_limit, metadata_limit):
             if type(value) is not int or value < 1:
                 raise ValueError("Capture budgets must be positive integers")
+        if type(include_binary) is not bool:
+            raise ValueError("include_binary must be a boolean")
+        self._include_binary = include_binary
         self.body_limit = body_limit
         self.session_limit = session_limit
         self.exchange_limit = exchange_limit
@@ -116,22 +251,33 @@ class HTTPTraceCapture:
         return dict(state="not_read", observed_bytes=0, data=bytearray(),
                     representation="transport_bytes")
 
+    def set_include_binary(self, value: bool):
+        if type(value) is not bool:
+            raise ValueError("include_binary must be a boolean")
+        with self._lock:
+            self._include_binary = value
+
     def status(self):
         """Small aggregate view, without copying bodies for a UI refresh."""
         with self._lock:
             return dict(active=_trace_active(), session_ref=self.session_ref,
                         exchanges=len(self._exchanges), used_bytes=self._used,
-                        omitted_exchanges=self._omitted)
+                        omitted_exchanges=self._omitted, include_binary=self._include_binary)
 
     def snapshot(self):
         with self._lock:
-            return copy.deepcopy(dict(
+            snapshot = copy.deepcopy(dict(
                 schema="cifereca.http-trace/1", session_ref=self.session_ref,
                 representation="transport_bytes_before_response_decompression",
                 omitted_exchanges=self._omitted, used_bytes=self._used,
                 limits=dict(body_bytes=self.body_limit, session_bytes=self.session_limit,
                             exchanges=self.exchange_limit, metadata_bytes=self.metadata_limit),
                 exchanges=self._exchanges))
+            snapshot['include_binary'] = self._include_binary
+            if not self._include_binary:
+                for entry in snapshot['exchanges']:
+                    _project_body_policy(entry)
+            return snapshot
 
     def export(self, destination: str | Path):
         """Publish a new ZIP atomically, never replace a file or follow its link.
@@ -150,12 +296,11 @@ class HTTPTraceCapture:
                 with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
                     for entry in snapshot['exchanges']:
                         for side in ('request', 'response'):
-                            body = entry[side + '_body']
-                            content = bytes(body.pop('data'))
                             name = f"bodies/{entry['exchange_ref']}-{side}.bin"
-                            body.update(blob=name, stored_bytes=len(content),
-                                        sha256=hashlib.sha256(content).hexdigest())
-                            archive.writestr(name, content)
+                            record, content = http_body_member(entry[side + '_body'], name)
+                            entry[side + '_body'] = record
+                            if content is not None:
+                                archive.writestr(name, content)
                     archive.writestr("index.json", json.dumps(snapshot, ensure_ascii=True, indent=2))
                 output.flush()
                 os.fsync(output.fileno())
@@ -170,25 +315,67 @@ class _Exchange:
     def __init__(self, capture, entry):
         self.capture, self.entry = capture, entry
         self.started = time.monotonic()
+        self._probes = {}
+
+    def _append(self, body, chunk):
+        if body["state"] == "quota":
+            return
+        available = min(self.capture.body_limit - len(body["data"]),
+                        self.capture.session_limit - self.capture._used)
+        saved = chunk[:max(0, available)]
+        body["data"].extend(saved)
+        self.capture._used += len(saved)
+        body["state"] = "partial" if len(saved) == len(chunk) else "quota"
+
+    def _capture(self, side, body, chunk, *, final=False):
+        pending = self._probes.pop(side, b"")
+        if self.capture._include_binary:
+            if pending:
+                self._append(body, pending)
+            if chunk:
+                self._append(body, chunk)
+            return
+        meta = self.entry.get(side)
+        prefix = bytes(body["data"][:_BODY_PROBE_BYTES])
+        if len(prefix) < _BODY_PROBE_BYTES:
+            prefix += pending[:_BODY_PROBE_BYTES - len(prefix)]
+        if len(prefix) < _BODY_PROBE_BYTES:
+            prefix += chunk[:_BODY_PROBE_BYTES - len(prefix)]
+        kind = body.get("classification") or _body_kind(
+            meta, prefix, body["representation"], final=final,
+        )
+        if kind == "pending":
+            # Pending implies all bytes fit in the bounded probe.
+            self._probes[side] = pending + chunk
+            body["state"] = "partial"
+            return
+        if kind != "text":
+            if body["data"]:
+                # Earlier, explicitly included bytes were already charged.
+                # Do not rewind the append-only session accounting/window.
+                body["prior_state"] = body["state"]
+            _exclude_body(body, meta, kind)
+            return
+        body.update(classification="text", mime=_mime(meta))
+        if pending:
+            self._append(body, pending)
+        if chunk:
+            self._append(body, chunk)
 
     def observe(self, side, chunk):
         try:
             with self.capture._lock:
                 body = self.entry[side + '_body']
                 if not _trace_active():
-                    if body['state'] not in ('complete', 'quota', 'error'):
+                    self._probes.pop(side, None)
+                    if body['state'] not in ('complete', 'quota', 'error') and body['state'] not in _EXCLUDED_STATES:
                         body['state'] = 'trace_disabled'
                     return
-                if body['state'] in ('quota', 'trace_disabled', 'error'):
-                    body['observed_bytes'] += len(chunk)
-                    return
                 body['observed_bytes'] += len(chunk)
-                available = min(self.capture.body_limit - len(body['data']),
-                                self.capture.session_limit - self.capture._used)
-                saved = chunk[:max(0, available)]
-                body['data'].extend(saved)
-                self.capture._used += len(saved)
-                body['state'] = 'partial' if len(saved) == len(chunk) else 'quota'
+                if (body['state'] in ('quota', 'trace_disabled', 'error')
+                        or body['state'] in _EXCLUDED_STATES or not chunk):
+                    return
+                self._capture(side, body, chunk)
         except Exception:
             self.finish_body(side, 'error')
 
@@ -196,7 +383,13 @@ class _Exchange:
         try:
             with self.capture._lock:
                 body = self.entry[side + '_body']
-                if body['state'] not in ('quota', 'trace_disabled', 'error'):
+                if side in self._probes:
+                    if _trace_active() and state == 'complete':
+                        self._capture(side, body, b'', final=True)
+                    else:
+                        self._probes.pop(side, None)
+                if (body['state'] not in ('quota', 'trace_disabled', 'error')
+                        and body['state'] not in _EXCLUDED_STATES):
                     body['state'] = state if _trace_active() else 'trace_disabled'
         except Exception:
             pass

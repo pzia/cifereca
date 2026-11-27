@@ -50,6 +50,7 @@ def capture_http_window(
         "schema": "cifereca.http-trace/1",
         "session_ref": snapshot["session_ref"],
         "representation": snapshot.get("representation"),
+        "include_binary": snapshot.get("include_binary", True),
         "limits": snapshot.get("limits"),
         "used_bytes": snapshot["used_bytes"] - initial_status["used_bytes"],
         "omitted_exchanges": (
