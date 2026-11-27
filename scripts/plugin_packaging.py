@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from collections import Counter
 import ast
 import hashlib
 import json
@@ -440,26 +441,313 @@ def _is_public_plugin_api(module: str) -> bool:
     return module == "cifereca.plugin_api" or module.startswith("cifereca.plugin_api.")
 
 
-def _private_core_imports(path: Path) -> list[tuple[int, str]]:
+def _boundary_findings(
+    source: str, *, filename: str = "<plugin>", package: str = "",
+    module_owners: dict[str, set[str]] | None = None,
+    plugin_owners: dict[str, str] | None = None,
+    category_owners: dict[str, set[str]] | None = None,
+    declared_ids: set[str] | None = None,
+    declared_categories: set[str] | None = None,
+) -> list[tuple[int, str]]:
+    """Bounded static boundary check. Never load a plugin or evaluate its code.
+
+    Unique simple aliases, literal strings, literal concatenation and named
+    public boundary receivers are covered. This is not a Python sandbox.
+    """
+    tree = ast.parse(source, filename=filename)
+    nodes = list(ast.walk(tree))
+    module_owners = module_owners or {}
+    plugin_owners = plugin_owners or {}
+    category_owners = category_owners or {}
+    declared_ids = declared_ids or set()
+    declared_categories = declared_categories or set()
+    allowed_packages = {plugin_owners[key] for key in declared_ids if key in plugin_owners}
+    allowed_packages.update(
+        owner for category in declared_categories
+        for owner in category_owners.get(category, ())
+    )
+    writes: Counter[str] = Counter()
+    imported: list[tuple[str, str]] = []
+    assignments: list[tuple[ast.AST, ast.AST]] = []
+    for node in nodes:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            writes[node.id] += 1
+        elif isinstance(node, ast.arg):
+            writes[node.arg] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            writes[node.name] += 1
+        elif isinstance(node, ast.Import):
+            for item in node.names:
+                name = item.asname or item.name.split(".")[0]
+                writes[name] += 1
+                imported.append((name, item.name if item.asname else name))
+        elif isinstance(node, ast.ImportFrom):
+            for item in node.names:
+                name = item.asname or item.name
+                writes[name] += 1
+                if node.level == 0 and node.module and item.name != "*":
+                    imported.append((name, node.module + "." + item.name))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            writes[node.name] += 1
+        if isinstance(node, ast.Assign):
+            assignments.extend((target, node.value) for target in node.targets)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            assignments.append((node.target, node.value))
+
+    aliases = {name: qualified for name, qualified in imported if writes[name] == 1}
+    constants: dict[str, str] = {}
+    builtin_names = {"__import__", "getattr", "setattr", "delattr", "hasattr", "vars"}
+
+    def literal(node: ast.AST | None) -> str | None:
+        if isinstance(node, ast.Constant) and type(node.value) is str:
+            return node.value if len(node.value) <= 512 else None
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = literal(node.left), literal(node.right)
+            if left is not None and right is not None and len(left) + len(right) <= 512:
+                return left + right
+        return None
+
+    def qualified(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            if node.id in aliases:
+                return aliases[node.id]
+            if node.id in builtin_names and not writes[node.id]:
+                return "builtins." + node.id
+        if isinstance(node, ast.Attribute):
+            prefix = qualified(node.value)
+            return prefix + "." + node.attr if prefix else ""
+        if isinstance(node, ast.Call) and qualified(node.func) == "builtins.getattr" and len(node.args) >= 2:
+            prefix, attr = qualified(node.args[0]), literal(node.args[1])
+            if prefix and attr is not None:
+                return prefix + "." + attr
+        return ""
+
+    # Fixed point for unique assignments only. No global mutable aliases,
+    # inferred return values, computed strings, exec or arbitrary reflection.
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for target, value in assignments:
+            if not isinstance(target, ast.Name) or writes[target.id] != 1:
+                continue
+            string, name = literal(value), qualified(value)
+            if string is not None and target.id not in constants:
+                constants[target.id] = string
+                changed = True
+            if name and target.id not in aliases:
+                aliases[target.id] = name
+                changed = True
+        if not changed:
+            break
+
+    def dotted(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted(node.value)
+            return prefix + "." + node.attr if prefix else ""
+        return ""
+
+    # A plugin may freely use its own private fields. Only a known boundary
+    # receiver (or a bounded alias of it) makes a private access forbidden.
+    roots = {"context": "context", "ctx": "context", "host": "host", "broker": "broker"}
+    boundary_aliases: dict[str, str] = {}
+    service_aliases: dict[str, str] = {}
+    target_counts = Counter(dotted(target) for target, _ in assignments)
+    for node in nodes:
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            annotation = qualified(node.annotation) or dotted(node.annotation)
+            if annotation.rsplit(".", 1)[-1] == "PluginContext":
+                boundary_aliases[node.arg] = "context"
+
+    def receiver(node: ast.AST) -> str:
+        name = dotted(node)
+        if name in boundary_aliases:
+            return boundary_aliases[name]
+        if isinstance(node, ast.Name):
+            return roots.get(node.id.lstrip("_"), "")
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in {"self", "cls"}:
+                kind = roots.get(node.attr.lstrip("_"))
+                if kind:
+                    return kind
+            # A public object reached through the boundary remains bounded.
+            return receiver(node.value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            kind = receiver(node.func.value)
+            if kind and node.func.attr in {"broker", "service", "select_service"}:
+                return "broker" if node.func.attr == "broker" else "service"
+        return ""
+
+    def service_method(node: ast.AST) -> str:
+        name = dotted(node)
+        if name in service_aliases:
+            return service_aliases[name]
+        methods = {"service", "services", "select_service", "subscribe_services"}
+        if isinstance(node, ast.Attribute) and receiver(node.value) == "context":
+            if node.attr in methods:
+                return node.attr
+        if (isinstance(node, ast.Call) and qualified(node.func) == "builtins.getattr"
+                and len(node.args) >= 2 and receiver(node.args[0]) == "context"):
+            method = literal(node.args[1])
+            if method in methods:
+                return method
+        return ""
+
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for target, value in assignments:
+            key = dotted(target)
+            if not key or target_counts[key] != 1:
+                continue
+            if isinstance(target, ast.Name) and writes[target.id] != 1:
+                continue
+            kind, method = receiver(value), service_method(value)
+            if kind and key not in boundary_aliases:
+                boundary_aliases[key] = kind
+                changed = True
+            if method and key not in service_aliases:
+                service_aliases[key] = method
+                changed = True
+        if not changed:
+            break
+
+    violations: list[tuple[int, str]] = []
+
+    def add(node: ast.AST, message: str) -> None:
+        violations.append((int(getattr(node, "lineno", 0) or 0), message))
+
+    def check_module(node: ast.AST, module: str) -> None:
+        if module == "cifereca" or module.startswith("cifereca."):
+            if not _is_public_plugin_api(module) or any(
+                part.startswith("_") for part in module.split(".")[2:]
+            ):
+                add(node, module)
+        elif package:
+            owners = module_owners.get(module.split(".")[0], set())
+            if owners and package not in owners and not owners <= allowed_packages:
+                add(node, "undeclared_plugin_import:" + module)
+
+    def call_arg(node: ast.Call, index: int, name: str) -> ast.AST | None:
+        if len(node.args) > index:
+            return node.args[index]
+        return next((item.value for item in node.keywords if item.arg == name), None)
+
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                check_module(node, item.name)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            check_module(node, module)
+            if _is_public_plugin_api(module):
+                for item in node.names:
+                    if item.name.startswith("_"):
+                        add(node, module + "." + item.name)
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("_") and receiver(node.value):
+                add(node, "private_boundary_access:" + node.attr)
+        elif isinstance(node, ast.Subscript) and qualified(node.value) == "sys.modules":
+            module = literal(node.slice)
+            if module is not None:
+                check_module(node, module)
+        elif isinstance(node, ast.Call):
+            name = qualified(node.func)
+            if name in {"builtins.__import__", "importlib.import_module"}:
+                module = literal(call_arg(node, 0, "name"))
+                if module is None:
+                    add(node, "dynamic_import_unresolved")
+                elif module.startswith("."):
+                    # importlib.import_module supports a static package anchor.
+                    anchor = literal(call_arg(node, 1, "package"))
+                    level = len(module) - len(module.lstrip("."))
+                    if not anchor or level > len(anchor.split(".")):
+                        add(node, "dynamic_import_unresolved")
+                    else:
+                        prefix = ".".join(anchor.split(".")[:len(anchor.split(".")) - level + 1])
+                        suffix = module[level:]
+                        check_module(node, prefix + ("." + suffix if suffix else ""))
+                else:
+                    check_module(node, module)
+                    if name == "builtins.__import__" and _is_public_plugin_api(module):
+                        fromlist = call_arg(node, 3, "fromlist")
+                        if isinstance(fromlist, (ast.List, ast.Tuple)):
+                            for item in fromlist.elts:
+                                attribute = literal(item)
+                                if attribute is not None and attribute.startswith("_"):
+                                    add(node, module + "." + attribute)
+            elif name == "sys.modules.get":
+                module = literal(call_arg(node, 0, "key"))
+                if module is not None:
+                    check_module(node, module)
+            elif name in {"builtins.getattr", "builtins.setattr", "builtins.delattr", "builtins.hasattr"}:
+                if node.args and receiver(node.args[0]) and len(node.args) >= 2:
+                    attr = literal(node.args[1])
+                    if attr is not None and attr.startswith("_"):
+                        add(node, "private_boundary_access:" + attr)
+            method = service_method(node.func)
+            if package and method:
+                argument = literal(call_arg(node, 0, "plugin_id" if method == "service" else "category_id"))
+                if argument is not None:
+                    if method == "service":
+                        # Core's historical named public service (e.g. llm)
+                        # is not an inter-plugin edge. Only installed plugin
+                        # IDs establish ownership; external IDs stay unknown.
+                        if (argument in plugin_owners and plugin_owners[argument] != package
+                                and argument not in declared_ids):
+                            add(node, "undeclared_plugin_service:" + argument)
+                    elif (category_owners.get(argument, set()) - {package}
+                          and argument not in declared_categories):
+                        add(node, "undeclared_plugin_category:" + argument)
+    return sorted(set(violations))
+
+
+def _private_core_imports(path: Path, **dependency_context) -> list[tuple[int, str]]:
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        return _boundary_findings(path.read_text(encoding="utf-8"),
+                                  filename=str(path), **dependency_context)
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         raise PackagingError(f"source Python invalide: {path}: {exc}") from exc
 
-    violations: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                module = str(alias.name or "")
-                if module == "cifereca" or module.startswith("cifereca."):
-                    if not _is_public_plugin_api(module):
-                        violations.append((int(getattr(node, "lineno", 0) or 0), module))
-        elif isinstance(node, ast.ImportFrom):
-            module = str(node.module or "")
-            if module == "cifereca" or module.startswith("cifereca."):
-                if not _is_public_plugin_api(module):
-                    violations.append((int(getattr(node, "lineno", 0) or 0), module))
-    return violations
+
+def _repository_dependency_context(plugin_dirs: Sequence[Path]) -> dict[str, dict]:
+    """Build package ownership from manifests and production module roots."""
+    plugin_owners: dict[str, str] = {}
+    category_owners: dict[str, set[str]] = {}
+    module_owners: dict[str, set[str]] = {}
+    descriptors = {}
+    for plugin_dir in plugin_dirs:
+        package = plugin_dir.name
+        manifest = read_plugin_manifest(plugin_dir)
+        descriptors[package] = manifest["plugins"]
+        for descriptor in manifest["plugins"]:
+            plugin_owners[descriptor["id"]] = package
+            category_owners.setdefault(descriptor["type"], set()).add(package)
+        for path in plugin_dir.rglob("*.py"):
+            relative = path.relative_to(plugin_dir)
+            if any(part in PRODUCTION_EXCLUDED_DIRS for part in relative.parts[:-1]):
+                continue
+            root = relative.parts[0]
+            module = Path(root).stem if len(relative.parts) == 1 else root
+            if module.isidentifier():
+                module_owners.setdefault(module, set()).add(package)
+    contexts = {}
+    for package, rows in descriptors.items():
+        declared_ids = {
+            dep if isinstance(dep, str) else dep["plugin"]
+            for row in rows for field in ("requires", "recommends")
+            for dep in (row.get(field) or ())
+        }
+        declared_categories = {
+            dep["category"] for row in rows for dep in (row.get("requires_contracts") or ())
+        }
+        contexts[package] = {
+            "package": package, "module_owners": module_owners,
+            "plugin_owners": plugin_owners, "category_owners": category_owners,
+            "declared_ids": declared_ids, "declared_categories": declared_categories,
+        }
+    return contexts
 
 
 def validate_plugin_entrypoints(plugin_dir: Path, manifest: dict) -> None:
@@ -501,7 +789,7 @@ def validate_plugin_entrypoints(plugin_dir: Path, manifest: dict) -> None:
             )
 
 
-def validate_plugin_source(plugin_dir: Path) -> None:
+def validate_plugin_source(plugin_dir: Path, **dependency_context) -> None:
     """Enforce the production plugin boundary: Core access goes through plugin_api only."""
     plugin_dir = plugin_dir.resolve()
     violations: list[str] = []
@@ -509,7 +797,7 @@ def validate_plugin_source(plugin_dir: Path) -> None:
         relative = path.relative_to(plugin_dir)
         if any(part in PRODUCTION_EXCLUDED_DIRS for part in relative.parts[:-1]):
             continue
-        for line, module in _private_core_imports(path):
+        for line, module in _private_core_imports(path, **dependency_context):
             violations.append(f"{relative.as_posix()}:{line}: {module}")
 
     if violations:
@@ -517,8 +805,8 @@ def validate_plugin_source(plugin_dir: Path) -> None:
         if len(violations) > 20:
             detail += f"; … +{len(violations) - 20}"
         raise PackagingError(
-            f"{plugin_dir}: imports Core privés interdits "
-            f"(utiliser cifereca.plugin_api): {detail}"
+            f"{plugin_dir}: imports Core privés interdits / frontière plugin "
+            f"(utiliser cifereca.plugin_api et déclarer les dépendances): {detail}"
         )
 
 
@@ -641,10 +929,12 @@ def validate_official_manifest_syntax(manifest: dict) -> None:
 def build_plugin_zip(plugin_dir: Path, output_dir: Path = DIST_DIR) -> Path:
     plugin_dir = plugin_dir.resolve()
     manifest = read_plugin_manifest(plugin_dir)
+    dependency_context = {}
     if plugin_dir.parent == PLUGINS_DIR.resolve():
         validate_official_manifest_syntax(manifest)
+        dependency_context = _repository_dependency_context(discover_plugins(PLUGINS_DIR))[plugin_dir.name]
     validate_plugin_entrypoints(plugin_dir, manifest)
-    validate_plugin_source(plugin_dir)
+    validate_plugin_source(plugin_dir, **dependency_context)
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / package_zip_name(manifest)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -999,11 +1289,12 @@ def validate_with_update_dev(
 def verify_repository(plugins_dir: Path = PLUGINS_DIR) -> list[dict]:
     plugin_dirs = discover_plugins(plugins_dir)
     validate_unique_plugin_ids(plugin_dirs)
+    contexts = _repository_dependency_context(plugin_dirs)
     rows = []
     for plugin_dir in plugin_dirs:
         manifest = read_plugin_manifest(plugin_dir)
         validate_plugin_entrypoints(plugin_dir, manifest)
-        validate_plugin_source(plugin_dir)
+        validate_plugin_source(plugin_dir, **contexts[plugin_dir.name])
         files = _source_files(plugin_dir)
         rows.append(
             {

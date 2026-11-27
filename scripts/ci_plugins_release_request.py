@@ -35,7 +35,12 @@ def active_package_ids(plugins_dir: Path = PLUGINS_DIR) -> set[str]:
             package_id = obj["package"]["id"]
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise ReleaseRequestRefused("Invalid active plugin manifest") from exc
-        if not isinstance(package_id, str) or not PACKAGE_RE.fullmatch(package_id):
+        # Historical meta.bundle identity predates the org.cifereca prefix.
+        # Recognize only its exact installed directory/ID for inventory;
+        # validate_selection still requires PACKAGE_RE for selected IDs.
+        legacy_metadata = (path.parent.name == "metadata-age-standard"
+                           and package_id == "metadata.age.standard")
+        if not isinstance(package_id, str) or not (PACKAGE_RE.fullmatch(package_id) or legacy_metadata):
             raise ReleaseRequestRefused("Invalid active package ID")
         if package_id in found:
             raise ReleaseRequestRefused("Duplicate active package ID")

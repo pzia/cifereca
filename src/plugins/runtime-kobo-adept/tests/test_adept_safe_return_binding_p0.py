@@ -95,7 +95,7 @@ def test_plugin_manifest_keeps_readonly_loans_and_fulfillment_without_return():
 
     descriptor = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
     runtime = descriptor["plugins"][0]
-    assert descriptor["package"]["version"] == runtime["version"] == "1.2.37"
+    assert descriptor["package"]["version"] == runtime["version"] == "1.2.38"
     assert "loan.return" not in runtime["capabilities"]
     assert "loan.inventory.readonly" in runtime["capabilities"]
     assert "acquisition.fulfill" in runtime["capabilities"]

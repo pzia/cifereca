@@ -304,7 +304,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-kobo", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-derived-variants", "maintenance-library-audit", "maintenance-library-organizer", "maintenance-local-origin", "maintenance-page", "metadata-age-standard", "provider-biblioaccess", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-kobo", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "storage-usb", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -312,7 +312,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-kobo", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-derived-variants", "maintenance-library-audit", "maintenance-library-organizer", "maintenance-local-origin", "maintenance-page", "metadata-age-standard", "provider-biblioaccess", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-kobo", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "storage-usb", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -414,21 +414,21 @@ class PluginSelectionTests(unittest.TestCase):
                         f"Unexpected dev-updater consumer: {source}",
                     )
 
-    def test_audited_maintenance_tools_have_no_other_plugin_consumers(self):
-        # The package publishes Core-consumed maintenance.tool contracts,
-        # never providers or imports used by other plugin package suites.
+    def test_audited_maintenance_tools_include_broker_consumer(self):
+        # The maintenance page consumes maintenance.tool contracts through
+        # the Core broker, without direct implementation imports.
         graph, audited = selector.dependency_graph(ROOT)
         self.assertIn("maintenance-library-audit", audited)
         self.assertEqual(
             selector.affected_packages({"maintenance-library-audit"}, graph),
-            ["maintenance-library-audit"],
+            ["maintenance-library-audit", "maintenance-page"],
         )
         for product in ("cifereca_library_audits.py", "cifereca_dedup_recovery.py"):
             with self.subTest(product=product):
                 selected, reason = selector.select([
                     ("M", "src/plugins/maintenance-library-audit/" + product),
                 ], ROOT)
-                self.assertEqual(selected, ["src/plugins/maintenance-library-audit"])
+                self.assertEqual(selected, ["src/plugins/maintenance-library-audit", "src/plugins/maintenance-page"])
                 self.assertIn("dependency closure", reason)
         # Manifest changes still trigger exhaustive selection.
         for changes in (
@@ -1471,3 +1471,11 @@ class PluginSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_current_repository_graph_covers_every_package():
+    graph, audited = selector.dependency_graph(ROOT)
+    assert audited == set(graph)
+    assert len(graph) >= 28
+    assert {"maintenance-derived-variants", "maintenance-library-audit",
+            "maintenance-library-organizer", "maintenance-local-origin"} <= graph["maintenance-page"]

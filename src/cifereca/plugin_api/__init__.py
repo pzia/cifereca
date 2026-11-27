@@ -92,6 +92,7 @@ from .acquisition import (
     acquisition_format_projection,
 )
 from .version import MANIFEST_VERSION, PLUGIN_API_VERSION
+from .runtime_status import RUNTIME_STATUS_CONTRACT, RuntimeStatusSnapshot, RuntimeStatusReader
 from .contracts import (ContractStatus, ContractDefinition, ContractCheck, CONTRACT_REGISTRY, contract_definition, split_contract, capability_name_valid, contract_version_matches, check_service_contract)
 from cifereca.language import normalize_language_tag
 from cifereca.filename_normalization import sanitize_filename_component
@@ -154,6 +155,7 @@ __all__ = [
     "LegacyRightsResourceAdapter", "DeliveryCandidate", "RetryableContentDownload", "ContentTransferUnavailable", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
     "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
+    "RUNTIME_STATUS_CONTRACT", "RuntimeStatusSnapshot", "RuntimeStatusReader",
     "UserFacingError", "AttentionRequired", "AdeptFulfillmentNotSubmitted", "RuntimeDispatchNotSubmitted", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "USB_STAGE_CAPABILITY", "UsbStorageStageWriter", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",

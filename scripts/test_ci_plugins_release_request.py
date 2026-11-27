@@ -78,6 +78,24 @@ class ReleaseRequestTests(unittest.TestCase):
             ("plugins-v0.9.44+dev.12-002", [DIAGNOSTICS]),
         )
 
+    def test_historical_metadata_inventory_does_not_authorize_its_release(self):
+        manifest = self.plugins / "metadata-age-standard" / "cifereca-plugin.json"
+        manifest.parent.mkdir()
+        manifest.write_text(json.dumps({"package": {"id": "metadata.age.standard"}}),
+                            encoding="utf-8")
+        self.write({"kind": ACTIVE_KIND, "release_tag": "plugins-v0.9.44+dev.12-001",
+                    "package_ids": [DIAGNOSTICS]})
+        self.assertEqual(self.resolve(), ("plugins-v0.9.44+dev.12-001", [DIAGNOSTICS]))
+        self.write({"kind": ACTIVE_KIND, "release_tag": "plugins-v0.9.44+dev.12-001",
+                    "package_ids": ["metadata.age.standard"]})
+        with self.assertRaisesRegex(ReleaseRequestRefused, "Invalid package ID"):
+            self.resolve()
+        self.write({"kind": ACTIVE_KIND, "release_tag": "plugins-v0.9.44+dev.12-001",
+                    "package_ids": [DIAGNOSTICS]})
+        manifest.parent.rename(self.plugins / "unexpected")
+        with self.assertRaisesRegex(ReleaseRequestRefused, "Invalid active package ID"):
+            self.resolve()
+
     def test_inactive_marker_cannot_hide_package_authorization(self):
         for payload in (
             {"kind": INACTIVE_KIND, "package_ids": [DIAGNOSTICS]},
