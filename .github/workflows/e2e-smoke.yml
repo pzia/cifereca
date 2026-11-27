@@ -13,6 +13,8 @@ on:
     branches: [main]
     paths:
       - 'e2e/notice_c_automated_receipt.py'
+      - 'e2e/reader_target_refresh_probe.py'
+      - 'src/cifereca/gui/reader_sync_actions.py'
       - '.github/workflows/e2e-smoke.yml'
       # Focus #7812: exact integrated main replay for C actions and parity.
       - 'src/cifereca/core/notice_c_loaded_filter.py'

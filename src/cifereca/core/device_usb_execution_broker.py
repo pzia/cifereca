@@ -409,7 +409,12 @@ class ReaderUsbExecutionBrokerImpl:
             return None
         if any(row.reason in ("target_batch_capacity_insufficient", "target_space_insufficient")
                for row in report.rows):
-            return None
+            # Preserve the read-only anomaly report; no executable item may
+            # be offered when the complete batch cannot fit.
+            if (storage.device_placements(device_id=device_id) != before
+                    or not self._mount_attested(scope, mountpoint, mount_key=mount_key)):
+                return None
+            return report, ()
         intents = {row["artifact_id"]: row for row in before}
         items = []
         for row in report.rows:

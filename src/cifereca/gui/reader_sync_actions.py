@@ -32,6 +32,7 @@ def request_reader_sync(window, button, *, Adw=None):
     if getattr(window, "_reader_sync_active", False):
         return
     nonce = object()
+    source_snapshot = getattr(window, "_reader_library_snapshot", None)
     window._reader_sync_nonce = nonce
 
     def current():
@@ -66,6 +67,20 @@ def request_reader_sync(window, button, *, Adw=None):
             return
         volume, (report, items) = result
         window._reader_status_label.set_label(_summary(report))
+        # The same read-only projection used by Examiner exposes the reasons
+        # for blocked books, without minting authority or showing raw errors.
+        if (source_snapshot is not None
+                and getattr(window, "_reader_library_snapshot", None) is source_snapshot):
+            from .reader_usb_decisions import project_reader_usb_decisions
+            decisions = project_reader_usb_decisions(report=report, library=source_snapshot)
+            window._reader_usb_decision_details = (
+                decisions if decisions.status == "scanned" else None)
+            window._reader_usb_detail_source_snapshot = (
+                source_snapshot if decisions.status == "scanned" else None)
+            selection = window.readers_page.selection.get_selected_item()
+            if selection is not None and current():
+                from .reader_page_controller import reader_selected
+                reader_selected(window, selection)
         if not items:
             return
         api = Adw
@@ -78,6 +93,22 @@ def request_reader_sync(window, button, *, Adw=None):
             f"{uploads} envoi(s), {len(items)-uploads} retrait(s) de copies gérées. "
             f"{size} octets à copier. Les fichiers sources restent inchangés. "
             "Les anomalies ne seront pas corrigées automatiquement.")
+        # List every removal in the native confirmation, not just its count.
+        # Paths are the exact managed relative destinations, never absolute
+        # source paths or untrusted markup.
+        removals = [path for _, path, fmt, _, _ in items if fmt is None]
+        if removals and callable(getattr(dialog, "set_extra_child", None)):
+            from gi.repository import Gtk
+            listing = Gtk.Label(label="Retraits :\n" + "\n".join(removals), xalign=0)
+            listing.set_wrap(True)
+            listing.set_selectable(True)
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_min_content_height(80)
+            scroll.set_max_content_height(240)
+            scroll.set_propagate_natural_height(True)
+            scroll.set_child(listing)
+            dialog.set_extra_child(scroll)
         dialog.add_response("cancel", "Annuler")
         dialog.add_response("sync", "Synchroniser")
         dialog.set_close_response("cancel")
@@ -97,14 +128,19 @@ def request_reader_sync(window, button, *, Adw=None):
                 confirmations.append(UsbCopyConsent(*args, fmt, path, *tail)
                     if fmt is not None else UsbRemovalConsent(*args, path, receipt, *tail))
             cancellation = Event()
+            relay = [None]
             def progress(done, total, copied_bytes):
+                message = f"Synchronisation : {done}/{total} fichiers · {copied_bytes} octets copiés."
+                # TaskRunner owns task-scoped global progress. Unlike the
+                # reader-page label, this remains visible during navigation.
+                if relay[0] is not None:
+                    relay[0](message)
                 # TaskRunner worker never touches GTK; publish via GLib.
                 from gi.repository import GLib
                 def show():
                     if (getattr(window, "_reader_sync_cancel", None) is cancellation
                             and current()):
-                        window._reader_status_label.set_label(
-                            f"Synchronisation : {done}/{total} fichiers · {copied_bytes} octets copiés.")
+                        window._reader_status_label.set_label(message)
                     return False
                 GLib.idle_add(show)
             try:
@@ -134,10 +170,16 @@ def request_reader_sync(window, button, *, Adw=None):
                 window._reader_sync_active = False
                 window._reader_sync_cancel = None
                 error(exc)
+            def execute(report_progress=None):
+                relay[0] = report_progress
+                try:
+                    return work()
+                finally:
+                    relay[0] = None
             try:
-                window.runner.submit("Synchroniser la liseuse…", work, ok=finished,
+                window.runner.submit("Synchroniser la liseuse…", execute, ok=finished,
                     err=failed, control=button, priority=TaskPriority.USER_ACTION,
-                    kind="maintenance", origin="user")
+                    kind="reader-sync", origin="user", with_progress=True)
             except Exception as exc:
                 failed(exc)
         dialog.connect("response", answered)

@@ -2,9 +2,10 @@
 """P1 #4985: real MainWindow GTK reader target reservation and detail repaint.
 
 Runs with an isolated SQLite/config/HOME and one local synthetic artifact.
-No USB mount, network, supplier or automatic transfer. Native Gtk.ListView
+No USB hardware, network, supplier or automatic transfer. Native Gtk.ListView
 selection and DetailPanel must update on the *same book key* after the
 explicit reserve button is clicked; GTK synthetic data is NOT hardware proof.
+The grouped receipt adds a real isolated pseudo-reader filesystem and Core transport.
 Private PNGs stay on the runner, never in public CI artifact export.
 """
 from __future__ import annotations
@@ -36,7 +37,9 @@ STAGES = frozenset({
     "reservation", "reservation_commit", "repaint", "intent_cancel",
     "intent_confirm", "intent_repaint", "execute_prepare",
     "execute_cancel", "execute_confirm", "execute_result",
-    "profile_b", "profile_a", "finish",
+    "profile_b", "profile_a", "native_fixture", "native_configuration",
+    "native_send", "native_conflict", "native_confirmation", "native_cancellation",
+    "native_copy", "native_idempotence", "native_removal", "finish",
 })
 
 
@@ -92,7 +95,18 @@ def main() -> int:
     phase[0] = "fixture"
     root = configured_identity_roots(core.config, "alice")["alice"][0]
     root.mkdir(parents=True, exist_ok=True)
-    payload = b"Local only: USB target reservation GTK fixture"
+    from io import BytesIO
+    from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
+    stream = BytesIO()
+    with ZipFile(stream, "w") as archive:
+        for name, value in (
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml",
+             '<container><rootfiles><rootfile full-path="OEBPS/package.opf"/></rootfiles></container>'),
+            ("OEBPS/package.opf", "<package/>"),
+        ):
+            archive.writestr(ZipInfo(name), value, compress_type=ZIP_DEFLATED)
+    payload = stream.getvalue()
     digest = sha256(payload).hexdigest()
     artifact_id = "sha256:" + digest
     local = root / "fixture.epub"
@@ -338,6 +352,7 @@ def main() -> int:
     fake_start = [None]
     fake_volume = [None]
     fake_epoch = [None]
+    production = {}
 
     def install_synthetic_executor():
         # This is a synthetic GTK/UI integration test ONLY. The fake broker
@@ -353,6 +368,7 @@ def main() -> int:
             "uuid-alice-0001", work / "synthetic-unmounted-volume",
             "vfat", "Synthetic (not hardware)", 100_000_000, 8, 5, 71,
         )
+        production["discover"] = preview_actions._discover_mounted_binding
         preview_actions._discover_mounted_binding = lambda **_: fake_volume[0]
         class FakeOnlyUsbBroker:
             def completed_copy_operation(self, **kwargs):
@@ -394,6 +410,7 @@ def main() -> int:
         manager = window.plugin_manager
         assert manager is not None
         fake_epoch[0] = window.service._account_context_epoch
+        production["broker"] = manager.broker("reader.usb")
         manager._brokers["reader.usb"] = FakeOnlyUsbBroker()
         # Refresh only the selected detail: the list-row version is
         # intentionally unchanged after synthetic test-broker injection.
@@ -520,11 +537,273 @@ def main() -> int:
             "reader-a", artifact_id,
         )["observed_state"] == "unknown"
         report["checks"]["real_gtk_A_B_A_target_persisted_not_presence"] = True
+        native_grouped_receipt()
         phase[0] = "finish"
         report["status"] = "PASS"
         save()
         result_code[0] = 0
         state["app"].quit()
+
+    def native_grouped_receipt():
+        """Real GTK widgets, TaskRunner, Core broker, SQLite and local FS.
+
+        Keep the two legacy USB bindings offline. Inject only the resolved
+        production storage.target service into the isolated no-plugin registry;
+        do not replace the real broker, scanner, executor or worker queue.
+        """
+        from threading import Event
+        from time import sleep
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import runpy
+        from cifereca.core.device_usb_execution_broker import ReaderUsbExecutionBrokerImpl
+        from cifereca.gui import reader_usb_preview_actions as preview_actions
+        from cifereca.plugin_api import USB_STAGE_CAPABILITY
+
+        phase[0] = "native_fixture"
+        window = state["window"]
+        db = core.storage
+        manager = window.plugin_manager
+        facade = production["broker"]
+        assert type(facade) is ReaderUsbExecutionBrokerImpl
+        manager._brokers["reader.usb"] = facade
+        preview_actions._discover_mounted_binding = production["discover"]
+        transport = runpy.run_path(str(ROOT / "src/plugins/storage-usb/cifereca_storage_usb.py"))[
+            "UsbMassStorageTarget"]()
+        original_services = manager.services
+        resolved = SimpleNamespace(
+            plugin_id="storage.usb", registry_generation=manager.registry_generation,
+            capabilities=(USB_STAGE_CAPABILITY,), service=transport,
+        )
+        manager.services = lambda category: (
+            (resolved,) if category == "storage.target" else original_services(category))
+        target_root = work / "native-local-reader"
+        target_root.mkdir()
+        device = "reader-local-a"
+        db.device_local_reader_declare(identity_id="alice", device_id=device,
+            label="Liseuse locale fixture", root=target_root, enabled=True)
+        binding = db.device_binding_get(device)
+        fingerprint = binding["metadata"]["usb_fingerprint"]
+        db.device_usb_reader_formats_set(identity_id="alice", device_id=device,
+            usb_fingerprint=fingerprint, supported_formats=("epub",))
+        assert {row["device_id"] for row in db.device_bindings()} == {
+            "reader-a", "reader-b", device}
+        context = GLib.MainContext.default()
+        deadline = monotonic() + 33
+
+        def wait(predicate):
+            limit = min(deadline, monotonic() + 6)
+            while monotonic() < limit and report["status"] == "RUNNING":
+                context.iteration(False)
+                value = predicate()
+                if value:
+                    return value
+                sleep(.01)
+            raise AssertionError("Native GTK checkpoint timeout")
+
+        def header(action):
+            return wait(lambda: next((widget for widget in walk(window.readers_page.header_actions)
+                if isinstance(widget, Gtk.Button) and widget.get_mapped()
+                and getattr(widget, "_cifereca_action_id", None) == action), None))
+
+        def select_reader(device_id):
+            window._reader_device_dropdown.set_selected(
+                window._reader_device_ids.index(device_id))
+            assert window._reader_selected_device_id == device_id
+
+        def dialog_with_heading(heading):
+            def find():
+                windows = Gtk.Window.get_toplevels()
+                for index in range(windows.get_n_items()):
+                    candidate = windows.get_item(index)
+                    if (isinstance(candidate, Adw.MessageDialog)
+                            and candidate.get_mapped() and candidate.get_heading() == heading):
+                        return candidate
+                return None
+            return wait(find)
+
+        def sync_dialog():
+            sync = header("reader-sync-delta")
+            wait(sync.get_sensitive)
+            sync.emit("clicked")
+            return wait(lambda: getattr(window, "_reader_sync_dialog", None))
+
+        def intent():
+            return db.device_placement_get(device, artifact_id)
+
+        try:
+            phase[0] = "native_configuration"
+            window._render_readers()
+            select_reader(device)
+            assert set(window._reader_device_ids) == {"reader-a", device}
+            header("reader-directory-config").emit("clicked")
+            directory_dialog = dialog_with_heading("Dossier géré de la liseuse")
+            directory_dialog.get_extra_child().set_text("Reading/Library")
+            directory_dialog.emit("response", "save")
+            assert db.device_binding_get(device)["target_directory"] == "Reading/Library"
+            header("reader-setup-directory").emit("clicked")
+            setup_dialog = dialog_with_heading("Initialiser le dossier géré ?")
+            setup_dialog.emit("response", "setup")
+            managed = target_root / "Reading" / "Library"
+            wait(lambda: managed.is_dir() and "initialisé" in window._reader_status_label.get_text())
+            third = managed / "third-party.txt"
+            third.write_bytes(b"untouched")
+            assert intent() is None
+
+            phase[0] = "native_send"
+            def menu_choices():
+                window.navigate("library")
+                window._render_library([entry])
+                assert window.library_page.select_key("reader-book")
+                # Force the actual selection controller to rebuild its action
+                # lease even when the library's row key has not changed.
+                window._library_selected(window.library_page.selection.get_selected_item())
+                detail = window.library_page.detail
+                menu = wait(lambda: next((widget for widget in walk(detail)
+                    if isinstance(widget, Gtk.MenuButton)
+                    and getattr(widget, "_cifereca_action_id", None) == "usb-intents"), None))
+                if not menu.get_mapped():
+                    bar = detail.action_scroll
+                    assert menu.get_parent() is bar.overflow_box
+                    bar.overflow_popover.popup()
+                wait(menu.get_mapped)
+                menu.get_popover().popup()
+                box = menu._cifereca_send_choices
+                choices = {getattr(widget, "_cifereca_action_id", None): widget
+                           for widget in walk(box) if isinstance(widget, Gtk.Button)}
+                return menu, choices
+
+            menu, choices = menu_choices()
+            offline = choices["usb-intent:keep:reader-a"]
+            stale = choices["usb-intent:keep:" + device]
+            wait(offline.get_mapped)
+            offline.emit("clicked")
+            offline_intent = db.device_placement_get("reader-a", artifact_id)
+            assert offline_intent["desired_state"] == "keep"
+            assert offline_intent["observed_state"] == "unknown"
+            assert db.device_placements(device_id="reader-b") == []
+            menu.get_popover().popdown()
+            window.navigate("readers")
+            stale.emit("clicked")
+            assert intent() is None
+            menu, choices = menu_choices()
+            local_choice = choices["usb-intent:keep:" + device]
+            wait(local_choice.get_mapped)
+            local_choice.emit("clicked")
+            assert intent()["desired_state"] == "keep"
+            assert intent()["observed_state"] == "unknown"
+            assert intent()["target_relative_path"] == "Reading/Library/" + digest + ".epub"
+            final = target_root / intent()["target_relative_path"]
+            assert not final.exists()
+            menu.get_popover().popdown()
+            window.navigate("readers")
+            window._library_entries_cache = [entry]
+            window._render_readers()
+            select_reader(device)
+            report["checks"]["native_send_offline_and_local_three_destinations"] = True
+
+            phase[0] = "native_conflict"
+            final.write_bytes(b"external conflict")
+            sync = header("reader-sync-delta")
+            sync.emit("clicked")
+            wait(lambda: sync.get_sensitive() and "bloqué(s)" in window._reader_status_label.get_text())
+            assert getattr(window, "_reader_sync_dialog", None) is None
+            assert "1 bloqué(s)" in window._reader_status_label.get_text()
+            assert final.read_bytes() == b"external conflict"
+            assert intent()["observed_state"] == "unknown"
+            final.unlink()  # fixture-owned external conflict, not application I/O
+            report["checks"]["native_conflict_no_overwrite"] = True
+
+            phase[0] = "native_confirmation"
+            dialog = sync_dialog()
+            assert isinstance(dialog, Adw.MessageDialog) and not final.exists()
+            assert "1 envoi(s)" in dialog.get_body()
+            dialog.emit("response", "cancel")
+            assert not final.exists() and not getattr(window, "_reader_sync_active", False)
+            dialog = sync_dialog()
+            select_reader("reader-a")
+            select_reader(device)
+            dialog.emit("response", "sync")
+            assert not final.exists() and not getattr(window, "_reader_sync_active", False)
+            report["checks"]["native_global_confirmation_cancel_and_reader_aba"] = True
+
+            # Deterministic interruption/navigation checkpoint at the real
+            # Core progress boundary; no fabricated result or task queue.
+            original_admit = type(facade).admit_delta
+            def run_held(*, cancel):
+                entered, release = Event(), Event()
+                def admit(broker, **kwargs):
+                    callback = kwargs["progress"]
+                    def progress(*args):
+                        callback(*args)
+                        if args[0] == 0:
+                            entered.set()
+                            release.wait(5)
+                    return original_admit(broker, **(kwargs | {"progress": progress}))
+                with patch.object(type(facade), "admit_delta", admit):
+                    try:
+                        dialog = sync_dialog()
+                        dialog.emit("response", "sync")
+                        wait(entered.is_set)
+                        assert window._reader_sync_active
+                        if cancel:
+                            header("reader-sync-cancel").emit("clicked")
+                        else:
+                            window.navigate("library")
+                            wait(lambda: "0/1 fichiers" in window.busy_label.get_text())
+                            assert window.view_stack.get_visible_child_name() == "library"
+                    finally:
+                        release.set()
+                    wait(lambda: not getattr(window, "_reader_sync_active", False))
+
+            phase[0] = "native_cancellation"
+            run_held(cancel=True)
+            assert not final.exists()
+            assert "interrompue" in window._reader_status_label.get_text()
+            report["checks"]["native_cooperative_cancel_before_mutation"] = True
+
+            phase[0] = "native_copy"
+            run_held(cancel=False)
+            assert final.read_bytes() == local.read_bytes() == payload
+            assert intent()["observed_state"] == "present"
+            assert intent()["last_observed_at"] is not None
+            assert db.device_placement_get("reader-a", artifact_id) == offline_intent
+            window.navigate("readers")
+            window._library_entries_cache = [entry]
+            window._render_readers()
+            select_reader(device)
+            report["checks"]["native_real_copy_observe_progress_across_navigation"] = True
+
+            phase[0] = "native_idempotence"
+            stat_before = final.stat()
+            sync = header("reader-sync-delta")
+            wait(sync.get_sensitive)
+            sync.emit("clicked")
+            wait(lambda: sync.get_sensitive() and "1 identique(s)" in window._reader_status_label.get_text())
+            assert getattr(window, "_reader_sync_dialog", None) is None
+            assert (final.stat().st_ino, final.stat().st_mtime_ns) == (
+                stat_before.st_ino, stat_before.st_mtime_ns)
+            report["checks"]["native_idempotent_no_recopy"] = True
+
+            phase[0] = "native_removal"
+            assert window.readers_page.select_key("reader-book")
+            remove = wait(mapped_intent_button)
+            remove.emit("clicked")
+            wish_dialog = getattr(window, "_reader_intent_dialog", None)
+            assert isinstance(wish_dialog, Adw.MessageDialog)
+            wish_dialog.emit("response", "remove")
+            assert intent()["desired_state"] == "remove" and final.exists()
+            dialog = sync_dialog()
+            assert "1 retrait(s)" in dialog.get_body()
+            assert final.exists()
+            dialog.emit("response", "sync")
+            wait(lambda: not getattr(window, "_reader_sync_active", False))
+            assert not final.exists() and intent()["observed_state"] == "missing"
+            assert local.read_bytes() == payload and third.read_bytes() == b"untouched"
+            assert db.device_placements(device_id="reader-b") == []
+            report["checks"]["native_confirmed_remove_preserves_source_and_third_party"] = True
+        finally:
+            manager.services = original_services
 
     class Application(Adw.Application):
         def __init__(self):

@@ -1150,7 +1150,9 @@ def main() -> int:
                         "repaint", "intent_cancel", "intent_confirm",
                         "intent_repaint", "execute_prepare", "execute_cancel",
                         "execute_confirm", "execute_result",
-                        "profile_b", "profile_a", "finish",
+                        "profile_b", "profile_a", "native_fixture", "native_configuration",
+                        "native_send", "native_conflict", "native_confirmation", "native_cancellation",
+                        "native_copy", "native_idempotence", "native_removal", "finish",
                     })
                     phase = report_data.get("closed_failure_phase")
                     if type(phase) is str and phase in closed_phases:

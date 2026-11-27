@@ -442,6 +442,15 @@ class TaskRunner:
 
     def _business_outcome(self, value: Any, kind: str) -> str:
         """One exact Core receipt for worker metrics and GTK task feedback."""
+        if kind == "reader-sync":
+            from ..core.device_usb_sync_engine import UsbSyncResult
+            if type(value) is not UsbSyncResult:
+                return "failed"
+            if value.status in ("cancelled", "blocked", "pending", "partial"):
+                return value.status
+            if value.status == "completed" and value.observed is True and not value.failed and not value.pending:
+                return "success"
+            return "failed"
         if kind == "borrow":
             return self._borrow_outcome(value)
         if kind == "transfer":
@@ -543,7 +552,7 @@ class TaskRunner:
             "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send", "lender-placement-check",
             "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification", "loan-renew",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
-            "identity", "maintenance-inspection",
+            "identity", "maintenance-inspection", "reader-sync",
         } else "other"
         def classify_business(value: Any) -> str:
             """Use the exact TaskRunner classifier; isolated submit adapters
