@@ -13,31 +13,34 @@ from ..core.borrow_for_identity_placement_resolution import LenderLocalPlacement
 
 def offer_cross_profile_local_send(
     window, *, borrowing_account: Account, exact_notice: SearchResult,
-    expected_item: SearchResult, Adw, TaskPriority, control=None,
+    expected_item: SearchResult | None, Adw, TaskPriority, control=None,
+    detail_current=None, detail_worker_current=None,
 ) -> bool:
-    """Read-only asynchronous placement check, then explicit send dialog."""
+    """Read-only placement check, then explicit send dialog.
+
+    C-first details pin their own shared route; the legacy Search detail
+    keeps its original exact visible-item fence. Neither route is authority
+    for a copy: only the existing Core admission can authorize that action.
+    """
+    canonical = detail_current is not None or detail_worker_current is not None
     if (type(borrowing_account) is not Account
             or type(exact_notice) is not SearchResult
-            or type(expected_item) is not SearchResult
+            or (canonical and (expected_item is not None
+                                or not callable(detail_current)
+                                or not callable(detail_worker_current)))
+            or (not canonical and type(expected_item) is not SearchResult)
             or getattr(window, "_closed", False)
             or getattr(window, "_cross_profile_send_pending", None) is not None):
         return False
     try:
         service = window.service
-        search_page = window.search_page
-        panel = search_page.detail
-        visible = panel._rendered_search_detail
         identity = service.current_identity
         account_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
         identity_epoch = window._identity_context_generation
         ui_account_epoch = window._account_context_generation
-        selection = window._selected_search_id
-        detail_epoch = window._search_detail_request_generation
         requester = identity.identity_id
-        if (type(visible) is not tuple or len(visible) != 2
-                or visible[0] is not expected_item
-                or type(requester) is not str
+        if (type(requester) is not str
                 or requester == borrowing_account.identity_id
                 or type(account_epoch) is not int
                 or type(source_epoch) is not int
@@ -45,52 +48,52 @@ def offer_cross_profile_local_send(
                 or not callable(service.capture_admitted_lender_local_copy)
                 or not callable(service.execute_admitted_lender_local_copy)):
             return False
+        if canonical:
+            if detail_current() is not True or detail_worker_current() is not True:
+                return False
+        else:
+            search_page = window.search_page
+            panel = search_page.detail
+            visible = panel._rendered_search_detail
+            selection = window._selected_search_id
+            detail_epoch = window._search_detail_request_generation
+            if (type(visible) is not tuple or len(visible) != 2
+                    or visible[0] is not expected_item):
+                return False
     except Exception:
         return False
 
-    def current() -> bool:
+    def worker_current() -> bool:
+        """Check only captured Core state and scalar UI generations."""
         try:
-            shown = window.search_page.detail._rendered_search_detail
-            return bool(
-                not getattr(window, "_closed", False)
-                and window.service is service
-                and window.search_page is search_page
-                and window.search_page.detail is panel
-                and service.current_identity is identity
-                and identity.identity_id == requester
-                and service._account_context_epoch == account_epoch
-                and service._source_context_epoch == source_epoch
-                and window._identity_context_generation == identity_epoch
-                and window._account_context_generation == ui_account_epoch
-                and window._selected_search_id == selection
-                and window._search_detail_request_generation == detail_epoch
-                and type(shown) is tuple and len(shown) == 2
-                and shown[0] is expected_item
-            )
+            if not (not getattr(window, "_closed", False)
+                    and window.service is service
+                    and service.current_identity is identity
+                    and identity.identity_id == requester
+                    and service._account_context_epoch == account_epoch
+                    and service._source_context_epoch == source_epoch
+                    and window._identity_context_generation == identity_epoch
+                    and window._account_context_generation == ui_account_epoch):
+                return False
+            if canonical:
+                return detail_worker_current() is True
+            return (window.search_page is search_page
+                    and window._selected_search_id == selection
+                    and window._search_detail_request_generation == detail_epoch)
         except Exception:
             return False
 
-    def worker_current() -> bool:
-        """Check only captured Core state and scalar UI generations.
-
-        TaskQueue invokes check/work off the GTK main thread. In particular,
-        never dereference search_page, DetailPanel or any GTK widget here.
-        Full rendered-detail equality is rechecked by current() on delivery.
-        """
+    def current() -> bool:
         try:
-            return bool(
-                not getattr(window, "_closed", False)
-                and window.service is service
-                and window.search_page is search_page
-                and service.current_identity is identity
-                and identity.identity_id == requester
-                and service._account_context_epoch == account_epoch
-                and service._source_context_epoch == source_epoch
-                and window._identity_context_generation == identity_epoch
-                and window._account_context_generation == ui_account_epoch
-                and window._selected_search_id == selection
-                and window._search_detail_request_generation == detail_epoch
-            )
+            if not worker_current():
+                return False
+            if canonical:
+                # Widget/selection checks only on GTK's delivery thread.
+                return detail_current() is True
+            shown = window.search_page.detail._rendered_search_detail
+            return bool(window.search_page.detail is panel
+                        and type(shown) is tuple and len(shown) == 2
+                        and shown[0] is expected_item)
         except Exception:
             return False
 
