@@ -35,6 +35,18 @@ jobs:
           python3 -m scripts.ci_provider_coupling_delta_gate \
             --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA"
 
+      - name: Review new test quality candidates (#8216)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.ci_test_quality --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA" \
+            --output "$RUNNER_TEMP/test-quality.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Signals require semantic review; never delete from a score alone." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Select validation scopes
         id: scope
         shell: bash
