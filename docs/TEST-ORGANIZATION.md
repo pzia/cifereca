@@ -98,11 +98,20 @@ Relecture des sources de tests au commit `e8ed298116e57d44645c37cd3fa7ad91e1e907
 
 Les invariants historiques devenus obsolètes sont conservés comme décisions datées, non comme spécification exécutable. Le module historique est absent du tree relu.
 
-## Chantier historique encore à analyser
+## Rationalisation Core 0.9.23 — capitalisation du 27 novembre 2026
 
-La chaîne historique suivante reste un chantier de triage, **sans restauration transitive** :
+Le plan historique [#110](https://github.com/pzia/cifereca/issues/110) a été livré par les PR [#111](https://github.com/pzia/cifereca/pull/111), [#123](https://github.com/pzia/cifereca/pull/123) et [#129](https://github.com/pzia/cifereca/pull/129). Relecture des sources de tests au commit `f31515bedacf7d9ef91a7c7c7ec77a76439044db`, sans nouvelle exécution des suites :
 
-- `test_core_0923.py` ;
+- GTK-C09 — [focus GTK](../tests/test_core0923_gtk_focus.py) : le contrôleur réel, avec témoin GTK injecté, ne demande pas de focus sans racine Gtk.Window ; racine valide → TAB_FORWARD, garde de démontage locale, aucun masquage global des warnings. Cette preuve ne remplace pas une recette GTK réelle.
+- IDENT-C08 — [sauvegarde identité](../tests/test_identity_save_ui_contract.py) : rafraîchir sélecteurs/délégations/Accueil uniquement au succès, préserver l'identité active au succès et à l'échec.
+- ADE-C07 — [rattachement ADEPT](../tests/test_adept_manual_binding.py) : sélection initiale vide, choix explicite profil/prêt, relecture et ID exact, ancien titre/chemin non probants, conservation de l'artefact et de la liaison précédente, `binding_source=manual_selection`, aucun téléchargement ni retour implicites. Les états expiré/rendu/sans jeton restent informatifs ; restitution volontaire indisponible conformément à #4048.
+
+Le module historique `test_core_0923.py` est absent du tree relu. Le plan de 0.9.23 excluait le choix visuel multi-profils, l'acquisition entièrement perdue, les autres détails d'Artifact sans ledger et la recette GTK réelle : ne pas leur attribuer une validation implicite.
+
+## État historique 0.9.25–0.9.33 à requalifier
+
+Le compte rendu [#112](https://github.com/pzia/cifereca/issues/112) du 7 octobre 2026 indique le triage 0.9.23–0.9.33 terminé (invariants migrés, déjà couverts ou obsolètes, sans restauration en bloc), à l'exception des invariants ADEPT alors explicitement suspendus par l'arbitrage du 4 octobre. Ce bilan historique ne prouve pas la couverture actuelle. Les sources suivantes restent à requalifier dans la documentation au regard des contrats actifs, **sans restauration transitive** :
+
 - `test_core_0925.py` ;
 - `test_core_0927.py` ;
 - `test_core_0929.py` ;
