@@ -55,7 +55,7 @@ Ces fichiers historiques ne sont pas présents dans le tree courant à la date d
 ### Core / plugins
 
 - `src/cifereca/builtin_ui/` reste intégré au Core.
-- `src/cifereca/kobo/` conserve seulement l'orchestration résiduelle Core ; le client HTTP Kobo-Vault appartient au plugin provider-kobo.
+- **Rationalisations historiques Paris/Kobo — capitalisation du 27/11/2026 :** [#164](https://github.com/pzia/cifereca/pull/164) a supprimé la zone Paris du Core et déplacé les invariants de normalisation, session/retry, recherche résiliente et prêts dans les tests provider Paris ; [#182](https://github.com/pzia/cifereca/pull/182) a supprimé le client HTTP Kobo-Vault du Core, en conservant à cette date l'orchestration résiduelle et la compatibilité nécessaire. Au HEAD `ee0978a02902118005ffa2b14f0051106c82f2c7`, les deux répertoires `src/cifereca/paris/` et `src/cifereca/kobo/` sont absents. Ne pas restaurer ces anciennes zones : protocoles, mappings et sessions restent chez le provider, runtime ADEPT spécialisé séparé, mécanismes transversaux et décision A→B au Core selon [ARCHITECTURE.md](ARCHITECTURE.md) et [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md). Témoins relus : [résilience Paris](../src/plugins/provider-paris/tests/test_legacy_client_resilience.py), [normalisation Paris](../src/plugins/provider-paris/tests/test_legacy_normalize_contract.py) et [frontière Kobo](../tests/test_kobo_boundary_rationalization.py). Les attributs historiques de restitution ou les anciennes orchestrations ne prescrivent aucun retour volontaire ni réactivation de W2. Relecture statique, sans nouvelle recette PNB/ACSM, ADEPT ni attestation exhaustive de découplage.
 - les plugins fonctionnels sont désormais sous `src/plugins/`, source canonique unique ;
 - le répertoire racine `plugins/` n'est plus une source active.
 
@@ -109,7 +109,7 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 
 1. poursuivre le triage historique `0921 → 0933` ;
 2. décider et exécuter la migration `simulation/` → `simulation/` ;
-3. poursuivre la rationalisation de `builtin_ui` et Kobo dans des PR de code séparées ;
+3. réexaminer `builtin_ui` et les éventuels résidus Core/provider selon les contrats courants, sans réouvrir les anciennes migrations Paris/Kobo ;
 4. traiter le déplacement physique des plugins seulement avec packaging/tests adaptés ;
 5. nettoyer la hiérarchie legacy Recommendations ;
 6. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
