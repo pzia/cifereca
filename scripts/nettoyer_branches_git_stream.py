@@ -11,7 +11,7 @@ from pathlib import Path
 REPO = "pzia/cifereca"
 KEEP = ("main", "master", "dev", "develop", "development", "staging",
         "production", "stable", "release", "release/*", "releases/*",
-        "hotfix/*", "support/*")
+        "hotfix/*", "support/*", "staging/backlog/*")
 
 
 def cmd(*args, check=True):
@@ -89,6 +89,8 @@ def main():
     exclusions = [item for item in rules if not item.startswith("!")]
     forced = {item[1:] for item in rules if item.startswith("!")}
     for branch in forced:
+        if branch.startswith("staging/backlog/"):
+            raise RuntimeError("Staging Backlog : purge dédiée obligatoire")
         if git("check-ref-format", "--branch", branch, check=False).returncode != 0:
             raise RuntimeError(f"Forçage invalide : {branch!r}")
     local = git("branch", "--show-current").stdout.strip()

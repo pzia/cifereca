@@ -4,7 +4,7 @@
 
 ## Frontière de rôle impérative (par défaut, sans exception implicite)
 
-À la clôture P0 (Backlog ou Focus), qualifier et autoriser la [consolidation du corpus clos](../../docs/AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0) sous délégation pzia ; CI/CD exécute, les rôles propriétaires capitalisent. Aucun développement ni lancement de tests par Backlog.
+À la clôture P0 (Backlog ou Focus), qualifier le périmètre et le gel de la [consolidation du corpus clos](../../docs/AGENT-DELIVERY-POLICY.md#consolidation-à-la-clôture-dun-p0) sous délégation pzia ; CI/CD exécute automatiquement, les rôles propriétaires capitalisent à la demande ; Backlog réceptionne puis autorise la purge. Aucun développement ni lancement de tests par Backlog.
 
 **Le rôle `backlog` est strictement limité à l'analyse et au ticketing.** Cette contrainte prévaut sur les formulations génériques d'autonomie, d'avancement ou d'orchestration.
 

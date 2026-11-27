@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""P0 #8195: bounded audit, validation and one-shot plan execution."""
+"""P0 #8195: verified staging, contextual compaction and deferred capitalization."""
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -8,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -20,13 +22,9 @@ DOCS = ("AGENTS.md", *(".agents/roles/" + n + ".md" for n in
         "docs/AGENT-DELIVERY-POLICY.md", "docs/CORE-P1-3913-DIAGNOSTIC-TOOLS.md",
         "docs/BACKLOG-COMPACTION.md")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 REFERENCE = re.compile(r"https?://[^\s<>()\]\`]+|(?<![\w/])#\d+\b")
-COMMENT_REF = re.compile(r"(?:issuecomment-|/issues/comments/)([0-9]+)\b")
-MAX_PLAN = 64000
 MAX_PAGES = 20
 MAX_REMOVALS = 10
-CONSUMED = "BACKLOG-COMPACTION-CONSUMED v1 "
 
 class Refusal(Exception):
     """Fixed diagnostic only; never include issue or plan contents."""
@@ -86,7 +84,7 @@ class ReadOnlyAPI:
 
     def get(self, path):
         require(path == "/git/ref/heads/main" or re.fullmatch(
-            r"/issues/[1-9]\d*(?:/comments\?per_page=100&page=[1-9]\d*)?", path),
+            r"/issues/[1-9]\d*(?:/(?:comments|sub_issues)\?per_page=100&page=[1-9]\d*)?", path),
             "forbidden API path")
         return self._request("GET", path, 200)
 
@@ -111,16 +109,16 @@ class ReadOnlyAPI:
             raise Refusal("GitHub request failed; do not retry mutations") from None
 
 class WriteAPI(ReadOnlyAPI):
-    """Fixed mutation endpoints; callers must pass the validated plan guards."""
-    def consume(self, pilot, marker):
-        require(marker.startswith(CONSUMED), "invalid consumption marker")
+    """Fixed issue mutation endpoints; staging must be verified first."""
+    def mark(self, pilot, marker):
+        require(marker.startswith(("BACKLOG-STAGING-START v1 ", "BACKLOG-STAGING-DONE v1 ", "BACKLOG-STAGING-PURGE-START v1 ", "BACKLOG-STAGING-PURGED v1 ")), "invalid staging marker")
         return self._request("POST", f"/issues/{number(pilot)}/comments", 201, {"body": marker})
 
     def replace_body(self, n, body):
         return self._request("PATCH", f"/issues/{number(n)}", 200, {"body": body})
 
-    def delete_comment(self, comment_id):
-        return self._request("DELETE", f"/issues/comments/{number(comment_id)}", 204)
+    def replace_comment(self, comment_id, body):
+        return self._request("PATCH", f"/issues/comments/{number(comment_id)}", 200, {"body": body})
 
 def issue_data(api, n, closed=True):
     path = "/issues/" + str(number(n))
@@ -208,239 +206,418 @@ def timestamp(value):
     except ValueError:
         raise Refusal("invalid UTC time") from None
 
-def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=None):
-    require(type(raw) is bytes and 0 < len(raw) <= MAX_PLAN, "invalid plan size")
-    require(type(expected) is str and bool(DIGEST.fullmatch(expected))
-            and sha256(raw) == expected, "plan digest mismatch")
-    plan = strict_json(raw)
-    exact_keys(plan, ("version", "repository", "pilot_issue", "main_sha", "baseline_sha",
-                      "created_at", "expires_at", "closure_p0", "issues", "retained_issues", "semantic_review",
-                      "execution_review"))
-    require(type(plan["version"]) is int and plan["version"] == 2
-            and plan["repository"] == REPO and number(plan["pilot_issue"]) == number(pilot)
-            and pilot != 8195 and plan["main_sha"] == current
-            and plan["baseline_sha"] == current,
-            "plan context mismatch")
-    closure = plan["closure_p0"]
-    if closure is not None:
-        number(closure)
-    pilot_before = snapshot(api, pilot, closed=False)
-    pilot_fingerprint = fingerprint(pilot_before)
-    require(not any(c["body"].startswith(CONSUMED) for c in pilot_before["comments"]),
-            "pilot already consumed")
-    require((pilot_before["issue"]["body"] or "").encode("utf-8") == raw, "pilot plan changed")
-    now = now or dt.datetime.now(dt.timezone.utc)
-    created, expires = timestamp(plan["created_at"]), timestamp(plan["expires_at"])
-    require(created <= now < expires <= created + dt.timedelta(hours=24), "plan expired or not current")
-    require(type(plan["semantic_review"]) is str and bool(plan["semantic_review"].strip()),
-            "missing semantic review")
-    exact_keys(plan["execution_review"], ("corpus_quiescent", "known_inbound_references", "global_gain"))
-    require(all(v is True for v in plan["execution_review"].values()), "missing Backlog execution review")
-    entries = plan["issues"]
-    require(type(entries) is list and 1 <= len(entries) <= 3, "pilot limited to 1–3 issues")
-    for entry in entries:
-        exact_keys(entry, ("number", "snapshot_sha256", "body_after", "remove_comments", "rationale"))
-    numbers = issue_numbers([entry["number"] for entry in entries])
-    require(pilot not in numbers and 8195 not in numbers, "control issue excluded")
-    before_docs = docs_at(plan["baseline_sha"])
-    after_docs = docs_at(current)
-    before, after = list(before_docs.values()), list(after_docs.values())
-    retained = plan["retained_issues"]
-    require(type(retained) is list and len(retained) <= 3, "too many retained issues")
-    for entry in retained:
-        exact_keys(entry, ("number", "snapshot_sha256"))
-    retained_numbers = [number(entry["number"]) for entry in retained]
-    require(len(set(retained_numbers)) == len(retained_numbers)
-            and not set(retained_numbers) & set(numbers + [pilot, 8195]), "overlapping retained issue")
-    if closure is not None:
-        require(closure in numbers + retained_numbers, "closure P0 outside bounded corpus")
-
-    def check_closure(snap):
-        issue = snap["issue"]
-        if issue["number"] == closure:
-            require(issue["state"] == "closed" and {label["name"] for label in issue["labels"]}
-                    & {"P0", "P-1", "P1", "P2", "P3"} == {"P0"}, "closure parent must be closed P0")
-
-    for entry in retained:
-        snap = snapshot(api, entry["number"], closed=None)
-        check_closure(snap)
-        require(entry["snapshot_sha256"] == fingerprint(snap), "retained issue drift")
-        before.extend(issue_texts(snap))
-        after.extend(issue_texts(snap))
-    removed_ids = set()
-    for entry in entries:
-        snap = snapshot(api, entry["number"])
-        check_closure(snap)
-        require(entry["snapshot_sha256"] == fingerprint(snap), "snapshot drift")
-        require(type(entry["body_after"]) is str and bool(entry["body_after"].strip())
-                and len(entry["body_after"].encode("utf-8")) <= MAX_PLAN
-                and type(entry["rationale"]) is str and bool(entry["rationale"].strip()),
-                "missing synthesis or rationale")
-        ids = entry["remove_comments"]
-        require(type(ids) is list, "invalid deletion list")
-        require(bool(ids) or entry["body_after"] != (snap["issue"]["body"] or ""), "empty change proposal")
-        for value in ids:
-            number(value)
-        require(len(set(ids)) == len(ids) and set(ids) <= {c["id"] for c in snap["comments"]},
-                "unknown or duplicate deletion target")
-        removed_ids.update(ids)
-        before.extend(issue_texts(snap))
-        after.extend([entry["body_after"], *(c["body"] for c in snap["comments"] if c["id"] not in ids)])
-    require(len(removed_ids) <= MAX_REMOVALS, "too many comment removals")
-    refs_before = set(REFERENCE.findall("\n".join(before)))
-    refs_after = set(REFERENCE.findall("\n".join(after)))
-    require(refs_before <= refs_after, "explicit reference missing from retained corpus")
-    cited_ids = {int(n) for n in COMMENT_REF.findall("\n".join(before + after + issue_texts(pilot_before)))}
-    require(not removed_ids & cited_ids, "known reference to deleted comment")
-    # Recheck the whole bounded corpus, including its plan, before reporting.
-    for entry in entries:
-        require(fingerprint(snapshot(api, entry["number"])) == entry["snapshot_sha256"], "snapshot drift")
-    for entry in retained:
-        require(fingerprint(snapshot(api, entry["number"], closed=None)) == entry["snapshot_sha256"], "retained issue drift")
-    require(fingerprint(snapshot(api, pilot, closed=False)) == pilot_fingerprint, "pilot plan changed")
-    old, new = metrics(before), metrics(after + issue_texts(pilot_before))
-    # Count the entire pilot issue as overhead; document savings are measured separately
-    # at closure and never recredited to each execution.
-    return {"status": "STRUCTURAL_VALIDATION_ONLY", "plan_sha256": expected,
-            "main_sha": current, "closure_p0": closure, "issues": numbers, "retained_issues": retained_numbers,
-            "pilot_snapshot_sha256": pilot_fingerprint,
-            "before": old, "projected_after_with_plan": new,
-            "projected_gain": {k: old[k] - new[k] for k in old},
-            "journal_included": False, "semantic_equivalence_proven": False,
-            "destruction_enabled": False}
-
-def apply_context(env, current):
-    require(all(env.get(k) == v for k, v in {
-        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
-        "GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
-        "GITHUB_SHA": current, "GITHUB_RUN_ATTEMPT": "1",
-        "GITHUB_ACTOR": "pzia", "GITHUB_ACTOR_ID": "11092036",
-        "GITHUB_TRIGGERING_ACTOR": "pzia",
-        "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main",
-    }.items()), "apply requires first manual pzia run on main")
-    run = env.get("GITHUB_RUN_ID", "")
-    require(bool(re.fullmatch(r"[1-9]\d{0,19}", run)), "invalid run id")
-    return run
-
-
-def expected_change(before, after, *, body=None, remove=None, marker=None):
+def expected_change(before, after, *, body=None, comment=None, marker=None):
     """Only permit our expected body/comment mutation and server timestamps."""
     wanted = dict(before["issue"])
     observed = dict(after["issue"])
     wanted.pop("updated_at", None)
     observed.pop("updated_at", None)
-    comments = list(before["comments"])
+    comments = [dict(c) for c in before["comments"]]
+    actual = [dict(c) for c in after["comments"]]
     if body is not None:
         wanted["body"] = body
-    if remove is not None:
-        comments = [c for c in comments if c["id"] != remove]
-        wanted["comments"] -= 1
+    if comment is not None:
+        cid, replacement = comment
+        target = next(c for c in comments if c["id"] == cid)
+        target["body"] = replacement
+        target.pop("updated_at", None)
+        next(c for c in actual if c["id"] == cid).pop("updated_at", None)
     if marker is not None:
         matches = [c for c in after["comments"] if c["id"] == marker["id"]]
         require(len(matches) == 1 and matches[0]["body"] == marker["body"]
                 and all(c["id"] != marker["id"] for c in comments), "consumption marker not verified")
         comments.append(matches[0])
         wanted["comments"] += 1
-    require(wanted == observed and sorted(comments, key=lambda c: c["id"]) == after["comments"],
+    require(wanted == observed and sorted(comments, key=lambda c: c["id"]) == actual,
             "unexpected post-mutation state; stop")
 
 
-def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock=None):
+STAGE_LIMIT = 1024 * 1024
+OWNER_ID = 11092036
+PRIORITIES = {"P0", "P-1", "P1", "P2", "P3"}
+SCOPE = re.compile(r"(?m)^<!-- backlog-staging-v1: (none|[1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
+
+def closure_event(env):
+    require(all(env.get(k) == v for k, v in {
+        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "issues",
+        "GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
+        "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTOR": "pzia",
+        "GITHUB_ACTOR_ID": str(OWNER_ID), "GITHUB_TRIGGERING_ACTOR": "pzia",
+        "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main",
+    }.items()), "invalid P0 closure context")
+    try:
+        with open(env.get("GITHUB_EVENT_PATH", ""), "rb") as stream:
+            raw = stream.read(1024 * 1024 + 1)
+    except OSError:
+        raise Refusal("cannot read closure event") from None
+    require(len(raw) <= 1024 * 1024, "closure event too large")
+    event = strict_json(raw)
+    require(event["action"] == "closed" and event["repository"]["full_name"] == REPO
+            and event["sender"]["id"] == OWNER_ID and event["sender"]["login"] == "pzia",
+            "unauthorized P0 closure")
+    issue = event["issue"]
+    closed = timestamp(issue["closed_at"])
+    now = dt.datetime.now(dt.timezone.utc)
+    require(closed <= now < closed + dt.timedelta(hours=24), "closure expired")
+    return issue
+
+def closure_identity(issue):
+    require("pull_request" not in issue and issue["state"] == "closed"
+            and issue["state_reason"] == "completed"
+            and {l["name"] for l in issue["labels"]} & PRIORITIES == {"P0"},
+            "not a completed closed P0")
+    timestamp(issue["closed_at"])
+    return {k: issue[k] for k in ("id", "number", "title", "body", "state",
+                                  "state_reason", "closed_at", "labels")}
+
+def public_projection(snap):
+    """Public text and provenance, not a raw REST dump."""
+    issue = snap["issue"]
+    def author(obj):
+        user = obj.get("user")
+        require(type(user) is dict and type(user.get("login")) is str, "unknown author")
+        return {"login": user["login"], "id": number(user["id"])}
+    result = {"issue": {k: issue[k] for k in ("id", "number", "title", "body",
+              "state", "state_reason", "created_at", "updated_at", "closed_at", "html_url")},
+              "comments": []}
+    result["issue"]["author"] = author(issue)
+    result["issue"]["labels"] = sorted(label["name"] for label in issue["labels"])
+    for c in snap["comments"]:
+        result["comments"].append({**{k: c[k] for k in
+            ("id", "body", "html_url", "created_at", "updated_at")}, "author": author(c)})
+    # A heuristic is not a DLP guarantee. Owner's public declaration is mandatory.
+    secret = re.compile(r"(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|Bearer\s+[A-Za-z0-9._~+/-]{20,})")
+    require(not any(secret.search(x) for x in issue_texts(snap)), "possible secret; staging refused")
+    return result
+
+def collect_closure(api, event_issue, current):
+    require(bool(SHA.fullmatch(current)), "invalid main SHA")
+    identity = closure_identity(event_issue)
+    root = number(identity["number"])
+    require(root != 8195, "infrastructure issue excluded")
+    require("PU" not in {l["name"] for l in identity["labels"]}, "suspended P0")
+    matches = SCOPE.findall(identity["body"] or "")
+    require(len(matches) == 1, "missing or ambiguous public closure scope")
+    children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
+    numbers = issue_numbers([root, *children])
+    require(8195 not in numbers, "infrastructure issue excluded")
+    snapshots = {n: snapshot(api, n) for n in numbers}
+    require(closure_identity(snapshots[root]["issue"]) == identity, "closure event drift")
+    edges = {}
+    for n, snap in snapshots.items():
+        require(snap["issue"]["state_reason"] == "completed", "non-completed corpus member")
+        require("PU" not in {l["name"] for l in snap["issue"]["labels"]}, "suspended corpus member")
+        require(not any(c["body"].startswith("BACKLOG-STAGING-") for c in snap["comments"]), "corpus already consumed")
+        if n != root:
+            require({l["name"] for l in snap["issue"]["labels"]} & PRIORITIES == {"P-1"},
+                    "child must be P-1")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(type(subs) is list and len(subs) < 100, "ambiguous native sub-issues")
+        ids = sorted(number(child["number"]) for child in subs)
+        summary = snap["issue"].get("sub_issues_summary")
+        require(type(summary) is dict and summary.get("total") == len(ids)
+                and set(ids) <= set(children) - {n}, "unresolved native sub-issue")
+        edges[n] = ids
+    for n in children:
+        require(any(n in ids for ids in edges.values()) or
+                ("#" + str(root)) in set(REFERENCE.findall(snapshots[n]["issue"]["body"] or "")),
+                "child relation unverified")
+    for n, snap in snapshots.items():
+        require(snapshot(api, n) == snap, "corpus drift")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(sorted(number(child["number"]) for child in subs) == edges[n], "scope drift")
+    ref = api.get("/git/ref/heads/main")
+    require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
+            "main changed during collection")
+    manifest = {"version": 1, "repository": REPO, "p0": root, "main_sha": current,
+                "edges": {str(n): edges[n] for n in sorted(edges)},
+                "snapshots": [public_projection(snapshots[n]) for n in sorted(snapshots)]}
+    require(len(encode(manifest)) <= STAGE_LIMIT, "staging corpus too large")
+    return manifest
+
+STAGE_PREFIX = "refs/heads/staging/backlog/p0-"
+START = "BACKLOG-STAGING-START v1 "
+DONE = "BACKLOG-STAGING-DONE v1 "
+PURGE_START = "BACKLOG-STAGING-PURGE-START v1 "
+PURGED = "BACKLOG-STAGING-PURGED v1 "
+PURGE_TITLE = "Capitalisation #8195 — "
+
+def stage_ref(n):
+    return STAGE_PREFIX + str(number(n))
+
+def checked_sha(value):
+    require(type(value) is str and bool(SHA.fullmatch(value)), "invalid Git SHA")
+    return value
+
+class GitStage:
+    """Isolated bare repo, fixed remote, no credentials in argv, leases on both writes."""
+    def __init__(self, directory, token=None):
+        self.directory = directory
+        self.remote = "https://github.com/" + REPO + ".git"
+        self.env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": directory,
+                    "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_AUTHOR_NAME": "Backlog staging", "GIT_AUTHOR_EMAIL": "staging@invalid",
+                    "GIT_COMMITTER_NAME": "Backlog staging", "GIT_COMMITTER_EMAIL": "staging@invalid"}
+        if token:
+            auth = base64.b64encode(("x-access-token:" + token).encode()).decode("ascii")
+            self.env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.https://github.com/.extraheader",
+                            GIT_CONFIG_VALUE_0="Authorization: Basic " + auth)
+        self.run("init", "--bare", "--quiet")
+
+    def run(self, *args, data=None):
+        try:
+            return subprocess.run(["git", "-C", self.directory, *args], input=data,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+                env=self.env, timeout=60).stdout
+        except (OSError, subprocess.SubprocessError):
+            raise Refusal("Git staging operation failed; do not retry mutations") from None
+
+    def remote_head(self, n):
+        ref = stage_ref(n)
+        lines = self.run("ls-remote", "--refs", self.remote, ref).splitlines()
+        if not lines:
+            return None
+        require(len(lines) == 1, "ambiguous staging ref")
+        digest, name = lines[0].decode("ascii").split("\t")
+        require(name == ref, "wrong staging ref")
+        return checked_sha(digest)
+
+    def make_commit(self, raw):
+        require(0 < len(raw) <= STAGE_LIMIT, "staging corpus too large")
+        blob = self.run("hash-object", "-w", "--stdin", data=raw).strip()
+        tree = self.run("mktree", data=b"100644 blob " + blob + b"\tmanifest.json\n").strip()
+        return checked_sha(self.run("commit-tree", tree.decode("ascii"),
+                           data=b"Temporary P0 staging\n").decode("ascii").strip())
+
+    def read_commit(self, commit):
+        checked_sha(commit)
+        require(self.run("rev-list", "--count", commit).strip() == b"1", "staging has ancestry")
+        tree = self.run("ls-tree", commit).strip()
+        require(bool(re.fullmatch(rb"100644 blob [0-9a-f]{40}\tmanifest\.json", tree)), "unexpected staging tree")
+        size = int(self.run("cat-file", "-s", commit + ":manifest.json").strip())
+        require(0 < size <= STAGE_LIMIT, "invalid staged size")
+        raw = self.run("show", commit + ":manifest.json")
+        require(0 < len(raw) <= STAGE_LIMIT, "invalid staged size")
+        return raw
+
+    def read_remote(self, n, commit):
+        require(self.remote_head(n) == checked_sha(commit), "staging ref drift")
+        self.run("fetch", "--no-tags", self.remote, stage_ref(n))
+        require(self.run("rev-parse", "FETCH_HEAD").decode().strip() == commit, "staging fetch drift")
+        require(self.remote_head(n) == commit, "staging ref drift")
+        return self.read_commit(commit)
+
+    def publish(self, n, raw):
+        require(self.remote_head(n) is None, "staging already exists")
+        commit = self.make_commit(raw)
+        ref = stage_ref(n)
+        self.run("push", "--force-with-lease=" + ref + ":", self.remote, commit + ":" + ref)
+        # Fetch in a distinct empty object store: verification cannot use local cached content.
+        with tempfile.TemporaryDirectory(prefix="backlog-verify-") as directory:
+            verifier = GitStage(directory)
+            verifier.remote = self.remote
+            require(verifier.read_remote(n, commit) == raw, "remote staging verification failed")
+        return commit
+
+    def purge(self, n, commit):
+        require(self.remote_head(n) == checked_sha(commit), "staging ref drift")
+        ref = stage_ref(n)
+        self.run("push", "--force-with-lease=" + ref + ":" + commit, self.remote, ":" + ref)
+        require(self.remote_head(n) is None, "staging ref still present")
+
+def local_stage_roundtrip(manifest):
+    raw = encode(manifest)
+    with tempfile.TemporaryDirectory(prefix="backlog-stage-") as directory:
+        stage = GitStage(directory)
+        commit = stage.make_commit(raw)
+        ref = stage_ref(manifest["p0"])
+        stage.run("update-ref", ref, commit, "0" * 40)
+        require(stage.read_commit(commit) == raw, "staging content mismatch")
+        stage.run("update-ref", "-d", ref, commit)
+        require(not stage.run("for-each-ref"), "staging ref not purged")
+    return {"status": "STAGING_LOCAL_ROUNDTRIP_ONLY", "p0": manifest["p0"],
+            "manifest_sha256": sha256(raw), "bytes": len(raw), "destruction_enabled": False}
+
+def main_guard(api, current):
+    ref = api.get("/git/ref/heads/main")
+    require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
+            "main changed")
+
+def compact_text(text, parent):
+    if not text:
+        return text
+    refs = sorted(set(REFERENCE.findall(text)))
+    stub = "Corpus transféré — P0 #" + str(parent) + " (consolidation #8195)."
+    if refs:
+        stub += "\nRéférences : " + " ".join(refs)
+    # Both metrics must decrease. Keep short comments and their unique links intact.
+    return stub if len(stub) < len(text) and len(stub.encode()) < len(text.encode()) else text
+
+def consolidate(api, stage, event_issue, current, clock=None):
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
-    report = validate_plan(raw, expected, pilot, current, api, docs_at=docs_at, now=clock())
-    plan = strict_json(raw)
-    entries = plan["issues"]
-    targets = {e["number"]: e["snapshot_sha256"] for e in entries}
-    retained = {e["number"]: e["snapshot_sha256"] for e in plan["retained_issues"]}
-    expected_states = {**targets, **retained, pilot: report["pilot_snapshot_sha256"]}
-    marker_body = CONSUMED + expected + " run=" + run
-    marker_metrics = metrics([marker_body])
-    require(all(report["projected_gain"][k] > marker_metrics[k] for k in ("characters", "bytes")),
-            "no positive bounded projected gain including consumption journal")
-
+    manifest = collect_closure(api, event_issue, current)
+    parent = manifest["p0"]
+    raw = encode(manifest)
+    digest = sha256(raw)
+    require(stage.remote_head(parent) is None, "staging already exists")
+    states = {s["issue"]["number"]: snapshot(api, s["issue"]["number"]) for s in manifest["snapshots"]}
+    require([public_projection(states[n]) for n in sorted(states)] == manifest["snapshots"],
+            "corpus changed before staging")
+    require(not any(c["body"].startswith("BACKLOG-STAGING-") for snap in states.values()
+                    for c in snap["comments"]), "corpus already consumed")
+    mutations, projected = [], []
+    for n, snap in states.items():
+        old = snap["issue"]["body"]
+        new = compact_text(old, parent)
+        if old != new:
+            mutations.append((n, None, new))
+        projected.append(new or "")
+        for c in snap["comments"]:
+            new = compact_text(c["body"], parent)
+            if new != c["body"]:
+                mutations.append((n, c["id"], new))
+            projected.append(new)
+    require(sum(cid is not None for _, cid, _ in mutations) <= MAX_REMOVALS, "pilot comment limit exceeded")
+    before = metrics([t for snap in states.values() for t in issue_texts(snap)])
+    # Count both persistent journals, even before the commit SHA is known.
+    estimate = metrics(projected + [START + digest + " " + "0" * 40, DONE + digest + " " + "0" * 40])
+    require(all(before[k] > estimate[k] for k in ("characters", "bytes")), "no positive contextual gain")
+    commit = None
     def guard():
-        require(clock() < timestamp(plan["expires_at"]), "plan expired during execution")
-        ref = api.get("/git/ref/heads/main")
-        require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
-                "main changed during execution")
-        states = {n: snapshot(api, n, closed=False if n == pilot else None if n in retained else True)
-                  for n in expected_states}
-        require(all(fingerprint(states[n]) == digest for n, digest in expected_states.items()),
-                "corpus changed during execution")
-        require(clock() < timestamp(plan["expires_at"]), "plan expired during execution")
-        ref = api.get("/git/ref/heads/main")
-        require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
-                "main changed during execution")
-        return states
+        require(clock() < timestamp(event_issue["closed_at"]) + dt.timedelta(hours=24), "closure expired")
+        main_guard(api, current)
+        require(all(snapshot(api, n) == snap for n, snap in states.items()), "corpus drift")
+        for n in states:
+            subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+            require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
+        require(stage.remote_head(parent) == commit, "staging ref drift")
+        main_guard(api, current)
+    guard()
+    commit = stage.publish(parent, raw)
+    require(stage.read_remote(parent, commit) == raw, "staging mismatch")
+    guard()
+    def mark(text):
+        marker = api.mark(parent, text)
+        require(marker.get("body") == text, "unexpected journal")
+        after = snapshot(api, parent)
+        expected_change(states[parent], after, marker=marker)
+        states[parent] = after
+    mark(START + digest + " " + commit)
+    for n, cid, body in mutations:
+        guard()
+        if cid is None:
+            api.replace_body(n, body)
+            change = {"body": body}
+        else:
+            api.replace_comment(cid, body)
+            change = {"comment": (cid, body)}
+        after = snapshot(api, n)
+        expected_change(states[n], after, **change)
+        states[n] = after
+    guard()
+    mark(DONE + digest + " " + commit)
+    guard()
+    after = metrics([t for snap in states.values() for t in issue_texts(snap)])
+    return {"status": "STAGED_AND_COMPACTED", "p0": parent, "stage_sha": commit,
+            "manifest_sha256": digest, "staging_bytes": len(raw), "before": before, "after": after,
+            "context_gain": {k: before[k] - after[k] for k in before}, "capitalized": False,
+            "global_gain_proven": False}
 
-    def verify(n, before, **change):
-        after = snapshot(api, n, closed=False if n == pilot else True)
-        expected_change(before, after, **change)
-        expected_states[n] = fingerprint(after)
+def canonical_evidence(ref, path):
+    checked_sha(ref)
+    require(type(path) is str and (path == "AGENTS.md" or
+            bool(re.fullmatch(r"(?:docs|\.agents/roles|\.agents/skills)/[A-Za-z0-9_./-]+\.md", path)))
+            and all(part not in ("", ".", "..") for part in path.split("/")), "invalid evidence path")
+    return git("show", ref + ":" + path)
 
-    # Persistent consumption precedes every target mutation. Never retry a failed request.
-    states = guard()
-    marker = api.consume(pilot, marker_body)
-    require(type(marker) is dict and marker.get("body") == marker_body, "invalid consumption response")
-    number(marker.get("id"))
-    verify(pilot, states[pilot], marker=marker)
-
-    # First write and verify every synthesis; only then delete any comment.
-    for e in entries:
-        states = guard()
-        n = e["number"]
-        if states[n]["issue"]["body"] != e["body_after"]:
-            api.replace_body(n, e["body_after"])
-            verify(n, states[n], body=e["body_after"])
-    for e in entries:
-        n = e["number"]
-        for comment_id in e["remove_comments"]:
-            states = guard()
-            require(states[n]["issue"]["body"] == e["body_after"], "synthesis not verified")
-            api.delete_comment(comment_id)
-            verify(n, states[n], remove=comment_id)
-    states = guard()
-    after = metrics(list(docs_at(current).values()) + [t for snap in states.values() for t in issue_texts(snap)])
-    report.update(status="APPLIED_BOUNDED_PLAN", actual_after_with_plan=after,
-                  actual_bounded_gain={k: report["before"][k] - after[k] for k in after},
-                  journal_included=True, external_control_overhead_included=False,
-                  destruction_enabled=True, run_id=run)
-    return report
+def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_evidence):
+    require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
+            and event_issue["title"].startswith(PURGE_TITLE) and not event_issue["labels"]
+            and not event_issue["assignees"] and event_issue["user"]["id"] == OWNER_ID,
+            "invalid capitalization control")
+    control = number(event_issue["number"])
+    control_before = snapshot(api, control)
+    require(all(control_before["issue"].get(k) == event_issue.get(k) for k in
+                ("id", "number", "body", "title", "state", "state_reason", "closed_at", "labels", "assignees")),
+            "capitalization control changed")
+    data = strict_json(event_issue["body"].encode())
+    exact_keys(data, ("version", "p0", "stage_sha", "manifest_sha256", "main_sha", "evidence", "semantic_review"))
+    require(type(data["version"]) is int and data["version"] == 1 and data["main_sha"] == current
+            and data["semantic_review"] is True, "capitalization review missing or stale")
+    parent = number(data["p0"])
+    require(parent not in (8195, control), "invalid capitalization parent")
+    require(event_issue["title"] == PURGE_TITLE + str(parent), "capitalization control title mismatch")
+    commit = checked_sha(data["stage_sha"])
+    raw = stage.read_remote(parent, commit)
+    digest = sha256(raw)
+    require(digest == data["manifest_sha256"], "staging digest mismatch")
+    manifest = strict_json(raw)
+    require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent,
+            "invalid staged manifest")
+    evidence = data["evidence"]
+    require(type(evidence) is list and 1 <= len(evidence) <= 30, "missing canonical evidence")
+    paths = set()
+    for entry in evidence:
+        exact_keys(entry, ("path", "sha256"))
+        path = entry["path"]
+        require(path not in paths and sha256(evidence_at(current, path)) == entry["sha256"],
+                "canonical evidence changed")
+        paths.add(path)
+    snap = snapshot(api, parent)
+    require(any(c["body"] == DONE + digest + " " + commit for c in snap["comments"]),
+            "consolidation not complete")
+    require(not any(c["body"].startswith((PURGE_START, PURGED)) for c in snap["comments"]), "purge already consumed")
+    main_guard(api, current)
+    require(snapshot(api, control) == control_before and snapshot(api, parent) == snap,
+            "capitalization corpus drift")
+    require(stage.read_remote(parent, commit) == raw, "staging changed")
+    marker = PURGE_START + digest + " " + commit + " review #" + str(control)
+    response = api.mark(parent, marker)
+    require(response.get("body") == marker, "purge journal mismatch")
+    after_start = snapshot(api, parent)
+    expected_change(snap, after_start, marker=response)
+    main_guard(api, current)
+    require(snapshot(api, control) == control_before, "capitalization control changed")
+    require(snapshot(api, parent) == after_start, "capitalization corpus drift")
+    stage.purge(parent, commit)
+    marker = PURGED + digest + " " + commit + " review #" + str(control)
+    response = api.mark(parent, marker)
+    require(response.get("body") == marker, "purge completion journal mismatch")
+    expected_change(after_start, snapshot(api, parent), marker=response)
+    return {"status": "STAGING_REFERENCE_PURGED", "p0": parent, "stage_sha": commit,
+            "physical_erasure_proven": False, "semantic_equivalence_proven_by_cli": False}
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("audit", "validate", "apply"))
+    parser.add_argument("mode", choices=("audit", "stage-preview", "closure"))
     parser.add_argument("--issues", default="")
-    parser.add_argument("--pilot", type=int)
-    parser.add_argument("--plan-sha256")
     args = parser.parse_args(argv)
     try:
-        if args.mode == "apply":
-            # Refuse local invocations before Git or network access.
-            run = apply_context(os.environ, os.environ.get("GITHUB_SHA", ""))
+        event_issue = closure_event(os.environ) if args.mode != "audit" else None
         current = head()
-        if args.mode == "apply":
-            apply_context(os.environ, current)
-        api = (WriteAPI if args.mode == "apply" else ReadOnlyAPI)(os.environ.get("GITHUB_TOKEN", ""))
-        if args.mode == "audit":
+        token = os.environ.get("GITHUB_TOKEN", "")
+        api = (WriteAPI if args.mode == "closure" else ReadOnlyAPI)(token)
+        if args.mode != "audit":
+            require(current == os.environ.get("GITHUB_SHA"), "checkout mismatch")
+            if args.mode == "stage-preview":
+                result = local_stage_roundtrip(collect_closure(api, event_issue, current))
+            else:
+                with tempfile.TemporaryDirectory(prefix="backlog-stage-") as directory:
+                    stage = GitStage(directory, token)
+                    result = (purge_capitalized if event_issue["title"].startswith(PURGE_TITLE)
+                              else consolidate)(api, stage, event_issue, current)
+        else:
             require(bool(re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*){0,2}", args.issues)), "invalid audit list")
             numbers = issue_numbers([int(n) for n in args.issues.split(",")])
             result = {"status": "READ_ONLY_AUDIT", "main_sha": current,
                       "issues": [audit_issue(snapshot(api, n)) for n in numbers],
                       "documents": doc_report(doc_texts(current)), "destruction_enabled": False}
-        else:
-            pilot = number(args.pilot)
-            raw = (issue_data(api, pilot, closed=False)["body"] or "").encode("utf-8")
-            if args.mode == "apply":
-                result = apply_plan(raw, args.plan_sha256, pilot, current, api, run)
-            else:
-                result = validate_plan(raw, args.plan_sha256, pilot, current, api)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except Refusal as exc:
         print("REFUSED: " + str(exc), file=sys.stderr)
         return 2
-    except (KeyError, TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+    except (KeyError, TypeError, ValueError, UnicodeError, OverflowError, RecursionError, OSError, StopIteration):
         print("REFUSED: malformed input or response", file=sys.stderr)
         return 2
 
