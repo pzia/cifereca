@@ -43,6 +43,7 @@ STAGES = frozenset({
     "native_copy_navigation", "native_copy_result", "native_copy_observation",
     "native_idempotence", "native_removal",
     "native_usb_a", "native_usb_b", "native_usb_isolation",
+    "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_commit", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
     "native_usb_discovery",
     "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation", "finish",
 })
@@ -615,8 +616,8 @@ def main() -> int:
     def native_grouped_receipt():
         """Real GTK widgets, TaskRunner, Core broker, SQLite and local FS.
 
-        Start with the two USB bindings offline, then connect two synthetic
-        block volumes on real directories. Only Linux discovery/attestation
+        Start with the two USB bindings offline, then detect two ad hoc
+        filesystem roots. Only USB discovery/attestation
         is simulated for those volumes. The pseudo-reader keeps native Linux
         attestation. Resolve the production storage.target in the isolated
         no-plugin registry; broker, scanner, executor and queue stay real.
@@ -1111,6 +1112,7 @@ def main() -> int:
                 report["checks"]["native_reconnected_usb_a_real_copy"] = True
 
                 phase[0] = "native_usb_b"
+                phase[0] = "native_usb_b_source"
                 bob_root = configured_identity_roots(core.config, "bob")["bob"][0]
                 bob_root.mkdir(parents=True, exist_ok=True)
                 bob_source = bob_root / "fixture.epub"
@@ -1122,21 +1124,30 @@ def main() -> int:
                 })
                 bob_entry = dict(entry, key="bob-reader-book", identity_id="bob",
                                  placement_id=bob_placement)
+                phase[0] = "native_usb_b_profile"
                 switch_profile("bob", bob_entry)
                 assert window._reader_device_ids == ("reader-b",)
+                select_reader("reader-b")
+                assert db.placement_get(bob_placement)["identity_id"] == "bob"
+                phase[0] = "native_usb_b_naming_dialog"
                 header("reader-directory-config").emit("clicked")
                 naming_dialog = dialog_with_heading("Dossier géré de la liseuse")
                 naming_dialog.get_extra_child().get_last_child().set_selected(1)
+                phase[0] = "native_usb_b_naming_commit"
                 naming_dialog.emit("response", "save")
                 assert db.device_binding_get("reader-b")["metadata"]["reader_target_naming"] == "source"
+                phase[0] = "native_usb_b_menu"
                 menu, choices = menu_choices(bob_entry)
                 assert "usb-intent:keep:reader-b" in choices
                 assert "usb-intent:keep:reader-a" not in choices
                 assert "usb-intent:keep:" + device not in choices
                 wait(choices["usb-intent:keep:reader-b"].get_mapped)
+                phase[0] = "native_usb_b_wish"
                 choices["usb-intent:keep:reader-b"].emit("clicked")
                 bob_wish = db.device_placement_get("reader-b", artifact_id)
+                assert bob_wish is not None
                 assert bob_wish["desired_state"] == "keep" and bob_wish["observed_state"] == "unknown"
+                phase[0] = "native_usb_b_reservation"
                 assert bob_wish["target_relative_path"] == "Books/Cifereca/fixture--" + digest + ".epub"
                 menu.get_popover().popdown()
                 window.navigate("readers")
