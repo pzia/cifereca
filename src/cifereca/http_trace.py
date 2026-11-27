@@ -301,7 +301,7 @@ class HTTPTraceCapture:
 
 # 32 MiB retained observations plus bounded index/ZIP overhead. No change to
 # capture budgets. The same index/blob format serves live and archived export.
-HTTP_TRACE_ZIP_LIMIT = 40 * 1024 * 1024
+HTTP_TRACE_ZIP_LIMIT = 63 * 1024 * 1024
 
 
 def build_http_trace_zip(snapshot):

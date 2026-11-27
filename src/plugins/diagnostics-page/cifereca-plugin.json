@@ -28,7 +28,8 @@
       "system_requires": [],
       "requires_brokers": [
         "diagnostics",
-        "tasks"
+        "tasks",
+        "capture.vault"
       ],
       "requires_contracts": []
     }
