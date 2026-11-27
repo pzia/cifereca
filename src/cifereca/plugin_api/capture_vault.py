@@ -75,4 +75,4 @@ class CaptureVaultBroker(Protocol):
 from ..core.capture_export import build_capture_zip, write_capture_zip
 
 from ..core.capture_devkit import core_contract_kit, _PUBLIC_SOURCES as CAPTURE_KIT_PUBLIC_SOURCES
-from ..core.capture_devkit_templates import reference_plugin_files, REFERENCE_MANIFEST
+from ..core.capture_devkit_templates import fixture_plugin_files, FIXTURE_MANIFEST

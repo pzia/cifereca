@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-REFERENCE_MANIFEST = {
+FIXTURE_MANIFEST = {
     "manifest": 1,
     "package": {
         "id": "org.cifereca.provider.fixture-example",
@@ -193,11 +193,11 @@ TLS, anti-SSRF, type de catalogue et permissions à partir de la trace.
 """
 
 
-def reference_plugin_files() -> dict[str, bytes]:
+def fixture_plugin_files() -> dict[str, bytes]:
     root = "plugin-dev-kit/examples/provider-fixture-example/"
     return {
         root + "cifereca-plugin.json": (
-            json.dumps(REFERENCE_MANIFEST, indent=2, ensure_ascii=False)
+            json.dumps(FIXTURE_MANIFEST, indent=2, ensure_ascii=False)
             + "\n"
         ).encode("utf-8"),
         root + "fixture_catalog.py": REFERENCE_CODE.encode("utf-8"),

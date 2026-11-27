@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from .capture_vault import VaultError
-from .capture_devkit_templates import reference_plugin_files
+from .capture_devkit_templates import fixture_plugin_files
 
 _KIT_SCHEMA = "cifereca.browser-recorder.plugin-dev-kit/1"
 _CORE_API_PACKAGE = "cifereca.plugin_api"
@@ -285,7 +285,7 @@ def core_contract_kit() -> dict[str, bytes]:
     )
     # Reference package is fixture-only. Include its tests and manifest
     # inside the exact reviewed ZIP, not as code run during capture/export.
-    examples = reference_plugin_files()
+    examples = fixture_plugin_files()
     if not examples or any(
         not name.startswith("plugin-dev-kit/examples/provider-fixture-example/")
         or name in contents or not isinstance(data, bytes)
@@ -295,7 +295,7 @@ def core_contract_kit() -> dict[str, bytes]:
     contents.update(examples)
     for name in examples:
         provenance[name] = (
-            "src/cifereca/core/capture_devkit_templates.py:reference_plugin_files"
+            "src/cifereca/core/capture_devkit_templates.py:fixture_plugin_files"
         )
     provenance["plugin-dev-kit/README.md"] = (
         "src/cifereca/core/capture_devkit.py:_GUIDE"
