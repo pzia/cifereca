@@ -37,7 +37,8 @@ def test_local_directory_binding_is_exclusive_and_replacement_refused(tmp_path):
         db.device_local_reader_declare(**args)
 
 
-def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monkeypatch):
+@pytest.mark.parametrize("target_naming", ["sha256", "source"])
+def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monkeypatch, target_naming):
     from hashlib import sha256
     from time import time
     from types import SimpleNamespace as NS
@@ -78,9 +79,17 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
     db.device_usb_intent_set(identity_id="alice", device_id="local-a",
                              artifact_id=artifact, desired_state="keep")
     db.device_usb_directory_set(identity_id="alice", device_id="local-a",
-                                fingerprint=fingerprint, target_directory="Reading/Library")
+                                fingerprint=fingerprint, target_directory="Reading/Library",
+                                target_naming=target_naming)
     managed = root / "Reading" / "Library"
-    target = "Reading/Library/" + digest + ".epub"
+    target = "Reading/Library/" + ("book--" if target_naming == "source" else "") + digest + ".epub"
+    assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
+                                                artifact_id=artifact) == target
+    # Naming changes only future wishes; the previously pinned destination
+    # remains executable with exactly the same bytes and managed receipt.
+    db.device_usb_directory_set(identity_id="alice", device_id="local-a",
+                                fingerprint=fingerprint, target_directory="Reading/Library",
+                                target_naming="sha256" if target_naming == "source" else "source")
     assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
                                                 artifact_id=artifact) == target
     with pytest.raises(ValueError):

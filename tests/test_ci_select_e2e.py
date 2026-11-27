@@ -477,6 +477,13 @@ class SelectionTests(unittest.TestCase):
         assert 'bar.overflow_popover.popup()' in source
         assert 'bar.overflow_button.get_mapped()' in source
         assert "P1_4985_GTK_CLOSED_STAGE=" in source
+        # The real Core verdict is captured, never replaced with a fake
+        # success, and the runner emits only independently closed codes.
+        assert 'outcome = original_copy(**kwargs)' in source
+        assert 'result = operation()' in source
+        assert 'type(verdict) is str and verdict in closed_copy_verdicts' in runner
+        assert 'P1_4985_CLOSED_COPY_RESULT=' in runner
+        assert 'report_data.get("closed_copy_result")' in runner
 
     def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
         self.assertEqual(mod.READER_TARGET_GTK, (

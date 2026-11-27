@@ -46,6 +46,59 @@ STAGES = frozenset({
 })
 
 
+# Closed verdicts only. No path, title, raw exception or plugin detail may
+# become a public diagnostic. The runner independently checks this vocabulary.
+COPY_VERDICTS = frozenset({
+    "copy_not_reached",
+    "copy_worker_timeout",
+    "copy_result_unclassified",
+    "copy_completed_physical_mismatch",
+    "usb_copy_source_unverified",
+    "usb_copy_directory_unavailable",
+    "usb_copy_request_invalid",
+    "usb_copy_authorization_unverified",
+    "usb_stage_transport_unavailable",
+    "usb_copy_consent_already_used",
+    "usb_copy_target_review_refused",
+    "usb_copy_target_not_clear",
+    "usb_copy_journal_conflict",
+    "usb_stage_request_invalid",
+    "usb_stage_unsupported",
+    "usb_stage_source_mismatch",
+    "usb_stage_directory_unverified",
+    "usb_stage_pending_not_current",
+    "usb_stage_already_exists",
+    "usb_stage_incomplete",
+    "usb_stage_scope_changed",
+    "usb_stage_file_unverified",
+    "usb_stage_io_failed",
+    "usb_stage_transport_failed",
+    "usb_recovery_pin_unverified",
+    "usb_recovery_checkpoint_refused",
+    "usb_recovery_checkpoint_failed",
+    "usb_publish_request_invalid",
+    "usb_publish_unsupported",
+    "usb_publish_stage_unverified",
+    "usb_publish_pending_not_current",
+    "usb_publish_directory_unbounded",
+    "usb_publish_target_occupied",
+    "usb_publish_stage_changed",
+    "usb_publish_postcheck_failed",
+    "usb_publish_io_failed",
+    "usb_publish_revalidation_failed",
+    "usb_copy_receipt_uncommitted",
+    "usb_copy_final_changed",
+    "usb_copy_reader_busy",
+    "usb_copy_operation_failed",
+    "sync_blocked",
+    "sync_unavailable",
+    "sync_partial",
+    "sync_pending",
+    "sync_cancelled",
+    "sync_completed",
+})
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -149,7 +202,8 @@ def main() -> int:
         "git_sha": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
         ).strip(),
-        "checks": {}, "usb_reads": 0, "usb_writes": 0, "provider_calls": 0,
+        "checks": {}, "legacy_synthetic_usb_reads": 0,
+        "legacy_synthetic_usb_writes": 0, "provider_calls": 0,
     }
 
     def save():
@@ -599,8 +653,8 @@ def main() -> int:
         context = GLib.MainContext.default()
         deadline = min(state["deadline"], monotonic() + 42)
 
-        def wait(predicate):
-            limit = min(deadline, monotonic() + 6)
+        def wait(predicate, *, seconds=6):
+            limit = min(deadline, monotonic() + seconds)
             while monotonic() < limit and report["status"] == "RUNNING":
                 context.iteration(False)
                 value = predicate()
@@ -649,7 +703,7 @@ def main() -> int:
             assert set(window._reader_device_ids) == {"reader-a", device}
             header("reader-directory-config").emit("clicked")
             directory_dialog = dialog_with_heading("Dossier géré de la liseuse")
-            directory_dialog.get_extra_child().set_text("Reading/Library")
+            directory_dialog.get_extra_child().get_first_child().set_text("Reading/Library")
             directory_dialog.emit("response", "save")
             assert db.device_binding_get(device)["target_directory"] == "Reading/Library"
             header("reader-setup-directory").emit("clicked")
@@ -741,8 +795,32 @@ def main() -> int:
             # Deterministic interruption/navigation checkpoint at the real
             # Core progress boundary; no fabricated result or task queue.
             original_admit = type(facade).admit_delta
+            from cifereca.core import device_usb_sync_engine as sync_engine
+            from cifereca.core.device_usb_copy_supervisor import UsbCopyExecution
+            from cifereca.core.device_usb_sync_engine import UsbSyncResult
+            original_copy = sync_engine.execute_usb_library_copy
+
             def run_held(*, cancel):
                 entered, release = Event(), Event()
+                copy_verdicts, sync_verdicts = [], []
+
+                def observed_copy(**kwargs):
+                    outcome = original_copy(**kwargs)
+                    if type(outcome) is UsbCopyExecution:
+                        copy_verdicts.append(outcome)
+                    return outcome
+
+                def closed_verdict():
+                    if copy_verdicts:
+                        outcome = copy_verdicts[-1]
+                        if outcome.status != "completed":
+                            return (outcome.reason if outcome.reason in COPY_VERDICTS
+                                    else "copy_result_unclassified")
+                        return "copy_completed_physical_mismatch"
+                    if sync_verdicts:
+                        candidate = "sync_" + sync_verdicts[-1].status
+                        return candidate if candidate in COPY_VERDICTS else "copy_result_unclassified"
+                    return "copy_not_reached"
                 def admit(broker, **kwargs):
                     callback = kwargs["progress"]
                     def progress(*args):
@@ -750,8 +828,15 @@ def main() -> int:
                         if args[0] == 0:
                             entered.set()
                             release.wait(12)
-                    return original_admit(broker, **(kwargs | {"progress": progress}))
-                with patch.object(type(facade), "admit_delta", admit):
+                    operation = original_admit(broker, **(kwargs | {"progress": progress}))
+                    def execute():
+                        result = operation()
+                        if type(result) is UsbSyncResult:
+                            sync_verdicts.append(result)
+                        return result
+                    return execute
+                with (patch.object(type(facade), "admit_delta", admit),
+                      patch.object(sync_engine, "execute_usb_library_copy", observed_copy)):
                     try:
                         if not cancel:
                             phase[0] = "native_copy_admission"
@@ -773,7 +858,21 @@ def main() -> int:
                         release.set()
                     if not cancel:
                         phase[0] = "native_copy_result"
-                    wait(lambda: not getattr(window, "_reader_sync_active", False))
+                    try:
+                        wait(lambda: not getattr(window, "_reader_sync_active", False), seconds=12)
+                    except AssertionError:
+                        if not cancel:
+                            report["closed_copy_result"] = (closed_verdict() if sync_verdicts
+                                                            else "copy_worker_timeout")
+                        raise
+                if cancel:
+                    assert len(sync_verdicts) == 1 and sync_verdicts[0].status == "cancelled"
+                    assert not copy_verdicts
+                else:
+                    report["closed_copy_result"] = closed_verdict()
+                    assert len(sync_verdicts) == 1 and sync_verdicts[0] == UsbSyncResult(
+                        "completed", copied=1, observed=True)
+                    assert len(copy_verdicts) == 1 and copy_verdicts[0].status == "completed"
 
             phase[0] = "native_cancellation"
             run_held(cancel=True)
@@ -792,6 +891,7 @@ def main() -> int:
             window._library_entries_cache = [entry]
             window._render_readers()
             select_reader(device)
+            report.pop("closed_copy_result", None)
             report["checks"]["native_real_copy_observe_progress_across_navigation"] = True
 
             phase[0] = "native_idempotence"
@@ -951,6 +1051,11 @@ def main() -> int:
                                  placement_id=bob_placement)
                 switch_profile("bob", bob_entry)
                 assert window._reader_device_ids == ("reader-b",)
+                header("reader-directory-config").emit("clicked")
+                naming_dialog = dialog_with_heading("Dossier géré de la liseuse")
+                naming_dialog.get_extra_child().get_last_child().set_selected(1)
+                naming_dialog.emit("response", "save")
+                assert db.device_binding_get("reader-b")["metadata"]["reader_target_naming"] == "source"
                 menu, choices = menu_choices(bob_entry)
                 assert "usb-intent:keep:reader-b" in choices
                 assert "usb-intent:keep:reader-a" not in choices
@@ -959,6 +1064,7 @@ def main() -> int:
                 choices["usb-intent:keep:reader-b"].emit("clicked")
                 bob_wish = db.device_placement_get("reader-b", artifact_id)
                 assert bob_wish["desired_state"] == "keep" and bob_wish["observed_state"] == "unknown"
+                assert bob_wish["target_relative_path"] == "Books/Cifereca/fixture--" + digest + ".epub"
                 menu.get_popover().popdown()
                 window.navigate("readers")
                 window._library_entries_cache = [bob_entry]

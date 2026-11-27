@@ -56,6 +56,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
             intention=intent, artifact=artifact,
             selected_format=artifact.get("media_format"),
             other_intentions=storage.device_placements(device_id=device_id),
+            source_path=(storage.placement_get(book.placement_id) or {}).get("path"),
         )
     except (ValueError, OSError, TypeError, KeyError, AttributeError):
         return any_action
@@ -123,6 +124,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
                 intention=live_intent, artifact=live_artifact,
                 selected_format=proposal.selected_format,
                 other_intentions=storage.device_placements(device_id=device_id),
+                source_path=placement.get("path"),
             )
             if live != proposal or not current():
                 return
@@ -132,6 +134,8 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
                 identity_id=identity_id, device_id=device_id,
                 artifact_id=book.artifact_id,
                 target_relative_path=proposal.target_relative_path,
+                expected_target_naming=(live_binding.get("metadata") or {}).get(
+                    "reader_target_naming", "sha256"),
             )
         except (ValueError, OSError, TypeError, KeyError, AttributeError):
             if current():

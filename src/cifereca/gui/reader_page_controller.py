@@ -148,7 +148,7 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     page.header_actions.append(setup)
     directory = Gtk.Button.new_from_icon_name("folder-documents-symbolic")
     directory._cifereca_action_id = "reader-directory-config"
-    directory.set_tooltip_text("Configurer le dossier géré avant réservation.")
+    directory.set_tooltip_text("Configurer le dossier géré et le nommage des prochains ajouts.")
     def directory_clicked(_button):
         from .reader_local_actions import request_reader_directory
         request_reader_directory(window, Gtk=Gtk)

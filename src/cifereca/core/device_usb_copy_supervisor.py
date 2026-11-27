@@ -20,6 +20,7 @@ from .device_usb_mount import LinuxUsbMount
 from .device_usb_preview import UsbManagedReceipt
 from .device_usb_target_preflight import _target_aliases
 from .device_usb_variant_review import _SUFFIX
+from .device_usb_target_name import usb_target_name_matches
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +113,8 @@ def execute_usb_copy(
     target = consent.target_relative_path
     if (not _valid_names(stage_name, target, consent.sha256, len(payload))
             or type(consent.selected_format) is not str or consent.selected_format not in _SUFFIX
-            or PurePosixPath(target).name != consent.sha256 + _SUFFIX[consent.selected_format]
+            or not usb_target_name_matches(PurePosixPath(target).name, consent.sha256,
+                                           consent.selected_format)
             or consent.operation != "upload" or consent.artifact_id != "sha256:" + consent.sha256
             or (rights is not None and _coordinates(consent) != _coordinates(rights))
             or _coordinates(consent)[:3] != (mount.identity_id, mount.device_id, mount.usb_fingerprint)

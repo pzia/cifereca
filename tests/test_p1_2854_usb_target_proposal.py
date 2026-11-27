@@ -241,3 +241,32 @@ def test_other_account_cannot_reserve_target_for_shared_sha(tmp_path):
     with pytest.raises(ValueError):
         propose_usb_target(**values)
     assert db.device_placement_get("usb-alice", artifact_id)["target_relative_path"] is None
+
+
+
+@pytest.mark.parametrize("fmt,suffix", [
+    ("epub", ".epub"), ("kepub", ".kepub.epub"),
+    ("fxl.kepub", ".fxl.kepub.epub"), ("pdf", ".pdf"),
+])
+def test_named_target_reuses_source_stem_but_never_infers_format(fmt, suffix):
+    from cifereca.core.device_usb_target_name import usb_target_name_matches
+    values = inputs(fmt)
+    values["binding"]["metadata"]["reader_target_naming"] = "source"
+    proposal = propose_usb_target(**values, source_path="/library/Auteur - Livre.fxl.kepub.epub")
+    assert proposal.target_relative_path == "Books/Cifereca/Auteur - Livre--" + SHA + suffix
+    assert usb_target_name_matches(proposal.target_relative_path.rsplit("/", 1)[-1], SHA, fmt)
+    assert not usb_target_name_matches("a--" + "b" * 64 + suffix, SHA, fmt)
+    assert not usb_target_name_matches("../a--" + SHA + suffix, SHA, fmt)
+    assert not usb_target_name_matches(".cifereca-usb-a--" + SHA + suffix, SHA, fmt)
+    with pytest.raises(ValueError):
+        propose_usb_target(**values, source_path="../foreign.epub")
+
+
+def test_readable_prefix_is_bounded_and_reserved_names_safe():
+    from cifereca.core.device_usb_target_name import usb_target_name, usb_target_name_matches
+    for stem in ("CON." + "é" * 200, "AUX", "a" * 1000, "title: book", "é" * 100):
+        name = usb_target_name(SHA, "fxl.kepub", mode="source",
+                               source_path="/library/" + stem + ".epub")
+        assert len(name.encode("utf-8")) <= 255
+        assert usb_target_name_matches(name, SHA, "fxl.kepub")
+        assert not usb_target_name_matches(name, SHA, "epub")

@@ -155,12 +155,26 @@ def request_reader_directory(window, *, Gtk, Adw=None):
     if Adw is None:
         from gi.repository import Adw
     dialog = Adw.MessageDialog.new(window, "Dossier géré de la liseuse",
-        "Chemin relatif à la racine du lecteur. Modifiable avant toute réservation ; "
-        "aucune migration ni suppression de fichiers.")
+        "Chemin relatif à la racine du lecteur, modifiable avant toute réservation. "
+        "Le nommage des nouveaux ajouts peut changer ensuite, sans migration ni "
+        "suppression des fichiers existants.")
     entry = Gtk.Entry()
     entry.set_text(row["target_directory"])
     entry.set_max_length(512)
-    dialog.set_extra_child(entry)
+    from ..core.device_usb_target_name import NAMING_MODES
+    mode = (row.get("metadata") or {}).get("reader_target_naming", "sha256")
+    if mode not in NAMING_MODES:
+        window.show_error("Mode de nommage non reconnu.", "Liseuses")
+        return
+    fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    fields.append(entry)
+    fields.append(Gtk.Label(label="Nommage des prochains ajouts", xalign=0))
+    naming = Gtk.DropDown.new_from_strings([
+        "Empreinte SHA uniquement", "Nom local + empreinte SHA",
+    ])
+    naming.set_selected(NAMING_MODES.index(mode))
+    fields.append(naming)
+    dialog.set_extra_child(fields)
     dialog.add_response("cancel", "Annuler")
     dialog.add_response("save", "Enregistrer")
     dialog.set_close_response("cancel")
@@ -169,8 +183,12 @@ def request_reader_directory(window, *, Gtk, Adw=None):
                 or getattr(window, "_reader_sync_active", False)):
             return
         try:
+            index = naming.get_selected()
+            if type(index) is not int or not 0 <= index < len(NAMING_MODES):
+                raise ValueError("invalid reader naming mode")
             scope[1].device_usb_directory_set(identity_id=scope[0], device_id=device,
-                fingerprint=fingerprint, target_directory=entry.get_text())
+                fingerprint=fingerprint, target_directory=entry.get_text(),
+                target_naming=NAMING_MODES[index])
             window._render_readers()
         except Exception:
             window.show_error("Chemin invalide ou destinations déjà réservées.", "Liseuses")

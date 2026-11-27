@@ -14,6 +14,7 @@ from typing import Mapping, Sequence
 
 from .device_usb_preview import _relative, _sha
 from .device_usb_variant_review import _SUFFIX
+from .device_usb_target_name import usb_target_name
 
 
 _MAX_INTENTIONS = 1000
@@ -38,6 +39,7 @@ def propose_usb_target(
     *, identity_id: str, binding: Mapping[str, object],
     intention: Mapping[str, object], artifact: Mapping[str, object],
     selected_format: str, other_intentions: Sequence[Mapping[str, object]],
+    source_path: str | None = None,
 ) -> UsbTargetProposal:
     """Propose a unique SHA-named path for the *exact* existing EPUB/PDF kind.
 
@@ -94,7 +96,10 @@ def propose_usb_target(
             or type(intention.get("metadata")) is not dict
             or intention["metadata"] != {"intent_identity_id": identity_id}):
         raise ValueError("usb_target_intention_unverified")
-    path = managed + "/" + digest + _SUFFIX[selected_format]
+    path = managed + "/" + usb_target_name(
+        digest, selected_format, mode=meta.get("reader_target_naming", "sha256"),
+        source_path=source_path,
+    )
     if not _relative(path):
         raise ValueError("usb_target_path_unverified")
     if (intention.get("target_relative_path") is not None

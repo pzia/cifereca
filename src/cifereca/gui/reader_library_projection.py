@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..core.device_usb_preview import _relative, _sha
-from ..core.device_usb_variant_review import _SUFFIX
+from ..core.device_usb_target_name import usb_target_format
 
 
 _MAX_ROWS = 30000
@@ -169,11 +169,8 @@ def project_reader_library(
         target_format = None
         digest = artifact_id.removeprefix("sha256:")
         if target is not None and digest != artifact_id and _sha(digest):
-            stem = managed_prefix + digest
-            target_format = next(
-                (name for name, suffix in _SUFFIX.items() if target == stem + suffix),
-                None,
-            )
+            if target.rpartition("/")[0] == managed:
+                target_format = usb_target_format(target.rpartition("/")[2], digest)
         thumb = entry.get("thumbnail_url")
         books.append(ReaderLibraryBook(
             key=key, artifact_id=artifact_id,

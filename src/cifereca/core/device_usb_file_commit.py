@@ -14,7 +14,7 @@ from typing import Callable, Literal
 from . import device_usb_mount as linux_mount
 from .device_usb_preview import _sha
 from .device_usb_target_preflight import _MAX_FILE_BYTES, _target_aliases
-from .device_usb_variant_review import _SUFFIX
+from .device_usb_target_name import usb_target_name_matches
 
 
 _STAGE_NAME = re.compile(r"\.cifereca-usb-[a-f0-9]{32}\.part", re.ASCII)
@@ -106,7 +106,7 @@ def publish_usb_staged_file(
             or not _sha(expected_sha256)
             or type(staged_name) is not str or _STAGE_NAME.fullmatch(staged_name) is None
             or type(target_name) is not str
-            or target_name not in {expected_sha256 + suffix for suffix in _SUFFIX.values()}
+            or not usb_target_name_matches(target_name, expected_sha256)
             or not callable(pending_is_current)):
         return UsbFilePublication("blocked", "usb_publish_request_invalid")
     if sys.platform != "linux" or not hasattr(os, "O_PATH") or not hasattr(os, "pread"):
