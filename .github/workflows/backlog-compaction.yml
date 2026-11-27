@@ -1,0 +1,61 @@
+name: Backlog compaction (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only operation
+        required: true
+        type: choice
+        options:
+          - audit
+          - validate
+      issues:
+        description: One to three closed issue numbers, comma separated (audit)
+        required: false
+        type: string
+      pilot:
+        description: Dedicated open pilot issue (validate)
+        required: false
+        type: string
+      plan_sha256:
+        description: SHA-256 of exact pilot issue body (validate)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: backlog-compaction-read-only
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: github.repository == 'pzia/cifereca' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Offline tests and read-only operation
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ISSUES: ${{ inputs.issues }}
+          PILOT: ${{ inputs.pilot }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest discover -s tests -p test_backlog_compaction.py
+          case "$MODE" in
+            audit) python3 scripts/backlog_compaction.py audit --issues="$ISSUES" ;;
+            validate) python3 scripts/backlog_compaction.py validate --pilot="$PILOT" --plan-sha256="$PLAN_SHA256" ;;
+            *) exit 2 ;;
+          esac
