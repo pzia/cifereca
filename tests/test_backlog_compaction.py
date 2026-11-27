@@ -46,7 +46,10 @@ class API:
 
     def mark(self, n, body):
         self.writes.append(("mark", n))
-        value = {"id": 100 + len(self.comments), "body": body}
+        value = {"id": 100 + len(self.comments), "body": body,
+                 "user": {"id": 41898282, "login": "github-actions[bot]"},
+                 "html_url": "https://github.com/pzia/cifereca/issues/123#issuecomment-" + str(100 + len(self.comments)),
+                 "created_at": "2026-11-27T12:00:00Z", "updated_at": "2026-11-27T12:00:00Z"}
         self.comments.append(value)
         self.issue["comments"] += 1
         return dict(value)
@@ -188,6 +191,54 @@ class Tests(unittest.TestCase):
         self.assertEqual(stage.commit, STAGE)
         self.assertTrue(any(x["body"].startswith(c.START) for x in self.api.comments))
         self.assertFalse(any(x["body"].startswith(c.DONE) for x in self.api.comments))
+
+    def test_short_evidence_kept(self):
+        proof = "Preuve unique à conserver. " * 4
+        self.assertEqual(c.compact_text(proof, 123), proof)
+
+    def test_timestamp_only_after_verified_write(self):
+        event, stage = self.consolidation_fixture()
+        original = self.api.replace_comment
+        def changed(cid, body):
+            original(cid, body)
+        with patch.object(self.api, "replace_comment", side_effect=changed):
+            before = c.snapshot(self.api, 123)
+            after = c.strict_json(c.encode(before))
+            after["issue"]["updated_at"] = "2026-11-27T12:00:01Z"
+            self.assertTrue(c.same_after_write(before, after))
+            after["issue"]["title"] = "Changed"
+            self.assertFalse(c.same_after_write(before, after))
+
+    def test_receive_completed_without_replay(self):
+        event, stage = self.consolidation_fixture()
+        original_mark = self.api.mark
+        def mark(n, body):
+            if body.startswith(c.DONE):
+                raise c.Refusal("simulated final failure")
+            return original_mark(n, body)
+        with patch.object(self.api, "mark", side_effect=mark):
+            with self.assertRaises(c.Refusal):
+                self.execute(event, stage)
+        data = {"version":1,"p0":123,"stage_sha":STAGE,"manifest_sha256":c.sha256(stage.raw),
+                "main_sha":HEAD,"reviewed":True}
+        control = {"id":999,"number":999,"state":"closed","state_reason":"completed",
+                   "title":c.RECEIVE_TITLE+"123","body":c.encode(data).decode(),
+                   "comments":0,"labels":[],"assignees":[],"closed_at":"2026-11-27T12:00:00Z",
+                   "user":{"id":c.OWNER_ID}}
+        self.api.pilot = control
+        original_get = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            before = len(self.api.writes)
+            self.api.comments[0]["body"] = "unexpected edit"
+            with self.assertRaisesRegex(c.Refusal, "incomplete or divergent"):
+                c.receive_completed(self.api, stage, control, HEAD)
+            self.assertEqual(len(self.api.writes), before)
+            self.api.comments[0]["body"] = c.compact_text(c.strict_json(stage.raw)["snapshots"][0]["comments"][0]["body"],123)
+            report = c.receive_completed(self.api, stage, control, HEAD)
+            self.assertEqual(report["status"], "RECEIVED_ALREADY_COMPACTED")
+            self.assertEqual(self.api.writes[before:], [("mark",123)])
+            with self.assertRaises(c.Refusal):
+                c.receive_completed(self.api, stage, control, HEAD)
 
     def test_capitalization_purge(self):
         event, stage = self.consolidation_fixture()
