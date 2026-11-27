@@ -1,0 +1,70 @@
+name: P0 8216 artifact analysis
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-artifact-analysis.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 440f3ae0747c2fc0f86eae8ca874f42eb2ad1e87
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46059532585
+          pattern: baseline-*
+          path: ${{ runner.temp }}/baseline
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP"
+          /usr/bin/time -p python -m scripts.ci_test_quality --output "$out/old.json"
+          git fetch origin focus/8216-delegated-oracles
+          test "$(git rev-parse FETCH_HEAD)" = 9ef5448faae657ecf33dee33447a95d49732a9d3
+          git checkout --detach FETCH_HEAD
+          /usr/bin/time -p python -m scripts.ci_test_quality --output "$out/new.json"
+          python - <<'PY'
+          import json, os, pathlib, sqlite3, hashlib, collections, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          for name in ("old","new"):
+              d=json.loads((root/(name+".json")).read_text())
+              print(name,collections.Counter(r["kind"] for r in d["findings"]))
+              if name=="new":
+                  for r in d["findings"]:
+                      if r["kind"] in ("no_recognized_assertion","delegated_oracle_review"):
+                          print("AST",r["kind"],r["path"],r["line"],r["test"])
+          totals=collections.Counter()
+          for folder in sorted((root/"baseline").iterdir()):
+              plain=list(folder.rglob("plain.xml"))
+              if not plain:
+                  print("MISSING JUNIT",folder.name); continue
+              cases=ET.parse(plain[0]).findall(".//testcase")
+              count=collections.Counter("failed" if c.find("failure") is not None or c.find("error") is not None else "skipped" if c.find("skipped") is not None else "passed" for c in cases)
+              totals.update(count)
+              print("JUNIT",folder.name,dict(count),sum(float(c.attrib.get("time",0)) for c in cases))
+              for db in folder.rglob(".coverage"):
+                  con=sqlite3.connect(db)
+                  groups=collections.defaultdict(list)
+                  # Arc signatures of test call contexts only; no equivalence claim.
+                  for cid,ctx in con.execute("select id,context from context where context like '%|run'"):
+                      h=hashlib.sha256()
+                      n=0
+                      for row in con.execute("select file_id,fromno,tono from arc where context_id=? order by file_id,fromno,tono",(cid,)):
+                          h.update(repr(row).encode()); n+=1
+                      if n: groups[h.hexdigest()].append(ctx)
+                  dup=[v for v in groups.values() if len(v)>1]
+                  print("ARCS",folder.name,len(groups),len(dup),sum(map(len,dup)))
+                  for v in sorted(dup,key=len,reverse=True)[:3]:
+                      print("CANDIDATE",len(v),v[:4])
+                  con.close()
+          print("TOTAL",dict(totals))
+          PY
