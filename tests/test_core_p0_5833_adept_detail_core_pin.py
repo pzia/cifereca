@@ -7,6 +7,7 @@ context, even when a replacement Core has the same visible borrower label.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -20,6 +21,7 @@ from cifereca.task_queue import TaskPriority
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
+@lru_cache(maxsize=None)
 def _method(name):
     module = ast.parse(SOURCE.read_text(encoding="utf-8"))
     owner = next(
