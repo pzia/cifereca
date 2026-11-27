@@ -1,0 +1,61 @@
+name: P0 8216 lock contention
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-lock-contention.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ee0978a02902118005ffa2b14f0051106c82f2c7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . 'pytest>=8,<9' 'Pillow>=10,<12' 'cryptography>=42,<48'
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          git fetch origin 031b0043e7d2fce428589131bbce4bea68cf2616
+          test "$(git rev-parse FETCH_HEAD)" = 031b0043e7d2fce428589131bbce4bea68cf2616
+          python - <<'PY' &
+          import os, time
+          from pathlib import Path
+          from cifereca.paths import acquisition_lock_file
+          from cifereca.locking import InterProcessLock
+          with InterProcessLock(acquisition_lock_file()):
+              Path(os.environ["RUNNER_TEMP"], "lock-ready").touch()
+              while not Path(os.environ["RUNNER_TEMP"], "lock-stop").exists():
+                  time.sleep(.05)
+          PY
+          holder=$!
+          trap 'touch "$RUNNER_TEMP/lock-stop"; wait "$holder"' EXIT
+          for i in $(seq 1 200); do
+            test ! -f "$RUNNER_TEMP/lock-ready" || break
+            sleep .05
+          done
+          test -f "$RUNNER_TEMP/lock-ready"
+          module=tests/test_core_p1_1498_duplicate_cleanup_row_progress.py
+          node="$module::test_duplicate_partial_failure_is_persistent_not_false_success"
+          set +e
+          python -m pytest -q "$node" > "$RUNNER_TEMP/old.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/old.log"
+          test "$rc" = 1
+          grep -q 'MaintenanceBusyError' "$RUNNER_TEMP/old.log"
+          git checkout FETCH_HEAD -- "$module"
+          python -m pytest -q "$module" --junitxml="$RUNNER_TEMP/new.xml"
+          python -m pytest -q "$module"
+          kill -0 "$holder"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contention-evidence
+          path: |
+            ${{ runner.temp }}/old.log
+            ${{ runner.temp }}/new.xml
