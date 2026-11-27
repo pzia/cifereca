@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
+from uuid import uuid4
+from cifereca.plugin_api.capture_vault import CaptureScope
 import json
 # Existing fault-injection tests exercise the shared OS/fcntl modules.
 import os
@@ -259,3 +261,47 @@ class PrivateSessionVault(EncryptedCaptureVault):
     @staticmethod
     def _mark_sealed(trace, session_id):
         trace.vault_session_id = session_id
+
+
+class RecorderVault:
+    """Typed consumer of the Core broker. No path, key or storage engine."""
+
+    def __init__(self, port):
+        self._port = port
+        self._scope = CaptureScope()
+
+    def begin(self, *, consented=False):
+        writer = self._port.begin(self._scope, uuid4().hex, consented=consented)
+        return _RecorderWriter(writer)
+
+    def sessions(self):
+        return self._port.sessions(self._scope)
+
+    def read(self, session_id):
+        row = self._port.read(self._scope, session_id)
+        stored = _unrecord(row.payload, session_id)
+        if stored.state != row.summary.state:
+            stored.trace.destroy()
+            raise VaultError("vault_invalid")
+        stored.saved_at = row.summary.saved_at
+        return stored
+
+    def set_label(self, session_id, label):
+        self._port.set_label(self._scope, session_id, label)
+
+    def pin(self, session_id, *, pinned, confirmed=False):
+        self._port.pin(self._scope, session_id, pinned=pinned, confirmed=confirmed)
+
+    def delete(self, session_id, *, confirmed=False):
+        self._port.delete(self._scope, session_id, confirmed=confirmed)
+
+
+class _RecorderWriter:
+    def __init__(self, writer):
+        self._writer = writer
+        self.session_id = writer.capture_id
+
+    def save(self, trace, state="recording", *, force=False):
+        self._writer.save(_record(trace, self.session_id, state), state, force=force)
+        if state != "recording":
+            trace.vault_session_id = self.session_id

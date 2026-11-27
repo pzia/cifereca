@@ -114,3 +114,25 @@ def test_volume_retention(tmp_path):
     assert len(rows) == 2
     assert {row.capture_id for row in rows} == set(ids[-2:])
     core.close()
+
+
+def test_activation_lease_revokes_reader_and_writer(tmp_path):
+    core = service(tmp_path)
+    live = True
+    port = core.for_activation(RECORDER, current=lambda: live)
+    writer = port.begin(SCOPE_A, "fixture", consented=True)
+    writer.save(b"first", force=True)
+    live = False
+    for action in (
+        lambda: port.sessions(SCOPE_A),
+        lambda: port.read(SCOPE_A, writer.capture_id),
+        lambda: port.delete(SCOPE_A, writer.capture_id, confirmed=True),
+        lambda: writer.save(b"second", "completed", force=True),
+    ):
+        with pytest.raises(VaultError, match="vault_activation_expired"):
+            action()
+    fresh = core.for_activation(RECORDER, current=lambda: True)
+    assert fresh.read(SCOPE_A, writer.capture_id).payload == b"first"
+    core.close()
+    with pytest.raises(VaultError, match="vault_activation_expired"):
+        fresh.sessions(SCOPE_A)

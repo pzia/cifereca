@@ -227,6 +227,11 @@ class CoreCaptureVault:
             return None
         return _Port(self, plugin_id)
 
+    def for_activation(self, plugin_id: str, *, current):
+        if plugin_id not in _ALLOWED or current() is not True:
+            return None
+        return _Port(self, plugin_id, current=current)
+
     def _key(self, *, create=False):
         # Never regenerate a lost key for an existing vault, including orphan
         # staging or labels. A trusted empty vault is the sole create case.
@@ -247,17 +252,24 @@ class CoreCaptureVault:
 
 
 class _Port:
-    def __init__(self, service, producer):
+    def __init__(self, service, producer, *, current=lambda: True):
         self._service = service
         self._producer = producer
+        self._current = current
+
+    def _check(self, scope):
+        if self._current() is not True or self._service._stop.is_set():
+            raise VaultError("vault_activation_expired")
+        self._service._check(self._producer, scope)
 
     def begin(self, scope, source_session_ref, *, consented=False):
         if consented is not True:
             raise VaultError("vault_confirmation_required")
-        self._service._check(self._producer, scope)
+        self._check(scope)
         if not _identifier(source_session_ref):
             raise VaultError("vault_scope_invalid")
         with self._service._lock:
+            self._check(scope)
             key = self._service._key(create=True)
             self._service.maintain(reserve=True)
             writer = self._service._storage.begin(key)
@@ -272,8 +284,9 @@ class _Port:
         return stored
 
     def sessions(self, scope):
-        self._service._check(self._producer, scope)
+        self._check(scope)
         with self._service._lock:
+            self._check(scope)
             ids = self._service._storage.list_ids()
             if not ids:
                 return ()
@@ -290,8 +303,9 @@ class _Port:
             return tuple(sorted(rows, key=lambda row: (row.saved_at, row.capture_id), reverse=True))
 
     def read(self, scope, capture_id):
-        self._service._check(self._producer, scope)
+        self._check(scope)
         with self._service._lock:
+            self._check(scope)
             stored = self._open(scope, capture_id, self._service._key())
             try:
                 key = self._service._key()
@@ -314,8 +328,9 @@ class _Port:
         self._update_metadata(scope, capture_id, pinned=pinned)
 
     def _update_metadata(self, scope, capture_id, *, label=None, pinned=None):
-        self._service._check(self._producer, scope)
+        self._check(scope)
         with self._service._lock:
+            self._check(scope)
             key = self._service._key()
             storage = self._service._storage
             stored = self._open(scope, capture_id, key)
@@ -345,8 +360,9 @@ class _Port:
     def delete(self, scope, capture_id, *, confirmed=False):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
-        self._service._check(self._producer, scope)
+        self._check(scope)
         with self._service._lock:
+            self._check(scope)
             key = self._service._key()
             stored = self._open(scope, capture_id, key)
             self._service._storage._release(stored)
@@ -364,8 +380,9 @@ class _Writer:
 
     def save(self, payload, state="recording", *, force=False):
         service = self._port._service
-        service._check(self._port._producer, self._scope)
+        self._port._check(self._scope)
         with service._lock:
+            self._port._check(self._scope)
             if service._key() != self._key:
                 raise VaultError("vault_key_unavailable")
             self._writer.save(_Capture(self._port._producer, self._scope,
