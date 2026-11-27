@@ -71,9 +71,10 @@ métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 Sur demande, les LLM des rôles propriétaires inventorient
 `staging/backlog/p0-*`, lisent les manifestes, vérifient les empreintes
 et mutualisent les connaissances dans les documents/skills canoniques.
-Les preuves uniques non capitalisables restent accessibles durablement
-avant purge ; sans destination sûre, conserver le staging. Backlog
-réceptionne la couverture sémantique complète, puis ferme completed sous
+La capitalisation est une obligation de moyens : conserver les connaissances
+utiles, sans couverture exhaustive. Le propriétaire accepte la perte résiduelle
+d'informations historiques non capitalisées après revue raisonnable. Backlog
+réceptionne cette revue, puis ferme completed sous
 pzia un contrôle sans label ni assignation, titre `Capitalisation #8195 — N`,
 corps JSON :
 
@@ -93,3 +94,35 @@ Mesurer caractères, octets et tokens estimés ; inclure staging, nouvelles
 synthèses, documents et journaux dans le gain global. Recette synthétique avant toute déclaration de périmètre historique,
 puis pilote réel, exact HEAD ; pas de réception globale avant preuve des deux
 parcours. Le stockage physique GitHub reste hors garantie.
+
+## Lots historiques sous un maître unique
+
+Créer des contrôles ouverts sans priorité ni assignation, titre `Lot consolidation #8195 — M`.
+Chaque contrôle L porte exactement `<!-- backlog-lot-v1: M ; A,B ; public -->` (un ou deux membres).
+Le maître P0 M porte une ligne `<!-- backlog-master-lot-v1: L ; A,B ; public -->` par lot,
+sans marqueur de clôture standard. Inventaire disjoint, contrôles et membres distincts,
+au plus 100 lots. Fermer le maître completed après qualification, puis fermer chaque contrôle
+completed sous pzia, séquentiellement après réception et purge du précédent. Le contrôle
+est l'ancre technique de staging, journaux, réception et purge existants ; le maître reste
+intact et son empreinte est vérifiée. Le corps du contrôle reste intact. Aucun changement
+historique de priorité, état ou relation. Chaque lot reste borné à 8 Mio de manifeste intégral et à la pagination existante ;
+le parcours standard conserve 1 Mio. Les écritures sont fractionnées en tranches de dix,
+avec un journal PROGRESS lié à l'empreinte et au curseur. Le staging intégral reste
+présent jusqu'à DONE et capitalisation. Ne jamais purger un lot incomplet. Les journaux du
+contrôle et les renvois des membres empêchent le rejeu ; ne pas réutiliser un contrôle.
+La clôture du maître ne vaut pas réception des lots : inventorier leurs journaux.
+
+### Poursuite d'un gros lot
+
+Après `LOT_PENDING`, fermer sous pzia un contrôle sans label ni assignation nommé
+`Poursuite consolidation #8195 — N` (N = contrôle de lot), avec JSON exact :
+
+```json
+{"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","cursor":10}
+```
+
+La reprise reconstruit le préfixe déterministe depuis le manifeste intégral, vérifie
+le journal exact, tous les textes, les relations et le maître, puis exécute au plus dix
+écritures nouvelles. Un ancien curseur, un écart ou une tranche partiellement appliquée
+sans journal entraîne un refus sûr ; conserver le staging et qualifier manuellement.
+DONE seulement après la dernière tranche. Aucun rerun, aucune purge avant DONE.
