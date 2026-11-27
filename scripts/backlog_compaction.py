@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -27,8 +28,6 @@ MAX_PLAN = 64000
 MAX_PAGES = 20
 MAX_REMOVALS = 10
 CONSUMED = "BACKLOG-COMPACTION-CONSUMED v1 "
-CONTROL_TITLE = "Contrôle compactage #8195 — "
-OWNER_ID = 11092036
 
 class Refusal(Exception):
     """Fixed diagnostic only; never include issue or plan contents."""
@@ -88,7 +87,7 @@ class ReadOnlyAPI:
 
     def get(self, path):
         require(path == "/git/ref/heads/main" or re.fullmatch(
-            r"/issues/[1-9]\d*(?:/comments\?per_page=100&page=[1-9]\d*)?", path),
+            r"/issues/[1-9]\d*(?:/(?:comments|sub_issues)\?per_page=100&page=[1-9]\d*)?", path),
             "forbidden API path")
         return self._request("GET", path, 200)
 
@@ -210,7 +209,7 @@ def timestamp(value):
     except ValueError:
         raise Refusal("invalid UTC time") from None
 
-def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=None, authorization=None):
+def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=None):
     require(type(raw) is bytes and 0 < len(raw) <= MAX_PLAN, "invalid plan size")
     require(type(expected) is str and bool(DIGEST.fullmatch(expected))
             and sha256(raw) == expected, "plan digest mismatch")
@@ -226,9 +225,7 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
     closure = plan["closure_p0"]
     if closure is not None:
         number(closure)
-    pilot_before = snapshot(api, pilot, closed=authorization is not None)
-    if authorization is not None:
-        require(closed_control(pilot_before["issue"]) == authorization, "control closure changed")
+    pilot_before = snapshot(api, pilot, closed=False)
     pilot_fingerprint = fingerprint(pilot_before)
     require(not any(c["body"].startswith(CONSUMED) for c in pilot_before["comments"]),
             "pilot already consumed")
@@ -301,7 +298,7 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
         require(fingerprint(snapshot(api, entry["number"])) == entry["snapshot_sha256"], "snapshot drift")
     for entry in retained:
         require(fingerprint(snapshot(api, entry["number"], closed=None)) == entry["snapshot_sha256"], "retained issue drift")
-    require(fingerprint(snapshot(api, pilot, closed=authorization is not None)) == pilot_fingerprint, "pilot plan changed")
+    require(fingerprint(snapshot(api, pilot, closed=False)) == pilot_fingerprint, "pilot plan changed")
     old, new = metrics(before), metrics(after + issue_texts(pilot_before))
     # Count the entire pilot issue as overhead; document savings are measured separately
     # at closure and never recredited to each execution.
@@ -315,50 +312,17 @@ def validate_plan(raw, expected, pilot, current, api, docs_at=doc_texts, now=Non
 
 def apply_context(env, current):
     require(all(env.get(k) == v for k, v in {
-        "GITHUB_ACTIONS": "true",
+        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": current, "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_ACTOR": "pzia", "GITHUB_ACTOR_ID": "11092036",
         "GITHUB_TRIGGERING_ACTOR": "pzia",
         "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main",
-    }.items()) and env.get("GITHUB_EVENT_NAME") in ("workflow_dispatch", "issues"),
-            "apply requires first authorized pzia run on main")
+    }.items()), "apply requires first manual pzia run on main")
     run = env.get("GITHUB_RUN_ID", "")
     require(bool(re.fullmatch(r"[1-9]\d{0,19}", run)), "invalid run id")
     return run
 
-
-def closed_control(issue):
-    require(type(issue) is dict and "pull_request" not in issue
-            and issue.get("state") == "closed" and issue.get("state_reason") == "completed"
-            and type(issue.get("title")) is str and issue["title"].startswith(CONTROL_TITLE)
-            and issue.get("user", {}).get("id") == OWNER_ID
-            and issue.get("user", {}).get("login") == "pzia"
-            and issue.get("labels") == [] and issue.get("assignees") == []
-            and issue.get("milestone") is None
-            and type(issue.get("body")) is str, "not a dedicated closed control")
-    closed_at = issue.get("closed_at")
-    timestamp(closed_at)
-    raw = issue["body"].encode("utf-8")
-    require(0 < len(raw) <= MAX_PLAN, "invalid control body")
-    return (number(issue.get("number")), sha256(raw), closed_at, issue["title"])
-
-def closure_authorization(event):
-    require(type(event) is dict and event.get("action") == "closed"
-            and event.get("repository", {}).get("full_name") == REPO
-            and event.get("sender", {}).get("id") == OWNER_ID
-            and event.get("sender", {}).get("login") == "pzia", "unauthorized closure event")
-    return closed_control(event.get("issue"))
-
-def event_authorization(env):
-    require(env.get("GITHUB_EVENT_NAME") == "issues", "not a closure event")
-    try:
-        with open(env.get("GITHUB_EVENT_PATH", ""), "rb") as stream:
-            raw = stream.read(1024 * 1024 + 1)
-    except OSError:
-        raise Refusal("cannot read closure event") from None
-    require(len(raw) <= 1024 * 1024, "closure event too large")
-    return closure_authorization(strict_json(raw))
 
 def expected_change(before, after, *, body=None, remove=None, marker=None):
     """Only permit our expected body/comment mutation and server timestamps."""
@@ -382,9 +346,9 @@ def expected_change(before, after, *, body=None, remove=None, marker=None):
             "unexpected post-mutation state; stop")
 
 
-def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock=None, authorization=None):
+def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock=None):
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
-    report = validate_plan(raw, expected, pilot, current, api, docs_at=docs_at, now=clock(), authorization=authorization)
+    report = validate_plan(raw, expected, pilot, current, api, docs_at=docs_at, now=clock())
     plan = strict_json(raw)
     entries = plan["issues"]
     targets = {e["number"]: e["snapshot_sha256"] for e in entries}
@@ -400,7 +364,7 @@ def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock
         ref = api.get("/git/ref/heads/main")
         require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
                 "main changed during execution")
-        states = {n: snapshot(api, n, closed=(authorization is not None) if n == pilot else None if n in retained else True)
+        states = {n: snapshot(api, n, closed=False if n == pilot else None if n in retained else True)
                   for n in expected_states}
         require(all(fingerprint(states[n]) == digest for n, digest in expected_states.items()),
                 "corpus changed during execution")
@@ -411,7 +375,7 @@ def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock
         return states
 
     def verify(n, before, **change):
-        after = snapshot(api, n, closed=(authorization is not None) if n == pilot else True)
+        after = snapshot(api, n, closed=False if n == pilot else True)
         expected_change(before, after, **change)
         expected_states[n] = fingerprint(after)
 
@@ -444,27 +408,147 @@ def apply_plan(raw, expected, pilot, current, api, run, docs_at=doc_texts, clock
                   destruction_enabled=True, run_id=run)
     return report
 
+STAGE_LIMIT = 1024 * 1024
+OWNER_ID = 11092036
+PRIORITIES = {"P0", "P-1", "P1", "P2", "P3"}
+SCOPE = re.compile(r"(?m)^<!-- backlog-staging-v1: (none|[1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
+
+def closure_event(env):
+    require(all(env.get(k) == v for k, v in {
+        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "issues",
+        "GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
+        "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTOR": "pzia",
+        "GITHUB_ACTOR_ID": str(OWNER_ID), "GITHUB_TRIGGERING_ACTOR": "pzia",
+        "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main",
+    }.items()), "invalid P0 closure context")
+    try:
+        with open(env.get("GITHUB_EVENT_PATH", ""), "rb") as stream:
+            raw = stream.read(1024 * 1024 + 1)
+    except OSError:
+        raise Refusal("cannot read closure event") from None
+    require(len(raw) <= 1024 * 1024, "closure event too large")
+    event = strict_json(raw)
+    require(event["action"] == "closed" and event["repository"]["full_name"] == REPO
+            and event["sender"]["id"] == OWNER_ID and event["sender"]["login"] == "pzia",
+            "unauthorized P0 closure")
+    return event["issue"]
+
+def closure_identity(issue):
+    require("pull_request" not in issue and issue["state"] == "closed"
+            and issue["state_reason"] == "completed"
+            and {l["name"] for l in issue["labels"]} & PRIORITIES == {"P0"},
+            "not a completed closed P0")
+    timestamp(issue["closed_at"])
+    return {k: issue[k] for k in ("id", "number", "title", "body", "state",
+                                  "state_reason", "closed_at", "labels")}
+
+def public_projection(snap):
+    """Public text and provenance, not a raw REST dump."""
+    issue = snap["issue"]
+    def author(obj):
+        user = obj.get("user")
+        require(type(user) is dict and type(user.get("login")) is str, "unknown author")
+        return {"login": user["login"], "id": number(user["id"])}
+    result = {"issue": {k: issue[k] for k in ("id", "number", "title", "body",
+              "state", "state_reason", "created_at", "updated_at", "closed_at", "html_url")},
+              "comments": []}
+    result["issue"]["author"] = author(issue)
+    result["issue"]["labels"] = sorted(label["name"] for label in issue["labels"])
+    for c in snap["comments"]:
+        result["comments"].append({**{k: c[k] for k in
+            ("id", "body", "html_url", "created_at", "updated_at")}, "author": author(c)})
+    # A heuristic is not a DLP guarantee. Owner's public declaration is mandatory.
+    secret = re.compile(r"(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|Bearer\s+[A-Za-z0-9._~+/-]{20,})")
+    require(not any(secret.search(x) for x in issue_texts(snap)), "possible secret; staging refused")
+    return result
+
+def collect_closure(api, event_issue, current):
+    require(bool(SHA.fullmatch(current)), "invalid main SHA")
+    identity = closure_identity(event_issue)
+    root = number(identity["number"])
+    matches = SCOPE.findall(identity["body"] or "")
+    require(len(matches) == 1, "missing or ambiguous public closure scope")
+    children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
+    numbers = issue_numbers([root, *children])
+    snapshots = {n: snapshot(api, n) for n in numbers}
+    require(closure_identity(snapshots[root]["issue"]) == identity, "closure event drift")
+    edges = {}
+    for n, snap in snapshots.items():
+        require(snap["issue"]["state_reason"] == "completed", "non-completed corpus member")
+        if n != root:
+            require({l["name"] for l in snap["issue"]["labels"]} & PRIORITIES == {"P-1"},
+                    "child must be P-1")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(type(subs) is list and len(subs) < 100, "ambiguous native sub-issues")
+        ids = sorted(number(child["number"]) for child in subs)
+        summary = snap["issue"].get("sub_issues_summary")
+        require(type(summary) is dict and summary.get("total") == len(ids)
+                and set(ids) <= set(children) - {n}, "unresolved native sub-issue")
+        edges[n] = ids
+    for n, snap in snapshots.items():
+        require(snapshot(api, n) == snap, "corpus drift")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(sorted(number(child["number"]) for child in subs) == edges[n], "scope drift")
+    ref = api.get("/git/ref/heads/main")
+    require(ref.get("ref") == "refs/heads/main" and ref.get("object", {}).get("sha") == current,
+            "main changed during collection")
+    manifest = {"version": 1, "repository": REPO, "p0": root, "main_sha": current,
+                "edges": {str(n): edges[n] for n in sorted(edges)},
+                "snapshots": [public_projection(snapshots[n]) for n in sorted(snapshots)]}
+    require(len(encode(manifest)) <= STAGE_LIMIT, "staging corpus too large")
+    return manifest
+
+def local_stage_roundtrip(manifest):
+    """Prove orphan transport and logical purge without publishing data."""
+    raw = encode(manifest)
+    require(0 < len(raw) <= STAGE_LIMIT, "staging corpus too large")
+    with tempfile.TemporaryDirectory(prefix="backlog-stage-") as directory:
+        def run(*args, data=None):
+            try:
+                return subprocess.run(["git", "-C", directory, *args], input=data,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+                    env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                         "HOME": directory, "GIT_CONFIG_NOSYSTEM": "1",
+                         "GIT_AUTHOR_NAME": "Backlog staging", "GIT_AUTHOR_EMAIL": "staging@invalid",
+                         "GIT_COMMITTER_NAME": "Backlog staging", "GIT_COMMITTER_EMAIL": "staging@invalid"},
+                    timeout=15).stdout
+            except (OSError, subprocess.SubprocessError):
+                raise Refusal("local staging failed") from None
+        run("init", "--bare", "--quiet")
+        blob = run("hash-object", "-w", "--stdin", data=raw).strip()
+        tree = run("mktree", data=b"100644 blob " + blob + b"\tmanifest.json\n").strip()
+        commit = run("commit-tree", tree.decode("ascii"), data=b"Temporary P0 staging\n").strip()
+        ref = "refs/heads/staging/backlog/p0-" + str(number(manifest["p0"]))
+        run("update-ref", ref, commit.decode("ascii"), "0" * 40)
+        require(run("show", ref + ":manifest.json") == raw, "staging content mismatch")
+        require(run("rev-list", "--count", ref).strip() == b"1", "staging has ancestry")
+        run("update-ref", "-d", ref, commit.decode("ascii"))
+        require(not run("for-each-ref"), "staging ref not purged")
+    return {"status": "STAGING_LOCAL_ROUNDTRIP_ONLY", "p0": manifest["p0"],
+            "issues": [s["issue"]["number"] for s in manifest["snapshots"]],
+            "manifest_sha256": sha256(raw), "bytes": len(raw),
+            "remote_staging_verified": False, "destruction_enabled": False,
+            "association_exhaustiveness_proven": False}
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("audit", "validate", "apply"))
+    parser.add_argument("mode", choices=("audit", "validate", "apply", "stage-preview"))
     parser.add_argument("--issues", default="")
     parser.add_argument("--pilot", type=int)
     parser.add_argument("--plan-sha256")
     args = parser.parse_args(argv)
     try:
-        authorization = None
         if args.mode == "apply":
-            # Refuse local invocations before Git or network access.
-            run = apply_context(os.environ, os.environ.get("GITHUB_SHA", ""))
-            if os.environ.get("GITHUB_EVENT_NAME") == "issues":
-                require(args.pilot is None and args.plan_sha256 is None, "closure inputs forbidden")
-                authorization = event_authorization(os.environ)
-                args.pilot, args.plan_sha256 = authorization[:2]
+            raise Refusal("legacy apply disabled pending staging reception")
+        event_issue = closure_event(os.environ) if args.mode == "stage-preview" else None
         current = head()
         if args.mode == "apply":
             apply_context(os.environ, current)
         api = (WriteAPI if args.mode == "apply" else ReadOnlyAPI)(os.environ.get("GITHUB_TOKEN", ""))
-        if args.mode == "audit":
+        if args.mode == "stage-preview":
+            require(current == os.environ.get("GITHUB_SHA"), "checkout mismatch")
+            result = local_stage_roundtrip(collect_closure(api, event_issue, current))
+        elif args.mode == "audit":
             require(bool(re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*){0,2}", args.issues)), "invalid audit list")
             numbers = issue_numbers([int(n) for n in args.issues.split(",")])
             result = {"status": "READ_ONLY_AUDIT", "main_sha": current,
@@ -472,9 +556,9 @@ def main(argv=None):
                       "documents": doc_report(doc_texts(current)), "destruction_enabled": False}
         else:
             pilot = number(args.pilot)
-            raw = (issue_data(api, pilot, closed=authorization is not None)["body"] or "").encode("utf-8")
+            raw = (issue_data(api, pilot, closed=False)["body"] or "").encode("utf-8")
             if args.mode == "apply":
-                result = apply_plan(raw, args.plan_sha256, pilot, current, api, run, authorization=authorization)
+                result = apply_plan(raw, args.plan_sha256, pilot, current, api, run)
             else:
                 result = validate_plan(raw, args.plan_sha256, pilot, current, api)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

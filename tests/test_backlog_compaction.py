@@ -327,55 +327,6 @@ class Tests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(c.Refusal):
                 c.apply_context(dict(env, **{key: "invalid"}), HEAD)
 
-    def closure(self):
-        raw = c.encode(self.plan)
-        self.api.pilot.update(state="closed", state_reason="completed",
-                              title=c.CONTROL_TITLE + "synthetic", labels=[], assignees=[],
-                              milestone=None, closed_at="2026-11-27T12:00:00Z",
-                              user={"id": c.OWNER_ID, "login": "pzia"}, body=raw.decode())
-        event = {"action": "closed", "repository": {"full_name": c.REPO},
-                 "sender": {"id": c.OWNER_ID, "login": "pzia"}, "issue": dict(self.api.pilot)}
-        return raw, event
-
-    def test_closed_control_apply_and_replay(self):
-        raw, event = self.closure()
-        auth = c.closure_authorization(event)
-        def apply():
-            return c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
-                                docs_at=docs, clock=lambda: NOW, authorization=auth)
-        self.assertEqual(apply()["status"], "APPLIED_BOUNDED_PLAN")
-        with self.assertRaisesRegex(c.Refusal, "pilot already consumed"):
-            apply()
-        self.assertEqual(self.api.writes, [("consume", 999), ("delete", 8)])
-
-    def test_closed_control_refuses_ordinary_or_changed_event(self):
-        raw, event = self.closure()
-        auth = c.closure_authorization(event)
-        for key, value in (("title", "ordinary"), ("state", "open"), ("state_reason", "not_planned"),
-                           ("labels", [{"name": "P0"}]), ("user", {"id": 2, "login": "pzia"})):
-            with self.subTest(key=key), self.assertRaises(c.Refusal):
-                c.closure_authorization(dict(event, issue=dict(event["issue"], **{key: value})))
-        for key, value in (("action", "reopened"), ("sender", {"id": 2, "login": "pzia"}),
-                           ("repository", {"full_name": "other/repo"})):
-            with self.subTest(key=key), self.assertRaises(c.Refusal):
-                c.closure_authorization(dict(event, **{key: value}))
-        self.api.pilot["closed_at"] = "2026-11-27T12:00:01Z"
-        with self.assertRaisesRegex(c.Refusal, "control closure changed"):
-            c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
-                         docs_at=docs, clock=lambda: NOW, authorization=auth)
-        self.assertEqual(self.api.writes, [])
-
-    def test_closed_control_body_binding(self):
-        raw, event = self.closure()
-        auth = c.closure_authorization(event)
-        self.plan["semantic_review"] += " changed"
-        changed = c.encode(self.plan)
-        self.api.pilot["body"] = changed.decode()
-        with self.assertRaisesRegex(c.Refusal, "control closure changed"):
-            c.apply_plan(changed, c.sha256(changed), 999, HEAD, self.api, "123",
-                         docs_at=docs, clock=lambda: NOW, authorization=auth)
-        self.assertEqual(self.api.writes, [])
-
     def test_mutation_endpoint_injection(self):
         api = c.WriteAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:
@@ -443,6 +394,59 @@ class Tests(unittest.TestCase):
             req = opener.call_args.args[0]
             self.assertEqual((req.method, req.full_url, req.data),
                              ("DELETE", c.API + "/issues/comments/8", None))
+
+    def staging_issue(self):
+        issue = dict(self.api.issue)
+        issue.update(id=100, title="Synthetic P0", body="Evidence\n<!-- backlog-staging-v1: none ; public -->",
+                     state_reason="completed", created_at="2026-11-27T11:00:00Z",
+                     updated_at="2026-11-27T12:00:00Z", closed_at="2026-11-27T12:00:00Z",
+                     html_url="https://github.com/pzia/cifereca/issues/123",
+                     labels=[{"name": "P0"}], sub_issues_summary={"total": 0},
+                     user={"login": "pzia", "id": 11092036, "email": "not-exported"})
+        self.api.issue = issue
+        self.api.comments[0].update(user={"login": "pzia", "id": 11092036},
+            html_url="https://github.com/pzia/cifereca/issues/123#issuecomment-8",
+            created_at="2026-11-27T11:00:00Z", updated_at="2026-11-27T11:00:00Z")
+        return dict(issue)
+
+    def test_staging_orphan_roundtrip(self):
+        event = self.staging_issue()
+        original = self.api.get
+        def get(path):
+            return [] if "/sub_issues?" in path else original(path)
+        with patch.object(self.api, "get", side_effect=get):
+            manifest = c.collect_closure(self.api, event, HEAD)
+        self.assertNotIn("not-exported", str(manifest))
+        self.assertEqual(manifest["snapshots"][0]["comments"][0]["body"], self.api.comments[0]["body"])
+        result = c.local_stage_roundtrip(manifest)
+        self.assertEqual(result["status"], "STAGING_LOCAL_ROUNDTRIP_ONLY")
+        self.assertFalse(result["destruction_enabled"])
+        self.assertFalse(result["remote_staging_verified"])
+        self.assertEqual(self.api.writes, [])
+
+    def test_staging_refuses_ambiguous_or_missing_scope(self):
+        event = self.staging_issue()
+        for body in ("No scope", event["body"] + "\n" + event["body"]):
+            with self.subTest(body=body), self.assertRaisesRegex(c.Refusal, "scope"):
+                c.collect_closure(self.api, dict(event, body=body), HEAD)
+        self.assertEqual(self.api.writes, [])
+
+    def test_staging_refuses_possible_secret(self):
+        event = self.staging_issue()
+        self.api.comments[0]["body"] = "ghp_" + "X" * 36
+        original = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original(path)):
+            with self.assertRaisesRegex(c.Refusal, "possible secret"):
+                c.collect_closure(self.api, event, HEAD)
+        self.assertEqual(self.api.writes, [])
+
+    def test_staging_refuses_unlisted_native_child(self):
+        event = self.staging_issue()
+        original = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [{"number": 124}] if "/sub_issues?" in path else original(path)):
+            with self.assertRaisesRegex(c.Refusal, "unresolved native"):
+                c.collect_closure(self.api, event, HEAD)
+        self.assertEqual(self.api.writes, [])
 
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
