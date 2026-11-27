@@ -36,8 +36,23 @@ class VaultError(Exception):
         super().__init__(code)
 
 
-def _key(passphrase: str, salt: bytes) -> bytes:
-    if not isinstance(passphrase, str) or not 12 <= len(passphrase) <= 1024:
+def _valid_key_material(value) -> bool:
+    return ((type(value) is bytes and len(value) == 32)
+            or (type(value) is str and 12 <= len(value) <= 1024))
+
+
+def _key(passphrase: str | bytes, salt: bytes) -> bytes:
+    if type(passphrase) is bytes and len(passphrase) == 32:
+        # Random installation key, not a low-entropy password. Use the same
+        # per-record salt with standard HKDF; no expensive password scan.
+        try:
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt,
+                        info=b"cifereca.capture-vault/v1").derive(passphrase)
+        except ImportError as exc:
+            raise VaultError("vault_crypto_unavailable") from exc
+    if not _valid_key_material(passphrase):
         raise VaultError("vault_passphrase_required")
     try:
         from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -340,7 +355,7 @@ class EncryptedCaptureVault:
         not block other, independently decryptable sessions. Call this API
         in a worker, as scrypt may take seconds across many sessions.
         """
-        if not isinstance(passphrase, str) or not 12 <= len(passphrase) <= 1024:
+        if not _valid_key_material(passphrase):
             raise VaultError("vault_passphrase_required")
         ids = self.list_ids()
         if len(ids) > MAX_SESSIONS:
@@ -438,7 +453,7 @@ class EncryptedCaptureVault:
         Reject unsafe/corrupt files rather than guessing whether to delete.
         """
         days = self._retention_days(older_than_days)
-        if type(passphrase) is not str or not 12 <= len(passphrase) <= 1024:
+        if not _valid_key_material(passphrase):
             raise VaultError("vault_passphrase_required")
         now = (now if now is not None else datetime.now(timezone.utc))
         if not isinstance(now, datetime) or now.tzinfo is None:

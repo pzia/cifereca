@@ -13,3 +13,55 @@ from ..core.capture_vault import (
     _key as derive_capture_archive_key,
     _aead as capture_archive_aead,
 )
+
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+
+@dataclass(frozen=True, repr=False)
+class CaptureScope:
+    """Exact scope, no wildcard matching. Empty fields denote manual capture.
+
+    The instance is the persisted provider connection ID; account and identity
+    refer to the exact account known by Core. Capture IDs are Core-generated.
+    """
+    provider_id: str = ""
+    instance_id: str = ""
+    account_id: str = ""
+    identity_id: str = ""
+
+
+@dataclass(frozen=True, repr=False)
+class CaptureSummary:
+    capture_id: str
+    scope: CaptureScope
+    source_session_ref: str
+    state: str
+    saved_at: str
+    payload_bytes: int
+
+
+@dataclass(frozen=True, repr=False)
+class CapturedSession:
+    summary: CaptureSummary
+    payload: bytes
+
+
+@runtime_checkable
+class CaptureWriter(Protocol):
+    @property
+    def capture_id(self) -> str: ...
+    def save(self, payload: bytes, state: str = "recording", *,
+             force: bool = False) -> None: ...
+
+
+@runtime_checkable
+class CaptureVaultBroker(Protocol):
+    """Technical captures only; never initiates HTTP or grants provider rights."""
+    def begin(self, scope: CaptureScope, source_session_ref: str, *,
+              consented: bool = False) -> CaptureWriter: ...
+    def sessions(self, scope: CaptureScope) -> tuple[CaptureSummary, ...]: ...
+    def read(self, scope: CaptureScope, capture_id: str) -> CapturedSession: ...
+    def delete(self, scope: CaptureScope, capture_id: str, *,
+               confirmed: bool = False) -> None: ...
