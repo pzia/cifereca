@@ -19,9 +19,13 @@ class API:
         self.retained = {"number": 42, "state": "open", "body": "Canonical evidence #42", "comments": 0}
         self.pilot_comments = []
         self.calls = []
+        self.writes = []
+        self.main_sha = HEAD
 
     def get(self, path):
         self.calls.append(path)
+        if path == "/git/ref/heads/main":
+            return {"ref": "refs/heads/main", "object": {"sha": self.main_sha}}
         if path == "/issues/123":
             return dict(self.issue)
         if path == "/issues/999":
@@ -38,6 +42,22 @@ class API:
             return list(self.comments[100:])
         raise AssertionError("unexpected path")
 
+    def consume(self, pilot, marker):
+        self.writes.append(("consume", pilot))
+        comment = {"id": 88, "body": marker}
+        self.pilot_comments.append(comment)
+        self.pilot["comments"] += 1
+        return dict(comment)
+
+    def replace_body(self, n, body):
+        self.writes.append(("body", n))
+        self.issue["body"] = body
+
+    def delete_comment(self, comment_id):
+        self.writes.append(("delete", comment_id))
+        self.comments = [c for c in self.comments if c["id"] != comment_id]
+        self.issue["comments"] = len(self.comments)
+
 def docs(ref):
     if ref not in (HEAD, BASE):
         raise c.Refusal("invalid document SHA")
@@ -51,6 +71,7 @@ class Tests(unittest.TestCase):
                      "created_at": "2026-11-27T11:00:00Z",
                      "expires_at": "2026-11-27T13:00:00Z",
                      "semantic_review": "Reviewed separately; not certified by the CLI.",
+                     "execution_review": {"no_other_focus": True, "known_inbound_references": True, "global_gain": True},
                      "retained_issues": [],
                      "issues": [{"number": 123, "snapshot_sha256": c.fingerprint(c.snapshot(self.api, 123)),
                                  "body_after": "Evidence #42", "remove_comments": [8],
@@ -184,12 +205,110 @@ class Tests(unittest.TestCase):
         with self.assertRaises(c.Refusal):
             c.snapshot(self.api, 123)
 
-    def test_apply_always_refused_before_any_network(self):
+    def test_local_apply_refused_before_any_network(self):
         with patch.object(c, "ReadOnlyAPI") as api, patch.object(c, "head") as head:
             with redirect_stderr(io.StringIO()):
                 self.assertEqual(c.main(["apply"]), 2)
             api.assert_not_called()
             head.assert_not_called()
+
+    def apply(self):
+        raw = c.encode(self.plan)
+        self.api.pilot["body"] = raw.decode("utf-8")
+        return c.apply_plan(raw, c.sha256(raw), 999, HEAD, self.api, "123",
+                            docs_at=docs, clock=lambda: NOW)
+
+    def test_apply_and_replay(self):
+        self.plan["issues"][0]["body_after"] = "Consolidated Evidence #42"
+        result = self.apply()
+        self.assertEqual(self.api.writes, [("consume", 999), ("body", 123), ("delete", 8)])
+        self.assertEqual(self.api.comments, [])
+        self.assertEqual(self.api.issue["labels"], [{"name": "P2"}])
+        self.assertEqual(result["status"], "APPLIED_BOUNDED_PLAN")
+        self.assertTrue(result["journal_included"])
+        self.assertFalse(result["semantic_equivalence_proven"])
+        self.assertGreater(result["actual_bounded_gain"]["bytes"], 0)
+        self.assertNotIn("Repeated text", str(result))
+        with self.assertRaisesRegex(c.Refusal, "pilot already consumed"):
+            self.apply()
+        self.assertEqual(len(self.api.writes), 3)
+
+    def test_apply_main_drift(self):
+        self.api.main_sha = BASE
+        with self.assertRaisesRegex(c.Refusal, "main changed"):
+            self.apply()
+        self.assertEqual(self.api.writes, [])
+
+    def test_apply_requires_review(self):
+        self.plan["execution_review"]["no_other_focus"] = False
+        with self.assertRaisesRegex(c.Refusal, "missing Backlog execution review"):
+            self.apply()
+        self.assertEqual(self.api.writes, [])
+
+    def test_apply_partial_failure_consumes_before_delete(self):
+        self.plan["issues"][0]["body_after"] = "Consolidated Evidence #42"
+        with patch.object(self.api, "delete_comment", side_effect=c.Refusal("synthetic failure")):
+            with self.assertRaisesRegex(c.Refusal, "synthetic failure"):
+                self.apply()
+        self.assertEqual(self.api.writes, [("consume", 999), ("body", 123)])
+        self.assertEqual(len(self.api.comments), 1)
+        with self.assertRaisesRegex(c.Refusal, "pilot already consumed"):
+            self.apply()
+
+    def test_apply_drift_after_marker(self):
+        consume = self.api.consume
+        def changed(pilot, marker):
+            value = consume(pilot, marker)
+            self.api.issue["labels"] = []
+            return value
+        with patch.object(self.api, "consume", side_effect=changed):
+            with self.assertRaisesRegex(c.Refusal, "corpus changed"):
+                self.apply()
+        self.assertEqual(self.api.writes, [("consume", 999)])
+
+    def test_apply_ambiguous_marker_failure(self):
+        consume = self.api.consume
+        def lost(pilot, marker):
+            consume(pilot, marker)
+            raise c.Refusal("synthetic timeout")
+        with patch.object(self.api, "consume", side_effect=lost):
+            with self.assertRaisesRegex(c.Refusal, "synthetic timeout"):
+                self.apply()
+        self.assertEqual(self.api.writes, [("consume", 999)])
+        with self.assertRaisesRegex(c.Refusal, "pilot already consumed"):
+            self.apply()
+
+    def test_apply_unexpected_body_metadata_change(self):
+        self.plan["issues"][0]["body_after"] = "Consolidated Evidence #42"
+        replace = self.api.replace_body
+        def changed(n, body):
+            replace(n, body)
+            self.api.issue["labels"] = []
+        with patch.object(self.api, "replace_body", side_effect=changed):
+            with self.assertRaisesRegex(c.Refusal, "unexpected post-mutation state"):
+                self.apply()
+        self.assertEqual(self.api.writes, [("consume", 999), ("body", 123)])
+        self.assertEqual(len(self.api.comments), 1)
+
+    def test_apply_context(self):
+        env = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_REPOSITORY": c.REPO, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": HEAD,
+               "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTOR": "pzia", "GITHUB_ACTOR_ID": "11092036",
+               "GITHUB_TRIGGERING_ACTOR": "pzia", "GITHUB_RUN_ID": "123",
+               "GITHUB_WORKFLOW_REF": c.REPO + "/.github/workflows/backlog-compaction.yml@refs/heads/main"}
+        self.assertEqual(c.apply_context(env, HEAD), "123")
+        for key in env:
+            with self.subTest(key=key), self.assertRaises(c.Refusal):
+                c.apply_context(dict(env, **{key: "invalid"}), HEAD)
+
+    def test_mutation_endpoint_injection(self):
+        api = c.WriteAPI("synthetic-token")
+        with patch.object(api.opener, "open") as opener:
+            for call in (lambda: api.delete_comment("8/../1"),
+                         lambda: api.replace_body(0, "x"), lambda: api.consume(999, "wrong")):
+                with self.assertRaises(c.Refusal):
+                    call()
+            opener.assert_not_called()
 
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")

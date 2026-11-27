@@ -1,19 +1,17 @@
-# Compactage Backlog — #8195 (tranche non destructive)
+# Compactage Backlog — #8195
 
-**État :** audit et validation structurelle seulement. Aucune autorisation de
-destruction ; `apply` refuse systématiquement avant accès réseau.
-Ne pas confondre un résultat structurel avec une équivalence sémantique,
-un consentement ou une recette destructive.
+Backlog qualifie et autorise le plan exact sous délégation propriétaire pzia
+(arbitrage #8195 du 27/11/2026). CI/CD exécute et vérifie ; les rôles
+propriétaires réalisent les PR documentaires. Aucun autre Focus actif durant
+l'application ; Backlog vérifie cette condition, les preuves uniques,
+décisions, exigences, exceptions, liens entrants connus et le gain global.
+La séparation des rôles est procédurale : même identité pzia, main non
+protégée lors de l'audit, rulesets vides, protection détaillée inaccessible.
+Ni l'identité ni le workflow ne prouvent une séparation cryptographique.
 
 ## Exploitation
 
-Backlog qualifie au plus trois issues closes (pas de PR), conserve les
-invariants, exigences, décisions, exceptions, références et preuves uniques,
-et prépare les synthèses dans un plan. CI/CD possède le script, ses tests et
-le workflow. Les rôles propriétaires réalisent leurs PR documentaires ;
-Backlog ne modifie pas les fichiers d'instructions et ne lance pas de CI.
-
-Avec le checkout exact et un jeton **en lecture seule** dans GITHUB_TOKEN :
+Audit/validation en lecture seule avec GITHUB_TOKEN et checkout exact :
 
 ```sh
 python3 scripts/backlog_compaction.py audit --issues 123,456
@@ -21,10 +19,18 @@ python3 -m unittest discover -s tests -p test_backlog_compaction.py
 python3 scripts/backlog_compaction.py validate --pilot 999 --plan-sha256 <empreinte>
 ```
 
-Le workflow manuel dédié expose le même audit/validation, jamais une mutation.
-Les rapports contiennent les empreintes, ID et métriques, pas les textes.
-La validation lit le corps JSON brut d'une issue de pilotage dédiée ouverte
-(distincte de #8195 et des cibles), et compare SHA-256 des octets UTF-8 exacts.
+Le [workflow dédié](../.github/workflows/backlog-compaction.yml), exclusivement
+workflow_dispatch sur main, offre ces deux opérations et apply. Ce dernier
+nécessite premier run pzia, SHA exact, plan autorisé et revue Backlog.
+Aucun autre workflow modifié ; aucun secret supplémentaire. Permissions
+contents:read/issues:read pour audit, contents:read/issues:write pour apply.
+Aucun rerun, même après échec. Pas d'appel apply depuis un poste local.
+Le connecteur actuel n'expose pas workflow_dispatch : déclenchement via
+l'interface GitHub avec les entrées exactes. Recette réelle de test à
+réceptionner avant tout pilote historique (maximum trois issues closes).
+
+Issue de pilotage dédiée ouverte, usage unique, distincte de #8195, des cibles
+et des canoniques. Corps JSON brut, SHA-256 des octets UTF-8 exacts.
 Schéma v1 fermé (exemple fictif, SHA et dates à remplacer) :
 
 ```json
@@ -36,7 +42,12 @@ Schéma v1 fermé (exemple fictif, SHA et dates à remplacer) :
   "baseline_sha": "8921002d1a5b9e0a4a0f0f592dbb6d669a283f4c",
   "created_at": "2026-11-27T12:00:00Z",
   "expires_at": "2026-11-27T13:00:00Z",
-  "semantic_review": "Qualification humaine/Backlog des éléments préservés et références entrantes connues.",
+  "semantic_review": "Preuves et exigences transférées, références vérifiées.",
+  "execution_review": {
+    "no_other_focus": true,
+    "known_inbound_references": true,
+    "global_gain": true
+  },
   "retained_issues": [{"number": 456, "snapshot_sha256": "<64 hex>"}],
   "issues": [{
     "number": 123,
@@ -48,39 +59,36 @@ Schéma v1 fermé (exemple fictif, SHA et dates à remplacer) :
 }
 ```
 
-Les snapshots incluent métadonnées et tous les commentaires paginés ; tout
-écart détecté refuse le plan. Jusqu'à trois issues canoniques supplémentaires
-peuvent être référencées dans retained_issues (lecture seule, ouvertes ou
-closes, jamais PR) ; leurs empreintes sont vérifiées avant et après. Une
-réécriture seule est admissible avec remove_comments vide si le corps change.
-Les références explicites du corpus doivent rester présentes ; les liens
-connus vers des commentaires à supprimer provoquent un refus. Cela ne prouve
-ni équivalence sémantique ni absence de liens entrants inconnus. Revue Backlog
-obligatoire. Baseline documentaire fixe : SHA initial du P0. Corpus comparable :
-cibles + issues canoniques + neuf instructions + registre #3913 + ce runbook ;
-le plan et tous ses commentaires existants sont comptés en surcoût. Tokens
-estimés = octets UTF-8 / 4 arrondis au supérieur. Journal futur, autres frais de
-pilotage et effets réels non comptés : aucun gain net réel attesté.
+Revue déclarative, pas une preuve automatique d'équivalence. Maximum
+24 h, trois cibles closes et dix commentaires au total, trois canoniques
+ouvertes ou closes en lecture seule, jamais PR. Corps seul possible si
+modifié ; aucune suppression d'issue entière. Les empreintes couvrent
+métadonnées et commentaires paginés ; références explicites du corpus
+conservées, liens connus vers commentaires retirés interdits. Vérifier
+aussi les liens hors corpus, capitalisations et leurs empreintes sur main.
 
-## Frontière de sécurité restant à établir
+## Application et réception
 
-Audit du 27/11/2026 au SHA 8921002d1a5b9e0a4a0f0f592dbb6d669a283f4c :
-main est signalée non protégée, rulesets vides ; accès à la protection
-détaillée refusé (403), Environments non exposés par le connecteur.
-Identité pzia et déclenchement workflow_dispatch seuls ne sont pas un
-consentement indépendant. Il faut une barrière propriétaire indépendante de
-la capacité d'écriture du connecteur, y compris modification du workflow
-et déclenchement indirect. Aucune permission issues:write n'est attribuée
-au workflow dans cette tranche.
+La consommation persistante est un commentaire minimal
+BACKLOG-COMPACTION-CONSUMED v1 (empreinte + run) vérifié avant toute
+mutation cible. Toute présence du marqueur interdit le rejeu de cette issue,
+y compris après échec partiel. Ne jamais modifier, effacer ou réutiliser ce
+contrôle ; il est éditable par pzia, pas un verrou inviolable. Concurrence
+sérialisée par le workflow ; vérifier absence d'écritures concurrentes hors
+workflow. Le REST n'est pas atomique : une fenêtre résiduelle subsiste entre
+lecture et mutation. Vérification du corpus, expiration et main avant
+chaque mutation, écriture et relecture de toutes les synthèses avant toute
+suppression de commentaire. Aucun changement de métadonnée hors effet
+serveur attendu. Tout écart/échec arrête ; inventorier l'état réellement
+observé, nouveau plan et nouvelle autorisation Backlog pour reprise.
+Aucun contenu retiré dans le journal ; pas d'archivage systématique.
 
-Avant de rendre possible apply : établir la frontière effective et les
-protections de main/workflow, le consentement spécifique lié à l'empreinte
-et l'anti-rejeu persistant consommé avant toute mutation (incluant refus
-des reruns), tests hors réseau et recette de test distinctement autorisée.
-Sérialiser, vérifier avant chaque mutation, écrire et vérifier les synthèses
-et les connaissances capitalisées sur main avant tout retrait. Un REST
-non atomique conserve une fenêtre résiduelle ; arrêt sur échec partiel,
-nouvelle autorisation pour reprendre, aucune destruction pendant un Focus
-actif. Journal minimal, sans contenu supprimé. Aucun archivage systématique.
-Le pilote de trois issues ne peut suivre qu'après ces preuves et un nouveau
-consentement spécifique. Ne pas fermer #8195 sur cette tranche.
+Mesures caractères/octets/tokens estimés (octets UTF-8 / 4 arrondis au
+supérieur). Corpus comparable : cibles, canoniques, neuf instructions,
+registre #3913 et ce runbook ; baseline documentaire initiale fixe ; plan
+et commentaires de pilotage comptés en surcoût. Apply refuse un gain borné
+non positif après marqueur et rapporte le gain borné réel après relecture.
+Backlog doit ajouter le coût de #8195, PR et autres journaux et vérifier
+l'équivalence sémantique : ni STRUCTURAL_VALIDATION_ONLY ni
+APPLIED_BOUNDED_PLAN ne valent réception globale. Ne fermer #8195
+qu'après recette de test, pilote réel et capitalisation effective.
