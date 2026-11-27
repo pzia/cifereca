@@ -70,3 +70,6 @@ class CaptureVaultBroker(Protocol):
             pinned: bool, confirmed: bool = False) -> None: ...
     def delete(self, scope: CaptureScope, capture_id: str, *,
                confirmed: bool = False) -> None: ...
+
+
+from ..core.capture_export import build_capture_zip, write_capture_zip
