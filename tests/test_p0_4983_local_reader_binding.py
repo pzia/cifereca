@@ -146,10 +146,29 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                              artifact_id=artifact, desired_state="remove")
     removal = UsbRemovalConsent("alice", "local-a", fingerprint, artifact, digest, target,
                                 consent.operation_id, "b" * 32, now, now + 240)
-    worker = facade.admit_delta(identity_id="alice", device_id="local-a",
-                                confirmations=(removal,), mountpoint=root,
-                                expected_profile_epoch=3, mount_key=mount_key)
-    assert worker() == UsbSyncResult("completed", removed=1, observed=True)
+    # Exercise the actual grouped GTK controller against Core and real
+    # files. Only GTK controls and the deterministic queue are test doubles.
+    from cifereca.gui.reader_sync_actions import request_reader_sync
+    from tests.test_p1_4985_gtk_supervised_removal import Runner, Dialog
+    from tests.test_p1_2854_readers_master_detail_page import FakeLabel
+    host = NS(service=service, plugin_manager=NS(broker=lambda _: facade),
+              _reader_selected_device_id="local-a", _reader_scope_identity="alice",
+              _reader_selection_generation=1, _route_display_token=object(),
+              _reader_status_label=FakeLabel(), runner=Runner(),
+              _render_readers=lambda: None)
+    dialogs = []
+    adw = NS(MessageDialog=NS(new=lambda *_: dialogs.append(Dialog()) or dialogs[-1]))
+    request_reader_sync(host, object(), Adw=adw)
+    host.runner.advance()
+    assert dialogs[-1].presented and final.exists()
+    dialogs[-1].answer("cancel")
+    assert not host.runner.jobs and final.exists()
+    request_reader_sync(host, object(), Adw=adw)
+    host.runner.advance()
+    dialogs[-1].answer("sync")
+    assert final.exists()
+    host.runner.advance()
+    assert "1 retiré(s)" in host._reader_status_label.label
     assert not final.exists()
     assert source.read_bytes() == payload and third_party.read_bytes() == b"untouched"
     db.device_usb_binding_forget(identity_id="alice", device_id="local-a", fingerprint=fingerprint)
