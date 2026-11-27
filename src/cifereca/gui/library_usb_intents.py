@@ -188,6 +188,11 @@ def build_library_usb_intents(
                 identity_id=identity_id, device_id=device_id,
                 artifact_id=artifact_id, desired_state=desired,
             )
+            if desired == "keep":
+                reserve = getattr(storage, "device_usb_reserve_pending_target", None)
+                if callable(reserve):
+                    reserve(identity_id=identity_id, device_id=device_id,
+                            artifact_id=artifact_id)
         except Exception:
             if still_current(button):
                 window.show_error(

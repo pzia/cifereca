@@ -4248,6 +4248,55 @@ class Storage:
             )
             return placement_id
 
+    def device_usb_reserve_pending_target(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+    ) -> str | None:
+        """Reserve a pending keep wish using the canonical naming policy.
+
+        A refused proposal leaves the wish pending for review; no file is
+        touched. The existing target transaction owns collision/owner checks.
+        """
+        from .core.device_usb_target_proposal import propose_usb_target
+
+        intent = self.device_placement_get(device_id, artifact_id)
+        if not intent or intent.get("desired_state") != "keep":
+            return None
+        if intent.get("target_relative_path") is not None:
+            return intent["target_relative_path"]
+        artifact = self.artifact_get(artifact_id)
+        binding = self.device_binding_get(device_id)
+        if not artifact or not binding:
+            return None
+        try:
+            proposal = propose_usb_target(
+                identity_id=identity_id, binding=binding, intention=intent,
+                artifact=artifact, selected_format=artifact.get("media_format"),
+                other_intentions=self.device_placements(device_id=device_id),
+            )
+            self.device_usb_target_set(
+                identity_id=identity_id, device_id=device_id, artifact_id=artifact_id,
+                target_relative_path=proposal.target_relative_path,
+            )
+            return proposal.target_relative_path
+        except ValueError:
+            return None
+
+    def device_usb_binding_forget(
+        self, *, identity_id: str, device_id: str, fingerprint: str,
+    ) -> None:
+        """Forget a scoped association and wishes, never destination bytes."""
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id, metadata_json FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if (row is None or row[0] != identity_id
+                    or (self._json_load(row[1]) or {}).get("usb_fingerprint") != fingerprint):
+                raise ValueError("reader association changed")
+            db.execute("DELETE FROM device_placements WHERE device_id=?", (device_id,))
+            db.execute("DELETE FROM device_bindings WHERE device_id=?", (device_id,))
+
     def device_usb_target_set(
         self, *, identity_id: str, device_id: str, artifact_id: str,
         target_relative_path: str,

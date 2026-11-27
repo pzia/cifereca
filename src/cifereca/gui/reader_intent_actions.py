@@ -135,6 +135,11 @@ def append_reader_intent_action(window, detail, book: ReaderLibraryBook, *,
                 identity_id=identity_id, device_id=device_id,
                 artifact_id=book.artifact_id, desired_state=wished,
             )
+            if wished == "keep":
+                reserve = getattr(storage, "device_usb_reserve_pending_target", None)
+                if callable(reserve):
+                    reserve(identity_id=identity_id, device_id=device_id,
+                            artifact_id=book.artifact_id)
         except Exception:
             if current():
                 window.show_error(

@@ -120,6 +120,31 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_sync(window, button)
     sync.connect("clicked", sync_clicked)
     page.header_actions.append(sync)
+    local = Gtk.Button.new_from_icon_name("folder-new-symbolic")
+    local._cifereca_action_id = "reader-local-pair"
+    local.set_tooltip_text("Associer un dossier existant comme liseuse locale.")
+    def local_clicked(_button):
+        from .reader_local_actions import request_local_reader
+        request_local_reader(window, Gtk=Gtk)
+    local.connect("clicked", local_clicked)
+    page.header_actions.append(local)
+    setup = Gtk.Button.new_from_icon_name("folder-symbolic")
+    setup._cifereca_action_id = "reader-setup-directory"
+    setup.set_tooltip_text("Initialiser explicitement le dossier géré.")
+    def setup_clicked(button):
+        from .reader_local_actions import request_reader_setup
+        request_reader_setup(window, button)
+    setup.connect("clicked", setup_clicked)
+    page.header_actions.append(setup)
+    forget = Gtk.Button.new_from_icon_name("list-remove-symbolic")
+    forget._cifereca_action_id = "reader-forget"
+    forget.set_tooltip_text("Dissocier la liseuse sans supprimer de fichiers.")
+    def forget_clicked(_button):
+        from .reader_local_actions import request_reader_forget
+        request_reader_forget(window)
+    forget.connect("clicked", forget_clicked)
+    page.header_actions.append(forget)
+
 
     pair = Gtk.Button.new_from_icon_name("list-add-symbolic")
     pair._cifereca_action_id = "reader-usb-pair"

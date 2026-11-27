@@ -274,6 +274,19 @@ def toggle_reader_examination(window) -> None:
             raise ValueError("invalid reader binding")
         fingerprint = binding["metadata"]["usb_fingerprint"]
         old_enabled = binding["enabled"]
+        if binding["metadata"].get("reader_transport") == "local":
+            if not _still_current(window, scope):
+                return
+            # Toggle an existing scoped binding without requiring the folder
+            # to be connected. The immutable metadata is preserved by Storage.
+            storage.device_usb_binding_declare(
+                identity_id=identity, device_id=device_id, label=binding["label"],
+                usb_fingerprint=fingerprint, enabled=not old_enabled,
+            )
+            if _still_current(window, scope):
+                window._render_readers()
+            return
+
         proposal = propose_usb_reader_binding(
             identity_id=identity,
             label=binding["label"], usb_fingerprint=fingerprint,
