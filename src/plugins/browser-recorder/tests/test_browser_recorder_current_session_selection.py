@@ -12,9 +12,8 @@ import pytest
 pytest.importorskip("cryptography")
 
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault
 import browser_recorder_review_ui as view
-from test_browser_recorder_review_ui import FakeTasks, Gtk, GLib, ORIGIN
+from test_browser_recorder_review_ui import FakeTasks, Gtk, GLib, ORIGIN, new_test_vault
 
 
 SECRET = "FAKE-SELECTOR-VAULT-PASSPHRASE-2026"
@@ -24,11 +23,11 @@ def test_newest_sealed_capture_is_immediately_selected_and_older_stays_readable(
     monkeypatch, tmp_path: Path,
 ):
     tasks = FakeTasks()
-    vault_path = tmp_path / "vault"
+    core, vault = new_test_vault(tmp_path)
     panel = view.PrivateReviewPanel(
         Gtk, GLib, tasks, NS(get_text=lambda: ORIGIN + "/catalog"),
         NS(get_active=lambda: True), lambda: False,
-        vault_directory=vault_path,
+        vault=vault,
     )
     numbers = []
 
@@ -51,32 +50,33 @@ def test_newest_sealed_capture_is_immediately_selected_and_older_stays_readable(
     try:
         for number in (1, 2):
             panel.vault_consent.set_active(True)
-            panel.vault_passphrase.set_text(SECRET)
             panel.begin()
             panel.stop_capture()
             tasks.handles[-1].finish()
+            tasks.handles[-1].finish()  # authenticated index scan
             assert len(numbers) == number
             sid = numbers[-1]
             assert panel.session_list.get_active_id() == sid
             assert panel.session_list.value == sid
-            stored = PrivateSessionVault(vault_path).open(sid, SECRET)
+            stored = vault.read(sid)
             assert stored.trace.exchanges[0].response_body == '{"BookId":214}'
             stored.trace.destroy()
-            assert len(PrivateSessionVault(vault_path).list_ids()) == number
+            assert len(vault.sessions()) == number
         assert numbers[0] != numbers[1]
         # Manual "Lister" may not override explicit user selection.
         panel.session_list.set_active_id(numbers[0])
         panel.refresh_sessions()
+        tasks.handles[-1].finish()
         assert panel.session_list.get_active_id() == numbers[0]
-        assert all("Archive chiffrée" in value
-                   for _key, value in panel.session_list.options.items())
-        assert "non chronologique" in panel.status.label
+        assert all("completed" in value for value in panel.session_list.options.values())
+        assert "sessions chiffrées" in panel.status.label
 
         # An additional capture does not mutate/decrypt the preceding files.
-        first = PrivateSessionVault(vault_path).open(numbers[0], SECRET)
+        first = vault.read(numbers[0])
         try:
             assert first.trace.exchanges[0].url.endswith("/1")
         finally:
             first.trace.destroy()
     finally:
         panel.destroy()
+        core.close()

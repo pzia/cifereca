@@ -13,7 +13,7 @@ from gi.repository import Gtk, GLib  # noqa: E402
 
 import browser_recorder_review_ui as ui
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_vault import PrivateSessionVault
+from test_browser_recorder_review_ui import new_test_vault
 from browser_recorder_page import BrowserRecorderPage
 from cifereca.diagnostics import Diagnostics
 from cifereca.plugins.manager import PluginManager
@@ -90,6 +90,7 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
     consent = Gtk.CheckButton()
     consent.set_active(True)
     tasks = Tasks()
+    core, vault = new_test_vault(tmp_path)
     outcomes = []
     collector = Diagnostics()
     plugin_id = "ui.page.browser-recorder"
@@ -108,7 +109,7 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
     panel = ui.PrivateReviewPanel(
         Gtk, GLib, tasks, site, consent, lambda: False,
         export_directory=tmp_path / "public",
-        vault_directory=tmp_path / "vault",
+        vault=vault,
         diagnostic=report,
     )
     window = Gtk.Window()
@@ -124,18 +125,14 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         assert not panel.private_export_button.get_sensitive()
         panel.start.emit("clicked")
         assert tasks.handle is None  # storage consent required
-        panel.vault_passphrase.set_text(PASSWORD)
-        panel.vault_open_button.emit("clicked")
-        assert tasks.handle is not None
-        tasks.handle.finish()
-        flush()
-        assert panel._vault_secret is not None
-        assert panel.vault_passphrase.get_text() == ""
+        assert not hasattr(panel, "vault_passphrase")
         panel.vault_consent.set_active(True)
         panel.start.emit("clicked")
         assert tasks.handle is not None
         panel.stop.emit("clicked")
         tasks.handle.finish()
+        flush()
+        tasks.handle.finish()  # authenticated index scan
         flush()
         assert trace.vault_session_id
         assert not panel.export_button.get_sensitive()
@@ -153,9 +150,7 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         )
         assert not list(folder.iterdir())
         assert outcomes == []
-        # Once the vault was explicitly opened, the very first click exports.
-        # No additional master-password entry or ZIP confirmation is needed.
-        assert panel.vault_passphrase.get_text() == ""
+        # Explicit Save As is sufficient; no manual vault unlock.
         assert panel.current_private_export_button.get_sensitive()
         panel.current_private_export_button.emit("clicked")
         flush()
@@ -174,27 +169,25 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         if (tmp_path / "public").exists():
             assert not list((tmp_path / "public").glob("*.zip"))
         assert panel.current_private_export_button.get_sensitive()
-        assert panel.vault_passphrase.get_text() == ""
         # The archived-list workflow remains independent and still works.
         panel.sessions_refresh.emit("clicked")
+        tasks.handle.finish()
         flush()
         assert panel.session_list.get_active_id() == trace.vault_session_id
         assert panel.private_export_button.get_sensitive()
         # Reopen the encrypted session offline with the *same* open vault.
-        assert panel.vault_passphrase.get_text() == ""
         panel.sessions_open.emit("clicked")
         flush()
         assert panel._review is not None and panel._review.pending() > 0
         assert panel._trace.vault_session_id == trace.vault_session_id
         assert panel.tabs.get_current_page() == 1
         assert panel.current_private_export_button.get_sensitive()
-        assert len(PrivateSessionVault(tmp_path / "vault").list_ids()) == 1
+        assert len(vault.sessions()) == 1
         # Failed destination then retry, without entering the master again.
         panel.current_private_export_button.emit("clicked")
         flush()
         assert "existe déjà" in panel.status.get_label()
         assert "autre nom" in panel.status.get_label()
-        assert panel.vault_passphrase.get_text() == ""
         assert outcomes[-1][1] == "private_zip_export_failed"
         panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
             folder / "session-retry.zip"
@@ -203,9 +196,9 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         flush()
         assert (folder / "session-retry.zip").is_file()
         assert outcomes[-1][1] == "private_zip_exported"
-        assert panel.vault_passphrase.get_text() == ""
     finally:
         panel.destroy()
+        core.close()
         window.close()
         flush()
     # The terminal result remains visible after the private GTK page closes.
