@@ -93,7 +93,7 @@ def test_new_intent_menu_is_passive_and_never_triggers_usb_transfer(tmp_path):
     saved = db.device_placement_get("reader-0", ARTIFACT)
     assert saved["desired_state"] == "keep"
     assert saved["observed_state"] == "unknown"
-    assert saved["target_relative_path"] is None
+    assert saved["target_relative_path"] == "Books/Cifereca/" + SHA + ".epub"
     assert saved["last_observed_at"] is None
     assert saved["metadata"] == {"intent_identity_id": "alice"}
     assert path.read_bytes() == baseline
@@ -102,24 +102,16 @@ def test_new_intent_menu_is_passive_and_never_triggers_usb_transfer(tmp_path):
                if event[0] == "activity")
 
 
-def test_remove_is_shown_only_for_prior_managed_intent(tmp_path):
+def test_removal_is_reserved_to_reader_detail(tmp_path):
     ctx = setup(tmp_path)
     db, path, _, window, _, detail, actions, events, jobs, groups, deps = ctx
     first = render(ctx)
-    assert first.popover.child.children[0].label.startswith("Mettre")
     first.popover.child.children[0].click()
     previous = db.device_placement_get("reader-0", ARTIFACT)
-    # Old popover can become stale; new detail computes the next step.
     actions.clear()
     groups.clear()
-    second = render(ctx)
-    assert second.popover.child.children[0].label == "Retirer de Liseuse 0"
-    second.popover.child.children[0].click()
-    changed = db.device_placement_get("reader-0", ARTIFACT)
-    assert changed["desired_state"] == "remove"
-    for key in ("metadata", "target_relative_path", "observed_state",
-                "last_observed_at", "created_at", "device_placement_id"):
-        assert changed[key] == previous[key]
+    assert render(ctx) is None
+    assert db.device_placement_get("reader-0", ARTIFACT) == previous
     assert path.read_bytes() == BOOK
     assert not jobs
 
@@ -147,13 +139,9 @@ def test_two_readers_are_separately_scoped_and_activation_does_not_copy(tmp_path
 def test_stale_context_cannot_mutate_intents(tmp_path, change):
     ctx = setup(tmp_path)
     db, saved, placement_id, window, item, detail, actions, events, jobs, _, _ = ctx
-    db.device_usb_intent_set(
-        identity_id="alice", device_id="reader-0",
-        artifact_id=ARTIFACT, desired_state="keep",
-    )
     menu = render(ctx)
     button = menu.popover.child.children[0]
-    assert button.label.startswith("Retirer")
+    assert button.label.startswith("Mettre")
     before = deepcopy(db.device_placements())
     if change == "current_identity":
         window.service.current_identity = NS(identity_id="bob")
@@ -180,7 +168,7 @@ def test_stale_context_cannot_mutate_intents(tmp_path, change):
     else:
         db.device_usb_intent_set(
             identity_id="alice", device_id="reader-0",
-            artifact_id=ARTIFACT, desired_state="remove",
+            artifact_id=ARTIFACT, desired_state="keep",
         )
         before = deepcopy(db.device_placements())
     button.click()

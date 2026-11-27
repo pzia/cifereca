@@ -137,13 +137,18 @@ def build_library_usb_intents(
     box.set_margin_start(8)
     box.set_margin_end(8)
     generation = getattr(window, "_identity_context_generation", None)
+    route = getattr(window, "_route_display_token", None)
+    epoch = getattr(service, "_account_context_epoch", None)
 
     def still_current(button) -> bool:
         if (getattr(window, "_closed", False)
                 or getattr(getattr(service, "current_identity", None),
                            "identity_id", None) != identity_id
                 or getattr(window, "_identity_context_generation", None)
-                           != generation):
+                           != generation
+                or getattr(window, "_route_display_token", None) is not route
+                or getattr(service, "_account_context_epoch", None) != epoch
+                or getattr(menu, "_cifereca_action_context_revoked", False)):
             return False
         root = getattr(button, "get_root", None)
         if callable(root) and root() is None:
@@ -154,7 +159,7 @@ def build_library_usb_intents(
         return True
 
     def clicked(button, *, device_id: str, desired: str,
-                fingerprint: str) -> None:
+                fingerprint: str, previous: str | None) -> None:
         if not still_current(button):
             return
         try:
@@ -174,16 +179,11 @@ def build_library_usb_intents(
                     or type(live_meta) is not dict
                     or live_meta.get("usb_fingerprint") != fingerprint):
                 raise ValueError("device binding changed")
-            # A stale 'remove' button must not create an intention for a
-            # previously unmanaged file. Storage validates original owner
-            # under BEGIN IMMEDIATE again.
-            if desired == "remove":
-                saved = storage.device_placement_get(device_id, artifact_id)
-                if (type(saved) is not dict
-                        or saved.get("desired_state") != "keep"
-                        or type(saved.get("metadata")) is not dict
-                        or saved["metadata"].get("intent_identity_id") != identity_id):
-                    raise ValueError("previous device intent changed")
+            saved = storage.device_placement_get(device_id, artifact_id)
+            if ((saved.get("desired_state") if type(saved) is dict else None) != previous
+                    or (saved is not None and
+                        (saved.get("metadata") or {}).get("intent_identity_id") != identity_id)):
+                raise ValueError("previous device intent changed")
             storage.device_usb_intent_set(
                 identity_id=identity_id, device_id=device_id,
                 artifact_id=artifact_id, desired_state=desired,
@@ -218,9 +218,9 @@ def build_library_usb_intents(
         button.connect(
             "clicked",
             lambda clicked_button, device_id=device_id, state=next_state,
-                   fingerprint=fingerprint:
+                   fingerprint=fingerprint, previous=desired:
                 clicked(clicked_button, device_id=device_id, desired=state,
-                        fingerprint=fingerprint),
+                        fingerprint=fingerprint, previous=previous),
         )
         box.append(button)
     popover.set_child(box)

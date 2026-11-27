@@ -78,8 +78,8 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
     db.device_usb_intent_set(identity_id="alice", device_id="local-a",
                              artifact_id=artifact, desired_state="keep")
     target = "Books/Cifereca/" + digest + ".epub"
-    db.device_usb_target_set(identity_id="alice", device_id="local-a",
-                             artifact_id=artifact, target_relative_path=target)
+    assert db.device_usb_reserve_pending_target(identity_id="alice", device_id="local-a",
+                                                artifact_id=artifact) == target
     # Actual production storage.target service; no fake USB/mount or policy.
     plugin_file = Path(__file__).resolve().parents[1] / "src/plugins/storage-usb/cifereca_storage_usb.py"
     transport = runpy.run_path(str(plugin_file))["UsbMassStorageTarget"]()
@@ -106,13 +106,30 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
     assert managed.is_dir()
     third_party = managed / "third-party.txt"
     third_party.write_bytes(b"untouched")
+    from cifereca.gui.reader_usb_preview_actions import _discover_mounted_binding
+    found = _discover_mounted_binding(storage=db, identity_id="alice",
+                                      device_id="local-a", fingerprint=fingerprint)
+    assert found.selection_key() == mount_key
+    report, candidates = facade.prepare_delta(identity_id="alice", device_id="local-a",
+                                              mountpoint=root, mount_key=mount_key)
+    assert report.rows[0].action == "upload_candidate"
+    assert candidates == ((artifact, target, "epub", None, len(payload)),)
+    cancelled = facade.admit_delta(identity_id="alice", device_id="local-a",
+                                confirmations=(consent,), mountpoint=root,
+                                expected_profile_epoch=3, mount_key=mount_key,
+                                cancelled=lambda: True)
+    assert cancelled().status == "cancelled"
+    assert not (root / target).exists()
+    updates = []
     worker = facade.admit_delta(identity_id="alice", device_id="local-a",
                                 confirmations=(consent,), mountpoint=root,
-                                expected_profile_epoch=3, mount_key=mount_key)
+                                expected_profile_epoch=3, mount_key=mount_key,
+                                progress=lambda *args: updates.append(args))
     final = root / target
     assert not final.exists()
     result = worker()
     assert result == UsbSyncResult("completed", copied=1, observed=True)
+    assert updates == [(0, 1, 0), (1, 1, len(payload))]
     assert worker().status == "blocked"
     assert final.read_bytes() == source.read_bytes() == payload
     journal = SqliteUsbOperationJournal(db)
@@ -128,4 +145,7 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                                 expected_profile_epoch=3, mount_key=mount_key)
     assert worker() == UsbSyncResult("completed", removed=1, observed=True)
     assert not final.exists()
+    assert source.read_bytes() == payload and third_party.read_bytes() == b"untouched"
+    db.device_usb_binding_forget(identity_id="alice", device_id="local-a", fingerprint=fingerprint)
+    assert db.device_binding_get("local-a") is None
     assert source.read_bytes() == payload and third_party.read_bytes() == b"untouched"
