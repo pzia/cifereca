@@ -70,3 +70,40 @@ def test_delta_ignores_line_shifts_but_keeps_extra_occurrences():
     extra = dict(old, line=6)
     assert new_findings([old], [moved, extra]) == [extra]
     assert new_findings([old], [moved]) == []
+
+
+def test_delegated_oracles_are_distinguished_without_hiding_candidates():
+    report = analyze("tests/test_example.py", """
+import pytest
+def check(value):
+    assert value == 7
+def reject(service):
+    with pytest.raises(ValueError):
+        service.run()
+def noop(value):
+    return value
+def tautology(value):
+    assert value == value
+def test_valid(service):
+    check(service.run())
+def test_rejection(service):
+    reject(service)
+def test_empty(service):
+    noop(service)
+def test_tautology(service):
+    tautology(service)
+def test_shadowed(check):
+    check(7)
+def test_conditional(service):
+    if False:
+        check(service.run())
+""")
+    observed = {r["test"]: r["kind"] for r in report["findings"]}
+    assert observed == {
+        "test_valid": "delegated_oracle_review",
+        "test_rejection": "delegated_oracle_review",
+        "test_empty": "no_recognized_assertion",
+        "test_tautology": "no_recognized_assertion",
+        "test_shadowed": "no_recognized_assertion",
+        "test_conditional": "no_recognized_assertion",
+    }
