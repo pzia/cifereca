@@ -362,6 +362,38 @@ class ReaderUsbExecutionBrokerImpl:
 
         return work
 
+    def initialize_target(
+        self, *, identity_id: str, device_id: str, mountpoint: Path,
+        expected_profile_epoch: int, mount_key: tuple,
+    ) -> bool:
+        """Explicit worker-only setup, separate from read-only preview."""
+        from .device_usb_directory_init import initialize_managed_reader_directory
+        from ..paths import state_dir
+
+        scope = self._scope(identity_id, device_id)
+        if (scope is None or type(expected_profile_epoch) is not int
+                or scope.epoch != expected_profile_epoch or type(mount_key) is not tuple
+                or len(mount_key) != 6):
+            return False
+
+        def current():
+            return self._mount_attested(scope, mountpoint, mount_key=mount_key)
+
+        try:
+            with InterProcessLock(state_dir(create=False) / "usb" / "sync.lock"):
+                if not current():
+                    return False
+                mount = observe_linux_usb_mount(
+                    identity_id=identity_id, binding=scope.binding, mountpoint=mountpoint,
+                )
+                if type(mount) is not LinuxUsbMount or mount.scope_key()[2:] != mount_key:
+                    return False
+                return initialize_managed_reader_directory(
+                    mount=mount, managed=scope.binding.get("target_directory"), current=current,
+                )
+        except Exception:
+            return False
+
     def admit_delta(
         self, *, identity_id: str, device_id: str, confirmations: tuple,
         mountpoint: Path, expected_profile_epoch: int, mount_key: tuple,

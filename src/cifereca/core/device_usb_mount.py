@@ -167,9 +167,9 @@ def observe_linux_usb_mount(
     is accepted. No caller-supplied `attested=True` flag can bypass Linux
     mountinfo, the real block-device UUID, or its USB sysfs ancestry.
 
-    Deliberately unsupported: MTP, FUSE, bind mounts, absent UUID symlink,
-    internal disks, emulated folders, and volumes behind USB abstractions
-    without an independently verifiable USB block-device lineage.
+    Physical USB still requires independently verifiable block lineage.
+    An explicitly bound local directory uses a separate inode/device proof;
+    it is never a fallback for a failed physical USB attestation.
     """
     if (type(identity_id) is not str or not identity_id
             or type(binding) is not dict

@@ -68,7 +68,7 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                           metadata={}))
     root = tmp_path / "reader"
     managed = root / "Books" / "Cifereca"
-    managed.mkdir(parents=True)
+    root.mkdir()
     db.device_local_reader_declare(identity_id="alice", device_id="local-a",
                                    label="Local", root=root, enabled=True)
     binding = db.device_binding_get("local-a")
@@ -80,8 +80,6 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
     target = "Books/Cifereca/" + digest + ".epub"
     db.device_usb_target_set(identity_id="alice", device_id="local-a",
                              artifact_id=artifact, target_relative_path=target)
-    third_party = managed / "third-party.txt"
-    third_party.write_bytes(b"untouched")
     # Actual production storage.target service; no fake USB/mount or policy.
     plugin_file = Path(__file__).resolve().parents[1] / "src/plugins/storage-usb/cifereca_storage_usb.py"
     transport = runpy.run_path(str(plugin_file))["UsbMassStorageTarget"]()
@@ -102,6 +100,12 @@ def test_pseudo_reader_real_copy_observe_remove_without_provider(tmp_path, monke
                                     binding=db.device_binding_get("local-a"), mountpoint=root)
     assert proof is not None
     mount_key = proof.scope_key()[2:]
+    assert not managed.exists()
+    assert facade.initialize_target(identity_id="alice", device_id="local-a", mountpoint=root,
+                                    expected_profile_epoch=3, mount_key=mount_key)
+    assert managed.is_dir()
+    third_party = managed / "third-party.txt"
+    third_party.write_bytes(b"untouched")
     worker = facade.admit_delta(identity_id="alice", device_id="local-a",
                                 confirmations=(consent,), mountpoint=root,
                                 expected_profile_epoch=3, mount_key=mount_key)

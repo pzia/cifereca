@@ -3957,6 +3957,8 @@ class Storage:
         def overlap(a, b):
             return a.is_relative_to(b) or b.is_relative_to(a)
 
+        if overlap(root, self.path.resolve()):
+            raise ValueError("local reader overlaps Cifereca database")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM identities WHERE identity_id=?",
