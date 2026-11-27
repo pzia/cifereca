@@ -7,13 +7,12 @@ file write; plaintext ZIP/HAR and provider credentials are never logged.
 """
 from __future__ import annotations
 
-from io import BytesIO
 import json
 import os
 from pathlib import Path
 import secrets
 import stat
-from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
+from cifereca.plugin_api.capture_vault import build_capture_zip, write_capture_zip
 
 from browser_recorder import RecorderError
 from browser_recorder_devkit import core_contract_kit
@@ -61,17 +60,7 @@ def _zip_bytes(session: StoredSession) -> bytes:
            for name in kit):
         raise VaultError("private_zip_kit_unavailable")
     members.update(kit)
-    output = BytesIO()
-    with ZipFile(output, "w") as archive:
-        for name, body in sorted(members.items()):
-            member = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            member.compress_type = ZIP_DEFLATED
-            member.external_attr = 0o600 << 16
-            archive.writestr(member, body)
-    data = output.getvalue()
-    if len(data) > MAX_FILE:
-        raise VaultError("private_zip_limit")
-    return data
+    return build_capture_zip(members, max_bytes=MAX_FILE)
 
 
 def save_session_llm_zip(
@@ -91,42 +80,7 @@ def save_session_llm_zip(
         raise VaultError("private_zip_destination")
     # Validate and bound the snapshot before opening the destination.
     payload = _zip_bytes(session)
-    folder_fd = None
-    try:
-        folder_fd = os.open(
-            destination.parent, os.O_RDONLY | os.O_DIRECTORY
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
-        info = os.fstat(folder_fd)
-        if not stat.S_ISDIR(info.st_mode):
-            raise VaultError("private_zip_destination")
-        fd = os.open(
-            destination.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=folder_fd,
-        )
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.fsync(folder_fd)
-        except Exception:
-            try:
-                os.unlink(destination.name, dir_fd=folder_fd)
-            except OSError:
-                pass
-            raise
-        return len(payload)
-    except VaultError:
-        raise
-    except FileExistsError as exc:
-        raise VaultError("private_zip_exists") from exc
-    except OSError as exc:
-        # No path or OS exception text may appear in the UI/diagnostics.
-        raise VaultError("private_zip_write_failed") from exc
-    finally:
-        if folder_fd is not None:
-            os.close(folder_fd)
+    return write_capture_zip(destination, payload, confirmed=confirmed, max_bytes=MAX_FILE)
 
 
 def save_private_zip(session: StoredSession, directory: Path, passphrase: str,
