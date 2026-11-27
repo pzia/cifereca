@@ -464,7 +464,7 @@ class SelectionTests(unittest.TestCase):
             "native_conflict", "native_confirmation", "native_cancellation",
             "native_copy", "native_idempotence", "native_removal",
             "native_usb_a", "native_usb_b", "native_usb_isolation",
-            "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_commit", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
+            "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_lease", "native_usb_b_naming_commit", "native_usb_b_naming_storage", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
             "native_usb_discovery",
             "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation",
         ):

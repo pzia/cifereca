@@ -43,7 +43,7 @@ STAGES = frozenset({
     "native_copy_navigation", "native_copy_result", "native_copy_observation",
     "native_idempotence", "native_removal",
     "native_usb_a", "native_usb_b", "native_usb_isolation",
-    "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_commit", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
+    "native_usb_b_source", "native_usb_b_profile", "native_usb_b_naming_dialog", "native_usb_b_naming_lease", "native_usb_b_naming_commit", "native_usb_b_naming_storage", "native_usb_b_menu", "native_usb_b_wish", "native_usb_b_reservation",
     "native_usb_discovery",
     "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation", "finish",
 })
@@ -691,16 +691,26 @@ def main() -> int:
                 window._reader_device_ids.index(device_id))
             assert window._reader_selected_device_id == device_id
 
-        def dialog_with_heading(heading):
+        def dialog_with_heading(heading, *, exclude=None):
             def find():
                 windows = Gtk.Window.get_toplevels()
                 for index in range(windows.get_n_items()):
                     candidate = windows.get_item(index)
                     if (isinstance(candidate, Adw.MessageDialog)
-                            and candidate.get_mapped() and candidate.get_heading() == heading):
+                            and candidate != exclude and candidate.get_mapped()
+                            and candidate.get_heading() == heading):
                         return candidate
                 return None
             return wait(find)
+
+        def save_directory_dialog(dialog):
+            # Click the actual Adwaita response button: emitting the response
+            # signal directly need not perform its native close lifecycle.
+            button = wait(lambda: next((widget for widget in walk(dialog)
+                if isinstance(widget, Gtk.Button) and widget.get_mapped()
+                and widget.get_label() == "Enregistrer"), None))
+            button.emit("clicked")
+            wait(lambda: not dialog.get_mapped())
 
         def sync_dialog():
             sync = header("reader-sync-delta")
@@ -722,7 +732,7 @@ def main() -> int:
             header("reader-directory-config").emit("clicked")
             directory_dialog = dialog_with_heading("Dossier géré de la liseuse")
             directory_dialog.get_extra_child().get_first_child().set_text("Reading/Library")
-            directory_dialog.emit("response", "save")
+            save_directory_dialog(directory_dialog)
             assert db.device_binding_get(device)["target_directory"] == "Reading/Library"
             header("reader-setup-directory").emit("clicked")
             setup_dialog = dialog_with_heading("Initialiser le dossier géré ?")
@@ -1130,11 +1140,23 @@ def main() -> int:
                 select_reader("reader-b")
                 assert db.placement_get(bob_placement)["identity_id"] == "bob"
                 phase[0] = "native_usb_b_naming_dialog"
+                selected = reader_local_actions._selected(window)
+                assert selected is not None and selected[1] == "reader-b"
                 header("reader-directory-config").emit("clicked")
-                naming_dialog = dialog_with_heading("Dossier géré de la liseuse")
-                naming_dialog.get_extra_child().get_last_child().set_selected(1)
+                naming_dialog = dialog_with_heading("Dossier géré de la liseuse", exclude=directory_dialog)
+                assert naming_dialog != directory_dialog
+                naming = naming_dialog.get_extra_child().get_last_child()
+                naming.set_selected(1)
+                assert naming.get_selected() == 1
+                phase[0] = "native_usb_b_naming_lease"
+                assert reader_local_actions._current(window, selected)
                 phase[0] = "native_usb_b_naming_commit"
-                naming_dialog.emit("response", "save")
+                with patch.object(db, "device_usb_directory_set", wraps=db.device_usb_directory_set) as save_layout:
+                    save_directory_dialog(naming_dialog)
+                    save_layout.assert_called_once_with(identity_id="bob", device_id="reader-b",
+                        fingerprint="uuid-bob-0001", target_directory="Books/Cifereca",
+                        target_naming="source")
+                phase[0] = "native_usb_b_naming_storage"
                 assert db.device_binding_get("reader-b")["metadata"]["reader_target_naming"] == "source"
                 phase[0] = "native_usb_b_menu"
                 menu, choices = menu_choices(bob_entry)
