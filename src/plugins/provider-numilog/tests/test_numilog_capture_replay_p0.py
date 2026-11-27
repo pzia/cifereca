@@ -268,3 +268,14 @@ def test_encrypted_or_unreadable_zip_member_returns_closed_status(tmp_path, monk
 
     monkeypatch.setattr(ZipFile, "read", encrypted_member)
     assert analyse_capture(archive) == {"status": "invalid_capture"}
+
+
+@pytest.mark.parametrize("state", ["binary_excluded", "body_type_unknown"])
+def test_omitted_request_is_not_proof_of_empty_public_get(tmp_path, state):
+    entry = _entry("a", HTML)
+    entry["request_body"] = {"state": state, "stored_bytes": 0, "observed_bytes": 42}
+    report = analyse_capture(_archive(tmp_path / "omitted.zip", [entry]))
+    assert report["status"] == "reviewed"
+    assert report["counts"]["unqualified"] == 1
+    assert report["counts"].get("eligible_public_get", 0) == 0
+    assert report["counts"].get("parser_qualified", 0) == 0

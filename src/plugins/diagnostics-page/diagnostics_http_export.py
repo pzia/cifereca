@@ -11,7 +11,7 @@ class HTTPTraceExport:
     CONFIRM = "Confirmer l’export HTTP non masqué"
 
     def __init__(self, button, *, broker, tasks, host, current, folder,
-                 gtk=None, gio=None, glib=None):
+                 gtk=None, gio=None, glib=None, include_binary=None):
         if gtk is None:
             from gi.repository import Gtk, Gio, GLib
             gtk, gio, glib = Gtk, Gio, GLib
@@ -21,25 +21,76 @@ class HTTPTraceExport:
         self.closed = self.armed = False
         self.chooser = self.handle = None
         self.timer = None
+        self.include_binary = include_binary
+        self._updating_policy = False
+        if include_binary is not None:
+            include_binary.connect("toggled", self.policy_toggled)
         button.connect("clicked", self.clicked)
         self.refresh()
         self.timer = glib.timeout_add(500, self.refresh)
 
-    def active(self):
+    def _status(self):
         if self.closed or not self.current():
-            return False
-        if not callable(getattr(self.broker, 'export_http_trace', None)):
-            return False
+            return {}
         try:
-            return self.broker.http_trace_status().get('active') is True
+            status = self.broker.http_trace_status()
+            return status if isinstance(status, dict) else {}
         except Exception:
-            return False
+            return {}
+
+    def active(self):
+        return (callable(getattr(self.broker, 'export_http_trace', None))
+                and self._status().get('active') is True)
+
+    def _sync_policy(self, status):
+        widget = self.include_binary
+        if widget is None:
+            return
+        value = status.get("include_binary")
+        available = (type(value) is bool
+                     and callable(getattr(self.broker, "set_http_trace_include_binary", None)))
+        self._updating_policy = True
+        try:
+            widget.set_sensitive(available)
+            widget.set_active(value if type(value) is bool else True)
+            widget.set_tooltip_text(
+                "S’applique à la capture et aux exports HTTP, y compris --capture. "
+                "Les corps omis ne peuvent pas être récupérés."
+                if available else "Préférence HTTP indisponible sur ce Core."
+            )
+        finally:
+            self._updating_policy = False
+
+    def policy_toggled(self, widget):
+        if self._updating_policy or self.closed or not self.current():
+            return
+        status = self._status()
+        setter = getattr(self.broker, "set_http_trace_include_binary", None)
+        if type(status.get("include_binary")) is not bool or not callable(setter):
+            self._sync_policy(status)
+            return
+        value = widget.get_active()
+        if value == status["include_binary"]:
+            return
+        self.armed = False
+        self.button.set_label(self.LABEL)
+        if self.chooser is not None:
+            chooser, self.chooser = self.chooser, None
+            chooser.destroy()
+        try:
+            setter(value)
+        except Exception:
+            self.host.toast("Impossible de modifier la préférence de capture HTTP")
+        self.refresh()
 
     def refresh(self):
         if self.closed or not self.current():
             self.timer = None
             return False
-        active = self.active()
+        status = self._status()
+        self._sync_policy(status)
+        active = (callable(getattr(self.broker, 'export_http_trace', None))
+                  and status.get('active') is True)
         self.button.set_sensitive(active)
         self.button.set_tooltip_text(
             "Export local brut : mots de passe, cookies, tokens et URLs signées "
@@ -145,6 +196,8 @@ class HTTPTraceExport:
             return
         self.closed = True
         self.armed = False
+        if self.include_binary is not None:
+            self.include_binary.set_sensitive(False)
         if self.timer is not None:
             self.glib.source_remove(self.timer)
             self.timer = None

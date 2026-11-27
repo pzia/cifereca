@@ -168,7 +168,9 @@ def analyse_capture(path):
                     counts["unqualified"] += 1
                     continue
                 body_request = entry.get("request_body")
-                if type(body_request) is not dict or body_request.get("stored_bytes") != 0:
+                if (type(body_request) is not dict or body_request.get("stored_bytes") != 0
+                        or body_request.get("state") in ("binary_excluded", "body_type_unknown")
+                        or body_request.get("observed_bytes", 0) != 0):
                     counts["unqualified"] += 1
                     continue
                 # Only brSimple GETs can use the installed anonymous

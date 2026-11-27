@@ -763,13 +763,15 @@ class DiagnosticsPagePlugin:
             "Peut contenir mots de passe, cookies, tokens et URLs privées."
         )
         advanced_box.append(journals_raw_export)
+        journals_include_binary = Gtk.CheckButton(label="Inclure les contenus binaires dans les captures HTTP")
+        journals_tab.append(journals_include_binary)
         journals_http_export = Gtk.Button(label="Exporter les échanges HTTP…")
         journals_tab.append(journals_http_export)
         from diagnostics_http_export import HTTPTraceExport
         self._http_trace_export = HTTPTraceExport(
             journals_http_export, broker=broker, tasks=self.tasks, host=host,
             current=lambda: self._page_root is page_root and self.diagnostics is broker,
-            folder=_readable_raw_export_folder,
+            folder=_readable_raw_export_folder, include_binary=journals_include_binary,
         )
 
         # FlowBox wraps four actions even in narrow 760px windows.
