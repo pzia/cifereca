@@ -112,6 +112,15 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
         request_reader_usb_preview(window, button, Gtk=Gtk)
     inspect.connect("clicked", examine_clicked)
     page.header_actions.append(inspect)
+    sync = Gtk.Button(label="Synchroniser")
+    sync._cifereca_action_id = "reader-sync-delta"
+    sync.set_tooltip_text("Examiner puis confirmer les changements du lecteur sélectionné.")
+    def sync_clicked(button):
+        from .reader_sync_actions import request_reader_sync
+        request_reader_sync(window, button)
+    sync.connect("clicked", sync_clicked)
+    page.header_actions.append(sync)
+
     pair = Gtk.Button.new_from_icon_name("list-add-symbolic")
     pair._cifereca_action_id = "reader-usb-pair"
     pair.set_tooltip_text(
