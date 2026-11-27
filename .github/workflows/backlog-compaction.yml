@@ -42,7 +42,8 @@ jobs:
       ((contains(github.event.issue.labels.*.name, 'P0') &&
         contains(github.event.issue.body, '<!-- backlog-staging-v1:')) ||
        startsWith(github.event.issue.title, 'Capitalisation #8195 — ') ||
-       startsWith(github.event.issue.title, 'Réception consolidation #8195 — '))
+       startsWith(github.event.issue.title, 'Réception consolidation #8195 — ') ||
+       startsWith(github.event.issue.title, 'Lot consolidation #8195 — '))
     concurrency:
       group: backlog-compaction
       cancel-in-progress: false
