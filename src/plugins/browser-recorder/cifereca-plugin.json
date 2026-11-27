@@ -25,8 +25,7 @@
         "browser.recorder.har.sanitized",
         "browser.recorder.http.private.review",
         "browser.recorder.http.reviewed_zip.local",
-        "browser.recorder.http.private_zip.local",
-        "browser.recorder.http.private_zip.encrypted"
+        "browser.recorder.http.private_zip.local"
       ],
       "requires": [],
       "recommends": [],

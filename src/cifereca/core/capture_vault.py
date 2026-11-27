@@ -155,6 +155,8 @@ class EncryptedCaptureVault:
             for name in os.listdir(fd):
                 if name.endswith(".cbrv") and _ID.fullmatch(name[:-5]):
                     ids.append(name[:-5])
+                    if len(ids) > MAX_SESSIONS:
+                        raise VaultError("vault_quota_exceeded")
             return tuple(sorted(ids))
         finally:
             os.close(fd)
@@ -179,7 +181,7 @@ class EncryptedCaptureVault:
             try:
                 handle = os.open(
                     session_id + ".cbrn",
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK, dir_fd=fd,
                 )
             except FileNotFoundError:
                 return ""
@@ -291,7 +293,7 @@ class EncryptedCaptureVault:
         """Only the exact opaque filename under a trusted directory FD."""
         try:
             handle = os.open(
-                name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd,
+                name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK, dir_fd=fd,
             )
             try:
                 info = os.fstat(handle)
@@ -426,7 +428,7 @@ class EncryptedCaptureVault:
         fd = self._open_dir(create=False)
         try:
             name = session_id + ".cbrv"
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK
             file_fd = os.open(name, flags, dir_fd=fd)
             try:
                 info = os.fstat(file_fd)

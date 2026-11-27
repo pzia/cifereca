@@ -786,6 +786,8 @@ class DiagnosticsPagePlugin:
                 current=lambda: self._page_root is page_root and self.diagnostics is broker,
                 folder=_readable_raw_export_folder, gtk=Gtk, gio=Gio, glib=GLib,
             )
+            archive_exporter = self._http_vault_archive.exporter
+            journals_include_binary.connect("toggled", lambda *_: archive_exporter.invalidate())
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()

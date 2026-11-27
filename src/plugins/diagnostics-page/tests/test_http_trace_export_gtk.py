@@ -161,3 +161,120 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
         plugin.deactivate()
         window.destroy()
         set_diagnostics_level(previous)
+
+
+def test_real_diagnostics_common_vault_restart(tmp_path, monkeypatch):
+    from cifereca import http_trace
+    from cifereca.core.capture_vault_service import CoreCaptureVault
+    from cifereca.plugin_api.capture_vault import CaptureScope
+
+    Gtk.init()
+    previous = diagnostics_level()
+    capture = HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", capture)
+    monkeypatch.setattr(page_module, "_readable_raw_export_folder", lambda: str(tmp_path))
+    directory, keys = tmp_path / "vault", tmp_path / "keys"
+
+    class Broker(SelectionBroker):
+        def http_trace_status(self):
+            return capture.status()
+        def set_http_trace_include_binary(self, value):
+            capture.set_include_binary(value)
+            return value
+
+    class Tasks(SelectionTasks):
+        def submit(self, fn, *, label, kind):
+            return ImmediateHandle(fn(SimpleNamespace(cancelled=lambda: False)))
+
+    class VaultContext(Context):
+        def __init__(self, port):
+            super().__init__(Broker(), Tasks())
+            self.port = port
+        def broker(self, name):
+            return self.port if name == "capture.vault" else super().broker(name)
+
+    def mount(port):
+        plugin = page_module.DiagnosticsPagePlugin().activate(VaultContext(port))
+        host, window = Host(), Gtk.Window()
+        host.window = window
+        page = plugin._build(host)
+        window.set_child(page)
+        window.present()
+        spin_until(page.get_mapped)
+        return plugin, window
+
+    try:
+        set_diagnostics_level("trace")
+        for mime, data in [("application/octet-stream", b"private-binary\\x00"),
+                           ("application/json", b'{"ok":true}')]:
+            with httpx.Client(transport=TraceHTTPTransport(
+                    httpx.MockTransport(lambda r: httpx.Response(200, headers={"Content-Type": mime},
+                        stream=httpx.ByteStream(data))), capture=capture), trust_env=False) as client:
+                assert client.get("https://example.test/fixture").content == data
+        core = CoreCaptureVault(directory, keys, authorize_scope=lambda *_: True)
+        port = core.for_plugin("ui.page.diagnostics")
+        plugin, window = mount(port)
+        try:
+            archive = plugin._http_vault_archive
+            assert not archive.save.get_sensitive() and not directory.exists()
+            archive.save.emit("clicked")
+            assert not directory.exists()
+            archive.consent.set_active(True)
+            archive.save.emit("clicked")
+            spin_until(lambda: archive.handle is None and bool(archive.rows.get_active_id()))
+            sid = archive.rows.get_active_id()
+            assert not archive.consent.get_active()
+            assert list(directory.glob("*.cbrv")) == [directory / (sid + ".cbrv")]
+            assert not list(tmp_path.glob("*.zip"))
+            archive.pin.emit("clicked")
+            spin_until(lambda: archive.handle is None and bool(port.sessions(CaptureScope())[0].pinned_until))
+        finally:
+            plugin.deactivate()
+            window.destroy()
+            core.close()
+        set_diagnostics_level("normal")
+        core = CoreCaptureVault(directory, keys, authorize_scope=lambda *_: True)
+        port = core.for_plugin("ui.page.diagnostics")
+        plugin, window = mount(port)
+        try:
+            archive = plugin._http_vault_archive
+            archive.list.emit("clicked")
+            spin_until(lambda: archive.handle is None and archive.rows.get_active_id() == sid)
+            checkbox = next(w for w in walk(window) if isinstance(w, Gtk.CheckButton)
+                            and w.get_label() == "Inclure les contenus binaires dans les captures HTTP")
+            reveal_diagnostics_section(archive.export)
+            archive.export.emit("clicked")
+            assert archive.exporter.armed
+            checkbox.set_active(False)
+            assert not archive.exporter.armed
+            archive.export.emit("clicked")
+            archive.export.emit("clicked")
+            chooser = archive.exporter.chooser
+            assert isinstance(chooser, Gtk.FileChooserNative)
+            chooser.emit("response", Gtk.ResponseType.CANCEL)
+            assert not list(tmp_path.glob("*.zip"))
+            archive.export.emit("clicked")
+            archive.export.emit("clicked")
+            chooser = archive.exporter.chooser
+            chooser.set_current_name("archive-reopened.zip")
+            target = tmp_path / "archive-reopened.zip"
+            spin_until(lambda: chooser.get_file() is not None and chooser.get_file().get_path() == str(target))
+            chooser.emit("response", Gtk.ResponseType.ACCEPT)
+            spin_until(target.exists)
+            assert stat.S_IMODE(target.stat().st_mode) == 0o600
+            with zipfile.ZipFile(target) as bundle:
+                index = json.loads(bundle.read("index.json"))
+                binary, textual = [entry["response_body"] for entry in index["exchanges"]]
+                assert binary["state"] == "binary_excluded" and not binary.get("blob")
+                assert bundle.read(textual["blob"]) == b'{"ok":true}'
+                assert "plugin-dev-kit/manifest.json" in bundle.namelist()
+            archive.delete_confirm.set_active(True)
+            archive.delete.emit("clicked")
+            spin_until(lambda: archive.handle is None and not archive.rows.get_active_id())
+            assert not port.sessions(CaptureScope()) and target.exists()
+        finally:
+            plugin.deactivate()
+            window.destroy()
+            core.close()
+    finally:
+        set_diagnostics_level(previous)

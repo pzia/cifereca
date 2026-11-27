@@ -6,8 +6,7 @@ Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **B
 consentir à l'archivage dans le coffre chiffré, démarrer Chromium et arrêter
 la capture. L'onglet **Sessions et exports** propose alors **« Exporter directement cette
 session privée pour LLM… »**, même si aucun identifiant n'a été anonymisé.
-Cliquer **Ouvrir le coffre** et saisir la phrase secrète **une seule fois**,
-puis choisir « Enregistrer sous » : le ZIP ordinaire est créé en mode 0600. Il contient les observations privées
+Choisir « Enregistrer sous » : le ZIP ordinaire est créé en mode 0600. Il contient les observations privées
 retenues, **en clair** ; choisir volontairement à quel LLM le communiquer.
 Aucun envoi automatique.
 
@@ -84,20 +83,11 @@ Depuis **Configuration → Browser Recorder**, l'écran est organisé en
   La revue individuelle et l'aperçu exact du ZIP anonymisé sont disponibles
   ensuite dans le même onglet ; ouvrir une session n'exporte aucun fichier.
 - **Paramètres** : origines complémentaires en capture normale ou métadonnées seulement, négociation HTTP,
-  rétention et nettoyage sur aperçu/confirmation, fonctions HAR héritées
+  fonctions HAR héritées
   repliées. Aucun réglage ne remplace le consentement d'une capture.
 
-Le bandeau d'état et les boutons **Ouvrir le coffre / Fermer le coffre**
-restent disponibles quel que soit l'onglet. Une fois ouvert, le coffre garde
-la phrase secrète **en mémoire de la page seulement** : capture autorisée,
-renommage, réouverture, export, prévisualisation et suppression n'exigent
-plus de la retaper. **Fermer le coffre** efface au mieux la copie mutable
-détenue en mémoire, ferme les dialogues privés, masque les aperçus et les
-métadonnées déchiffrées, sans supprimer les fichiers chiffrés. La fermeture
-de la page produit le même effacement ; aucune clé n'est sauvegardée dans
-les préférences ni récupérée automatiquement au redémarrage. Avant ouverture,
-la saisie ponctuelle par action reste compatible. Les autorisations de
-capture, de suppression et d'export restent distinctes.
+Le coffre commun du Core est accessible sans déverrouillage manuel. Le consentement à la capture, au stockage, à la suppression et à l’export reste distinct. La fermeture de la page révoque son accès actif et efface au mieux ses aperçus privés. Les limites de rétention sont configurées dans Diagnostics.
+
 Changer d'onglet n'autorise aucun export. Aucun consentement de
 conservation par lot. Le téléchargement de Chromium se fait séparément dans
 **Plugins** et exige une confirmation dédiée.
@@ -218,7 +208,7 @@ et collecte dans `PrivateHttpTrace` une chronologie de requêtes-réponses
 pour les origines explicitement autorisées (par défaut, seule l'origine de
 départ). Les échanges sont identifiés, les redirections et les erreurs
 réseau sont distinguées, et les corps textuels JSON/HTML/XML/plain peuvent
-être conservés en mémoire privée et, après consentement dédié et déverrouillage, dans le coffre chiffré. Aucun replay HTTP n'est
+être conservés en mémoire privée et, après consentement dédié, dans le coffre chiffré. Aucun replay HTTP n'est
 déclenché par le collecteur.
 
 Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
@@ -364,129 +354,17 @@ avant toute transmission volontaire. Ne jamais déduire un droit
 d'acquisition d'un JSON partiellement préservé.
 
 
-## Coffre privé chiffré — sessions différées (#2725)
+## Coffre commun chiffré du Core (#8181)
 
-La page Browser Recorder présente un consentement supplémentaire au
-**stockage local chiffré**, puis une entrée de phrase secrète (12 caractères
-minimum ; préférer une phrase longue, unique et non partagée). La saisie est
-**obligatoire avant de démarrer Chromium** ; en l'absence de coffre sûr ou de
-`cryptography` disponible, la capture ne doit pas démarrer. Le Core propose
-l'installation/réparation explicite des dépendances Python du plugin.
-La simple ouverture de la page n'initialise ni coffre ni collecte.
+Le service permanent du Core est indépendant de l’activation du Recorder. Le broker `capture.vault` limite chaque producteur à son périmètre autorisé. Le stockage d’une nouvelle session exige le consentement dédié. Aucun rejeu automatique.
 
-Chaque parcours autorisé crée un ID aléatoire ; ses observations retenues
-(URL/query, redirections, en-têtes techniques, corps textuels limités) sont
-sauvegardées dans `private-sessions/<id>.cbrv`, un fichier **AES-256-GCM**
-avec clé dérivée de la phrase secrète par **scrypt**, sel/nonce aléatoires
-propres à la session et authentification du nom de fichier. Le répertoire
-privé doit appartenir à l'utilisateur et être en mode 0700 ; fichiers
-0600, sans symlink/hardlink, snapshots atomiques/fdatasync/fsync et bornes
-128 sessions / 128 Mio / 3 Mio par session. Deux exports sont distincts : le ZIP **revu/filtré** requiert les décisions
-individuelles, alors que le ZIP **session pour LLM** restitue les observations
-conservées depuis le coffre chiffré, sans décisions d'anonymisation.
+La clé aléatoire d’installation (256 bits) est conservée séparément des captures, dans la configuration privée du Core (`capture-secrets/key`, fichier 0600, répertoire 0700). Les captures sont protégées par AES-GCM avec dérivation HKDF et conservées dans `capture-vault-v1`. La perte de la clé interdit l’accès et ne provoque aucune régénération silencieuse. Ce mécanisme ne protège pas contre un processus disposant des mêmes droits utilisateur ou d’une copie simultanée de la clé et du coffre.
 
-Pendant la capture, le collecteur écrit au plus une projection chiffrée
-par seconde ; il finalise un état `completed` lors du Stop ou de la fermeture
-normale de la dernière fenêtre Chromium. Après une interruption brutale,
-**seule la dernière projection déjà durable** est récupérable :
-`recording` ne signifie pas complété. À la réouverture, toute session dont
-le dernier snapshot porte encore l'état `recording` est affichée
-**« partielle (dernière sauvegarde seulement) »**, jamais en cours ni
-terminée ; `interrupted` indique une fin anormale détectée. La date
-affichée est celle du dernier snapshot durable, **pas celle du début**.
-L'origine/les compteurs restent invisibles tant que la session n'est
-pas déverrouillée et ne sont pas publiés dans Diagnostics. Les erreurs récupérables peuvent
-produire `interrupted`. Ce mécanisme ne garantit pas les dernières requêtes,
-les corps jamais retenus ni les écritures après une panne totale du disque.
+Le plafond Recorder est de 3 Mio par session ; le coffre commun contient au plus 128 sessions et 128 Mio. La durée (90 jours par défaut) et le volume sont configurables dans Diagnostics. Les épingles durent 30 jours et sont bornées. Les résidus chiffrés reconnus de plus de 24 heures sont purgés automatiquement. Les sauvegardes interrompues restent consultables selon leur dernier état authentifié. Aucun ancien coffre n’est migré ; son répertoire éventuel reste ignoré.
 
-« Lister les sessions archivées » affiche seulement des ID opaques ;
-l'origine et les corps ne sont pas dans les noms ni les diagnostics. Pour
-reprendre une session, sélectionner son ID, saisir la même phrase secrète,
-puis « Ouvrir une session — nouvelle revue ». **Aucun navigateur ni
-requête fournisseur** n'est lancé par cette action. Une nouvelle revue
-n'altère pas la capture source et peut déboucher sur un ZIP anonymisé
-différent, toujours avec aperçu et consentement. « Démarrer HTTP privé »
-permet des captures en série après sauvegarde de la précédente. La suppression
-exige de sélectionner la session, cocher sa confirmation et ressaisir la clé.
+## Export direct de session privée pour LLM
 
-**Confidentialité et limites** : perdre la phrase secrète rend le fichier
-irrécupérable ; la passphrase n'est jamais enregistrée. Les métadonnées privées
-n'apparaissent pas dans le journal applicatif, mais les données restent
-sensibles après déchiffrement en RAM. L'archive locale **ne contient pas**
-les cookies/Authorization/Set-Cookie exclus en amont, les fichiers binaires,
-les échanges hors périmètre, les corps refusés ni un profil navigateur.
-La suppression du fichier ne garantit pas un effacement forensique des
-snapshots SSD/sauvegardes. Ne pas synchroniser `private-sessions/` vers
-un cloud par défaut. L'export privé pour LLM est une action explicite : il crée une **copie en
-clair** de la session conservée. Ne pas partager un fichier `.cbrv` comme
-s'il s'agissait d'un ZIP ordinaire.
-
-
-## Export direct de session privée pour LLM (0.2.17)
-
-Pour une capture que vous venez de terminer : après **Ouvrir le coffre**,
-dans **Revue et ZIP LLM**, cliquer
-**« Exporter directement cette session privée pour LLM… »**. Aucune étape
-dans le catalogue Sessions et aucune décision d'anonymisation n'est requise.
-Le ZIP correspond strictement à la session affichée.
-
-Pour une capture plus ancienne : cliquer **Ouvrir le coffre** si nécessaire,
-ouvrir **Sessions et export privé**, choisir la session, puis cliquer
-**« Exporter cette session pour un LLM… »**. Dans les deux cas, choisir
-le nom et l'emplacement via **Enregistrer sous**, puis valider.
-
-**Aucune nouvelle phrase secrète de ZIP, aucun dossier 0700 à préparer,
-aucune confirmation supplémentaire.** Le coffre demeure AES-256-GCM avec
-ses permissions restrictives. Le ZIP de destination est un fichier standard
-**non chiffré**, créé en `0600`, jamais écrasé, dans un dossier existant
-choisi par l'utilisateur (par ex. Documents ou Téléchargements). Une annulation
-ne crée aucun fichier. Aucun envoi à un LLM n'est automatique.
-
-Ce ZIP comprend `README.txt` et `trace.json` avec **les URL d'origine, les
-identifiants et les corps textuels effectivement conservés** ; il peut contenir
-des données sensibles. Pour travailler avec un LLM, vérifier ses conditions de
-confidentialité, lui transmettre explicitement l'archive et supprimer ensuite
-la copie claire locale si elle n'est plus utile. Les secrets, réponses binaires,
-cookies ou autres éléments rejetés *pendant la capture* ne peuvent pas être
-restaurés. Le ZIP revu/anonymisé de Sessions et exports reste disponible en parallèle.
-
-### Compatibilité des anciennes archives chiffrées `.brzip`
-
-Le lecteur historique `CFRZIP01` reste disponible pour les anciennes
-archives. Le nouvel export pour LLM **n'utilise plus ce format**.
-
-**Format ouvert documenté `CFRZIP01`** : octets [0:8] = magic ASCII
-`CFRZIP01`, [8:24] = sel scrypt aléatoire (16 octets), [24:36] = nonce
-AES-GCM (12 octets), [36:] = ciphertext authentifié et tag 16 octets.
-La clé est dérivée avec scrypt(`length=32,n=32768,r=8,p=1`) sur les octets
-UTF-8 de la phrase secrète. AAD = la concaténation des 36 octets de l'en-tête.
-Le plaintext est un ZIP ordinaire contenant `README.txt` et
-`trace.json` (schéma `cifereca.browser-recorder.private-session/1`).
-Un lecteur indépendant peut déchiffrer en mémoire avec `cryptography` :
-
-```python
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from getpass import getpass
-from io import BytesIO
-from pathlib import Path
-from zipfile import ZipFile
-
-data = Path("example.brzip").read_bytes()
-assert data[:8] == b"CFRZIP01"
-salt, nonce = data[8:24], data[24:36]
-key = Scrypt(salt=salt, length=32, n=32768, r=8, p=1).derive(
-    getpass("Phrase secrète : ").encode()
-)
-raw = AESGCM(key).decrypt(nonce, data[36:], data[:36])
-with ZipFile(BytesIO(raw)) as archive:
-    print(archive.namelist())  # ni fichier clair ni partage implicite
-```
-
-Le lecteur des anciennes enveloppes `.brzip` déchiffre en mémoire.
-Pour les nouveaux exports de session, le ZIP est directement lisible
-par les outils habituels et n'exige aucune étape de déchiffrement.
-
+Choisir une session, puis confirmer la destination locale par « Enregistrer sous ». Le ZIP standard, non chiffré, est écrit en 0600 sans écrasement. Il contient les observations privées et le kit public de développement avec manifeste SHA-256. Relire avant tout partage ; aucun envoi automatique. Le ZIP revu et filtré exige toujours les décisions individuelles et la validation de son aperçu. L’ancien format `.brzip` n’est plus pris en charge.
 
 ## Choix de la destination ZIP (0.2.6)
 
@@ -499,7 +377,7 @@ déjà présent n'écrivent rien et ne remplacent aucun ZIP. L'archive est cré�
 en mode 0600, et les permissions du dossier sont vérifiées.
 
 Le nouveau bouton de Sessions et exports ouvre **Enregistrer sous** avec nom
-`cifereca-session-privee.zip` par défaut. Lorsqu'une session a été renommée puis explicitement déverrouillée, le nom proposé est par exemple `cifereca-session-privee-parcours-catalogue-bnf.zip`. Il est modifiable dans Enregistrer sous. **Ce nom de fichier est visible en clair** dans le système de fichiers, contrairement au libellé enregistré dans le coffre. Les labels ne sont ni déchiffrés sur le thread GTK ni envoyés à Diagnostics ; verrouillage, actualisation, renommage et suppression invalident leur cache transitoire. Aucun mode 0700 n'est imposé sur le dossier
+`cifereca-session-privee.zip` par défaut. Lorsqu'une session a été renommée puis listée, le nom proposé est par exemple `cifereca-session-privee-parcours-catalogue-bnf.zip`. Il est modifiable dans Enregistrer sous. **Ce nom de fichier est visible en clair** dans le système de fichiers, contrairement au libellé enregistré dans le coffre. Les labels ne sont ni déchiffrés sur le thread GTK ni envoyés à Diagnostics ; verrouillage, actualisation, renommage et suppression invalident leur cache transitoire. Aucun mode 0700 n'est imposé sur le dossier
 choisi et aucun mot de passe ZIP n'est demandé. La copie créée est **en clair
 et réservée à l'utilisateur (0600)** ; ne pas la confondre avec le coffre chiffré.
 
@@ -544,126 +422,9 @@ avec succès une API réelle sans hypothèse. L'exemple doit être adapté aux
 endpoints effectivement observés et aux permissions autorisées.
 
 
-## Bibliothèque de sessions déverrouillable (0.2.6, #2725)
+## Bibliothèque de sessions du coffre commun
 
-« Lister les sessions archivées » ne montre que des **ID opaques**.
-Saisir la phrase secrète puis « Déverrouiller les métadonnées des sessions… »
-lance un travail de lecture AES-GCM en arrière-plan (jamais dans la boucle
-GTK). Seules les sessions déchiffrées avec cette clé affichent alors
-**date de la dernière sauvegarde, origine HTTPS, statut completed/partial/
-interrupted, nombre d'échanges et omissions**. Un fichier chiffré avec
-une autre clé ou corrompu demeure « verrouillé/illisible » sans empêcher
-la consultation des autres sessions. Aucun index en clair n'est persisté.
-
-« Lister » à nouveau masque les métadonnées ; quitter la page détruit
-les libellés déchiffrés en mémoire GTK. Les opérations capturer, ouvrir,
-supprimer, exporter sont désactivées pendant l'indexation asynchrone.
-Un résultat d'indexation tardif après changement de capture ou fermeture
-est ignoré. L'utilisateur peut avoir des **phrases secrètes différentes**
-pour ses sessions ; les autres ne sont ni perdues ni révélées.
-
-
-## Nom de session chiffré (0.2.6, #2725)
-
-Depuis la bibliothèque privée, choisir une session, saisir un nom de **1 à
-80 caractères** et la phrase secrète du coffre, puis cliquer
-« Renommer cette session chiffrée ». Le travail de chiffrement AES-256-GCM
-et de vérification scrypt passe par le broker de tâches, hors du thread GTK.
-
-Le nom est sauvegardé indépendamment de la capture d'origine dans
-`private-sessions/<id>.cbrn` (fichier propriétaire 0600, écriture atomique,
-ID aléatoire opaque et authentification cryptographique associée à l'ID).
-Le nom n'apparaît jamais dans les chemins, les diagnostics, les ZIP
-anonymisés ou les ZIP privés. Il n'est affiché qu'après un nouveau
-déverrouillage explicite de la bibliothèque ; le bouton « Lister »
-remasque les métadonnées. La suppression volontaire d'une session purge
-aussi son nom chiffré, sans promettre d'effacement forensique SSD.
-
-Les noms contenant des caractères de contrôle, échappements ou caractères
-de direction Unicode sont refusés, tout comme une étiquette altérée ou un
-lien symbolique. Les sessions existantes n'ont aucun nom par défaut et
-restent compatibles sans migration destructrice.
-
-
-## Résidus temporaires après crash et quota conservateur (0.2.7, #2725)
-
-Le coffre 0700 conserve au maximum 128 sessions et 128 Mio d'archives.
-**Tout** le chiffrement local consomme désormais ce quota : snapshots
-`.cbrv`, noms privés `.cbrn`, ainsi que les fichiers d'écriture
-atomique `.part` et `.labelpart` qui pourraient subsister après un crash.
-Aucune donnée privée ne passe en clair dans ces fichiers.
-
-**Aucune purge automatique** : dans la page privée, « Examiner les résidus
-chiffrés sans suppression » affiche uniquement un nombre et une taille,
-sans identifiant ni origine. La case de confirmation distincte autorise
-ensuite à nettoyer seulement les fichiers temporaires reconnus du Recorder
-âgés de **plus de 24 h**. Une capture source `.cbrv` ou un nom `.cbrn`
-n'est **jamais** concerné. Les liens symboliques/hardlinks, modes et
-propriétaires suspects entraînent un refus sans purge partielle. La suppression
-est explicite, irréversible sur les fichiers concernés et ne garantit pas
-l'effacement forensique des sauvegardes disque.
-
-Un verrou POSIX coopératif synchronise les snapshots, les renommages,
-les suppressions et ce nettoyage. Les sessions interrompues restent
-récupérables avec la dernière portion enregistrée. Si le quota est saturé,
-faire la revue des captures et supprimer explicitement celles choisies, ou
-libérer les seuls résidus temporaires anciens après inspection ; il n'existe
-aucune politique automatique de conservation en fonction de l'âge.
-
-## Rétention manuelle des captures terminées (0.2.8, #2725)
-
-Le coffre garde les archives **indéfiniment par défaut**, dans la limite
-de 128 sessions et 128 Mio ; **aucune purge automatique** n'existe.
-Choisir une durée de 30, 90, 180 ou 365 jours, puis prévisualiser après
-déverrouillage : cette étape ne supprime **aucun** fichier.
-Seules les captures terminées dont la **dernière sauvegarde** dépasse
-le délai choisi sont candidates. Les sessions partielles ou interrompues,
-les clés différentes et les snapshots récents sont conservés.
-
-Pour appliquer, cocher une confirmation spécifique, **ressaisir** la phrase
-secrète du coffre et cliquer sur la suppression des seules sessions
-prévisualisées. L'aperçu expire après dix minutes ; changer le seuil ou
-refermer la page l'invalide. Sous verrou POSIX, le coffre réauthentifie
-chaque archive et compare les empreintes SHA-256 des captures chiffrées
-et de leurs noms chiffrés : toute altération, modification de fichier,
-clé incorrecte ou permission non sûre bloque la purge avant la première
-suppression. Les archives d'une autre clé, les captures partielles et
-les résidus temporaires ne sont jamais concernés.
-
-La suppression est irréversible pour Cifereca sans garantir l'effacement
-physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
-transmis. Les tests fonctionnent uniquement sur des données fictives.
-
-
-## Vérification d'authenticité des noms lors de la rétention (0.2.17)
-
-Une étiquette de session est protégée par AES-256-GCM et associée
-cryptographiquement à un ID de capture précis. La revue de rétention
-réauthentifie désormais le contenu du nom privé, **sans l'afficher**, avant
-de proposer ou d'exécuter une suppression. Si un nom est altéré,
-transplanté depuis une autre session ou chiffré avec une autre clé,
-l'aperçu est refusé et **aucune suppression groupée n'est autorisée**.
-Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
-et le délai d'expiration du plan restent obligatoires.
-
-
-## Renommage chiffré et concurrence avec la suppression (0.2.17, #2725)
-
-Le renommage privé authentifie **sous le même verrou exclusif POSIX**
-l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
-atomiquement. La suppression d'une session ou une politique de rétention
-manuelle ne peut plus intervenir entre la vérification cryptographique et
-l'écriture du nom. Si la capture a été supprimée ou si un nom a été
-altéré dans l'intervalle, le renommage échoue sans laisser de sidecar
-orphelin, sans restaurer une session supprimée et sans écraser une
-métadonnée non authentifiée.
-
-Les tests simulent une suppression effective et une altération du nom
-au moment exact où un renommage attend le verrou ; aucune donnée privée
-fictive n'est publiée. Le verrou est coopératif entre processus Cifereca
-et n'est pas une garantie contre un acteur local ayant accès en écriture
-au coffre en dehors de l'application.
-
+L’actualisation authentifie les captures et leurs métadonnées via le broker dans une tâche de fond. La sélection est liée à l’identifiant exact, conservée si la session existe toujours. Renommage, épinglage et suppression confirmée passent par le même service ; aucun déverrouillage manuel. Un fichier ou une clé invalide entraîne un refus, jamais un remplacement silencieux. La purge automatique utilise le même verrou que les écritures.
 
 ## Téléchargements Chromium sous décision explicite (0.2.17, #2528)
 
@@ -770,7 +531,7 @@ CDN ou un domaine est nécessaire au scraper. Pour examiner une origine,
 démarrer une nouvelle capture sur son URL avec consentement, ou l'autoriser
 explicitement en métadonnées seulement. Aucun ajout automatique au périmètre.
 La liste n'entre ni dans le coffre, ni dans aucun ZIP, ni dans Diagnostics ;
-fermeture, verrouillage et effacement suppriment aussi l'affichage local.
+fermeture et effacement suppriment aussi l'affichage local.
 Les sessions réouvertes n'ont donc pas cet inventaire transitoire.
 
 Les GET de scripts Chromium partagent désormais l'échantillon statique de
@@ -866,26 +627,9 @@ avec 1/11 JSON capturé n'en devient pas 11/11 après export. `size_unavailable`
 reste refusé faute de taille réseau mesurée fiable ; aucun `response.body()`
 aveugle ni rejeu réseau n'est introduit.
 
-## Sélecteur immédiatement cohérent après une capture (#2884)
+## Sélecteur cohérent après une capture (#2884)
 
-Après la sauvegarde **terminée** dans le coffre chiffré, la page rafraîchit
-immédiatement la liste opaque locale et sélectionne **l'ID exact** de cette
-capture, avant toute nouvelle capture. Aucun réseau, déchiffrement
-automatique, nom de fournisseur, titre ni secret n'est nécessaire pour
-lister les IDs. Un arrêt vide ou échoué ne présélectionne pas de nouvelle
-session « terminée ». Si le fichier final n'est pas listable, le message
-signale l'index indisponible sans inventer une réussite de déchiffrement.
-
-Les IDs des fichiers sont aléatoires : leur ordre alphanumérique **n'est
-pas chronologique**. La liste verrouillée dit désormais « Archive chiffrée
-· <ID court> », sans numérotation trompeuse. Un clic manuel sur « Lister »
-préserve la sélection précédente si l'archive existe encore ; une **nouvelle
-capture finalisée** a seule priorité pour sélectionner automatiquement
-son propre ID. Déverrouiller les métadonnées reste un geste distinct.
-Une erreur de clé pour une ancienne session n'est jamais réparée par la
-capture d'une autre session sous une nouvelle clé ; ne pas conclure à une
-corruption cryptographique à partir du seul sélecteur.
-
+La liste des captures authentifiées est actualisée après enregistrement et sélectionne l’identifiant exact de la session terminée. Une actualisation ordinaire conserve la sélection encore présente. Une erreur de lecture est signalée sans substituer une autre capture.
 
 ## Finalisation des réponses en attente (#2528)
 

@@ -359,7 +359,6 @@ class PrivateReviewPanel:
             ))
             self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
             self.session_list = Gtk.ComboBoxText()
-            self.session_list.connect("changed", lambda *_: self._refresh())
             self.session_name = Gtk.Entry()
             self.session_name.set_max_length(80)
             self.session_name.set_placeholder_text(
@@ -370,6 +369,10 @@ class PrivateReviewPanel:
             self.delete_confirm = Gtk.CheckButton(
                 label="Je confirme la suppression locale de la session choisie."
             )
+            def selection_changed(*_):
+                self.delete_confirm.set_active(False)
+                self._refresh()
+            self.session_list.connect("changed", selection_changed)
             self.sessions_delete = Gtk.Button(label="Supprimer cette session")
             self.sessions_pin = Gtk.Button(label="Épingler cette session (30 jours)")
             self.sessions_unpin = Gtk.Button(label="Retirer l'épingle")
