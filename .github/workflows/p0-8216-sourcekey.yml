@@ -1,0 +1,56 @@
+name: P0 8216 SourceKey redundancy evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-sourcekey.yml'
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 019ba8c9138427b5b1dd6a6f68b6855f84837ce1
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . pytest Pillow cryptography
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/src"
+          weak=tests/test_core_p0_3196_backup_projection_audit_removed.py
+          strong=tests/test_core_p0_3171_source_convergence_plan.py
+          python -m pytest -q "$weak" "$strong"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("src/cifereca/core/source_convergence.py")
+          s = p.read_text()
+          anchor = "@dataclass(frozen=True, slots=True)\nclass PlacementEvidence:"
+          assert s.count(anchor) == 1
+          p.write_text(s.replace(anchor, "SourceKey = None\n\n" + anchor))
+          PY
+          for target in "$weak::test_canonical_source_convergence_remains_available" "$strong::test_scope_is_exact_credential_account_identity_edition_and_right"; do
+            set +e
+            python -m pytest -q "$target"
+            rc=$?
+            set -e
+            test "$rc" = 1
+          done
+          git restore src/cifereca/core/source_convergence.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("src/cifereca/core/source_convergence.py")
+          s = p.read_text()
+          old = 'or not _id(self.edition_id) or not _id(self.right_id)'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'or not _id(self.edition_id) or not _id(self.right_id) or self.right_id == "purchase-1"'))
+          PY
+          python -m pytest -q "$weak"
+          set +e
+          python -m pytest -q "$strong::test_scope_is_exact_credential_account_identity_edition_and_right"
+          rc=$?
+          set -e
+          test "$rc" = 1
