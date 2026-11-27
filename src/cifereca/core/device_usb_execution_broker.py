@@ -1,11 +1,9 @@
 """P1 #4985: conservative Core broker for explicit, one-book USB operations.
 
 The GTK layer never receives USB file descriptors or writes to the device.
-The broker reattests the selected identity, binding, mount and exact Core
-delta, then delegates to the existing locked Core executor. It does NOT
-manufacture independent DRM/copy rights. For now, only a completed managed
-copy may be considered for a separately confirmed removal; uploads remain
-blocked until a trusted positive rights resolver is available.
+The broker reattests the selected identity, binding, destination and exact
+Core delta, then delegates to the existing locked Core executor. Local
+placements are admissible without a separate provider rights policy.
 """
 from __future__ import annotations
 
@@ -16,6 +14,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
+from ..locking import InterProcessLock
 from .device_usb_copy_admission import UsbCopyConsent
 from .device_usb_dry_run import UsbDryRun, inspect_usb_dry_run
 from .device_usb_mount import LinuxUsbMount, observe_linux_usb_mount
@@ -101,6 +100,22 @@ class ReaderUsbExecutionBrokerImpl:
                         for row in bindings
                     ) != 1):
                 return None
+            if meta.get("reader_transport") == "local":
+                local_root = Path(meta.get("local_root", ""))
+                if not local_root.is_absolute():
+                    return None
+                for row in storage.device_bindings():
+                    if row.get("device_id") == device_id:
+                        continue
+                    other = row.get("metadata") or {}
+                    if other.get("reader_transport") == "local":
+                        path = Path(other["local_root"])
+                        if local_root.is_relative_to(path) or path.is_relative_to(local_root):
+                            return None
+                for owner in service.config.identities():
+                    for path in configured_identity_roots(service.config, owner["id"])[owner["id"]]:
+                        if local_root.is_relative_to(path) or path.is_relative_to(local_root):
+                            return None
             return _ReaderScope(identity, identity_id, epoch,
                                 device_id, fingerprint, roots[0], binding)
         except Exception:
@@ -430,18 +445,19 @@ class ReaderUsbExecutionBrokerImpl:
                 check_cancelled()
             from ..paths import state_dir
             manager = getattr(self.service, "_plugin_manager", None)
-            result = synchronize_usb_reader(
-                storage=storage, identity_id=scope.identity_id,
-                device_id=scope.device_id, identity_root=scope.identity_root,
-                mountpoint=mountpoint, lock_root=state_dir(create=False) / "usb",
-                current_profile=current_profile,
-                plugin_manager=manager, plugin_id="storage.usb",
-                registry_generation=getattr(manager, "registry_generation", -1),
-                confirmations={confirmation.artifact_id: confirmation},
-                rights={}, policy_verifier=None,
-                artifact_id=confirmation.artifact_id,
-                check_cancelled=check_cancelled,
-            )
+            with InterProcessLock(state_dir(create=False) / "usb" / "sync.lock"):
+                result = synchronize_usb_reader(
+                    storage=storage, identity_id=scope.identity_id,
+                    device_id=scope.device_id, identity_root=scope.identity_root,
+                    mountpoint=mountpoint, lock_root=state_dir(create=False) / "usb",
+                    current_profile=current_profile,
+                    plugin_manager=manager, plugin_id="storage.usb",
+                    registry_generation=getattr(manager, "registry_generation", -1),
+                    confirmations={confirmation.artifact_id: confirmation},
+                    rights={}, policy_verifier=None,
+                    artifact_id=confirmation.artifact_id,
+                    check_cancelled=check_cancelled,
+                )
             return result if type(result) is UsbSyncResult else blocked
         except Exception:
             return blocked

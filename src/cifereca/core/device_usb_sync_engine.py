@@ -77,12 +77,21 @@ def synchronize_usb_reader(
         return UsbSyncResult("unavailable")
 
     journal = SqliteUsbOperationJournal(storage)
-    placement_ids = {
-        row["artifact_id"]: row.get("placement_id")
-        for row in storage.placements(state="present")
-        if type(row) is dict and row.get("identity_id") == identity_id
-        and type(row.get("artifact_id")) is str
-    }
+    placement_ids = {}
+    if any(row.action == "upload_candidate" for row in preview.rows):
+        sources = storage.placements(state="present")
+        if type(sources) is not list or len(sources) > 30000:
+            return UsbSyncResult("blocked")
+        for source in sources:
+            if (type(source) is dict and source.get("identity_id") == identity_id
+                    and type(source.get("artifact_id")) is str):
+                key = source["artifact_id"]
+                placement_ids[key] = (
+                    None if key in placement_ids else source.get("placement_id")
+                )
+    if any(row.reason in ("target_batch_capacity_insufficient", "target_space_insufficient")
+           for row in preview.rows):
+        return UsbSyncResult("blocked")
     copied = removed = pending = failed = 0
     for row in preview.rows:
         if check_cancelled is not None:
@@ -96,6 +105,8 @@ def synchronize_usb_reader(
             authorization = rights.get(row.artifact_id)
             placement_id = placement_ids.get(row.artifact_id)
             if (type(consent) is not UsbCopyConsent
+                    or consent.artifact_id != row.artifact_id
+                    or consent.identity_id != identity_id or consent.device_id != device_id
                     or (authorization is not None and type(authorization) is not UsbCopyRightsEvidence)
                     or (authorization is None and policy_verifier is not None)
                     or type(placement_id) is not str or not placement_id):
@@ -116,7 +127,9 @@ def synchronize_usb_reader(
             else:
                 failed += 1
         else:
-            if type(consent) is not UsbRemovalConsent:
+            if (type(consent) is not UsbRemovalConsent
+                    or consent.artifact_id != row.artifact_id
+                    or consent.identity_id != identity_id or consent.device_id != device_id):
                 pending += 1
                 continue
             def removal_profile() -> tuple[str, int]:

@@ -26,9 +26,10 @@ def _row(artifact, action):
 
 def _arguments(tmp_path, consent, rights):
     class Storage:
-        def device_placements(self, *, device_id):
-            assert device_id == consent.device_id
-            return [{"artifact_id": consent.artifact_id, "placement_id": "local-copy"}]
+        def placements(self, *, state):
+            assert state == "present"
+            return [{"artifact_id": consent.artifact_id, "placement_id": "local-copy",
+                     "identity_id": consent.identity_id}]
 
     return dict(
         storage=Storage(), identity_id=consent.identity_id, device_id=consent.device_id,

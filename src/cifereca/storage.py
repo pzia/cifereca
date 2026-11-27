@@ -3930,6 +3930,74 @@ class Storage:
             )
         return device_id
 
+    def device_local_reader_declare(
+        self, *, identity_id: str, device_id: str, label: str,
+        root: Path, enabled: bool = False,
+    ) -> str:
+        """Bind an existing dedicated directory, without copying or deleting."""
+        from hashlib import sha256
+        from .core.device_usb_mount import _observe_local_reader
+
+        if (any(type(v) is not str or not 1 <= len(v) <= 128
+                or v != v.strip() or not v.isprintable()
+                for v in (identity_id, device_id, label))
+                or type(enabled) is not bool or not isinstance(root, Path)
+                or not root.is_absolute() or len(root.parts) < 3
+                or root.resolve(strict=True) != root or not root.is_dir()):
+            raise ValueError("invalid local reader declaration")
+        info = root.stat()
+        fingerprint = "local-" + sha256(
+            f"{info.st_dev}:{info.st_ino}".encode("ascii")
+        ).hexdigest()
+        metadata = {
+            "reader_transport": "local", "usb_fingerprint": fingerprint,
+            "local_root": str(root), "local_device": info.st_dev,
+            "local_inode": info.st_ino,
+        }
+        def overlap(a, b):
+            return a.is_relative_to(b) or b.is_relative_to(a)
+
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM identities WHERE identity_id=?",
+                          (identity_id,)).fetchone() is None:
+                raise ValueError("local reader identity not configured")
+            for stored_id, owner, raw in db.execute(
+                "SELECT device_id,identity_id,metadata_json FROM device_bindings"
+            ):
+                old = self._json_load(raw)
+                if stored_id == device_id:
+                    if owner != identity_id or type(old) is not dict or any(
+                        old.get(k) != v for k, v in metadata.items()
+                    ):
+                        raise ValueError("local reader rebind requires explicit unlink")
+                    metadata = old
+                    continue
+                if type(old) is dict and (
+                    old.get("usb_fingerprint") == fingerprint or
+                    (old.get("reader_transport") == "local"
+                     and type(old.get("local_root")) is str
+                     and overlap(root, Path(old["local_root"])))
+                ):
+                    raise ValueError("local reader directory already bound")
+            for (path,) in db.execute("SELECT path FROM placements"):
+                if type(path) is str and overlap(root, Path(path).resolve()):
+                    raise ValueError("local reader overlaps a library placement")
+            if _observe_local_reader(identity_id, {
+                "device_id": device_id, "metadata": metadata,
+            }, root) is None:
+                raise ValueError("local reader directory changed")
+            now = int(time.time())
+            db.execute(
+                "INSERT INTO device_bindings(device_id,identity_id,label,enabled,"
+                "metadata_json,created_at,updated_at,target_directory) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(device_id) DO UPDATE SET label=excluded.label,"
+                "enabled=excluded.enabled,updated_at=excluded.updated_at",
+                (device_id, identity_id, label, int(enabled), self._json_dump(metadata),
+                 now, now, "Books/Cifereca"),
+            )
+        return device_id
+
     def device_usb_binding_declare(
         self, *, identity_id: str, device_id: str, label: str,
         usb_fingerprint: str, enabled: bool = False,

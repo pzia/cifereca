@@ -120,11 +120,11 @@ def test_confirmed_remove_delegates_exact_book_to_locked_core(rig, monkeypatch):
     assert db.device_placement_get("reader-a", consent.artifact_id)["observed_state"] == "unknown"
 
 
-def test_upload_never_derives_rights_from_file_or_user_consent(rig, monkeypatch):
+def test_upload_refuses_remove_intent_even_with_local_file(rig, monkeypatch):
     db, service, mount, c, report, local = rig
     monkeypatch.setattr(
         mod, "synchronize_usb_reader",
-        lambda **_: pytest.fail("no copy rights verifier"),
+        lambda **_: pytest.fail("wrong desired state"),
     )
     upload = UsbCopyConsent(
         c.identity_id, c.device_id, c.usb_fingerprint,
