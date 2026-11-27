@@ -362,7 +362,17 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(c.Refusal, "evidence changed"):
             c.purge_capitalized(self.api, stage, control, HEAD, evidence_at=lambda *_: b"bad")
         self.assertEqual(stage.commit, STAGE)
-        report = c.purge_capitalized(self.api, stage, control, HEAD, evidence_at=lambda *_: evidence)
+        original_get = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            before = len(self.api.writes)
+            original_body = self.api.comments[0]["body"]
+            self.api.comments[0]["body"] = "unexpected edit"
+            with self.assertRaisesRegex(c.Refusal, "incomplete or divergent"):
+                c.purge_capitalized(self.api, stage, control, HEAD, evidence_at=lambda *_: evidence)
+            self.assertEqual(stage.commit, STAGE)
+            self.assertEqual(len(self.api.writes), before)
+            self.api.comments[0]["body"] = original_body
+            report = c.purge_capitalized(self.api, stage, control, HEAD, evidence_at=lambda *_: evidence)
         self.assertEqual(report["status"], "STAGING_REFERENCE_PURGED")
         self.assertIsNone(stage.commit)
 

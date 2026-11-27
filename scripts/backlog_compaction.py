@@ -742,6 +742,53 @@ def canonical_evidence(ref, path):
             and all(part not in ("", ".", "..") for part in path.split("/")), "invalid evidence path")
     return git("show", ref + ":" + path)
 
+def verify_compacted_corpus(api, manifest, digest, commit, control, completed=False):
+    """Verify the complete compacted projection and exact bot journals."""
+    parent = manifest["p0"]
+    originals = manifest["snapshots"]
+    numbers = issue_numbers([x["issue"]["number"] for x in originals])
+    if "master" in manifest:
+        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
+    require(parent in numbers and control not in numbers and 8195 not in numbers,
+            "invalid staged corpus")
+    states = {}
+    start = START + digest + " " + commit
+    for original in originals:
+        n = original["issue"]["number"]
+        snap = snapshot(api, n)
+        states[n] = snap
+        projected = public_projection(snap)
+        journals = [c for c in projected["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
+        if n == parent:
+            expected_journals = [start]
+            if "master" in manifest:
+                expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
+            if completed:
+                expected_journals.append(DONE + digest + " " + commit)
+            require([c["body"] for c in journals] == expected_journals
+                    and all(c["author"]["login"] == "github-actions[bot]" for c in journals), "missing exact START or progress")
+        else:
+            require(not journals, "unexpected child journal")
+        projected["comments"] = [c for c in projected["comments"] if c not in journals]
+        expected = strict_json(encode(original))
+        if n != parent or "master" not in manifest:
+            expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
+        # Compare preserved public provenance; server timestamps are allowed to change
+        # only for items which were compacted (parent also received the journal).
+        if n == parent or expected["issue"]["body"] != original["issue"]["body"]:
+            expected["issue"].pop("updated_at")
+            projected["issue"].pop("updated_at")
+        for old, want, seen in zip(original["comments"], expected["comments"], projected["comments"]):
+            want["body"] = compact_text(old["body"], parent)
+            if want["body"] != old["body"]:
+                want.pop("updated_at")
+                seen.pop("updated_at")
+        require(expected == projected, "incomplete or divergent compacted corpus")
+        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
+        require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
+    return states
+
+
 def receive_completed(api, stage, event_issue, current):
     """Finalize only an already completed deterministic transfer; never edit targets."""
     require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
@@ -766,45 +813,7 @@ def receive_completed(api, stage, event_issue, current):
     manifest = strict_json(raw)
     require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent,
             "invalid staged manifest")
-    originals = manifest["snapshots"]
-    numbers = issue_numbers([x["issue"]["number"] for x in originals])
-    if "master" in manifest:
-        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
-    require(parent in numbers and control not in numbers and 8195 not in numbers,
-            "invalid staged corpus")
-    states = {}
-    start = START + digest + " " + commit
-    for original in originals:
-        n = original["issue"]["number"]
-        snap = snapshot(api, n)
-        states[n] = snap
-        projected = public_projection(snap)
-        journals = [c for c in projected["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
-        if n == parent:
-            expected_journals = [start]
-            if "master" in manifest:
-                expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
-            require([c["body"] for c in journals] == expected_journals
-                    and all(c["author"]["login"] == "github-actions[bot]" for c in journals), "missing exact START or progress")
-        else:
-            require(not journals, "unexpected child journal")
-        projected["comments"] = [c for c in projected["comments"] if c not in journals]
-        expected = strict_json(encode(original))
-        if n != parent or "master" not in manifest:
-            expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
-        # Compare preserved public provenance; server timestamps are allowed to change
-        # only for items which were compacted (parent also received the journal).
-        if n == parent or expected["issue"]["body"] != original["issue"]["body"]:
-            expected["issue"].pop("updated_at")
-            projected["issue"].pop("updated_at")
-        for old, want, seen in zip(original["comments"], expected["comments"], projected["comments"]):
-            want["body"] = compact_text(old["body"], parent)
-            if want["body"] != old["body"]:
-                want.pop("updated_at")
-                seen.pop("updated_at")
-        require(expected == projected, "incomplete or divergent compacted corpus")
-        subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
-        require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
+    states = verify_compacted_corpus(api, manifest, digest, commit, control)
     main_guard(api, current)
     require(snapshot(api, control) == control_before and all(snapshot(api, n) == snap for n, snap in states.items()),
             "reception corpus drift")
@@ -852,12 +861,10 @@ def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_ev
         require(path not in paths and sha256(evidence_at(current, path)) == entry["sha256"],
                 "canonical evidence changed")
         paths.add(path)
-    snap = snapshot(api, parent)
-    require(any(c["body"] == DONE + digest + " " + commit for c in snap["comments"]),
-            "consolidation not complete")
-    require(not any(c["body"].startswith((PURGE_START, PURGED)) for c in snap["comments"]), "purge already consumed")
+    states = verify_compacted_corpus(api, manifest, digest, commit, control, completed=True)
+    snap = states[parent]
     main_guard(api, current)
-    require(snapshot(api, control) == control_before and snapshot(api, parent) == snap,
+    require(snapshot(api, control) == control_before and all(snapshot(api, n) == original for n, original in states.items()),
             "capitalization corpus drift")
     require(stage.read_remote(parent, commit) == raw, "staging changed")
     marker = PURGE_START + digest + " " + commit + " review #" + str(control)
@@ -867,7 +874,9 @@ def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_ev
     expected_change(snap, after_start, marker=response)
     main_guard(api, current)
     require(snapshot(api, control) == control_before, "capitalization control changed")
-    require(snapshot(api, parent) == after_start, "capitalization corpus drift")
+    require(snapshot(api, parent) == after_start and all(snapshot(api, n) == original for n, original in states.items() if n != parent), "capitalization corpus drift")
+    if "master" in manifest:
+        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
     stage.purge(parent, commit)
     marker = PURGED + digest + " " + commit + " review #" + str(control)
     response = api.mark(parent, marker)
