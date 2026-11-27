@@ -19,7 +19,10 @@ from cifereca.plugin_api import (
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
     ProviderRightsScope, ProviderRightObservation, ProviderRightsSnapshot,
 )
-from cifereca_bnf_pret_http import ReaderHTTPClient, ReaderHTTPError, TemporaryLoanTokenError, ACTIVITY
+from cifereca_bnf_pret_http import (
+    ReaderHTTPClient, ReaderHTTPError, TemporaryLoanTokenError, ACTIVITY,
+    PERSONAL_PRINCIPAL_SCHEME,
+)
 from cifereca_bnf_pret_web import ProfileScope, parse_loans, WebParseError
 from cifereca_bnf_pret_catalog import read_search, read_detail, MAX_SEARCH_PAGES, resource_url
 from cifereca_bnf_pret_signed_action import signed_acsm_action, reader_acs4_offer_pairs
@@ -36,6 +39,7 @@ DESCRIPTOR = ProviderDescriptor(
     authenticated_catalogue_edition_branches_v1=(
         ("BNF_PRET", "BNF_PRET", "digital", None, None, "results.Book.resource_link"),
     ),
+    authenticated_catalogue_principal_scheme_v1=PERSONAL_PRINCIPAL_SCHEME,
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="BNF_PRET", verification="active_only",
         reborrow_inventory_branch="bnf_html",
@@ -216,6 +220,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
         self._closed = False
+        self._authenticated_catalogue_principal_v1 = None
         self.last_search_warnings = []
         self._private_search_inputs = {}
         self._private_replay_pages = {}
@@ -297,6 +302,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             # This is independent of Core's identity context epoch.
             self._epoch = uuid4().hex
             self.connected = False
+            self._authenticated_catalogue_principal_v1 = None
             self._accounts = []
             self._observed_loans = {}
             self._private_search_inputs = {}
@@ -319,6 +325,15 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             self._accounts = [Account(display_name=self.label, unique_id=self.credential_id,
                                       provider_id=self.provider_id, credential_id=self.credential_id,
                                       provider_label=DESCRIPTOR.display_name)]
+            # The native transport attested a complete, fresh independent
+            # login for an immutable personal-account identifier. Never
+            # reconstruct this from credentials or a returned Account ID.
+            principal = (self.client._catalogue_principal
+                         if type(self.client) is ReaderHTTPClient else None)
+            if type(principal) is bytes and len(principal) == 32:
+                self._authenticated_catalogue_principal_v1 = (
+                    PERSONAL_PRINCIPAL_SCHEME, epoch, self._accounts[0], principal,
+                )
             self.connected = True
             return self.accounts
 
@@ -364,6 +379,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
             snapshot = self._snapshot(activity_html)
         except (ReaderHTTPError, WebParseError) as exc:
             self.connected = False
+            self._authenticated_catalogue_principal_v1 = None
             self.client.clear()
             raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
         if self._closed or epoch != self._epoch:
@@ -1524,6 +1540,7 @@ class BnfProviderSession(LegacyRightsResourceAdapter, ProviderSession):
         self._closed = True
         self._epoch = uuid4().hex
         self.connected = False
+        self._authenticated_catalogue_principal_v1 = None
         self._accounts = []
         self._observed_loans = {}
         with self._lock:

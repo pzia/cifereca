@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from hashlib import sha256
+import hmac
+from secrets import token_bytes
 import json
 import logging
 from pathlib import Path
@@ -21,6 +23,23 @@ from cifereca_bnf_pret_signed_action import signed_loan_url
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
 HISTORY = ORIGIN + '/my_profile/history?l=fr'
+
+# BnF's public personal-account policy (article 4.1) documents the email
+# login identifier as immutable. Compare only the exact independently
+# accepted email login, never a professional alias or a local credential.
+# Key is process-local: no raw identifier or reversible/stable hash export.
+_PERSONAL_PRINCIPAL_KEY = token_bytes(32)
+_PERSONAL_LOGIN = re.compile(r"[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]{1,189}\Z")
+PERSONAL_PRINCIPAL_SCHEME = "bnf.personal-login.v1"
+
+
+def _personal_login_principal(username):
+    if (type(username) is not str or len(username) > 254
+            or _PERSONAL_LOGIN.fullmatch(username) is None
+            or "." not in username.split("@", 1)[1]):
+        return None
+    return hmac.digest(_PERSONAL_PRINCIPAL_KEY,
+                       b"bnf.personal-login.v1\0" + username.encode("ascii"), "sha256")
 
 
 class ReaderHTTPError(RuntimeError):
@@ -126,6 +145,7 @@ def form_fields(form):
 class ReaderHTTPClient:
     def __init__(self, *, transport=None, diagnostics=None):
         self.diagnostics = diagnostics
+        self._catalogue_principal = None
         self.http = HTTPX_TRANSPORT.client(producer="provider.bnf-pret",
                                  timeout=httpx.Timeout(15, connect=10),
                                  follow_redirects=False, trust_env=False,
@@ -190,9 +210,11 @@ class ReaderHTTPClient:
                           'partial' if redirect else 'success', started)
 
     def close(self):
+        self._catalogue_principal = None
         self.http.close()
 
     def clear(self):
+        self._catalogue_principal = None
         self.http.cookies.clear()
 
     def request(self, method, url, *, data=None, authenticating=False, deadline=None,
@@ -497,8 +519,15 @@ class ReaderHTTPClient:
         deadline = time.monotonic() + 60
         url, html = self.request('GET', ACTIVITY, authenticating=True, deadline=deadline)
         submitted = False
+        saml_submitted = False
         for _ in range(8):
             if url == ACTIVITY:
+                # Existing isolated SSO flow only. A direct activity page
+                # or a shortcut after password submission does not attest
+                # the declared principal. Session publishes only after its
+                # ordinary activity parser also accepts this response.
+                if submitted and saml_submitted:
+                    self._catalogue_principal = _personal_login_principal(username)
                 return html
             candidates = forms(html)
             if len(candidates) != 1:
@@ -520,6 +549,7 @@ class ReaderHTTPClient:
                 if (not submitted or urlsplit(target).hostname != 'pret.bnf.fr'
                         or not urlsplit(target).path.startswith('/sso/saml/')):
                     raise ReaderHTTPError('unsupported_form')
+                saml_submitted = True
             else:
                 raise ReaderHTTPError('auth_interactive_required')
             url, html = self.request('POST', target, data=fields, authenticating=True, deadline=deadline)
