@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0,1]
+        shard: [1]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -33,6 +33,8 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = e8ed298116e57d44645c37cd3fa7ad91e1e9077e
           git fetch origin 2e2d31ffc471553facb924ed32d1e7033503b73f
           test "$(git rev-parse FETCH_HEAD)" = 2e2d31ffc471553facb924ed32d1e7033503b73f
+          git fetch origin 1db4a1203b5c644436fa804f652a60b372d82818
+          test "$(git rev-parse FETCH_HEAD)" = 1db4a1203b5c644436fa804f652a60b372d82818
           python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
           python -m pip freeze > "$out/dependencies.txt"
           for label in A B; do
@@ -41,10 +43,14 @@ jobs:
             test "$(git rev-parse HEAD)" = "$sha"
             # Apply identical test-only isolation controls to both arms.
             git checkout 2e2d31ffc471553facb924ed32d1e7033503b73f -- tests/test_library_metadata_candidates.py tests/test_core_p1_1498_duplicate_cleanup_row_progress.py
+            test "$(git rev-parse HEAD:tests/test_core_placement_observation_handoff.py)" = e371df65dfdba81be1d854b94c021da45a2cf651
+            git checkout 1db4a1203b5c644436fa804f652a60b372d82818 -- tests/test_core_placement_observation_handoff.py
+            test "$(git rev-parse :tests/test_core_placement_observation_handoff.py)" = 5f6b325ff81b8063d0b505ab6194a4cac1d905cc
             git diff --cached --binary > "$out/$label.isolation.patch"
+            if [ "$label" = B ]; then cmp "$out/A.isolation.patch" "$out/B.isolation.patch"; fi
             git rev-parse HEAD > "$out/$label.sha"
             git diff --cached --name-only > "$out/$label.changed"
-            test "$(wc -l < "$out/$label.changed")" = 2
+            test "$(wc -l < "$out/$label.changed")" = 3
             python - <<'PY' > "$out/$label.files"
           import hashlib, os, subprocess
           paths=subprocess.check_output(["git","ls-files","tests"],text=True).splitlines()
