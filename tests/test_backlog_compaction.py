@@ -176,6 +176,18 @@ class Tests(unittest.TestCase):
             c.lot_attachment(self.api, control)
         self.assertEqual(self.api.writes, [])
 
+    def test_lot_prefix_plan_and_replay_cursor(self):
+        event, stage = self.consolidation_fixture()
+        original = c.public_projection(c.snapshot(self.api, 123))
+        manifest = {"p0": 999, "master": 888, "snapshots": [original]}
+        plan = c.lot_plan(manifest)
+        self.assertEqual(len(plan), 2)
+        prefix = c.expected_prefix(manifest, 1)
+        self.assertEqual(prefix[0]["issue"]["body"], plan[0][2])
+        self.assertEqual(prefix[0]["comments"][0]["body"], original["comments"][0]["body"])
+        with self.assertRaisesRegex(c.Refusal, "cursor"):
+            c.expected_prefix(manifest, 3)
+
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:
