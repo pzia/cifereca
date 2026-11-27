@@ -1,0 +1,48 @@
+name: P0 8216 placement IO oracle
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-placement-io-mutations.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 302500704ea989440fa6c9239753d7e482cc1d28
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' pytest-xdist 'Pillow>=10,<12' 'cryptography>=42,<48'
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          module=tests/test_core_placement_observation_handoff.py
+          node="$module::test_bound_is_explicit_and_projection_performs_no_new_io"
+          source=src/cifereca/core/library_placement_observations.py
+          python -m pytest -q -n 3 --dist=loadfile "$module" --cov=src/cifereca --cov-branch --cov-context=test --cov-report=
+          for kind in stat open sqlite indirect; do
+            git restore "$source"
+            KIND="$kind" python - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path("src/cifereca/core/library_placement_observations.py")
+          s=p.read_text()
+          code={"stat":"import os; os.stat('.')","open":"import os; os.open('.', os.O_RDONLY)","sqlite":"import sqlite3; sqlite3.connect(':memory:')","indirect":"from pathlib import Path; Path('.').stat()"}[os.environ["KIND"]]
+          needle="    from .library_audit import LibraryAudit"
+          assert s.count(needle)==1
+          p.write_text(s.replace(needle, "    "+code+"\n"+needle))
+          PY
+            set +e
+            python -m pytest -q "$node" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= > "$RUNNER_TEMP/$kind.log" 2>&1
+            rc=$?
+            set -e
+            cat "$RUNNER_TEMP/$kind.log"
+            test "$rc" = 1
+            grep -q 'Failed: projection must not' "$RUNNER_TEMP/$kind.log"
+          done
+          git restore "$source"
+          test -z "$(git status --porcelain --untracked-files=no)"
