@@ -162,6 +162,20 @@ class Tests(unittest.TestCase):
                         c.collect_closure(self.api, event, HEAD)
         self.assertEqual(self.api.writes, [])
 
+    def test_master_lot_binding_and_overlap(self):
+        master = self.staging_issue()
+        master["body"] = "<!-- backlog-master-lot-v1: 999 ; 42 ; public -->"
+        self.api.issue = master
+        control = dict(master, number=999, title=c.LOT_TITLE+"123", labels=[], assignees=[],
+                       body="<!-- backlog-lot-v1: 123 ; 42 ; public -->")
+        self.assertEqual(c.lot_attachment(self.api, control)[:2], (123, [42]))
+        with self.assertRaisesRegex(c.Refusal, "not bound"):
+            c.lot_attachment(self.api, dict(control, number=998))
+        self.api.issue["body"] += "\n<!-- backlog-master-lot-v1: 998 ; 42 ; public -->"
+        with self.assertRaisesRegex(c.Refusal, "overlapping"):
+            c.lot_attachment(self.api, control)
+        self.assertEqual(self.api.writes, [])
+
     def test_api_path_injection(self):
         api = c.ReadOnlyAPI("synthetic-token")
         with patch.object(api.opener, "open") as opener:

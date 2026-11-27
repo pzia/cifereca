@@ -93,3 +93,18 @@ Mesurer caractères, octets et tokens estimés ; inclure staging, nouvelles
 synthèses, documents et journaux dans le gain global. Recette synthétique avant toute déclaration de périmètre historique,
 puis pilote réel, exact HEAD ; pas de réception globale avant preuve des deux
 parcours. Le stockage physique GitHub reste hors garantie.
+
+## Lots historiques sous un maître unique
+
+Créer des contrôles ouverts sans priorité ni assignation, titre `Lot consolidation #8195 — M`.
+Chaque contrôle L porte exactement `<!-- backlog-lot-v1: M ; A,B ; public -->` (un ou deux membres).
+Le maître P0 M porte une ligne `<!-- backlog-master-lot-v1: L ; A,B ; public -->` par lot,
+sans marqueur de clôture standard. Inventaire disjoint, contrôles et membres distincts,
+au plus 100 lots. Fermer le maître completed après qualification, puis fermer chaque contrôle
+completed sous pzia, séquentiellement après réception et purge du précédent. Le contrôle
+est l'ancre technique de staging, journaux, réception et purge existants ; le maître reste
+intact et son empreinte est vérifiée. Le corps du contrôle reste intact. Aucun changement
+historique de priorité, état ou relation. Chaque lot reste borné à 1 Mio et 100 commentaires
+modifiables ; un ticket dépassant ces limites est refusé, pas tronqué. Les journaux du
+contrôle et les renvois des membres empêchent le rejeu ; ne pas réutiliser un contrôle.
+La clôture du maître ne vaut pas réception des lots : inventorier leurs journaux.

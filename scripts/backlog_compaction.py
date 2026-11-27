@@ -261,7 +261,48 @@ def closure_event(env):
     require(closed <= now < closed + dt.timedelta(hours=24), "closure expired")
     return issue
 
+LOT_TITLE = "Lot consolidation #8195 — "
+LOT_SCOPE = re.compile(r"(?m)^<!-- backlog-lot-v1: ([1-9]\d*) ; ([1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
+MASTER_SCOPE = re.compile(r"(?m)^<!-- backlog-master-lot-v1: ([1-9]\d*) ; ([1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
+
+def lot_attachment(api, issue):
+    matches = LOT_SCOPE.findall(issue["body"] or "")
+    require(len(matches) == 1, "invalid lot attachment")
+    master, members = matches[0]
+    master = int(master)
+    members = issue_numbers([int(n) for n in members.split(",")])
+    require(len(members) <= 2 and master not in members and master != issue["number"]
+            and issue["number"] not in members and 8195 not in [master, *members],
+            "invalid lot members")
+    require(issue["title"] == LOT_TITLE + str(master), "lot master title mismatch")
+    snap = snapshot(api, master)
+    closure_identity(snap["issue"])
+    require(not snap["issue"]["title"].startswith(LOT_TITLE), "nested lot master")
+    require("PU" not in {l["name"] for l in snap["issue"]["labels"]}, "suspended master")
+    require(not SCOPE.findall(snap["issue"]["body"] or ""), "mixed master modes")
+    declarations = MASTER_SCOPE.findall(snap["issue"]["body"] or "")
+    require(1 <= len(declarations) <= 100, "invalid master inventory")
+    controls = [int(n) for n, _ in declarations]
+    all_members = [int(n) for _, group in declarations for n in group.split(",")]
+    require(len(set(controls)) == len(controls) and len(set(all_members)) == len(all_members)
+            and not set(controls) & set(all_members)
+            and master not in controls + all_members and 8195 not in controls + all_members,
+            "overlapping master lots")
+    require(all(1 <= len(group.split(",")) <= 2 for _, group in declarations),
+            "invalid master lot size")
+    require((str(issue["number"]), ",".join(map(str, members))) in declarations,
+            "lot not bound to master")
+    return master, members, snap
+
 def closure_identity(issue):
+    if issue["title"].startswith(LOT_TITLE):
+        require("pull_request" not in issue and issue["state"] == "closed"
+                and issue["state_reason"] == "completed" and not issue["labels"]
+                and not issue["assignees"] and issue["user"]["id"] == OWNER_ID,
+                "invalid lot control")
+        timestamp(issue["closed_at"])
+        return {k: issue[k] for k in ("id", "number", "title", "body", "state",
+                                      "state_reason", "closed_at", "labels")}
     require("pull_request" not in issue and issue["state"] == "closed"
             and issue["state_reason"] == "completed"
             and {l["name"] for l in issue["labels"]} & PRIORITIES == {"P0"},
@@ -296,9 +337,14 @@ def collect_closure(api, event_issue, current):
     root = number(identity["number"])
     require(root != 8195, "infrastructure issue excluded")
     require("PU" not in {l["name"] for l in identity["labels"]}, "suspended P0")
-    matches = SCOPE.findall(identity["body"] or "")
-    require(len(matches) == 1, "missing or ambiguous public closure scope")
-    children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
+    lot = lot_attachment(api, event_issue) if identity["title"].startswith(LOT_TITLE) else None
+    if lot:
+        children = lot[1]
+        require(not SCOPE.findall(identity["body"] or ""), "mixed lot modes")
+    else:
+        matches = SCOPE.findall(identity["body"] or "")
+        require(len(matches) == 1, "missing or ambiguous public closure scope")
+        children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
     numbers = issue_numbers([root, *children])
     require(8195 not in numbers, "infrastructure issue excluded")
     snapshots = {n: snapshot(api, n) for n in numbers}
@@ -328,6 +374,10 @@ def collect_closure(api, event_issue, current):
     manifest = {"version": 1, "repository": REPO, "p0": root, "main_sha": current,
                 "edges": {str(n): edges[n] for n in sorted(edges)},
                 "snapshots": [public_projection(snapshots[n]) for n in sorted(snapshots)]}
+    if lot:
+        require(snapshot(api, lot[0]) == lot[2], "master inventory drift")
+        manifest["master"] = lot[0]
+        manifest["master_sha256"] = fingerprint(lot[2])
     require(len(encode(manifest)) <= STAGE_LIMIT, "staging corpus too large")
     return manifest
 
@@ -474,7 +524,7 @@ def consolidate(api, stage, event_issue, current, clock=None):
     mutations, projected = [], []
     for n, snap in states.items():
         old = snap["issue"]["body"]
-        new = compact_text(old, parent)
+        new = old if n == parent and "master" in manifest else compact_text(old, parent)
         if old != new:
             mutations.append((n, None, new))
         projected.append(new or "")
@@ -483,7 +533,8 @@ def consolidate(api, stage, event_issue, current, clock=None):
             if new != c["body"]:
                 mutations.append((n, c["id"], new))
             projected.append(new)
-    require(sum(cid is not None for _, cid, _ in mutations) <= MAX_REMOVALS, "pilot comment limit exceeded")
+    require(sum(cid is not None for _, cid, _ in mutations) <= (100 if "master" in manifest else MAX_REMOVALS),
+            "lot comment limit exceeded")
     before = metrics([t for snap in states.values() for t in issue_texts(snap)])
     # Count both persistent journals, even before the commit SHA is known.
     estimate = metrics(projected + [START + digest + " " + "0" * 40, DONE + digest + " " + "0" * 40])
@@ -491,6 +542,9 @@ def consolidate(api, stage, event_issue, current, clock=None):
     commit = None
     written = set()
     def guard():
+        if "master" in manifest:
+            require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"],
+                    "master inventory drift")
         require(clock() < timestamp(event_issue["closed_at"]) + dt.timedelta(hours=24), "closure expired")
         main_guard(api, current)
         for n, snap in states.items():
@@ -568,6 +622,8 @@ def receive_completed(api, stage, event_issue, current):
             "invalid staged manifest")
     originals = manifest["snapshots"]
     numbers = issue_numbers([x["issue"]["number"] for x in originals])
+    if "master" in manifest:
+        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
     require(parent in numbers and control not in numbers and 8195 not in numbers,
             "invalid staged corpus")
     states = {}
@@ -585,7 +641,8 @@ def receive_completed(api, stage, event_issue, current):
             require(not journals, "unexpected child journal")
         projected["comments"] = [c for c in projected["comments"] if c not in journals]
         expected = strict_json(encode(original))
-        expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
+        if n != parent or "master" not in manifest:
+            expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
         # Compare preserved public provenance; server timestamps are allowed to change
         # only for items which were compacted (parent also received the journal).
         if n == parent or expected["issue"]["body"] != original["issue"]["body"]:
@@ -635,6 +692,8 @@ def purge_capitalized(api, stage, event_issue, current, evidence_at=canonical_ev
     manifest = strict_json(raw)
     require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent,
             "invalid staged manifest")
+    if "master" in manifest:
+        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
     evidence = data["evidence"]
     require(type(evidence) is list and 1 <= len(evidence) <= 30, "missing canonical evidence")
     paths = set()
