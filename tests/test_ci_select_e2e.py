@@ -464,11 +464,17 @@ class SelectionTests(unittest.TestCase):
             "native_conflict", "native_confirmation", "native_cancellation",
             "native_copy", "native_idempotence", "native_removal",
             "native_usb_a", "native_usb_b", "native_usb_isolation",
-            "native_usb_discovery", "native_usb_setup_dialog", "native_usb_setup_result",
+            "native_usb_discovery",
             "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation",
         ):
             self.assertIn(f'"{phase}"', runner)
             self.assertIn(f'"{phase}"', source)
+        # Physical USB hardware is deliberately not emulated: the fixture
+        # only detects disposable roots through the real local FS proof.
+        self.assertIn('local_binding = dict(binding, metadata=local_proofs[reader])', source)
+        self.assertIn('proof = real_attest(identity_id=owner, binding=local_binding,', source)
+        self.assertIn('third_a = connect_usb("reader-a")', source)
+        self.assertIn('third_b = connect_usb("reader-b")', source)
         assert '"closed_failure_phase"] = phase[0]' in source
         assert '"reservation_commit"' in source
         assert 'reserve_deadline[0] = monotonic() + 5.0' in source

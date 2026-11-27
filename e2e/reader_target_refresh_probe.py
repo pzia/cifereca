@@ -43,7 +43,7 @@ STAGES = frozenset({
     "native_copy_navigation", "native_copy_result", "native_copy_observation",
     "native_idempotence", "native_removal",
     "native_usb_a", "native_usb_b", "native_usb_isolation",
-    "native_usb_discovery", "native_usb_setup_dialog", "native_usb_setup_result",
+    "native_usb_discovery",
     "native_usb_preview", "native_usb_admission", "native_usb_copy_result", "native_usb_observation", "finish",
 })
 
@@ -625,7 +625,7 @@ def main() -> int:
         from dataclasses import replace
         from importlib import import_module
         from threading import Event
-        from time import sleep, time
+        from time import sleep
         from types import SimpleNamespace
         from unittest.mock import patch
         import runpy
@@ -963,30 +963,25 @@ def main() -> int:
             assert db.device_placements(device_id="reader-b") == []
             report["checks"]["native_confirmed_remove_preserves_source_and_third_party"] = True
 
-            # Reuse the two actual USB bindings from the earlier fixture.
-            # Supply only the kernel/udev evidence at the same seam as the
-            # existing USB real-filesystem acceptance tests. Keep live inode,
-            # mount ID, directory FDs, source SHA, staging and journal checks.
+            # Owner-approved USB fixture: detect two disposable filesystem
+            # roots instead of emulating a physical block device/udev. Reuse
+            # the real local inode/device/mount proof only inside this test;
+            # actual USB bindings, Core operations and SQLite stay unchanged.
             from cifereca.core import device_usb_mount as mount_ops
             from cifereca.core import device_usb_discovery as discovery
             real_attest = mount_ops.observe_linux_usb_mount
-            usb_roots = {}
-            pins = {}
-            connected = set()
+            usb_roots, local_proofs, connected = {}, {}, set()
             for owner, reader in (("alice", "reader-a"), ("bob", "reader-b")):
                 volume_root = work / ("synthetic-volume-" + owner)
-                volume_root.mkdir()
-                fd = os.open(volume_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-                try:
-                    info = os.fstat(fd)
-                    mount_id = mount_ops._fd_mount_id(fd)
-                    assert mount_id is not None
-                    pins[reader] = (info.st_dev, info.st_ino, mount_id)
-                finally:
-                    os.close(fd)
-                usb_roots[reader] = (owner, "uuid-" + owner + "-0001", volume_root)
+                (volume_root / "Books" / "Cifereca").mkdir(parents=True)
+                info = volume_root.stat()
+                fp = "uuid-" + owner + "-0001"
+                usb_roots[reader] = (owner, fp, volume_root)
+                local_proofs[reader] = dict(reader_transport="local",
+                    local_root=str(volume_root), local_inode=info.st_ino,
+                    local_device=info.st_dev, usb_fingerprint=fp)
                 db.device_usb_reader_formats_set(identity_id=owner, device_id=reader,
-                    usb_fingerprint=usb_roots[reader][1], supported_formats=("epub",))
+                    usb_fingerprint=fp, supported_formats=("epub",))
 
             def attest(*, identity_id, binding, mountpoint):
                 reader = binding.get("device_id")
@@ -1000,17 +995,13 @@ def main() -> int:
                         or binding.get("metadata", {}).get("usb_fingerprint") != fp
                         or mountpoint != volume_root):
                     return None
-                fd = os.open(volume_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-                try:
-                    info = os.fstat(fd)
-                    mount_id = mount_ops._fd_mount_id(fd)
-                    if (info.st_dev, info.st_ino, mount_id) != pins[reader]:
-                        return None
-                    return mount_ops.LinuxUsbMount(owner, reader, fp, volume_root,
-                        "ext4", os.major(info.st_dev), os.minor(info.st_dev),
-                        int(time()), mount_id)
-                finally:
-                    os.close(fd)
+                # A fixture-only view of the binding: never persisted. The
+                # real proof opens the actual filesystem without following
+                # symlinks and checks its pinned inode and device.
+                local_binding = dict(binding, metadata=local_proofs[reader])
+                proof = real_attest(identity_id=owner, binding=local_binding,
+                                    mountpoint=volume_root)
+                return replace(proof, filesystem="ext4") if proof is not None else None
 
             def discover():
                 results = []
@@ -1020,7 +1011,7 @@ def main() -> int:
                                    mountpoint=volume_root)
                     if proof is not None:
                         results.append(discovery.MountedUsbVolume(fp, volume_root,
-                            proof.filesystem, "Synthetic USB", None, proof.major,
+                            proof.filesystem, "Synthetic filesystem", None, proof.major,
                             proof.minor, proof.mount_id))
                 return tuple(results)
 
@@ -1033,34 +1024,22 @@ def main() -> int:
                 window._render_readers()
                 assert window._reader_scope_identity == owner
 
-            def setup_usb(reader):
+            def connect_usb(reader):
                 phase[0] = "native_usb_discovery"
+                owner, fp, volume_root = usb_roots[reader]
+                assert production["discover"](storage=db, identity_id=owner,
+                    device_id=reader, fingerprint=fp) is None
                 connected.add(reader)
                 select_reader(reader)
-                owner, fp, volume_root = usb_roots[reader]
-                # Independently check the same production discovery entry
-                # point before opening the native confirmation. It is not
-                # an authorization: setup still re-discovers in its worker.
                 volume = production["discover"](storage=db, identity_id=owner,
                     device_id=reader, fingerprint=fp)
                 assert type(volume) is discovery.MountedUsbVolume
                 assert volume.mountpoint == volume_root
-                phase[0] = "native_usb_setup_dialog"
-                button = header("reader-setup-directory")
-                wait(button.get_sensitive)
-                button.emit("clicked")
-                setup_dialog = dialog_with_heading("Initialiser le dossier géré ?")
-                phase[0] = "native_usb_setup_result"
-                setup_dialog.emit("response", "setup")
-                folder = volume_root / "Books" / "Cifereca"
-                wait(lambda: button.get_sensitive() and (
-                    "initialisé" in window._reader_status_label.get_text()
-                    or "Initialisation refusée" in window._reader_status_label.get_text()))
-                assert folder.is_dir()
-                assert "initialisé" in window._reader_status_label.get_text()
-                other = folder / "third-party.txt"
+                # Native directory setup is already exercised on the local
+                # reader above; these USB fixtures start with a managed dir.
+                other = volume_root / "Books" / "Cifereca" / "third-party.txt"
                 other.write_bytes(b"untouched " + reader.encode("ascii"))
-                return folder, other
+                return other
 
             def sync_real(reader):
                 phase[0] = "native_usb_preview"
@@ -1124,7 +1103,7 @@ def main() -> int:
                 stack.enter_context(patch.object(discovery, "discover_linux_usb_volumes", discover))
 
                 phase[0] = "native_usb_a"
-                _, third_a = setup_usb("reader-a")
+                third_a = connect_usb("reader-a")
                 assert db.device_placement_get("reader-a", artifact_id)["desired_state"] == "keep"
                 usb_a = sync_real("reader-a")
                 assert third_a.read_bytes() == b"untouched reader-a"
@@ -1163,7 +1142,7 @@ def main() -> int:
                 window.navigate("readers")
                 window._library_entries_cache = [bob_entry]
                 window._render_readers()
-                _, third_b = setup_usb("reader-b")
+                third_b = connect_usb("reader-b")
                 usb_b = sync_real("reader-b")
                 assert usb_a.read_bytes() == usb_b.read_bytes() == payload
                 report["checks"]["native_usb_b_real_copy_same_sha_other_profile"] = True
