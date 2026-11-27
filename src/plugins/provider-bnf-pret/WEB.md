@@ -843,3 +843,8 @@ saine n'est jamais remplacée par une relecture historique. Une entrée absente
 ou révoquée est indisponible, sans fallback réseau. L'alerte et le pin restent
 inspectables après réouverture de SQLite sous la liaison propriétaire courante,
 sans rétention du corps après redémarrage.
+
+
+### #6397 — équivalence documentaire du même identifiant personnel authentifié
+
+La [politique de confidentialité BnF, article 4.1](https://www.bnf.fr/fr/politique-de-confidentialite) décrit l'adresse personnelle servant d'identifiant de connexion à l'espace personnel et son caractère immuable. Le [mode d'emploi BnF-Prêt numérique](https://www.bnf.fr/fr/centre-d-aide/bnf-pret-numerique-mode-demploi) confirme l'usage de ce compte personnel pour le service de prêt à distance. Le transport qualifie uniquement le même identifiant de forme courriel exact, indépendamment accepté au terme de la chaîne SSO existante (soumission au formulaire autorisé, POST SAML déjà prévu, activité valide). Les alias professionnels, raccourcis de connexion, réponses partielles ou échecs restent sans preuve d'équivalence. Le marqueur d'égalité HMAC à clé de processus n'est ni conservé en SQLite, ni exporté, ni un identifiant fournisseur de prêt; aucune lecture d'assertion SAML, aucun appel supplémentaire. Le Core ne l'utilise que pour regrouper les choix de fiche identiques d'une même ressource native fortement attestée. Chaque profil/credential/compte/epoch, observation et preuve de lien conserve ses gardes indépendantes; aucune session ou capacité ne transite. Les tests utilisent exclusivement des réponses synthétiques via HTTPX MockTransport. Limites : aucun alias différent n'est rapproché, aucune preuve d'identité distante de l'API v1 n'est revendiquée, aucune recette terrain.

@@ -374,6 +374,12 @@ class ProviderDescriptor:
     authenticated_catalogue_edition_branches_v1: tuple[
         tuple[str, str, str, str | None, str | None, str], ...
     ] = ()
+    # Optional native authentication principal, ONLY for documentary link
+    # equivalence. After independent authentication, a provider may expose
+    # an inert session-bound (scheme, epoch, exact Account, opaque bytes)
+    # in _authenticated_catalogue_principal_v1. No credential, right,
+    # session, identifier or durable account alias may be shared.
+    authenticated_catalogue_principal_scheme_v1: str | None = None
 
 
 class ProviderSession(ABC):
