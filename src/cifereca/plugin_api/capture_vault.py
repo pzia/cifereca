@@ -76,3 +76,11 @@ from ..core.capture_export import build_capture_zip, write_capture_zip
 
 from ..core.capture_devkit import core_contract_kit, _PUBLIC_SOURCES as CAPTURE_KIT_PUBLIC_SOURCES
 from ..core.capture_devkit_templates import fixture_plugin_files, FIXTURE_MANIFEST
+
+
+@runtime_checkable
+class DiagnosticsCaptureVaultBroker(CaptureVaultBroker, Protocol):
+    """Opt-in snapshot of the current HTTP Trace, without extra HTTP activity."""
+    def archive_http_trace(self, *, consented: bool = False) -> str: ...
+    def export_http_archive(self, capture_id: str, destination: str, *,
+                            confirmed: bool = False) -> int: ...

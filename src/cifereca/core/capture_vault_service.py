@@ -236,12 +236,14 @@ class CoreCaptureVault:
     def for_plugin(self, plugin_id: str, *, trusted: bool = False):
         if plugin_id not in _ALLOWED:
             return None
-        return _Port(self, plugin_id)
+        cls = _DiagnosticsPort if plugin_id == "ui.page.diagnostics" else _Port
+        return cls(self, plugin_id)
 
     def for_activation(self, plugin_id: str, *, current):
         if plugin_id not in _ALLOWED or current() is not True:
             return None
-        return _Port(self, plugin_id, current=current)
+        cls = _DiagnosticsPort if plugin_id == "ui.page.diagnostics" else _Port
+        return cls(self, plugin_id, current=current)
 
     def _key(self, *, create=False):
         # Never regenerate a lost key for an existing vault, including orphan
@@ -383,6 +385,47 @@ class _Port:
             stored = self._open(scope, capture_id, key)
             self._service._storage._release(stored)
             self._service._storage.delete(capture_id, key, confirmed=True)
+
+
+class _DiagnosticsPort(_Port):
+    """Only Diagnostics can archive the opt-in process-wide HTTP Trace."""
+
+    def archive_http_trace(self, *, consented=False):
+        if consented is not True:
+            raise VaultError("vault_confirmation_required")
+        from ..http_trace import HTTP_TRACE, build_http_trace_zip
+        scope = CaptureScope()
+        self._check(scope)
+        if HTTP_TRACE.status()["active"] is not True:
+            raise VaultError("vault_trace_inactive")
+        snapshot = HTTP_TRACE.snapshot()
+        source = snapshot["session_ref"]
+        payload = build_http_trace_zip(snapshot)
+        self._check(scope)
+        if HTTP_TRACE.status()["active"] is not True:
+            raise VaultError("vault_trace_inactive")
+        writer = self._begin(scope, source, consented=True,
+                             reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
+        writer.save(payload, "completed", force=True)
+        return writer.capture_id
+
+    def export_http_archive(self, capture_id, destination, *, confirmed=False):
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
+        from .capture_export import write_capture_zip
+        scope = CaptureScope()
+        row = self.read(scope, capture_id)
+        try:
+            payload = project_archived_http_zip(
+                row.payload, include_binary=HTTP_TRACE.status()["include_binary"],
+                source_session_ref=row.summary.source_session_ref,
+            )
+        except Exception as exc:
+            raise VaultError("vault_invalid") from exc
+        self._check(scope)
+        return write_capture_zip(Path(destination), payload, confirmed=True,
+                                 max_bytes=HTTP_TRACE_ZIP_LIMIT)
 
 
 class _Writer:

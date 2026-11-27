@@ -7,13 +7,13 @@ by constructing a public TraceHTTPTransport / TraceAsyncHTTPTransport.
 from __future__ import annotations
 
 import copy
+from io import BytesIO
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 import re
 from pathlib import Path
-import tempfile
 import threading
 import time
 import uuid
@@ -280,35 +280,96 @@ class HTTPTraceCapture:
             return snapshot
 
     def export(self, destination: str | Path):
-        """Publish a new ZIP atomically, never replace a file or follow its link.
+        """Exclusive local ZIP; retain the established caller error contract."""
+        from .core.capture_export import write_capture_zip
+        from .core.capture_vault import VaultError
 
-        Only call following the application's explicit raw export confirmation.
-        A private temporary ZIP is removed on failure. Existing destinations
-        require a new filename; no partial export is published.
-        """
         if not _trace_active():
             raise ValueError("HTTP export requires active Trace")
-        snapshot = self.snapshot()
         destination = Path(destination)
-        fd, temporary = tempfile.mkstemp(prefix=".cifereca-http-", dir=destination.parent)
+        payload = build_http_trace_zip(self.snapshot())
         try:
-            with os.fdopen(fd, "w+b") as output:
-                with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
-                    for entry in snapshot['exchanges']:
-                        for side in ('request', 'response'):
-                            name = f"bodies/{entry['exchange_ref']}-{side}.bin"
-                            record, content = http_body_member(entry[side + '_body'], name)
-                            entry[side + '_body'] = record
-                            if content is not None:
-                                archive.writestr(name, content)
-                    archive.writestr("index.json", json.dumps(snapshot, ensure_ascii=True, indent=2))
-                output.flush()
-                os.fsync(output.fileno())
-            # Hardlink publication is atomic, exclusive and same-filesystem.
-            os.link(temporary, destination, follow_symlinks=False)
-        finally:
-            os.unlink(temporary)
+            write_capture_zip(destination.absolute(), payload, confirmed=True,
+                              max_bytes=HTTP_TRACE_ZIP_LIMIT)
+        except VaultError as exc:
+            code = exc.args[0]
+            if code == "private_zip_exists":
+                raise FileExistsError("HTTP export destination exists") from exc
+            raise OSError("HTTP export failed") from exc
         return destination
+
+
+# 32 MiB retained observations plus bounded index/ZIP overhead. No change to
+# capture budgets. The same index/blob format serves live and archived export.
+HTTP_TRACE_ZIP_LIMIT = 40 * 1024 * 1024
+
+
+def build_http_trace_zip(snapshot):
+    from .core.capture_export import build_capture_zip
+    members = {}
+    for entry in snapshot["exchanges"]:
+        for side in ("request", "response"):
+            name = f"bodies/{entry['exchange_ref']}-{side}.bin"
+            record, content = http_body_member(entry[side + "_body"], name)
+            entry[side + "_body"] = record
+            if content is not None:
+                members[name] = content
+    members["index.json"] = json.dumps(snapshot, ensure_ascii=True, indent=2).encode()
+    return build_capture_zip(members, max_bytes=HTTP_TRACE_ZIP_LIMIT,
+                             compression=zipfile.ZIP_STORED)
+
+
+def project_archived_http_zip(payload, *, include_binary, source_session_ref):
+    """Authenticate index/blob consistency and reapply the current binary policy."""
+    if type(payload) is not bytes or len(payload) > HTTP_TRACE_ZIP_LIMIT:
+        raise ValueError("invalid_http_archive")
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        infos = archive.infolist()
+        names = {info.filename for info in infos}
+        if (len(infos) != len(names) or len(infos) > 2001
+                or "index.json" not in names
+                or sum(info.file_size for info in infos) > HTTP_TRACE_ZIP_LIMIT):
+            raise ValueError("invalid_http_archive")
+        snapshot = json.loads(archive.read("index.json"))
+        if (snapshot.get("schema") != "cifereca.http-trace/1"
+                or snapshot.get("session_ref") != source_session_ref
+                or type(snapshot.get("exchanges")) is not list
+                or len(snapshot["exchanges"]) > 1000):
+            raise ValueError("invalid_http_archive")
+        expected = {"index.json"}
+        seen = set()
+        for entry in snapshot["exchanges"]:
+            ref = entry["exchange_ref"]
+            if type(ref) is not str or not re.fullmatch(r"[a-f0-9]{32}", ref) or ref in seen:
+                raise ValueError("invalid_http_archive")
+            seen.add(ref)
+            for side in ("request", "response"):
+                body = entry[side + "_body"]
+                name = f"bodies/{ref}-{side}.bin"
+                if body["state"] in _EXCLUDED_STATES:
+                    if "blob" in body or body.get("stored_bytes") != 0:
+                        raise ValueError("invalid_http_archive")
+                    body["data"] = bytearray()
+                else:
+                    if body.get("blob") != name or name not in names:
+                        raise ValueError("invalid_http_archive")
+                    data = archive.read(name)
+                    if (len(data) != body.get("stored_bytes")
+                            or hashlib.sha256(data).hexdigest() != body.get("sha256")):
+                        raise ValueError("invalid_http_archive")
+                    expected.add(name)
+                    body["data"] = bytearray(data)
+                for key in ("blob", "stored_bytes", "sha256"):
+                    body.pop(key, None)
+            if not include_binary:
+                _project_body_policy(entry)
+        if names != expected:
+            raise ValueError("invalid_http_archive")
+    if include_binary:
+        # Bodies deliberately omitted when archived cannot be recovered.
+        return payload
+    snapshot["include_binary"] = False
+    return build_http_trace_zip(snapshot)
 
 
 class _Exchange:
