@@ -1,0 +1,26 @@
+name: P0 8216 global triage
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-global-triage.yml'
+permissions:
+  contents: read
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 0d1cb09b5c31479f693e96c1b58116508a24bbe0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: |
+          test "$(git rev-parse HEAD)" = "0d1cb09b5c31479f693e96c1b58116508a24bbe0"
+          python -m scripts.ci_test_quality --output "$RUNNER_TEMP/quality.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: global-test-quality
+          path: ${{ runner.temp }}/quality.json
+          retention-days: 7
