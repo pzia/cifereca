@@ -249,15 +249,15 @@ def test_malicious_primary_cover_can_fall_back_to_independent_public_image():
     assert "PRIVATE" not in json.dumps(result.metadata)
 
 
-@pytest.mark.parametrize("safe", (
-    "covers/edition/cover.jpg",
-    "/covers/edition/cover.webp",
-    "https://cdn.example/book/cover%20image.jpg",
-    "https://cdn.example/covers/cover%2520image.jpg",
-    "https://cdn.example/covers/book%25variant.jpg",
+@pytest.mark.parametrize("safe,resolved", (
+    ("covers/edition/cover.jpg", "https://vault.example/base/covers/edition/cover.jpg"),
+    ("/covers/edition/cover.webp", "https://vault.example/covers/edition/cover.webp"),
+    ("https://cdn.example/book/cover%20image.jpg", "https://cdn.example/book/cover%20image.jpg"),
+    ("https://cdn.example/covers/cover%2520image.jpg", "https://cdn.example/covers/cover%2520image.jpg"),
+    ("https://cdn.example/covers/book%25variant.jpg", "https://cdn.example/covers/book%25variant.jpg"),
 ))
-def test_safe_nested_images_remain_usable_after_route_guard(safe):
-    assert _catalog().cover_url({"cover_url": safe}) is not None
+def test_safe_nested_images_remain_usable_after_route_guard(safe, resolved):
+    assert _catalog().cover_url({"cover_url": safe}) == resolved
 
 
 def test_same_origin_local_vault_does_not_bypass_cover_route_policy():
