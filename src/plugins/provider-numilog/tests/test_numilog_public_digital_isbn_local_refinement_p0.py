@@ -6,7 +6,9 @@ anonymous search; labelled EAN details in this fixture are *synthetic*.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -27,11 +29,17 @@ EPUB = "9782092591093"
 PDF = "9782380354539"
 
 
-def listing():
+@lru_cache(maxsize=1)
+def _parsed_listing():
     observed = parse_public_search(HTML, SOURCE)
     return replace(observed, items=tuple(
         replace(row, source_provider="numilog-catalog") for row in observed.items
     ))
+
+
+def listing():
+    # The fixture is fixed; each caller gets an independent mutable projection.
+    return deepcopy(_parsed_listing())
 
 
 def synthetic_detail(item, *, visible="", json_isbn=PAPER, title=None):
