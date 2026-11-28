@@ -1585,6 +1585,8 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         code = "SearchTemporarilyUnavailable"
         message = _search_problem_label(code)
         return [], [message], code, message
+    from .provider_health_search import begin_public_search, finish_public_search
+    health_call = begin_public_search(self, session, identity)
     try:
         outcome = consume_provider_stream(
             session.search_stream(
@@ -1600,10 +1602,16 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         if str(scope or "all").casefold() == "unknown":
             from ..core.search import support_kind
             rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call,
+                                 'success' if outcome.rows and not outcome.warnings
+                                 and not outcome.error_code else 'unknown')
         return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
     except SearchStreamCancelled:
         return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
     except SearchStreamFailure as exc:
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call, 'unknown')
         _log_observed_stream_failure(
             session.provider_id, "stream_validation", exc,
         )
@@ -1622,6 +1630,8 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
             session, query, scope, field=field, content_types=content_types,
         )
     except Exception as exc:
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call, 'unknown')
         _log_observed_stream_failure(
             session.provider_id, "stream_delivery", exc,
         )
