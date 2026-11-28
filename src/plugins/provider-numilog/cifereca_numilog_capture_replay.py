@@ -133,7 +133,13 @@ def analyse_capture(path):
             names = archive.namelist()
             if len(names) != len(set(names)):
                 raise ValueError("ambiguous_trace_members")
-            index = archive.getinfo("http/index.json")
+            # Accept the historic recorder shape and the common vault's
+            # targeted HTTP archive, never both in the same container.
+            roots = [root for root in ("http/", "") if root + "index.json" in names]
+            if len(roots) != 1:
+                raise ValueError("ambiguous_trace_index")
+            root = roots[0]
+            index = archive.getinfo(root + "index.json")
             if index.file_size > _MAX_INDEX:
                 raise ValueError("invalid_trace_index")
             trace = json.loads(archive.read(index))
@@ -142,6 +148,16 @@ def analyse_capture(path):
                     or type(trace.get("exchanges")) is not list
                     or len(trace["exchanges"]) > 1000):
                 raise ValueError("invalid_trace_index")
+            if root == "":
+                # New targeted archives must identify one complete operation.
+                # Legacy recorder bundles retain their original semantics.
+                source = trace.get("session_ref")
+                if (type(source) is not str or not source or len(source) > 256
+                        or trace.get("omitted_exchanges") != 0
+                        or not trace["exchanges"]
+                        or any(type(entry) is not dict or entry.get("task_ref") != source
+                               for entry in trace["exchanges"])):
+                    raise ValueError("unqualified_targeted_trace")
             for entry in trace["exchanges"]:
                 counts["exchanges"] += 1
                 if type(entry) is not dict:
@@ -226,7 +242,11 @@ def analyse_capture(path):
                         or info.get("state") != "complete"):
                     reasons["body_incomplete"] += 1
                     continue
-                member = "http/bodies/" + ref + "-response.bin"
+                if root == "" and (entry.get("outcome") != "complete"
+                                   or info.get("observed_bytes") != info.get("stored_bytes")):
+                    reasons["body_incomplete"] += 1
+                    continue
+                member = root + "bodies/" + ref + "-response.bin"
                 if info.get("blob") != member:
                     reasons["invalid_receipt"] += 1
                     continue
