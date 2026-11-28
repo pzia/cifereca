@@ -293,7 +293,8 @@ def test_scoped_archive_pins_exact_scope_and_revokes_queued_consent(setup, chang
     s = setup
     s.export.close()
     scope = CaptureScope("fixture", "instance", "account", "owner")
-    selected = ScopedHTTPArchive("capture", scope, "loans", "evidence")
+    generation = (0, 0, "fixture", 1)
+    selected = ScopedHTTPArchive("capture", scope, "loans", "evidence", generation)
     state = {"selected": selected, "policy": True, "authorized": True}
     s.broker.http_trace_status = lambda: {"active": False, "include_binary": state["policy"]}
     vault = SimpleNamespace(export_http_archive=Mock())
@@ -321,7 +322,8 @@ def test_scoped_archive_pins_exact_scope_and_revokes_queued_consent(setup, chang
     s.tasks.run()
     if change == "none":
         vault.export_http_archive.assert_called_once_with(
-            "capture", dialog.output, confirmed=True, scope=scope)
+            "capture", dialog.output, confirmed=True, scope=scope,
+            capability="loans", evidence_ref="evidence", generation=generation)
     else:
         vault.export_http_archive.assert_not_called()
     s.broker.export_http_trace.assert_not_called()

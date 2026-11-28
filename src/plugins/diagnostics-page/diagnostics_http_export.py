@@ -11,6 +11,7 @@ class ScopedHTTPArchive:
     scope: object
     capability: str
     evidence_ref: str
+    generation: tuple | None = None
 
 
 class HTTPTraceExport:
@@ -253,7 +254,9 @@ class HTTPTraceExport:
                     selected = source[0]
                     if type(selected) is ScopedHTTPArchive:
                         self.vault.export_http_archive(
-                            selected.capture_id, destination, confirmed=True, scope=selected.scope)
+                            selected.capture_id, destination, confirmed=True, scope=selected.scope,
+                            capability=selected.capability, evidence_ref=selected.evidence_ref,
+                            generation=selected.generation)
                     else:
                         self.vault.export_http_archive(selected, destination, confirmed=True)
                 return True
@@ -373,6 +376,13 @@ class HTTPVaultArchive:
                 self.retention_apply.connect("clicked", self._apply_retention)
             except Exception:
                 self.retention_days = self.retention_mib = self.retention_apply = None
+        self.private = None
+        if all(callable(getattr(broker, name, None)) for name in (
+                "provider_health_active_observations", "provider_health_selection_current")
+                ) and callable(getattr(vault, "archive_provider_trace", None)):
+            self.private = ProviderEvidenceArchive(
+                container, vault=vault, broker=broker, tasks=tasks, host=host,
+                current=current, folder=folder, gtk=gtk, gio=gio, glib=glib)
         self._controls()
 
     def _selected(self):
@@ -486,8 +496,155 @@ class HTTPVaultArchive:
 
     def close(self):
         self.closed = True
+        if self.private is not None:
+            self.private.close()
         self.exporter.close()
         if self.handle is not None:
             self.handle.cancel()
             self.handle = None
+        self.rows.remove_all()
+
+
+
+class ProviderEvidenceArchive:
+    """Separate, explicit private observation selection; no provider requests."""
+
+    def __init__(self, container, *, vault, broker, tasks, host, current, folder,
+                 gtk, gio, glib):
+        self.vault, self.broker, self.tasks = vault, broker, tasks
+        self.current, self.glib = current, glib
+        self.closed = False
+        self.handle = None
+        self.tokens = {}
+        self.rows = gtk.ComboBoxText()
+        self.status = gtk.Label(label="Preuves fournisseurs de l’identité active", xalign=0, wrap=True)
+        self.reload = gtk.Button(label="Actualiser les observations fournisseurs")
+        self.consent = gtk.CheckButton(label="J’autorise l’archivage chiffré de cette observation.")
+        self.save = gtk.Button(label="Archiver la preuve sélectionnée")
+        self.export = gtk.Button(label="Exporter la preuve archivée…")
+        for widget in (self.status, self.reload, self.rows, self.consent, self.save, self.export):
+            container.append(widget)
+        self.exporter = HTTPTraceExport(
+            self.export, broker=broker, tasks=tasks, host=host, current=current, folder=folder,
+            gtk=gtk, gio=gio, glib=glib, vault=vault, archive_source=self._export_source,
+            archive_current=self._valid)
+        self.rows.connect("changed", self._changed)
+        self.consent.connect("toggled", lambda *_: self._controls())
+        self.reload.connect("clicked", lambda *_: self.refresh())
+        self.save.connect("clicked", self._archive)
+        self.refresh()
+
+    def _selected(self):
+        if self.closed or not self.current() or self.handle is not None:
+            return None
+        return self.tokens.get(self.rows.get_active_id())
+
+    def _valid(self, token):
+        if self.closed or not self.current() or token is None:
+            return False
+        try:
+            return self.broker.provider_health_selection_current(
+                token.scope, token.capability, token.evidence_ref,
+                token.capture_id, token.generation) is True
+        except Exception:
+            return False
+
+    def _export_source(self):
+        token = self._selected()
+        return token if token is not None and token.capture_id and self._valid(token) else None
+
+    def _controls(self):
+        token = self._selected()
+        idle = not self.closed and self.current() and self.handle is None
+        try:
+            trace = self.broker.http_trace_status().get("active") is True
+        except Exception:
+            trace = False
+        allowed = idle and token is not None and not token.capture_id and trace and self._valid(token)
+        self.reload.set_sensitive(idle)
+        self.rows.set_sensitive(idle)
+        self.consent.set_sensitive(allowed)
+        self.save.set_sensitive(allowed and self.consent.get_active())
+        self.exporter.refresh()
+
+    def _changed(self, *_):
+        self.exporter.invalidate()
+        self.consent.set_active(False)
+        self._controls()
+
+    def refresh(self):
+        from cifereca.plugin_api.capture_vault import CaptureScope
+        if self.closed or not self.current() or self.handle is not None:
+            return
+        self.exporter.invalidate()
+        self.consent.set_active(False)
+        self.tokens.clear()
+        self.rows.remove_all()
+        try:
+            observations = self.broker.provider_health_active_observations()
+            for row in observations:
+                if not row["evidence_ref"] or not row["generation"]:
+                    continue
+                scope = CaptureScope(row["provider_id"], row["instance_id"],
+                                     row["account_id"], row["identity_id"])
+                token = ScopedHTTPArchive(row["capture_id"], scope, row["capability"],
+                                          row["evidence_ref"], row["generation"])
+                if not self._valid(token):
+                    continue
+                key = str(len(self.tokens))
+                self.tokens[key] = token
+                self.rows.append(key, f'{row["provider_id"]} · {row["capability"]} · '
+                                      f'{row["observed_at"]} · {row["outcome"]} · '
+                                      + ("archivée" if token.capture_id else "non archivée"))
+            self.status.set_label(f"{len(self.tokens)} preuves privées disponibles ; aucun envoi.")
+        except Exception:
+            self.tokens.clear()
+            self.rows.remove_all()
+            self.status.set_label("Observations fournisseurs indisponibles.")
+        self._controls()
+
+    def _archive(self, *_):
+        token = self._selected()
+        if (token is None or token.capture_id or not self.consent.get_active()
+                or not self._valid(token)):
+            return
+        self.consent.set_active(False)
+        self.exporter.invalidate()
+        def execute(control):
+            if control.cancelled() or not self._valid(token):
+                raise RuntimeError("cancelled")
+            return self.vault.archive_provider_trace(
+                token.scope, token.capability, token.evidence_ref,
+                consented=True, generation=token.generation)
+        try:
+            self.handle = self.tasks.submit(execute, label="Archivage de preuve fournisseur",
+                                            kind="diagnostics")
+        except Exception:
+            self.status.set_label("Archivage indisponible.")
+            return
+        self._controls()
+        def completed(handle):
+            try:
+                handle.result()
+                okay = True
+            except Exception:
+                okay = False
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                self.refresh()
+                if not okay:
+                    self.status.set_label("Archivage refusé ou annulé.")
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def close(self):
+        self.closed = True
+        self.exporter.close()
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        self.tokens.clear()
         self.rows.remove_all()
