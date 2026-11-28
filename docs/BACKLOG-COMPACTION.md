@@ -146,3 +146,51 @@ par Backlog. Une lecture REST instable sur le seul horodatage de l'issue peut
 le snapshot renvoyé reste exact, non normalisé.
 
 DONE seulement après la dernière tranche. Aucun rerun, aucune purge avant DONE.
+
+
+### Transition XL des inventaires gelés (#8207)
+
+Sur arbitrage propriétaire, un contrôle de groupe distinct, de même titre
+`Lot consolidation #8195 — M`, porte exactement :
+
+`<!-- backlog-xl-v1: M ; L1,L2,L3,L4,L5 ; public -->`
+
+Cinq contrôles consécutifs de l'inventaire maître (dix issues historiques)
+constituent le pilote ; dix contrôles consécutifs (vingt issues historiques)
+sont autorisés seulement après réception du pilote réel. Aucun changement de
+l'inventaire maître ni des lots déjà consommés. Les sources doivent comporter
+deux membres chacune ; le reliquat est traité par le protocole ordinaire.
+Avant toute réservation, vérifier les états, les journaux, les refs, la
+publicité, les relations natives et la qualification sémantique du groupe.
+Un seul groupe ou lot individuel actif ; aucun autre agent ne touche le corpus.
+
+Créer l'ancre XL ouverte, sans label ni assignation. Chaque contrôle source,
+encore ouvert, sans commentaire ni staging, reçoit **un seul** commentaire
+propriétaire exact `BACKLOG-XL-CLAIM v1 #X` (X = ancre XL), puis est fermé
+`not_planned` sous pzia, sans modifier son corps ni les membres historiques.
+Cette fermeture technique ne vaut ni consolidation ni réception. Elle ne
+déclenche pas de transfert individuel. Le workflow refuse le rejeu individuel
+d'un contrôle revendiqué et refuse les sources manquantes, divergentes,
+déjà consolidées ou revendiquées par un autre groupe. Ne jamais retirer une
+revendication pour reprendre sans arbitrage explicite et preuve de non-mutation.
+Si la réservation est interrompue, conserver l'ancre et les revendications,
+requalifier avant de compléter le même groupe ; ne pas créer un doublon.
+
+Fermer l'ancre XL completed sous pzia seulement après qualification complète.
+Le manifeste v1 ajoute `xl_controls` (liste ordonnée des contrôles sources),
+inclut l'ancre, les contrôles revendiqués et les membres historiques (16 ou
+31 snapshots) ; la limite 8 Mio et la pagination restent inchangées.
+Le staging, les journaux START/PROGRESS/DONE, les tranches de dix écritures,
+les reprises explicites et la capitalisation/purge sont ceux du lot ordinaire,
+sur l'ancre XL. Le corps et le commentaire de revendication des sources,
+tous courts, sont conservés. Le maître et les revendications sont revérifiés
+avant les écritures ; aucune fusion du staging, aucun rerun.
+Les contrôles de capitalisation restent explicites et liés au SHA exact de
+main et aux empreintes ; revue sémantique par membre, même avec une preuve
+canonique mutualisée.
+
+Compter cinq ou dix lots d'origine comme purgés uniquement après DONE,
+capitalisation, PURGED authentifié, CI SUCCESS et ref absente pour l'ancre.
+Ne pas compter les fermetures not_planned des sources comme avancement.
+Les tranches et la latence REST peuvent exiger des cycles supplémentaires ;
+mesurer leur coût réel et le gain logique, sans promettre de purge physique.

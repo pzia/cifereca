@@ -135,14 +135,23 @@ Hors périmètre historique : COVER-C02/P02, STORE-P01, divergences PDF exhausti
 - COVER-C03 ([#156](https://github.com/pzia/cifereca/pull/156), [tests](../tests/test_core0929_cover_c03.py)) : guide XHTML/SVG et spine à image unique, méthode/provenance, cache par contenu et schéma versionné ; réinspection forcée Bibliothèque/CLI `--refresh-covers`, sans téléchargement ni modification du livre, sans rasterisation de première page. Recette EPUB/GTK réelle hors périmètre.
 - OBS-C29 ([#161](https://github.com/pzia/cifereca/pull/161), [tests](../tests/test_core0929_observations.py)) : fusion persistée multi-comptes, cache ancien ne remplace pas l'observation fournisseur fraîche, amorçage d'un compte manquant, lecture sans réseau, mise à jour atomique et récupération du payload legacy ; la relecture ne démontre pas à elle seule une campagne exhaustive d'injection de panne.
 
-## État historique 0.9.31–0.9.33 à requalifier
+## Rationalisation Core 0.9.31–0.9.33 — capitalisation pilote XL #8411
 
-Le compte rendu [#112](https://github.com/pzia/cifereca/issues/112) du 7 octobre 2026 indique le triage 0.9.23–0.9.33 terminé (invariants migrés, déjà couverts ou obsolètes, sans restauration en bloc), à l'exception des invariants ADEPT alors suspendus par l'arbitrage du 4 octobre. Ce bilan historique ne prouve pas la couverture actuelle. Les sources suivantes restent à requalifier dans la documentation selon les contrats actifs, sans restauration transitive :
+Relecture statique des témoins sur `6e2720af6c84149c8e5d7dee792321d0b2933630`. Le triage historique #112 ne vaut pas preuve fonctionnelle actuelle ; ne pas restaurer les modules historiques `test_core_0931.py` et `test_core_0933.py` en bloc.
 
-- `test_core_0931.py` ;
-- `test_core_0933.py`.
+### 0.9.31 (#160, #162)
 
-Ces fichiers historiques sont absents du tree de référence. Classer chaque invariant selon son propriétaire actuel ou son obsolescence.
+- COVER-C31 ([#163](https://github.com/pzia/cifereca/pull/163), [tests](../tests/test_core0931_cover_preview.py)) : pool dédié deux workers, taille de liste adaptée au facteur d'échelle, cache par source/empreinte/taille, pas d'agrandissement et ratio conservé, jobs dédupliqués et plafond 64, dimensions 2048, 24 Mio et 50 millions de pixels bornés, PNG atomique, fallback comptabilisé vers original, détail conservant l'original. Les assertions textuelles ne prouvent pas le comportement réel de GdkPixbuf/GTK.
+- ADE-C31 : suspendu par arbitrage du 4 octobre 2026 ; reclassé sans duplication dans [retour](../tests/test_adept_return.py) et [liaison manuelle](../tests/test_adept_manual_binding.py) : succès historique uniquement après inventaire returned=true/token_present=false, conflit ou verification_failed non annoncé comme succès, artefact local conservé, aucune restitution implicite au rattachement manuel. Pas de réactivation après #4048. DETAIL/LIST/FILTER relèvent des migrations précédentes.
+
+### 0.9.33 (#165–#168)
+
+- SourcePlacement ([#179](https://github.com/pzia/cifereca/pull/179), [tests](../tests/test_core0933_source_placement.py)) : acquisition complète attestée pour identité/provider/credential/item exacts ; aucun rapprochement par titre seul ; un seul placement local présent, fichier absent ou plusieurs copies → pas de liaison/action locale ; lecture sans sync/acquisition. Témoins structurels.
+- PublicLink ([#180](https://github.com/pzia/cifereca/pull/180), [tests](../tests/test_core0933_public_links.py)) : préférer friendly_url publique, refuser URLs de livraison/signées, file/javascript/userinfo/loan/token/AWS/acsm/port non standard ; notice Paris relative contre site configuré, fallback homepage publique déclarée ; origine inconnue sans notice inventée.
+- RefreshAndNavigation ([#184](https://github.com/pzia/cifereca/pull/184), [tests](../tests/test_core0933_refresh_navigation.py)) : refresh limité aux sessions de prêt de l'identité, ADEPT inventaire en lecture, pas de sync store/acquisition ; résultats obsolètes ignorés, route/identité/providers validés, UiIdentityViewHost optionnel sans élargissement de UiIdentityHost. Assertions structurelles, pas recette de course réelle.
+- Index #165 : six migrations non-ADEPT livrées historiquement ; autres témoins présents : [DetailsAndActions #186](../tests/test_core0933_details_actions.py) (actions dédupliquées, deux colonnes, budget largeur, remplacement des facettes inline), [ResponsiveWidgets #188](../tests/test_core0933_responsive_widgets.py) (objets boutons conservés, label accessible, ordre, restauration, sensibilité miroir), [DeveloperExamples #191](../tests/test_core0933_developer_examples.py) (manifestes provider/page, capacités et origine publique exactes, page sans import GTK). ADEPT Conflicts reste hors de ce périmètre, pas de reprise implicite.
+
+La relecture ne constitue ni une nouvelle exécution des suites ni une recette utilisateur réelle.
 
 ## Validation minimale d'une migration de test
 

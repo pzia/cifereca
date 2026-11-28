@@ -273,11 +273,15 @@ def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
         "media_format": "pdf", "local_state": "local",
         "metadata": {"path": str(pdf)},
     })
+    # Import the consumer before replacing the provider binding: otherwise its
+    # module-level from-import can capture the temporary path as its original.
+    from cifereca import paths
+    from cifereca.core import canonical_transfer
+
     lock = tmp_path / "transfer.lock"
-    monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock)
-    monkeypatch.setattr(
-        "cifereca.core.canonical_transfer.acquisition_lock_file", lambda: lock,
-    )
+    lock_path = lambda: lock
+    monkeypatch.setattr(paths, "acquisition_lock_file", lock_path)
+    monkeypatch.setattr(canonical_transfer, "acquisition_lock_file", lock_path)
     try:
         sent = service.materialize_to_identity(pid, "bob")
         received = Path(sent["path"])
