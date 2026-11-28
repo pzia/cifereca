@@ -10,7 +10,7 @@ from .capture_vault import VaultError
 from ..http_trace import HTTP_TRACE_ZIP_LIMIT
 
 
-def build_health_bundle(rows, *, include_binary):
+def build_health_bundle(rows, *, include_binary, correlated_journal=None):
     if (type(rows) is not tuple or not 1 <= len(rows) <= 25
             or type(include_binary) is not bool):
         raise VaultError("vault_invalid")
@@ -46,13 +46,24 @@ def build_health_bundle(rows, *, include_binary):
             pass
         manifest.append(evidence)
     members.update(core_contract_kit())
+    journal_status = "not_included"
+    if correlated_journal is not None:
+        if (type(correlated_journal) is not dict
+                or correlated_journal.get("schema") != "cifereca.provider-health-journal/1"
+                or correlated_journal.get("coverage") not in ("partial", "retained_matches")):
+            raise VaultError("vault_invalid")
+        journal_bytes = json.dumps(correlated_journal, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(journal_bytes) > 1_100_000:
+            raise VaultError("private_zip_limit")
+        members["journal/correlated.json"] = journal_bytes
+        journal_status = correlated_journal["coverage"]
     members["manifest.json"] = json.dumps({
         "schema": "cifereca.provider-health-bundle/1",
         "include_binary": include_binary,
         "captures": manifest,
         "provider_source": "not_included",
         "provider_version": "not_attested_in_bundle",
-        "correlated_logs": "not_included",
+        "correlated_logs": journal_status,
         "business_comparison": "not_attested",
     }, indent=2).encode()
     members["README.txt"] = (
@@ -60,7 +71,8 @@ def build_health_bundle(rows, *, include_binary):
         "Review locally before sharing. No automatic upload or correction.\n"
         "Read the public Core contract kit. Compare only equivalent exact-scope "
         "observations; distinguish unknown, attested empty and parser regression.\n"
-        "Provider source and correlated logs are not included. Observed versions "
+        "Provider source is not included. Consult journal coverage in the manifest; "
+        "retained matches are not proof of a complete historical journal. Observed versions "
         "in the manifest do not attest the version of available source code; do not infer "
         "a root cause or claim a successful replay from HTTP status alone.\n"
         "Do not execute captured requests against a real supplier.\n"

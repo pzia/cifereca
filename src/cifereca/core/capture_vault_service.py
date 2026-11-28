@@ -829,7 +829,14 @@ class _DiagnosticsPort(_Port):
             if total > HTTP_TRACE_ZIP_LIMIT:
                 raise VaultError("private_zip_limit")
             rows.append((capability, payload))
-        payload = build_health_bundle(tuple(rows), include_binary=policy)
+        from .diagnostic_journal import provider_health_correlated_journal
+        from ..paths import log_file
+        check_publication()
+        journal = provider_health_correlated_journal(
+            log_file(), provider_id=scope.provider_id,
+            evidence_refs=tuple(selection[1] for selection in selections))
+        payload = build_health_bundle(tuple(rows), include_binary=policy,
+                                      correlated_journal=journal)
         check_publication()
         return write_capture_zip(Path(destination), payload, confirmed=True,
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,

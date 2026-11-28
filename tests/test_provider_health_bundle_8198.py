@@ -42,3 +42,29 @@ def test_bundle_reports_observed_version_without_attesting_source(monkeypatch):
         assert manifest["captures"][0]["observed_provider_version"] == "2.1"
         assert manifest["provider_source"] == "not_included"
         assert manifest["provider_version"] == "not_attested_in_bundle"
+
+
+def test_correlated_journal_exact_provider_and_reference(monkeypatch, tmp_path):
+    from cifereca.core import diagnostic_journal as journal
+    ref = "123456abcdef"
+    terminal = {"task_ref": ref, "logger": "cifereca", "severity": "info",
+                "message": f"TRACE task correlation task_ref={ref} status=success"}
+    exact = {"task_ref": ref, "provider_id": "fixture", "logger": "cifereca",
+             "severity": "info", "message": "exact"}
+    unrelated = dict(exact, task_ref="000000000000")
+    wrong = dict(exact, provider_id="other")
+    free_text = dict(terminal, message="not an exact terminal line")
+    monkeypatch.setattr(journal, "_events", lambda path: (
+        [terminal, exact, unrelated, wrong, free_text], [], False))
+    result = journal.provider_health_correlated_journal(
+        tmp_path / "log", provider_id="fixture", evidence_refs=(ref,))
+    assert result["events"] == [terminal, exact]
+    assert result["coverage"] == "retained_matches"
+    monkeypatch.setattr(bundle, "core_contract_kit", lambda: {})
+    payload = bundle.build_health_bundle((("search", b"fixture"),),
+                                         include_binary=False, correlated_journal=result)
+    with ZipFile(BytesIO(payload)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["correlated_logs"] == "retained_matches"
+        assert json.loads(archive.read("journal/correlated.json")) == result
+        assert archive.testzip() is None
