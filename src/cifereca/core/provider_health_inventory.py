@@ -117,7 +117,7 @@ def diagnostic_health_observations(service, identity_id):
             if observation is None or observation.evidence_ref in seen:
                 continue
             seen.add(observation.evidence_ref)
-            owned = private and health.owns_reference(scope, observation.evidence_ref)
+            owned = private and health.has_unique_evidence(scope, observation.evidence_ref)
             rows.append({
                 "provider_id": scope.provider,
                 "instance_id": scope.instance,

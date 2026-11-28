@@ -178,8 +178,12 @@ class PassiveHealth:
                                  deque((unlink(row) for row in anomalies), maxlen=3))
 
     def owns_reference(self, scope, reference):
+        return self.has_unique_evidence(scope, reference)
+
+    def has_unique_evidence(self, scope, evidence_ref):
+        """Whether one exact scope owns this retained observation token."""
         with self._lock:
-            return _unique_owner(self._rows, self._enabled, scope, reference)
+            return _unique_owner(self._rows, self._enabled, scope, evidence_ref)
 
     def notifications_saturated(self):
         with self._lock:
