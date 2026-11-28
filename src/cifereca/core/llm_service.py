@@ -261,6 +261,10 @@ class OptionalLLMService:
             raw = json.dumps(payload).encode("utf-8")
             if len(raw) > _MAX_REQUEST_BYTES:
                 return failed("request_too_large")
+            if env_name and not api_key:
+                # A configured credential reference must never silently
+                # turn into an anonymous request carrying private data.
+                return failed("auth_refused")
             headers = {"Content-Type": "application/json", "User-Agent": BROWSER_USER_AGENT}
             if api_key:
                 headers["Authorization"] = "Bearer " + api_key
@@ -268,7 +272,8 @@ class OptionalLLMService:
         except (ValueError, TypeError):
             return failed("invalid_request")
 
-        if not _LLM_SLOTS.acquire(blocking=False):
+        slots = _LLM_SLOTS
+        if not slots.acquire(blocking=False):
             return failed("busy")
         done = Event()
         result: list[LLMResult] = []
@@ -343,13 +348,13 @@ class OptionalLLMService:
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:
-                _LLM_SLOTS.release()
+                slots.release()
                 done.set()
 
         try:
             Thread(target=worker, daemon=True, name="cifereca-llm",).start()
         except RuntimeError:
-            _LLM_SLOTS.release()
+            slots.release()
             return failed("backend_unavailable")
         deadline = monotonic() + timeout
         while not done.is_set():
@@ -372,13 +377,19 @@ class OptionalLLMService:
 
 def optional_llm_service(config) -> OptionalLLMService | None:
     """Resolve exactly one profile at startup, retaining legacy flat support."""
-    from .llm_profiles import is_profile_config, selected_settings, LLMSettingsError
+    from .llm_profiles import (
+        is_profile_config, selected_settings, legacy_remote_destination, LLMSettingsError,
+    )
 
     settings = config.get("llm", {})
     if not isinstance(settings, Mapping) or settings.get("enabled") is not True:
         return None
     snapshot = deepcopy(dict(settings))
     try:
+        if legacy_remote_destination(snapshot):
+            # A flat boolean is not a destination-bound permission. Preserve
+            # the saved values for the editor but never send until reapproved.
+            return None
         effective = selected_settings(snapshot) if is_profile_config(snapshot) else snapshot
     except LLMSettingsError:
         return None

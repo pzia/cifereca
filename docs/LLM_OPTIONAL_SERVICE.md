@@ -30,9 +30,11 @@ serveur parlant l'API de chat completions compatible OpenAI. Le Core ne dépend
 d'aucune bibliothèque fournisseur. Les seuls hôtes reconnus comme locaux
 sont `localhost` et les adresses IP loopback.
 
-Pour un endpoint distant, configurer **explicitement**
-`enabled=true`, une URL HTTPS et `allow_remote=true`.
-C'est l'autorisation d'envoyer les prompts/documents aux systèmes distants.
+Pour un endpoint distant, utiliser les Paramètres IA avec une URL HTTPS,
+l'activation explicite et l'autorisation distante. La sauvegarde crée un
+profil avec une autorisation liée à sa destination exacte. Un ancien
+`allow_remote=true` dans le format plat ne suffit plus : il faut renouveler
+l'accord dans le formulaire avant redémarrage.
 Les redirections HTTP et les URL comportant des identifiants, query strings ou
 fragments sont refusées. Ne pas inscrire de token dans l'URL ou la configuration :
 `api_key_env` désigne **le nom** d'une variable d'environnement déjà définie.
@@ -101,8 +103,11 @@ contacté en ouvrant la page ou en sauvegardant les paramètres.
 
 ## Configurations nommées (P0 #8465)
 
-Le format historique plat reste lisible et utilisable. L'action explicite de
-gestion des profils dans Paramètres migre les valeurs vers un schéma versionné :
+Le format historique plat reste lisible et utilisable pour les destinations
+locales. Les destinations distantes historiques restent visibles mais
+inactives jusqu'à une nouvelle autorisation explicite. L'action de gestion
+des profils ou une nouvelle sauvegarde distante migre les valeurs vers un
+schéma versionné :
 une activation globale, des profils nommés (32 au plus), un identifiant
 sélectionné ou aucun, et une autorisation distante liée à la destination exacte.
 Il n'existe ni profil de secours ni duplication mutable du profil actif.

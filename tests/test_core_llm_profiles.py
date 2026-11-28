@@ -6,7 +6,7 @@ import pytest
 from cifereca.config import Config
 from cifereca.core.llm_profiles import (
     LLMSettingsError, normalize_profiles, selected_settings, select_profile,
-    store_profile, delete_profile, enable_profile,
+    store_profile, delete_profile, enable_profile, editor_settings, settings_for_save,
 )
 from cifereca.core.llm_service import optional_llm_service
 from cifereca.plugin_api import LLMRequest
@@ -253,3 +253,61 @@ def test_profile_disclosure_rejects_hidden_controls(hidden):
     cfg = normalize_profiles({**LOCAL, "enabled": True})
     with pytest.raises(LLMSettingsError):
         store_profile(cfg, "other", {**LOCAL, "model": "model" + hidden})
+
+
+def test_legacy_remote_runtime_refused_until_explicit_bound_save(tmp_path):
+    path = tmp_path / "config.json"
+    legacy = {**REMOTE, "enabled": True, "allow_remote": True}
+    path.write_text(json.dumps({"llm": legacy}))
+    c = Config(path)
+    assert optional_llm_service(c) is None
+    view = editor_settings(c.get("llm"))
+    assert not view["enabled"] and not view["allow_remote"]
+    assert view["endpoint"] == REMOTE["endpoint"]
+    assert view["api_key_env"] == REMOTE["api_key_env"]
+    assert c.get("llm.allow_remote") is True  # No mutation at read.
+    with pytest.raises(LLMSettingsError):
+        settings_for_save({**view, "enabled": True})
+    approved = settings_for_save({**view, "enabled": True, "allow_remote": True})
+    assert approved["schema_version"] == 1
+    assert approved["remote_approval"]
+    c.set("llm", approved)
+    c.save()
+    assert optional_llm_service(Config(path)).destination()["remote"] is True
+
+
+def test_bound_remote_request_and_revocation_without_external_network(monkeypatch):
+    from io import BytesIO
+
+    cfg = settings_for_save({**REMOTE, "enabled": True, "allow_remote": True})
+    root = {"llm": cfg}
+    service = optional_llm_service(root)
+    monkeypatch.setenv("TEST_KEY", "synthetic-token")
+    sent = []
+
+    def fixture(request, **_kwargs):
+        assert request.full_url == REMOTE["endpoint"]
+        assert request.get_header("Authorization") == "Bearer synthetic-token"
+        sent.append(request.full_url)
+        return BytesIO(b'{"choices":[{"message":{"content":"OK"}}]}')
+
+    monkeypatch.setattr(service, "_opener", fixture)
+    assert service.generate(LLMRequest("synthetic")).ok
+    root["llm"] = store_profile(cfg, "legacy", {**REMOTE, "model": "changed"})
+    assert not service.generate(LLMRequest("synthetic")).ok
+    assert sent == [REMOTE["endpoint"]]
+    assert "synthetic-token" not in repr(service.metrics_snapshot())
+
+
+def test_missing_configured_key_never_sends_anonymous_request(monkeypatch):
+    cfg = settings_for_save({**REMOTE, "enabled": True, "allow_remote": True})
+    service = optional_llm_service({"llm": cfg})
+    monkeypatch.delenv("TEST_KEY", raising=False)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("HTTP attempted without configured credential")
+
+    monkeypatch.setattr(service, "_opener", forbidden)
+    outcome = service.generate(LLMRequest("private"))
+    assert not outcome.ok and outcome.reason == "auth_refused"
+    assert service.metrics_snapshot()["remote:auth_refused"]["count"] == 1

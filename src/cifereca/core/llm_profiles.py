@@ -225,3 +225,39 @@ def enable_profile(raw: Mapping[str, Any], *, enabled: bool,
         if allowed and remote and remote_confirmed:
             cfg["remote_approval"] = _fingerprint(active, profile)
     return normalize_profiles(cfg)
+
+
+def legacy_remote_destination(raw: Mapping[str, Any]) -> bool:
+    """Identify historical remote destinations without consulting DNS or HTTP."""
+    if not isinstance(raw, Mapping) or is_profile_config(raw):
+        return False
+    endpoint = raw.get("endpoint")
+    return (type(endpoint) is str
+            and _allowed_endpoint(endpoint.strip(), allow_remote=True)[1])
+
+
+def editor_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Never present a historical remote opt-in as current approval."""
+    if is_profile_config(raw):
+        return selected_settings(raw)
+    if legacy_remote_destination(raw):
+        return {**normalize_llm_settings({**raw, "enabled": False,
+                                         "allow_remote": False})}
+    return dict(raw)
+
+
+def settings_for_save(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """An explicit validated remote save always uses the bound profile format.
+
+    Keep the flat local configuration compatible until named profiles are used.
+    The caller must pass the actual current editor values, not a stored
+    historical authorization.
+    """
+    if is_profile_config(raw):
+        return normalize_profiles(raw)
+    flat = normalize_llm_settings(raw)
+    if legacy_remote_destination(flat):
+        migrated = normalize_profiles(flat)
+        return enable_profile(migrated, enabled=flat["enabled"],
+                              remote_confirmed=flat["allow_remote"])
+    return flat

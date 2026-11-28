@@ -11,7 +11,7 @@ from time import monotonic
 
 from ..plugin_api import Cancelled
 from ..core.llm_profiles import (
-    is_profile_config, normalize_profiles, selected_settings,
+    is_profile_config, normalize_profiles, selected_settings, editor_settings,
     store_profile, select_profile, delete_profile, enable_profile,
 )
 from ..config_defaults import DEFAULT_CONFIG
@@ -65,6 +65,13 @@ def bind_settings_ai_callbacks(
         }
 
     def capture_ai_settings():
+        if not profile_mode[0] and profile_ui and is_profile_config(ai_cfg):
+            # A first explicit remote Save can migrate a flat editor while
+            # this page remains open. Adopt the saved collection without
+            # overwriting current widget edits or dropping other profiles.
+            profile_mode[0] = True
+            profile_draft[0] = normalize_profiles(ai_cfg)
+            refresh_profile_info()
         if not profile_mode[0]:
             return capture_flat_settings()
         cfg = profile_draft[0]
@@ -207,7 +214,7 @@ def bind_settings_ai_callbacks(
         if profile_ui:
             load_saved_profiles()
         try:
-            values = selected_settings(ai_cfg) if is_profile_config(ai_cfg) else ai_cfg
+            values = editor_settings(ai_cfg)
         except LLMSettingsError:
             values = {}
         load_flat(values)

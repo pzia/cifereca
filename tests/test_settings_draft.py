@@ -2003,3 +2003,17 @@ def test_sso_and_authenticated_sources_without_credential_fields_are_not_anonymo
     assert all(row["identity_id"] == "alice" for row in rows.values())
     assert all(row["credentials"] == {} for row in rows.values())
     assert not _config.path.exists()
+
+
+def test_legacy_remote_save_uses_destination_bound_profile(editor):
+    from cifereca.core.llm_profiles import selected_settings
+
+    config, values = editor
+    values['ai'] = dict(enabled=True, endpoint='https://example.invalid/v1/chat/completions',
+                        model='synthetic', allow_remote=True, api_key_env='SYNTHETIC_KEY_NAME')
+    draft = validate(editor, ai_dirty=True)
+    saved = draft.data['llm']
+    assert saved['schema_version'] == 1 and saved['remote_approval']
+    assert saved['active_profile'] == 'legacy'
+    assert selected_settings(saved)['allow_remote'] is True
+    assert config.get('llm.enabled') is False
