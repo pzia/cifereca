@@ -841,7 +841,8 @@ class _DiagnosticsPort(_Port):
         source = source_reader(scope.provider_id) if source_reader is not None else None
         check_publication()
         payload = build_health_bundle(tuple(rows), include_binary=policy,
-                                      correlated_journal=journal, provider_source=source)
+                                      correlated_journal=journal, provider_source=source,
+                                      scope_provider=scope.provider_id)
         check_publication()
         return write_capture_zip(Path(destination), payload, confirmed=True,
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,

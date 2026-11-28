@@ -10,7 +10,7 @@ from .capture_vault import VaultError
 from ..http_trace import HTTP_TRACE_ZIP_LIMIT
 
 
-def build_health_bundle(rows, *, include_binary, correlated_journal=None, provider_source=None):
+def build_health_bundle(rows, *, include_binary, correlated_journal=None, provider_source=None, scope_provider=None):
     if (type(rows) is not tuple or not 1 <= len(rows) <= 25
             or type(include_binary) is not bool):
         raise VaultError("vault_invalid")
@@ -73,6 +73,8 @@ def build_health_bundle(rows, *, include_binary, correlated_journal=None, provid
     members["manifest.json"] = json.dumps({
         "schema": "cifereca.provider-health-bundle/1",
         "include_binary": include_binary,
+        "scope": {"provider_id": scope_provider, "single_private_account": True}
+                 if scope_provider is not None else None,
         "captures": manifest,
         "provider_source": source_status,
         "provider_version": source_version,
