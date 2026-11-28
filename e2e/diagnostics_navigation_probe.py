@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import math
 import os
 import platform
 import tempfile
@@ -475,6 +476,61 @@ def compare_recent_render(window, *, pairs=3):
     }
 
 
+def aggregate_performance_campaign(out, manifest):
+    """Aggregate raw samples, never percentiles of percentiles."""
+    cells = {}
+    rejected = []
+    for attempt in manifest["attempts"]:
+        if attempt["status"] != "PASS":
+            continue
+        try:
+            data = json.loads((out / attempt["directory"] / "screen.json").read_text())
+            provenance = data["performance_provenance"]
+            if (data["git_sha"] != manifest["git_sha"]
+                    or data["width"] != manifest["width"]
+                    or provenance["capture_enabled"] is not attempt["capture_enabled"]):
+                raise ValueError("inconsistent provenance")
+            samples = {}
+            def add(name, values, expected):
+                if (not isinstance(values, list) or len(values) != expected
+                        or any(type(v) not in (int, float) or not math.isfinite(v)
+                               or v < 0 for v in values)):
+                    raise ValueError("invalid sample cell")
+                samples[name] = values
+            for route in ("library", "recent"):
+                comparison = data[route + "_563_u0_comparison"]
+                if comparison["rows"] != 563 or not comparison["row_projection_equal"]:
+                    raise ValueError("inconsistent fixture")
+                for renderer in ("baseline_u0", "extracted"):
+                    add(route + "." + renderer, comparison["samples_ms"][renderer], 3)
+                for metric in ("selection_sync_ms", "selection_after_paint_ms"):
+                    add(route + "." + metric, [data[route + "_" + metric]], 1)
+            library = data["library_563_u0_comparison"]
+            for renderer in ("baseline_u0", "extracted"):
+                add("library.cpu." + renderer, library["process_cpu_samples_ms"][renderer], 3)
+                for phase, values in library["phase_samples_ms"][renderer].items():
+                    add("library.phase." + renderer + "." + phase, values, 3)
+            for name in ("mainwindow_constructor_ms", "library_filter_sync_ms",
+                         "search_projection_sync_ms", "search_selection_sync_ms",
+                         "search_selection_after_paint_ms"):
+                add(name, [data[name]], 1)
+            add("core_open_ms", [provenance["core_open_ms"]], 1)
+            for scopes in ("1", "2", "4"):
+                add("sync_simulated." + scopes, data["sync_simulated_ms"][scopes], 3)
+            for name, values in samples.items():
+                key = ("on" if attempt["capture_enabled"] else "off") + "." + name
+                cells.setdefault(key, []).extend(values)
+        except (OSError, ValueError, KeyError, TypeError):
+            rejected.append(attempt["directory"])
+    return {
+        "performance_verdict": "not_qualified",
+        "rejected_batches": rejected,
+        "cells": {key: {"samples_ms": values, **perf_distribution(values),
+                        "coverage": "limited" if len(values) < 20 else "descriptive"}
+                  for key, values in sorted(cells.items())},
+    }
+
+
 def run_performance_campaign(args):
     """Private, isolated batches; never extend the functional E2E watchdog.
 
@@ -561,7 +617,10 @@ def run_performance_campaign(args):
                     attempt["status"] = "FAIL"
                 persist()
     # Do not silently drop failed batches or substitute a partial percentile.
-    return 0 if all(a["status"] == "PASS" for a in manifest["attempts"]) else 1
+    manifest["aggregation"] = aggregate_performance_campaign(out, manifest)
+    persist()
+    return 0 if (all(a["status"] == "PASS" for a in manifest["attempts"])
+                 and not manifest["aggregation"]["rejected_batches"]) else 1
 
 
 def main() -> int:
@@ -1134,6 +1193,39 @@ def main() -> int:
         assert any(isinstance(node, Gtk.Label) and node.get_text() == "Notice volume 562"
                    for node in walk(w.library_page.detail))
         report["checks"]["performance_library_detail"] = True
+        from dataclasses import replace
+        library_volume["search_snapshot"] = {
+            "state": w.search_controls.state(),
+            "local": dict(w._search_local_objects),
+            "remote": list(w._remote_search_results),
+            "objects": dict(w.search_objects),
+            "mode": w._search_mode,
+            "selected": w._selected_search_id,
+            "global_sensitive": w.search_global_button.get_sensitive(),
+        }
+        w.search_controls.set_state(
+            replace(w.search_controls.state(), text="", field="all", scope="all",
+                    providers=(), types=(), languages=()), notify=False)
+        started_at = monotonic()
+        w._populate_local_search(list(w._library_entries_cache))
+        report["search_projection_sync_ms"] = round((monotonic() - started_at) * 1000, 3)
+        assert w.search_page.store.get_n_items() == 563
+        w.navigate("search")
+        await_route("search", performance_search_ready)
+
+    def performance_search_ready():
+        w = window[0]
+        def select():
+            assert w.search_page.select_key("p0-volume-562")
+        observe_detail_frame(w.search_page, select, "search", performance_search_selected)
+
+    def performance_search_selected():
+        w = window[0]
+        assert w.search_page.selection.get_selected_item().key == "p0-volume-562"
+        assert w.search_page.detail.get_mapped()
+        assert w.service.current_identity.identity_id == "camille"
+        report["checks"]["performance_search_detail"] = True
+        restore_search_snapshot()
         restore_volume_snapshot()
 
     def library_volume_selected():
@@ -1426,6 +1518,23 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         report["checks"]["performance_recent_detail"] = True
         report["recent_capture"] = w.ui_perf.performance_report()
+        # Explicit synthetic timing-helper exercise, not provider throughput.
+        from cifereca.core.source_sync_timing import timing_scope, measure
+        samples = {}
+        for scopes in (1, 2, 4):
+            samples[str(scopes)] = []
+            for _ in range(3):
+                started_at = monotonic()
+                for _scope in range(scopes):
+                    phases = {}
+                    with timing_scope(phases):
+                        with measure("locked_work_ms"):
+                            with measure("library_read_ms"):
+                                tuple(range(563))
+                    assert set(phases) == {"locked_work_ms", "library_read_ms"}
+                samples[str(scopes)].append(round((monotonic() - started_at) * 1000, 3))
+        report["sync_simulated_ms"] = samples
+        report["sync_simulated_scope"] = "timing_helper_only_no_provider_or_task_runner"
         finish()
 
     def recent_volume_selected():
