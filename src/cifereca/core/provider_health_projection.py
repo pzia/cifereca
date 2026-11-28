@@ -1,5 +1,5 @@
 """Pure passive health projection; no transport, persistence or scheduling."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from collections import deque
 from threading import RLock
@@ -31,6 +31,7 @@ class Observation:
     version: str
     observed_at: str
     evidence_ref: str
+    capture_id: str | None = None
 
 
 class PassiveHealth:
@@ -88,6 +89,8 @@ class PassiveHealth:
                 for v in (observation.version, observation.observed_at,
                           observation.evidence_ref)):
             raise ValueError("invalid evidence")
+        if observation.capture_id is not None:
+            raise ValueError('capture must be linked separately')
         if scope not in self._rows:
             if len(self._rows) >= self._limit:
                 return False
@@ -104,3 +107,44 @@ class PassiveHealth:
         with self._lock:
             latest, reference, anomalies = self._rows.get(scope, (None, None, ()))
             return latest, reference, tuple(anomalies)
+
+    def link_capture(self, scope, observation_ref, capture_id, *, lease, port, consented=False):
+        """Explicitly link an existing completed capture, never start recording.
+
+        The caller supplies its activation-bound vault port. Manual/public
+        captures cannot attest an exact private scope.
+        """
+        from ..plugin_api.capture_vault import CaptureScope, VaultError
+        if consented is not True or not all((scope.provider, scope.instance,
+                                             scope.account, scope.identity)):
+            return False
+        with self._lock:
+            if not self._enabled or lease != self._generation or scope not in self._rows:
+                return False
+            latest, reference, anomalies = self._rows[scope]
+            if not any(row is not None and row.evidence_ref == observation_ref
+                       for row in (latest, reference, *anomalies)):
+                return False
+        try:
+            exact = CaptureScope(scope.provider, scope.instance, scope.account, scope.identity)
+            captured = port.read(exact, capture_id)
+            summary = captured.summary
+            if (summary.scope != exact or summary.capture_id != capture_id
+                    or summary.source_session_ref != observation_ref
+                    or summary.state != "completed" or not captured.payload):
+                return False
+        except VaultError:
+            return False
+        with self._lock:
+            if not self._enabled or lease != self._generation or scope not in self._rows:
+                return False
+            latest, reference, anomalies = self._rows[scope]
+            def link(row):
+                return (replace(row, capture_id=capture_id)
+                        if row is not None and row.evidence_ref == observation_ref else row)
+            if not any(row is not None and row.evidence_ref == observation_ref
+                       for row in (latest, reference, *anomalies)):
+                return False
+            self._rows[scope] = (link(latest), link(reference),
+                                 deque((link(row) for row in anomalies), maxlen=3))
+            return True
