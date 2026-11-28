@@ -1,0 +1,86 @@
+name: P0 8216 transfer failure diagnosis
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-transfer-diagnosis.yml'
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/diagnosis"
+          mkdir -p "$out"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          python -m pip freeze > "$out/dependencies.txt"
+          git fetch origin 2e2d31ffc471553facb924ed32d1e7033503b73f
+          git fetch origin 1db4a1203b5c644436fa804f652a60b372d82818
+          git checkout 2e2d31ffc471553facb924ed32d1e7033503b73f -- tests/test_library_metadata_candidates.py tests/test_core_p1_1498_duplicate_cleanup_row_progress.py
+          git checkout 1db4a1203b5c644436fa804f652a60b372d82818 -- tests/test_core_placement_observation_handoff.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("src/cifereca/core/canonical_transfer.py")
+          s=p.read_text()
+          needle='        raise ValueError("canonical_transfer_authorization_required")'
+          assert s.count(needle)==1
+          # Diagnostic booleans only, no path, ID or secret; the original refusal remains.
+          p.write_text(s.replace(needle, '''        try:
+                      print("TRANSFER_GUARD_DIAG", {
+                          "authorized": type(explicitly_authorized) is bool and explicitly_authorized,
+                          "identity_tokens": token(from_identity_id) and token(to_identity_id),
+                          "distinct": from_identity_id != to_identity_id,
+                          "receipt_tokens": token(transfer_id) and token(transfer_receipt_ref),
+                          "path_types": all(isinstance(p, Path) for p in (library_root, from_path, to_path)),
+                          "lock_type_exact": type(shared_lock) is InterProcessLock,
+                          "lock_handle_present": getattr(shared_lock, "_handle", None) is not None,
+                          "lock_path_matches": shared_lock.path.resolve() == acquisition_lock_file().resolve(),
+                      }, flush=True)
+                  except Exception as diagnostic_error:
+                      print("TRANSFER_GUARD_DIAG_ERROR", type(diagnostic_error).__name__, flush=True)
+          '''.rstrip()+"\n"+needle))
+          PY
+          python -m py_compile src/cifereca/core/canonical_transfer.py
+          git diff --binary > "$out/diagnostic.patch"
+          git diff --cached --binary > "$out/isolation.patch"
+          export COVERAGE_FILE="$out/target.coverage"
+          set +e
+          python -m pytest -q -n 3 --dist=loadfile tests/test_catalog_083.py --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/target.xml" > "$out/target.log" 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > "$out/target.exit"
+          tail -100 "$out/target.log"
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          python - <<'PY' > "$out/shard.files"
+          import hashlib,subprocess
+          for p in subprocess.check_output(["git","ls-files","tests"],text=True).splitlines():
+              if p.endswith(".py") and p.rsplit("/",1)[-1].startswith("test") and int(hashlib.sha256(p.encode()).hexdigest(),16)%8==1:
+                  print(p)
+          PY
+          mapfile -t files < "$out/shard.files"
+          export COVERAGE_FILE="$out/shard.coverage"
+          set +e
+          python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/shard.xml" > "$out/shard.log" 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > "$out/shard.exit"
+          tail -160 "$out/shard.log"
+          exit "$rc"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-transfer-diagnosis
+          path: ${{ runner.temp }}/diagnosis
+          include-hidden-files: true
+          retention-days: 7
