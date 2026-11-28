@@ -566,7 +566,8 @@ class ProviderEvidenceArchive:
         if all(callable(getattr(broker, name, None)) for name in (
                 "provider_health_recipe_options", "run_provider_health_recipe")):
             self.recipe = ProviderRecipeControls(container, broker=broker, tasks=tasks,
-                current=current, gtk=gtk, glib=glib, after=self.refresh)
+                current=current, gtk=gtk, glib=glib, after=self.refresh,
+                restore=getattr(vault, "restore_provider_health_history", None))
         self.refresh()
 
     def _selected(self):
@@ -719,9 +720,10 @@ class ProviderEvidenceArchive:
 
 class ProviderRecipeControls:
     """Explicit, single-account recipe; never starts work on refresh."""
-    def __init__(self, container, *, broker, tasks, current, gtk, glib, after):
+    def __init__(self, container, *, broker, tasks, current, gtk, glib, after, restore=None):
         self.broker, self.tasks, self.current = broker, tasks, current
         self.glib, self.after = glib, after
+        self.restore = restore if callable(restore) else None
         self.closed = False
         self.handle = None
         self.options = {}
@@ -733,6 +735,16 @@ class ProviderRecipeControls:
                                 xalign=0, wrap=True)
         for widget in (self.status, self.reload, self.rows, self.consent, self.run):
             container.append(widget)
+        self.restore_button = None
+        self.restore_consent = None
+        if self.restore is not None:
+            self.restore_consent = gtk.CheckButton(
+                label="J’autorise la relecture locale des archives chiffrées de ce compte.")
+            self.restore_button = gtk.Button(label="Restaurer les preuves historiques")
+            container.append(self.restore_consent)
+            container.append(self.restore_button)
+            self.restore_consent.connect("toggled", lambda *_: self._controls())
+            self.restore_button.connect("clicked", lambda *_: self._run(restore=True))
         self.rows.connect("changed", self._changed)
         self.consent.connect("toggled", lambda *_: self._controls())
         self.reload.connect("clicked", lambda *_: self.refresh())
@@ -750,15 +762,23 @@ class ProviderRecipeControls:
         self.reload.set_sensitive(idle)
         self.consent.set_sensitive(allowed)
         self.run.set_sensitive(allowed and self.consent.get_active())
+        if self.restore_button is not None:
+            historical = idle and selected is not None
+            self.restore_consent.set_sensitive(historical)
+            self.restore_button.set_sensitive(historical and self.restore_consent.get_active())
 
     def _changed(self, *_):
         self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
         self._controls()
 
     def refresh(self):
         if self.closed or not self.current() or self.handle is not None:
             return
         self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
         self.options.clear()
         self.rows.remove_all()
         try:
@@ -773,22 +793,31 @@ class ProviderRecipeControls:
             self.rows.remove_all()
         self._controls()
 
-    def _run(self, *_):
+    def _run(self, *_, restore=False):
         option = self._selected()
-        if (self.closed or not self.current() or self.handle is not None
-                or option is None or option["enabled"] is not True or not self.consent.get_active()):
+        if self.closed or not self.current() or self.handle is not None or option is None:
+            return
+        if restore:
+            if self.restore is None or not self.restore_consent.get_active():
+                return
+        elif option["enabled"] is not True or not self.consent.get_active():
             return
         scope, generation = option["scope"], option["generation"]
         self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
 
         def execute(control):
             if control.cancelled() or self.closed or not self.current():
                 return ()
+            if restore:
+                return self.restore(scope, generation, confirmed=True)
             return self.broker.run_provider_health_recipe(
                 scope, generation, confirmed=True, control=control)
         try:
-            self.handle = self.tasks.submit(execute, label="Recette fournisseur en lecture seule",
-                                            kind="diagnostics")
+            self.handle = self.tasks.submit(execute,
+                label="Restauration historique locale" if restore else "Recette fournisseur en lecture seule",
+                kind="diagnostics")
         except Exception:
             self.status.set_label("Recette indisponible.")
             return
@@ -797,8 +826,12 @@ class ProviderRecipeControls:
         def completed(handle):
             try:
                 rows = handle.result()
-                message = " ; ".join(f'{row["capability"]} : {row["outcome"]} ({row["reason"]})'
-                                     for row in rows) or "Recette annulée."
+                if restore:
+                    message = (f"{rows} preuve(s) historique(s) restaurée(s) ; état actuel non vérifié."
+                               if type(rows) is int else "Restauration annulée.")
+                else:
+                    message = " ; ".join(f'{row["capability"]} : {row["outcome"]} ({row["reason"]})'
+                                         for row in rows) or "Recette annulée."
             except Exception:
                 message = "Recette indisponible."
             def deliver():
