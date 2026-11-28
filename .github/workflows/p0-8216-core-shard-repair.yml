@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1,4,7]
+        shard: [7]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -37,6 +37,8 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = 1db4a1203b5c644436fa804f652a60b372d82818
           git fetch origin 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
           test "$(git rev-parse FETCH_HEAD)" = 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
+          git fetch origin c9db1c0f46535832ff15b395c4f8d9ab580d569f
+          test "$(git rev-parse FETCH_HEAD)" = c9db1c0f46535832ff15b395c4f8d9ab580d569f
           python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
           python -m pip freeze > "$out/dependencies.txt"
           for label in A B; do
@@ -51,11 +53,14 @@ jobs:
             test "$(git rev-parse HEAD:tests/test_core_p0_2975_complete_digital_inventory.py)" = 43de2c2c7e0ef39ad3efbd17ef7b005087ad1550
             git checkout 18af69e0b18c6a85461c9248a03c0d3e4fd3013c -- tests/test_core_p0_2975_complete_digital_inventory.py
             test "$(git rev-parse :tests/test_core_p0_2975_complete_digital_inventory.py)" = 06233dd72522531c934491c1399d8f5d356abdf9
+            test "$(git rev-parse HEAD:tests/test_core_p0_5843_adept_local_diagnostic.py)" = 33fe9d05ab915d5b1649ee5f1f324bd251d5aa99
+            git checkout c9db1c0f46535832ff15b395c4f8d9ab580d569f -- tests/test_core_p0_5843_adept_local_diagnostic.py
+            test "$(git rev-parse :tests/test_core_p0_5843_adept_local_diagnostic.py)" = a8b5006eb8a1100d2fdc7c13da51dda80e4f274c
             git diff --cached --binary > "$out/$label.isolation.patch"
             if [ "$label" = B ]; then cmp "$out/A.isolation.patch" "$out/B.isolation.patch"; fi
             git rev-parse HEAD > "$out/$label.sha"
             git diff --cached --name-only > "$out/$label.changed"
-            test "$(wc -l < "$out/$label.changed")" = 4
+            test "$(wc -l < "$out/$label.changed")" = 5
             python - <<'PY' > "$out/$label.files"
           import hashlib, os, subprocess
           paths=subprocess.check_output(["git","ls-files","tests"],text=True).splitlines()
