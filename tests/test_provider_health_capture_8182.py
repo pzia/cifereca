@@ -28,3 +28,22 @@ def test_explicit_exact_capture_link(tmp_path):
         assert not health.link_capture(scope, "operation:1", writer.capture_id, consented=True, **args)
     finally:
         vault.close()
+
+
+def test_targeted_archive_rejects_unbound_reference(tmp_path):
+    import pytest
+    from cifereca.plugin_api.capture_vault import VaultError
+    health = PassiveHealth()
+    health.set_enabled(True)
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True, health=health)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        exact = CaptureScope("fixture", "instance", "account", "owner")
+        with pytest.raises(VaultError, match="vault_confirmation_required"):
+            port.archive_search_trace(exact, "unbound")
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.archive_search_trace(exact, "unbound", consented=True)
+        assert not (tmp_path / "vault").exists()
+    finally:
+        vault.close()

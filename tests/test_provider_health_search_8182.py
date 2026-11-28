@@ -86,3 +86,32 @@ def test_private_scope_refuses_multiple_accounts(monkeypatch):
     assert begin_public_search(service, session, service.current_identity) is None
     finish_public_search(service, session, service.current_identity, call, "auth")
     assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+
+
+def test_classic_read_path(monkeypatch):
+    from cifereca.core import search_orchestration as search
+    from cifereca.core import notice_c_private_search_web as private
+    from cifereca.core import borrow_for_identity_public_branch as public
+    from cifereca.core import notice_c_private_series as series
+    from cifereca.core import borrow_for_identity_native_occurrence as native
+    service, session, health = _public_fixture()
+    service._search_query_variants = lambda query: [query]
+    calls = []
+    def read(query, scope, **kwargs):
+        calls.append(query)
+        return []
+    session.search = read
+    monkeypatch.setattr(search, "_effective_search_field", lambda *a, **k: ("all", None))
+    monkeypatch.setattr(search, "_source_in_retry_after", lambda *a: False)
+    for module, names in [
+        (private, ("capture_authenticated_search_call", "stamp_authenticated_search_rows")),
+        (public, ("capture_public_branch_borrow_call", "stamp_public_branch_borrow_occurrences")),
+        (series, ("capture_series_call", "stamp_series_rows")),
+        (native, ("stamp_native_borrow_occurrences",)),
+    ]:
+        for name in names:
+            monkeypatch.setattr(module, name, lambda *a, **k: None)
+    assert search._search_provider_session(service, session, "fixture", "all",
+                                           facade_type=object) == ([], [], "", "")
+    assert calls == ["fixture"]
+    assert health.snapshot(Scope("fixture", "", "", "", "search"))[0].outcome is Outcome.UNKNOWN

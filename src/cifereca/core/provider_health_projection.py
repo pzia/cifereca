@@ -151,16 +151,8 @@ class PassiveHealth:
             return True
 
     def owns_reference(self, scope, reference):
-        """Only a retained, unique Core observation can authorize correlation."""
         with self._lock:
-            if not self._enabled:
-                return False
-            owners = set()
-            for candidate, (latest, baseline, anomalies) in self._rows.items():
-                if any(row is not None and row.evidence_ref == reference
-                       for row in (latest, baseline, *anomalies)):
-                    owners.add(candidate)
-            return owners == {scope}
+            return _unique_owner(self._rows, self._enabled, scope, reference)
 
     def inventory(self):
         """Immutable snapshot of observed scopes, not installed providers."""
@@ -172,7 +164,16 @@ class PassiveHealth:
     def archive_guard(self, scope, reference):
         """Serialize consented archival against projection revocation."""
         with self._lock:
-            if not self.owns_reference(scope, reference):
+            if not _unique_owner(self._rows, self._enabled, scope, reference):
                 yield None
             else:
                 yield self._generation
+
+
+def _unique_owner(rows, enabled, scope, reference):
+    if not enabled:
+        return False
+    owners = {candidate for candidate, (latest, baseline, anomalies) in rows.items()
+              if any(row is not None and row.evidence_ref == reference
+                     for row in (latest, baseline, *anomalies))}
+    return owners == {scope}
