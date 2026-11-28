@@ -224,3 +224,46 @@ d'acquisition ; la lecture du contrat ne crée aucun timer ni appel réseau.
 Le broker revalide le compte, la session, l'identité, la connexion et la
 politique juste avant chaque actualisation. Les autres fournisseurs et les
 sessions sans inventaire personnel n'annoncent pas cette capacité.
+
+
+## Réception #8436 — contention, verdicts et reprise (28/11/2026)
+
+La correction #8442 conserve les frontières d'identité, de consentement et
+d'acquisition. Un refus de verrou avant admission ne constitue pas un essai
+d'inventaire : ne pas consommer son horloge ni pérenniser `busy` comme état
+métier bloquant. La règle de backoff ci-dessus vise les tentatives admises,
+y compris celles échouées. La reprise startup reste unique, différée et
+`inventory_only`, avec revalidation du scope et du consentement ; elle ne
+crée aucun nouveau droit de matérialisation.
+
+Les publications et restaurations concurrentes d'état passent par CAS
+atomique, avec identité de tentative : un terminal concurrent ne doit jamais
+être écrasé par une restauration obsolète. La contention observée est un
+signal de présentation distinct de l'état métier, borné et invalidé à la
+nouvelle preuve ; son expiration GTK est gardée par scope/génération.
+Un état running abandonné n'est récupéré que sur preuve suffisante de
+disparition du propriétaire ; un PID réutilisé ou une identité historique
+incertaine ne justifie pas une récupération aveugle.
+
+Opening et Deep préservent les causes typées busy/cancelled/failed jusqu'au
+TaskRunner et aux diagnostics. Le bilan planifié distingue report, partiel
+et échec ; aucun faux succès ni effacement des résultats positifs.
+Un inventaire A incomplet peut légitimement rester partial malgré cinq
+ressources B attestées et zéro pending/blocked/failed/downloaded. Avec A
+complète et les mêmes B, le verdict devient success. Aucune nouvelle
+acquisition ne doit être provoquée par ce seul changement de couverture.
+La fixture discriminante #8445 vérifie Core, Broker, TaskRunner et horloges.
+
+Preuves : #8437–#8440 reçus ; caractérisation hors réseau #8441 (3/3,
+non fusionnée), correctif #8442 (main `61f4e001e8c8ecd3491d9084b20f4a55a7d72a0b`,
+13/13 jobs push, Core 29047 PASS, E2E 5/5), puis #8445 (tests seuls,
+main `33071ad45bfefa0835d050bdb332e635eb1f2ec6`, 2/2 PASS,
+documentation et AST success). L'incident terrain d'origine n'a pas été
+attribué exclusivement à ces mécanismes ; aucune recette terrain, preuve
+Windows native ni release n'est revendiquée. Le premier échec E2E
+maintenance-tools-1600 a réussi lors de la reprise diagnostique, sans cause
+racine établie : ne pas assimiler ce fait à une preuve de flakiness.
+Sources : [#8442](https://github.com/pzia/cifereca/pull/8442),
+[#8445](https://github.com/pzia/cifereca/pull/8445),
+[Core main](https://github.com/pzia/cifereca/actions/runs/46131623725),
+[discriminant main](https://github.com/pzia/cifereca/actions/runs/46137441170).
