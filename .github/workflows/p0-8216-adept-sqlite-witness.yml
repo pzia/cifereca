@@ -1,0 +1,63 @@
+name: P0 8216 ADEPT SQLite oracle witness
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-adept-sqlite-witness.yml'
+permissions:
+  contents: read
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/sqlite-witness"
+          mkdir -p "$out" "$RUNNER_TEMP/cov-db"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          export COVERAGE_FILE="$RUNNER_TEMP/cov-db/.coverage"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          git fetch origin c9db1c0f46535832ff15b395c4f8d9ab580d569f
+          test "$(git rev-parse FETCH_HEAD)" = c9db1c0f46535832ff15b395c4f8d9ab580d569f
+          target=tests/test_core_p0_5843_adept_local_diagnostic.py
+          git checkout c9db1c0f46535832ff15b395c4f8d9ab580d569f -- "$target"
+          test "$(git rev-parse ":$target")" = a8b5006eb8a1100d2fdc7c13da51dda80e4f274c
+          python -m pytest -q -n 2 --dist=loadfile "$target" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/clean.xml"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("src/cifereca/core/adept_local_diagnostic.py")
+          s=p.read_text()
+          old='db = sqlite3.connect(":memory:")'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'db = sqlite3.connect(str(path))'))
+          PY
+          set +e
+          python -m pytest -q "$target::test_never_open_source_sqlite_even_when_image_is_unavailable" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/mutant.xml" > "$out/mutant.log" 2>&1
+          rc=$?
+          set -e
+          cat "$out/mutant.log"
+          test "$rc" = 1
+          python - <<'PY'
+          import os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"sqlite-witness"
+          cases=ET.parse(root/"mutant.xml").findall(".//testcase")
+          assert len(cases)==1
+          failure=cases[0].find("failure")
+          assert failure is not None and cases[0].find("error") is None
+          assert 'assert name == ":memory:"' in (failure.text or "")
+          print("SOURCE_SQLITE_MUTANT_KILLED")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adept-sqlite-witness
+          path: ${{ runner.temp }}/sqlite-witness
+          retention-days: 7
