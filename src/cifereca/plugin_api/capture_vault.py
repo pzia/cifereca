@@ -78,3 +78,10 @@ class DiagnosticsCaptureVaultBroker(CaptureVaultBroker, Protocol):
                             scope: CaptureScope = CaptureScope(), capability: str | None = None,
                             evidence_ref: str | None = None,
                             generation: tuple | None = None) -> int: ...
+
+
+@runtime_checkable
+class DiagnosticsHealthBundleBroker(Protocol):
+    """Explicit local multi-evidence export for one exact private scope."""
+    def export_provider_health_bundle(self, scope: CaptureScope, selections: tuple,
+                                      destination: str, *, confirmed: bool = False) -> int: ...

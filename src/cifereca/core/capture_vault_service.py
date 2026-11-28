@@ -718,6 +718,55 @@ class _DiagnosticsPort(_Port):
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,
                                  before_publish=check_publication if guarded else None)
 
+    def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False):
+        """One explicitly selected private scope; never aggregate across accounts."""
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        if (type(scope) is not CaptureScope or scope == CaptureScope()
+                or type(selections) is not tuple or not 1 <= len(selections) <= 25):
+            raise VaultError("vault_scope_denied")
+        from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
+        from .capture_export import write_capture_zip
+        from .provider_health_bundle import build_health_bundle
+        policy = HTTP_TRACE.status()["include_binary"]
+        seen = set()
+        for selection in selections:
+            if type(selection) is not tuple or len(selection) != 4:
+                raise VaultError("vault_scope_denied")
+            capability, evidence, capture, generation = selection
+            if type(capture) is not str or not capture or capture in seen:
+                raise VaultError("vault_scope_denied")
+            seen.add(capture)
+            self._check_selection(scope, capability, evidence, capture, generation)
+
+        def check_publication():
+            if HTTP_TRACE.status()["include_binary"] != policy:
+                raise VaultError("vault_scope_denied")
+            for capability, evidence, capture, generation in selections:
+                self._check_selection(scope, capability, evidence, capture, generation)
+
+        rows = []
+        total = 0
+        for capability, evidence, capture, generation in selections:
+            check_publication()
+            row = self.read(scope, capture)
+            if row.summary.state != "completed" or row.summary.source_session_ref != evidence:
+                raise VaultError("vault_scope_denied")
+            try:
+                payload = project_archived_http_zip(row.payload, include_binary=policy,
+                                                    source_session_ref=evidence)
+            except Exception:
+                raise VaultError("vault_invalid") from None
+            total += len(payload)
+            if total > HTTP_TRACE_ZIP_LIMIT:
+                raise VaultError("private_zip_limit")
+            rows.append((capability, payload))
+        payload = build_health_bundle(tuple(rows), include_binary=policy)
+        check_publication()
+        return write_capture_zip(Path(destination), payload, confirmed=True,
+                                 max_bytes=HTTP_TRACE_ZIP_LIMIT,
+                                 before_publish=check_publication)
+
 
 class _Writer:
     def __init__(self, port, scope, source_session_ref, writer, key):
