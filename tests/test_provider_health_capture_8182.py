@@ -47,3 +47,42 @@ def test_targeted_archive_rejects_unbound_reference(tmp_path):
         assert not (tmp_path / "vault").exists()
     finally:
         vault.close()
+
+
+def test_targeted_archive_positive(tmp_path, monkeypatch):
+    import json
+    from io import BytesIO
+    from zipfile import ZipFile
+    import httpx
+    from cifereca import http_trace
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "account", "owner", "search")
+    exact = CaptureScope("fixture", "instance", "account", "owner")
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", "https://example.invalid/selected"), "fixture")
+        exchange.entry["outcome"] = "completed"
+    with diagnostic_task_scope():
+        other = trace.begin(httpx.Request("GET", "https://example.invalid/other"), "fixture")
+        other.entry["outcome"] = "completed"
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True, health=health)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        capture_id = port.archive_search_trace(exact, ref, consented=True)
+        assert health.snapshot(scope)[0].capture_id == capture_id
+        captured = port.read(exact, capture_id)
+        with ZipFile(BytesIO(captured.payload)) as archive:
+            index = json.loads(archive.read("index.json"))
+            assert index["session_ref"] == ref
+            assert len(index["exchanges"]) == 1
+            assert index["exchanges"][0]["task_ref"] == ref
+            assert index["exchanges"][0]["request"]["url"].endswith("/selected")
+    finally:
+        vault.close()
