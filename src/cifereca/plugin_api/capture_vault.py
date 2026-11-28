@@ -88,3 +88,9 @@ class DiagnosticsHealthBundleBroker(Protocol):
     def export_provider_health_bundle(self, scope: CaptureScope, selections: tuple,
                                       destination: str, *, confirmed: bool = False,
                                       expected_binary: bool | None = None) -> int: ...
+
+
+@runtime_checkable
+class DiagnosticsHealthReplayBroker(Protocol):
+    def replay_provider_health(self, scope: CaptureScope, capability: str, evidence_ref: str,
+                               capture_id: str, generation: tuple, *, confirmed: bool = False) -> dict: ...

@@ -124,11 +124,13 @@ class CiferecaCore:
         from ..paths import data_dir
         capture_root = database_path.parent if database_path is not None else data_dir(create=False)
         from .provider_health_source import snapshot_provider_source
+        from .provider_health_replay import replay_archived_observation
         brokers["capture.vault"] = CoreCaptureVault(
             capture_root / "capture-vault-v1", config.path.parent / "capture-secrets",
             authorize_scope=capture_scope_authorizer(library),
             health=library._provider_health,
             provider_source=lambda provider_id: snapshot_provider_source(plugins, provider_id),
+            provider_replay=lambda *args: replay_archived_observation(plugins, *args),
             selection_current=lambda *args: diagnostic_health_selection_current(library, *args),
             restore_current=lambda scope, generation: any(
                 row["scope"] == scope and row["generation"] == generation

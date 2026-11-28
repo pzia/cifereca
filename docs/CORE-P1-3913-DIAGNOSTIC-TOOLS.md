@@ -193,7 +193,6 @@ indépendamment de leur présence dans une installation donnée :
 
 | Chemin effectif | Commande / paramètres | Effet attestable et précautions |
 |---|---|---|
-| `src/plugins/provider-bnf-pret/cifereca_bnf_pret_health_replay.py` | **F** | Comparaison locale de deux captures privées de prêts BnF du même compte, sans réseau ni écriture ; compteurs uniquement. |
 | `src/plugins/provider-numilog/cifereca_numilog_capture_replay.py` | `PYTHONPATH=src/plugins/provider-numilog python3 -m cifereca_numilog_capture_replay CAPTURE.zip` | **F** : lit une capture HTTP ZIP **privée déjà existante**, compte les requêtes GET publiques qualifiées et compare localement les formes de réponses ; ne contacte aucun fournisseur, n'écrit pas la capture et n'exporte ni URL, ni en-tête, ni contenu brut. La capture contient potentiellement des secrets : **ne jamais publier le ZIP**. L'évaluation locale ne confère aucun droit ni attestation fournisseur. |
 | `src/plugins/provider-numilog/numilog_delivery_diagnose.py` | `python3 src/plugins/provider-numilog/numilog_delivery_diagnose.py JOURNAL.zip [--task-ref REF] [--json]` | **F** : analyse hors réseau d'une archive **déjà créée**, aucun placement EPUB ni résultat d'emprunt attesté. Les archives sources peuvent contenir des secrets. |
 | `src/plugins/recommendations/trace_report.py` | `python3 src/plugins/recommendations/trace_report.py [LOG|-]` | **F** : lecture de logs de performance (stdin `-` par défaut), statistiques ; **ne pas publier les lignes brutes**. |

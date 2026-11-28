@@ -90,7 +90,7 @@ def _read_sync_loan_inventory(account: Account, session: Any, *, scope_current=N
                 # rejects epoch changes, retired accounts and disabled sources.
                 if scope_current is not None and scope_current() is True:
                     finish_account_read(health_service, session, account, health_call,
-                                        loan_inventory_outcome(snapshot))
+                                        loan_inventory_outcome(snapshot), loan_snapshot=snapshot)
             except Exception:
                 pass  # Optional observation must not change Sync semantics.
         if snapshot.status == "cancelled":

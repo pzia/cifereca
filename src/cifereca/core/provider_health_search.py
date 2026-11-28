@@ -74,7 +74,7 @@ def begin_public_search(service, session, identity, *, capability="search"):
                 _installed_version(service, scope.provider))
 
 
-def finish_public_search(service, session, identity, call, outcome, *, rows=()):
+def finish_public_search(service, session, identity, call, outcome, *, rows=(), business_digest=None):
     if call is None or outcome is None:
         return
     with service._source_context_lock:
@@ -83,7 +83,8 @@ def finish_public_search(service, session, identity, call, outcome, *, rows=()):
                 or _installed_version(service, scope.provider) != version):
             return
         observation = Observation(Outcome(outcome), version,
-                                  datetime.now(timezone.utc).isoformat(), reference)
+                                  datetime.now(timezone.utc).isoformat(), reference,
+                                  business_digest=business_digest)
         health = service._provider_health
         health.observe(scope, observation, lease=lease)
         if scope.capability == "search" and outcome == "success":
@@ -186,7 +187,7 @@ def begin_account_read(service, session, account, capability):
         return None
 
 
-def finish_account_read(service, session, account, call, outcome, *, rows=()):
+def finish_account_read(service, session, account, call, outcome, *, rows=(), loan_snapshot=None):
     if call is None or outcome is None:
         return
     from types import SimpleNamespace
@@ -195,7 +196,8 @@ def finish_account_read(service, session, account, call, outcome, *, rows=()):
                       account.identity_id, call[1].capability)
         if exact == call[1]:
             finish_public_search(service, session,
-                                 SimpleNamespace(identity_id=account.identity_id), call, outcome, rows=rows)
+                                 SimpleNamespace(identity_id=account.identity_id), call, outcome, rows=rows,
+                                 business_digest=_loan_digest(loan_snapshot, account))
     except Exception:
         pass
 
@@ -253,3 +255,10 @@ def personal_library_outcome(rows, account):
     except Exception:
         pass
     return "unknown"
+
+
+def _loan_digest(snapshot, account):
+    if snapshot is None:
+        return None
+    from .provider_health_replay import loan_snapshot_digest
+    return loan_snapshot_digest(snapshot, account)

@@ -299,11 +299,12 @@ class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
                  policy=None, health=None, selection_current=None, restore_current=None,
-                 provider_source=None):
+                 provider_source=None, provider_replay=None):
         self._health = health
         self._selection_current = selection_current
         self._restore_current = restore_current
         self._provider_source = provider_source
+        self._provider_replay = provider_replay
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -652,6 +653,7 @@ class _DiagnosticsPort(_Port):
                 "schema": "cifereca.health-observation/1",
                 "capability": capability, "outcome": observation.outcome.value,
                 "version": observation.version, "observed_at": observation.observed_at,
+                "business_digest": observation.business_digest,
                 "book_witnesses": [list(book) for _, book, version, ref
                                    in health.book_witnesses(exact)
                                    if version == observation.version and ref == source_ref],
@@ -784,6 +786,18 @@ class _DiagnosticsPort(_Port):
                 continue
         current()
         return health.restore_history(tuple(restored), lease=lease)
+
+    def replay_provider_health(self, scope, capability, evidence_ref, capture_id, generation, *, confirmed=False):
+        if confirmed is not True or scope == CaptureScope():
+            raise VaultError("vault_confirmation_required")
+        self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+        captured = self.read(scope, capture_id)
+        if captured.summary.state != "completed" or captured.summary.source_session_ref != evidence_ref:
+            raise VaultError("vault_scope_denied")
+        replay = self._service._provider_replay
+        result = replay(scope, capability, evidence_ref, captured.payload) if replay is not None else {"outcome": "unknown"}
+        self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+        return result
 
     def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False,
                                       expected_binary=None):

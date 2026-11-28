@@ -15,9 +15,6 @@ from pathlib import Path
 # Classification is deliberately explicit: a newly detected direct executable
 # is marked "unclassified" until an owner reviews its actual side effects.
 CLASSIFIED: dict[str, tuple[str, str]] = {
-    "src/plugins/provider-bnf-pret/cifereca_bnf_pret_health_replay.py": (
-        "F", "comparaison locale bornée de deux captures privées de prêts ; compteurs sans réseau ni écriture",
-    ),
     "src/plugins/provider-numilog/cifereca_numilog_capture_replay.py": (
         "F", "lecture locale bornée d'une capture HTTP ZIP ; compteurs fermés sans réseau",
     ),

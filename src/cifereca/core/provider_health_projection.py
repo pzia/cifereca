@@ -34,6 +34,7 @@ class Observation:
     observed_at: str
     evidence_ref: str
     capture_id: str | None = None
+    business_digest: str | None = None
 
 
 class PassiveHealth:
@@ -104,6 +105,10 @@ class PassiveHealth:
                 for v in (observation.version, observation.observed_at,
                           observation.evidence_ref)):
             raise ValueError("invalid evidence")
+        digest = observation.business_digest
+        if digest is not None and (type(digest) is not str or len(digest) != 64
+                                   or any(c not in "0123456789abcdef" for c in digest)):
+            raise ValueError("invalid business digest")
         if observation.capture_id is not None:
             raise ValueError('capture must be linked separately')
         if scope not in self._rows:

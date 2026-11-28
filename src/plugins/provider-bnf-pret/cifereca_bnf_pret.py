@@ -1557,6 +1557,11 @@ class BnfProviderPlugin(ProviderPlugin):
         self._identity_broker = context.broker("identities")
         return self
 
+    @staticmethod
+    def health_replay_projection(capability, read):
+        from cifereca_bnf_pret_health_replay import parse_projection
+        return parse_projection(capability, read)
+
     def deactivate(self):
         self._identity_broker = None
 

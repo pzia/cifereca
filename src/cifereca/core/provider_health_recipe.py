@@ -338,7 +338,7 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                         if not current():
                             return report("unknown", "scope_or_trace_unavailable")
                         outcome = loan_inventory_outcome(snapshot)
-                        finish_account_read(service, session, account, call, outcome)
+                        finish_account_read(service, session, account, call, outcome, loan_snapshot=snapshot)
                         put("loans", outcome, "typed_inventory")
             if not current():
                 return report("unknown", "scope_or_trace_unavailable")

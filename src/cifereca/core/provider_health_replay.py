@@ -89,6 +89,21 @@ class CapturedReadTransport(httpx.BaseTransport):
         self._cursor += 1
         return httpx.Response(status, headers=response_headers, stream=httpx.ByteStream(body))
 
+    def read_recorded(self, method, url):
+        """Parser requests only an exact logical read, never captured credentials."""
+        if self._closed or self._failed or self._cursor >= len(self._entries):
+            self._failed = True
+            raise ReplayUnavailable("replay_unmatched_request")
+        recorded_method, recorded_url, headers, _, _, _ = self._entries[self._cursor]
+        if (method, url) != (recorded_method, recorded_url):
+            self._failed = True
+            raise ReplayUnavailable("replay_unmatched_request")
+        response = self.handle_request(httpx.Request(method, url, headers=headers))
+        response.read()
+        # Do not expose cookies or other response credentials to the parser.
+        return httpx.Response(response.status_code, content=response.content,
+                              headers={"content-type": response.headers.get("content-type", "")})
+
     def require_complete(self):
         if self._closed or self._failed or self._cursor != len(self._entries):
             raise ReplayUnavailable("replay_incomplete")
@@ -132,3 +147,89 @@ def compare_business_projection(baseline, replayed, *, baseline_version, replay_
             "removed": len(before.keys() - after.keys()),
             "changed": sum(before[k] != after[k] for k in before.keys() & after.keys()),
             "version_changed": baseline_version != replay_version}
+
+
+def projection_digest(rows):
+    """Bounded canonical digest, with explicit empty distinct from unknown."""
+    from hashlib import sha256
+    if type(rows) is not tuple or len(rows) > 2048:
+        return None
+    seen = set()
+    for row in rows:
+        if (type(row) is not tuple or len(row) != 4
+                or not all(type(value) is str and len(value) <= 4096 for value in row)
+                or not row[0] or not row[1] or row[0] in seen):
+            return None
+        seen.add(row[0])
+    payload = json.dumps(sorted(rows), ensure_ascii=True, separators=(",", ":")).encode()
+    if len(payload) > 2_000_000:
+        return None
+    return sha256(payload).hexdigest()
+
+
+def loan_snapshot_digest(snapshot, account):
+    from ..plugin_api.loan_inventory import LoanInventorySnapshot
+    try:
+        if (type(snapshot) is not LoanInventorySnapshot or snapshot.status != "success"
+                or snapshot.reason_code is not None or not snapshot.observed_at or not snapshot.branches
+                or any(branch.completeness != "complete" or branch.pagination_complete is not True
+                       or branch.medium == "unknown" for branch in snapshot.branches)
+                or (snapshot.scope.provider_id, snapshot.scope.credential_id, snapshot.scope.account_id,
+                    snapshot.scope.identity_id) != (account.provider_id, account.credential_id,
+                                                    account.unique_id, account.identity_id)):
+            return None
+        return projection_digest(tuple((row.id, row.record_id, row.title, row.author or "")
+                                       for row in snapshot.loans))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def replay_archived_observation(manager, scope, capability, evidence_ref, payload):
+    """One generic dispatch to an already active optional parser adapter.
+
+    Never activate a plugin, create a provider session or execute archived source.
+    Plugin code is trusted installed code, not an OS-level sandbox.
+    """
+    unknown = {"outcome": "unknown"}
+    try:
+        checked = project_archived_http_zip(payload, include_binary=True, source_session_ref=evidence_ref)
+        with ZipFile(BytesIO(checked)) as archive:
+            meta = json.loads(archive.read("index.json"))["health_observation"]
+        baseline = meta.get("business_digest")
+        version = meta.get("version")
+        if (meta.get("schema") != "cifereca.health-observation/1"
+                or meta.get("capability") != capability or type(baseline) is not str
+                or len(baseline) != 64 or any(c not in "0123456789abcdef" for c in baseline)
+                or type(version) is not str or not version or version == "unknown"):
+            return unknown
+        with manager.hold_descriptive_lifecycle():
+            record = manager._records.get(scope.provider_id)
+            if (record is None or record.descriptor.type != "provider.library"
+                    or record.descriptor.id != scope.provider_id or not record.enabled
+                    or record.state not in ("ready", "degraded")):
+                return unknown
+            service = record.service
+            replay_version = record.descriptor.version
+            adapter = getattr(service, "health_replay_projection", None)
+        if not callable(adapter) or type(replay_version) is not str or not replay_version:
+            return unknown
+        tape = CapturedReadTransport(checked, evidence_ref=evidence_ref, producer=scope.provider_id)
+        try:
+            rows = adapter(capability, tape.read_recorded)
+            tape.require_complete()
+            actual = projection_digest(rows)
+        finally:
+            tape.close()
+        if actual is None:
+            return unknown
+        with manager.hold_descriptive_lifecycle():
+            current = manager._records.get(scope.provider_id)
+            if (current is not record or current.service is not service or not current.enabled
+                    or current.state not in ("ready", "degraded")
+                    or current.descriptor.version != replay_version):
+                return unknown
+        return {"outcome": "equal" if actual == baseline else "different",
+                "observed_version": version, "replay_version": replay_version,
+                "rows": len(rows), "empty_attested": not rows}
+    except Exception:
+        return unknown
