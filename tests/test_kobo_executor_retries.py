@@ -214,12 +214,9 @@ def _success_result(request: dict) -> dict:
 
 
 @pytest.mark.parametrize("session_type", [FakeKoboSession, ProfileFallbackSession])
-@pytest.mark.parametrize("failure", [
-    "auth_expired", "delegation_403", "invalid_candidate",
-    "runtime_failure", "destination_present",
-])
+@pytest.mark.parametrize("destination_present", [False, True], ids=["destination_absent", "destination_present"])
 def test_retired_direct_executor_never_issues_get_or_retry(
-    tmp_path: Path, monkeypatch, session_type, failure,
+    tmp_path: Path, monkeypatch, session_type, destination_present,
 ):
     """D3 legacy descriptor/HTTP retry is retired; canonical GET owns CAS.
 
@@ -231,7 +228,7 @@ def test_retired_direct_executor_never_issues_get_or_retry(
     service, session = _service(tmp_path, session_type)
     try:
         item = _item()
-        if failure == "destination_present":
+        if destination_present:
             path = service.library_identity_provider_dir("default", "kobo") / "Book One.epub"
             _write_epub(path)
             original = path.read_bytes()
