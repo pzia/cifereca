@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from collections import deque
+from threading import RLock
 
 
 class Outcome(Enum):
@@ -45,20 +46,35 @@ class PassiveHealth:
         self._limit = max_scopes
         self._enabled = False
         self._rows = {}
+        self._lock = RLock()
+        self._generation = 0
 
     def set_enabled(self, enabled):
         if type(enabled) is not bool:
             raise ValueError("invalid activation")
-        self._enabled = enabled
-        if not enabled:
-            self._rows.clear()
+        with self._lock:
+            if enabled != self._enabled:
+                self._generation += 1
+            self._enabled = enabled
+            if not enabled:
+                self._rows.clear()
 
-    def observe(self, scope, observation):
-        if not self._enabled:
+    def lease(self):
+        """Capture before an operation; stale completions must not be admitted."""
+        with self._lock:
+            return self._generation if self._enabled else None
+
+    def observe(self, scope, observation, *, lease):
+        with self._lock:
+            return self._observe(scope, observation, lease)
+
+    def _observe(self, scope, observation, lease):
+        if not self._enabled or lease != self._generation:
             return False
         if type(scope) is not Scope or type(observation) is not Observation:
             raise ValueError("invalid observation")
         if not all(type(v) is str and v.strip() == v and len(v) <= 256
+                   and all(ch.isprintable() for ch in v)
                    for v in (scope.provider, scope.instance, scope.account,
                              scope.identity, scope.capability)):
             raise ValueError("invalid scope")
@@ -85,5 +101,6 @@ class PassiveHealth:
         return previous is None or previous.outcome != observation.outcome
 
     def snapshot(self, scope):
-        latest, reference, anomalies = self._rows.get(scope, (None, None, ()))
-        return latest, reference, tuple(anomalies)
+        with self._lock:
+            latest, reference, anomalies = self._rows.get(scope, (None, None, ()))
+            return latest, reference, tuple(anomalies)
