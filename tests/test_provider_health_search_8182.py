@@ -176,3 +176,26 @@ def test_rights_empty_partial_and_cancelled_are_not_positive():
         scope=scope, status="success", coverage="complete", pagination_complete=True,
         branch="fixture", observed_at="2026-11-28T12:00:00Z", snapshot_ref="fixture")
     assert rights_outcome(complete) == "unknown"
+
+
+def test_loan_inventory_health_refuses_empty_legacy_and_cancelled():
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage
+    from cifereca.core.provider_health_search import loan_inventory_outcome
+    scope = LoanInventoryScope("viewer", "fixture", "instance", "account")
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, ())) == "unknown"
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, (), status="cancelled")) is None
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, (), status="failed",
+                                                       reason_code="scope_changed")) is None
+    complete = LoanInventorySnapshot(
+        scope, (), status="success", observed_at="2026-11-28T12:00:00Z",
+        branches=(LoanBranchCoverage("fixture", "digital", "complete", True),))
+    assert loan_inventory_outcome(complete) == "unknown"
+
+
+def test_personal_library_health_requires_exact_positive_rows():
+    from cifereca.models import Account, SearchResult
+    from cifereca.core.provider_health_search import personal_library_outcome
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    assert personal_library_outcome([], account) == "unknown"
+    assert personal_library_outcome([object()], account) == "unknown"

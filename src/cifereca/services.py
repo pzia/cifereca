@@ -1685,14 +1685,22 @@ class LibraryService:
                 and inspect.getattr_static(session, "descriptor", None) is descriptor
             )
 
+        from .core.provider_health_search import (
+            begin_account_read, finish_account_read, loan_inventory_outcome,
+        )
+        from .diagnostic_task_context import diagnostic_task_scope
         try:
-            snapshot = read_loan_inventory(
-                session, account, descriptor=descriptor, scope_current=still_bound,
-            )
+            with diagnostic_task_scope():
+                health_call = begin_account_read(self, session, account, "loans")
+                snapshot = read_loan_inventory(
+                    session, account, descriptor=descriptor, scope_current=still_bound,
+                )
         except ValueError as exc:
             raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
         if not still_bound() or snapshot.reason_code == "scope_changed":
             raise ProviderConfigurationError("loan_inventory_scope_changed")
+        finish_account_read(self, session, account, health_call,
+                            loan_inventory_outcome(snapshot))
         if snapshot.status in ("failed", "cancelled"):
             raise ProviderConfigurationError("loan_inventory_read_unavailable")
         rows = list(snapshot.loans)
@@ -2157,6 +2165,10 @@ class LibraryService:
         Neither this mirror nor direct_download is acquisition consent.
         """
         from .core.personal_library_mirror import PersonalLibraryMirrorCounts
+        from .core.provider_health_search import (
+            begin_account_read, finish_account_read, personal_library_outcome, classify_failure,
+        )
+        from .diagnostic_task_context import diagnostic_task_scope
         from .core.private_inventory_binding import private_inventory_binding_current
         from .core.source_context import source_context_epoch
         from .plugin_api import Cancelled
@@ -2212,10 +2224,25 @@ class LibraryService:
                 )
                 continue
             identity = self.identity_by_id(scope[0])
+            health_call = None
             try:
                 # Consume a one-shot iterable once for the scoped catalogue
                 # observation, without projecting historical ownership.
-                rows = list(session.library())
+                with diagnostic_task_scope():
+                    health_call = begin_account_read(self, session, account, "personal_library")
+                    try:
+                        rows = list(session.library())
+                    except Cancelled:
+                        raise
+                    except Exception as error:
+                        if health_call is not None:
+                            try:
+                                if source_current():
+                                    finish_account_read(self, session, account, health_call,
+                                                        classify_failure(error))
+                            except Exception:
+                                pass
+                        raise
                 if not source_current():
                     result.blocked_sources += 1
                     _TRACE_LOG.warning(
@@ -2246,6 +2273,9 @@ class LibraryService:
                         "provider=%s reason=source_binding_changed", provider_id,
                     )
                     continue
+                if health_call is not None:
+                    finish_account_read(self, session, account, health_call,
+                                        personal_library_outcome(rows, account))
                 result[f"{provider_id}:{credential_id}"] = self._mirror_remote_results(
                     rows, identity_id=identity.identity_id,
                 )

@@ -194,3 +194,40 @@ def rights_outcome(snapshot):
             and any(row.provider_attested is True for row in snapshot.rights)):
         return "success"
     return "unknown"
+
+
+def loan_inventory_outcome(snapshot):
+    """Typed complete positive inventory, never infer a global zero."""
+    from ..plugin_api.loan_inventory import LoanInventorySnapshot, LoanBranchCoverage
+    if type(snapshot) is not LoanInventorySnapshot:
+        return None
+    try:
+        if snapshot.status == "cancelled" or snapshot.reason_code in ("cancelled", "scope_changed", "unavailable"):
+            return None
+        if (snapshot.status == "success" and snapshot.reason_code is None
+                and snapshot.observed_at and snapshot.loans and snapshot.branches
+                and all(type(branch) is LoanBranchCoverage
+                        and branch.completeness == "complete"
+                        and branch.pagination_complete is True
+                        and branch.medium != "unknown"
+                        for branch in snapshot.branches)):
+            return "success"
+    except Exception:
+        return "unknown"
+    return "unknown"
+
+
+def personal_library_outcome(rows, account):
+    """Only accepted positive exact-source metadata; legacy empty is unknown."""
+    from ..models import SearchResult
+    try:
+        if (type(rows) is list and rows
+                and all(type(row) is SearchResult
+                        and row.source_provider == account.provider_id
+                        and row.source_credential == account.credential_id
+                        and row.source_account_id == account.unique_id
+                        and row.owned is True for row in rows)):
+            return "success"
+    except Exception:
+        pass
+    return "unknown"
