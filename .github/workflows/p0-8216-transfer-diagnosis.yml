@@ -20,48 +20,61 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/diagnosis"
-          mkdir -p "$out"
+          mkdir -p "$out" "$RUNNER_TEMP/probe" "$RUNNER_TEMP/coverage-data"
           export PYTHONDONTWRITEBYTECODE=1
-          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo:$RUNNER_TEMP/probe"
           python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
           python -m pip freeze > "$out/dependencies.txt"
           git fetch origin 2e2d31ffc471553facb924ed32d1e7033503b73f
           git fetch origin 1db4a1203b5c644436fa804f652a60b372d82818
+          git fetch origin 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
           git checkout 2e2d31ffc471553facb924ed32d1e7033503b73f -- tests/test_library_metadata_candidates.py tests/test_core_p1_1498_duplicate_cleanup_row_progress.py
           git checkout 1db4a1203b5c644436fa804f652a60b372d82818 -- tests/test_core_placement_observation_handoff.py
-          python - <<'PY'
-          from pathlib import Path
-          p=Path("src/cifereca/core/canonical_transfer.py")
-          s=p.read_text()
-          needle='        raise ValueError("canonical_transfer_authorization_required")'
-          assert s.count(needle)==1
-          # Diagnostic booleans only, no path, ID or secret; the original refusal remains.
-          p.write_text(s.replace(needle, '''        try:
-                      print("TRANSFER_GUARD_DIAG", {
-                          "authorized": type(explicitly_authorized) is bool and explicitly_authorized,
-                          "identity_tokens": token(from_identity_id) and token(to_identity_id),
-                          "distinct": from_identity_id != to_identity_id,
-                          "receipt_tokens": token(transfer_id) and token(transfer_receipt_ref),
-                          "path_types": all(isinstance(p, Path) for p in (library_root, from_path, to_path)),
-                          "lock_type_exact": type(shared_lock) is InterProcessLock,
-                          "lock_handle_present": getattr(shared_lock, "_handle", None) is not None,
-                          "lock_path_matches": shared_lock.path.resolve() == acquisition_lock_file().resolve(),
-                      }, flush=True)
-                  except Exception as diagnostic_error:
-                      print("TRANSFER_GUARD_DIAG_ERROR", type(diagnostic_error).__name__, flush=True)
-          '''.rstrip()+"\n"+needle))
-          PY
-          python -m py_compile src/cifereca/core/canonical_transfer.py
-          git diff --binary > "$out/diagnostic.patch"
+          git checkout 18af69e0b18c6a85461c9248a03c0d3e4fd3013c -- tests/test_core_p0_2975_complete_digital_inventory.py
+          test "$(git diff --cached --name-only | wc -l)" = 4
           git diff --cached --binary > "$out/isolation.patch"
-          export COVERAGE_FILE="$out/target.coverage"
-          set +e
-          python -m pytest -q -n 3 --dist=loadfile tests/test_catalog_083.py --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/target.xml" > "$out/target.log" 2>&1
-          rc=$?
-          set -e
-          echo "$rc" > "$out/target.exit"
-          tail -100 "$out/target.log"
-          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          cat > "$RUNNER_TEMP/probe/transfer_failure_probe.py" <<'PY'
+          import json
+          import sys
+          import pytest
+
+          @pytest.hookimpl(hookwrapper=True)
+          def pytest_runtest_makereport(item, call):
+              outcome = yield
+              report = outcome.get_result()
+              if call.excinfo is None or call.when != "call":
+                  return
+              if not isinstance(call.excinfo.value, ValueError) or str(call.excinfo.value) != "canonical_transfer_authorization_required":
+                  return
+              for entry in call.excinfo.traceback:
+                  frame = entry.frame
+                  if frame.code.name != "publish_completed_local_transfer":
+                      continue
+                  try:
+                      loc, glob = frame.f_locals, frame.f_globals
+                      lock = loc["shared_lock"]
+                      lock_cls = glob["InterProcessLock"]
+                      path_fn = glob["acquisition_lock_file"]
+                      paths = sys.modules.get("cifereca.paths")
+                      locking = sys.modules.get("cifereca.locking")
+                      token = loc["token"]
+                      result = {
+                          "authorized": type(loc["explicitly_authorized"]) is bool and loc["explicitly_authorized"],
+                          "identity_tokens": token(loc["from_identity_id"]) and token(loc["to_identity_id"]),
+                          "distinct": loc["from_identity_id"] != loc["to_identity_id"],
+                          "receipt_tokens": token(loc["transfer_id"]) and token(loc["transfer_receipt_ref"]),
+                          "path_types": all(isinstance(loc[k], glob["Path"]) for k in ("library_root","from_path","to_path")),
+                          "lock_type_exact": type(lock) is lock_cls,
+                          "lock_handle_present": getattr(lock, "_handle", None) is not None,
+                          "lock_path_matches": lock.path.resolve() == path_fn().resolve(),
+                          "path_alias_current": path_fn is getattr(paths, "acquisition_lock_file", None),
+                          "lock_class_alias_current": lock_cls is getattr(locking, "InterProcessLock", None),
+                          "lock_type_current": type(lock) is getattr(locking, "InterProcessLock", None),
+                      }
+                      report.sections.append(("TRANSFER_GUARD_DIAG",json.dumps(result,sort_keys=True)))
+                  except Exception as exc:
+                      report.sections.append(("TRANSFER_GUARD_DIAG_ERROR",type(exc).__name__))
+          PY
           python - <<'PY' > "$out/shard.files"
           import hashlib,subprocess
           for p in subprocess.check_output(["git","ls-files","tests"],text=True).splitlines():
@@ -69,13 +82,20 @@ jobs:
                   print(p)
           PY
           mapfile -t files < "$out/shard.files"
-          export COVERAGE_FILE="$out/shard.coverage"
+          # Keep plain pass and coverage pass in the same runner, matching the failed campaign.
+          python -m pytest -q -p transfer_failure_probe -n 3 --dist=loadfile "${files[@]}" --junitxml="$out/plain.xml" > "$out/plain.log" 2>&1 || { tail -c 16000 "$out/plain.log"; exit 1; }
+          tail -c 1000 "$out/plain.log"
+          export COVERAGE_FILE="$RUNNER_TEMP/coverage-data/.coverage"
           set +e
-          python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/shard.xml" > "$out/shard.log" 2>&1
+          python -m pytest -q -p transfer_failure_probe -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/coverage.xml" > "$out/coverage.log" 2>&1
           rc=$?
           set -e
-          echo "$rc" > "$out/shard.exit"
-          tail -160 "$out/shard.log"
+          echo "$rc" > "$out/coverage.exit"
+          grep -A1 'TRANSFER_GUARD_DIAG' "$out/coverage.log" | cut -c1-2000 || true
+          tail -c 16000 "$out/coverage.log"
+          test -z "$(git diff --name-only)"
+          git diff --cached --binary > "$out/final.patch"
+          cmp "$out/isolation.patch" "$out/final.patch"
           exit "$rc"
       - uses: actions/upload-artifact@v4
         if: always()
