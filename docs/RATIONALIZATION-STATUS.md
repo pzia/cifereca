@@ -54,7 +54,8 @@ Ces fichiers historiques ne sont pas présents dans le tree courant à la date d
 
 ### Core / plugins
 
-- `src/cifereca/builtin_ui/` reste intégré au Core.
+- `builtin_ui` reste dans CoreUI : [#157](https://github.com/pzia/cifereca/pull/157) sépare pages, chrome, système et maintenance cache ; shim et entrypoints publics stables ([contrats](../tests/test_builtin_ui_rationalization.py)).
+- Installation CLI [#108](https://github.com/pzia/cifereca/pull/108) : `resolve_archive` privilégie le chemin fourni, puis Téléchargements/XDG pour un nom simple ; chemins explicites sans fallback, erreur listant les essais ([tests](../tests/test_install_helpers_097.py)).
 - **Rationalisations historiques Paris/Kobo — capitalisation du 27/11/2026 :** [#164](https://github.com/pzia/cifereca/pull/164) a supprimé la zone Paris du Core et déplacé les invariants de normalisation, session/retry, recherche résiliente et prêts dans les tests provider Paris ; [#182](https://github.com/pzia/cifereca/pull/182) a supprimé le client HTTP Kobo-Vault du Core, en conservant à cette date l'orchestration résiduelle et la compatibilité nécessaire. Au HEAD `ee0978a02902118005ffa2b14f0051106c82f2c7`, les deux répertoires `src/cifereca/paris/` et `src/cifereca/kobo/` sont absents. Ne pas restaurer ces anciennes zones : protocoles, mappings et sessions restent chez le provider, runtime ADEPT spécialisé séparé, mécanismes transversaux et décision A→B au Core selon [ARCHITECTURE.md](ARCHITECTURE.md) et [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md). Témoins relus : [résilience Paris](../src/plugins/provider-paris/tests/test_legacy_client_resilience.py), [normalisation Paris](../src/plugins/provider-paris/tests/test_legacy_normalize_contract.py) et [frontière Kobo](../tests/test_kobo_boundary_rationalization.py). Les attributs historiques de restitution ou les anciennes orchestrations ne prescrivent aucun retour volontaire ni réactivation de W2. Relecture statique, sans nouvelle recette PNB/ACSM, ADEPT ni attestation exhaustive de découplage.
 - depuis la PR #201, `src/plugins/` est la seule source canonique ; `plugins/`, `bundled_plugins/` et `integrations/` sont absents au HEAD relu.
 
@@ -107,6 +108,6 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 ## Prochaines étapes de rationalisation
 
 1. poursuivre le triage historique `0921 → 0933` ;
-2. réexaminer `builtin_ui` et les éventuels résidus Core/provider selon les contrats courants, sans réouvrir les anciennes migrations Paris/Kobo ;
+2. réexaminer les résidus Core/provider selon les contrats courants, sans rouvrir les migrations builtin_ui/Paris/Kobo ;
 3. nettoyer la hiérarchie legacy Recommendations ;
 4. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
