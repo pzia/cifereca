@@ -362,6 +362,8 @@ def configure(
         def work():
             failures = 0
             completed = 0
+            deferred = 0
+            partials = 0
             interrupted = False
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
@@ -377,6 +379,10 @@ def configure(
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial"}:
+                        deferred += int(receipt.facts.get("deferred", 0) > 0)
+                        partials += int(receipt.facts.get("status") == "partial")
+                        continue
                     progressed, failed = _scheduled_inventory_progress(receipt)
                     completed += int(progressed)
                     failures += int(failed)
@@ -387,6 +393,15 @@ def configure(
                 if not scope_current():
                     interrupted = True
                     break
+            if partials or (completed and (failures or deferred)):
+                return SyncResult(ok=False, facts={"status": "partial",
+                                                   "completed": completed,
+                                                   "failed": failures,
+                                                   "deferred": deferred})
+            if deferred and not failures:
+                return SyncResult(ok=False, facts={"status": "busy",
+                                                   "reason": "operation_busy",
+                                                   "deferred": deferred})
             if completed and failures:
                 return SyncResult(ok=False, facts={"status": "partial",
                                                    "completed": completed,
