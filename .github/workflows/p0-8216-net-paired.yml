@@ -1,0 +1,130 @@
+name: P0 8216 paired net scoped receipt
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-net-paired.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Prepare one shared environment and pinned clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/8216-tree" 4fd07df843b9d940746bbfe962a1877eec15d431
+          git diff --exit-code 4fd07df843b9d940746bbfe962a1877eec15d431 246dc0125e8786d90e259520cc58ed5ccb90e350 -- src/cifereca pyproject.toml
+          python -m venv "$RUNNER_TEMP/8216-venv"
+          "$RUNNER_TEMP/8216-venv/bin/python" -m pip install --disable-pip-version-check -e "$RUNNER_TEMP/8216-tree" 'pytest>=8,<9' 'Pillow>=10,<12' 'cryptography>=42,<48'
+          mkdir -p "$RUNNER_TEMP/8216-net"
+          "$RUNNER_TEMP/8216-venv/bin/python" -m pip freeze > "$RUNNER_TEMP/8216-net/dependencies.txt"
+          git diff --name-status 4fd07df843b9d940746bbfe962a1877eec15d431 246dc0125e8786d90e259520cc58ed5ccb90e350 > "$RUNNER_TEMP/8216-net/source-diff.txt"
+      - name: ABBA changed-module receipt including recurring preventive cost
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/8216-venv/bin/python" - <<'PY'
+          import collections, json, os, pathlib, subprocess, sys, time
+          import xml.etree.ElementTree as ET
+          A = "4fd07df843b9d940746bbfe962a1877eec15d431"
+          B = "246dc0125e8786d90e259520cc58ed5ccb90e350"
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          root = tmp / "8216-tree"
+          out = tmp / "8216-net"
+          py = sys.executable
+          core = [
+              "tests/test_core_p0_5975_business_coupling_ledger.py",
+              "tests/test_core_p0_5833_adept_detail_core_pin.py",
+              "tests/test_core_p0_3196_backup_projection_audit_removed.py",
+              "tests/test_core_p0_3909_correlated_flow_trace.py",
+          ]
+          groups = {
+              "numilog": ("src/plugins/provider-numilog", [
+                  "tests/test_numilog_public_local_refinement_integrity_p0.py",
+                  "tests/test_numilog_public_digital_isbn_local_refinement_p0.py",
+              ]),
+              "kobo": ("src/plugins/provider-kobo", ["tests/test_kobo_public_cover_url_p1.py"]),
+          }
+          records = {}
+          identities = {}
+          def git(*args):
+              return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+          def run(args, cwd, env, log):
+              start = time.monotonic()
+              with log.open("w") as f:
+                  result = subprocess.run(args, cwd=cwd, env=env, stdout=f, stderr=subprocess.STDOUT)
+              elapsed = time.monotonic() - start
+              print(log.name, "seconds", round(elapsed, 6), "exit", result.returncode, flush=True)
+              print(log.read_text()[-4000:], flush=True)
+              assert result.returncode == 0, log
+              return elapsed
+          def cases(path):
+              rows = ET.parse(path).findall(".//testcase")
+              result = collections.Counter()
+              for c in rows:
+                  status = next((tag for tag in ("failure", "error", "skipped") if c.find(tag) is not None), "passed")
+                  assert status in ("passed", "skipped"), c.attrib
+                  result[(c.attrib.get("classname", ""), c.attrib["name"], status)] += 1
+              assert rows and all(n == 1 for n in result.values()), path
+              return result
+          for label, sha in (("A1", A), ("B1", B), ("B2", B), ("A2", A)):
+              git("checkout", "--detach", sha)
+              git("clean", "-fdx", "-e", "src/cifereca.egg-info/")
+              assert git("rev-parse", "HEAD") == sha
+              assert not git("status", "--porcelain", "--untracked-files=no")
+              env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+              env.pop("PYTEST_ADDOPTS", None)
+              env["PYTHONPATH"] = str(root / "src") + ":" + str(root / "src/plugins/provider-kobo")
+              times = {}
+              if sha == B:
+                  times["quality_delta"] = run([py, "-m", "scripts.ci_test_quality", "--base-ref", A, "--head-ref", B,
+                      "--output", str(out / (label + "-quality.json"))], root, env, out / (label + "-quality.log"))
+              else:
+                  times["quality_delta"] = 0.0
+              selected = {"core": (".", core + (["tests/test_ci_test_quality.py"] if sha == B else [])), **groups}
+              for name, (directory, targets) in selected.items():
+                  cwd = root / directory
+                  junit = out / (label + "-" + name + ".xml")
+                  local = dict(env)
+                  if name != "core":
+                      local["PYTHONPATH"] = str(root / "src")
+                  times[name] = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--durations=10",
+                      "--junitxml=" + str(junit), *targets], cwd, local, out / (label + "-" + name + ".log"))
+                  identities[label, name] = cases(junit)
+              assert not git("status", "--porcelain", "--untracked-files=no")
+              records[label] = {"sha": sha, "seconds": times, "net_seconds": sum(times.values())}
+              print("PASS", label, json.dumps(records[label]), flush=True)
+          for name in ("core", "numilog", "kobo"):
+              old = identities["A1", name]
+              new = identities["B1", name]
+              assert old == identities["A2", name] and new == identities["B2", name], name
+              removed, added = old - new, new - old
+              print("CASE_DELTA", name, "A", sum(old.values()), "B", sum(new.values()), "removed", list(removed), "added", list(added), flush=True)
+              if name == "core":
+                  assert removed == {("tests.test_core_p0_3196_backup_projection_audit_removed", "test_canonical_source_convergence_remains_available", "passed"): 1}, removed
+                  expected = ("test_ast_fingerprint_keeps_parameters_decorators_and_values", "test_delegated_oracles_are_distinguished_without_hiding_candidates", "test_delta_ignores_line_shifts_but_keeps_extra_occurrences", "test_signals_and_distinct_valid_contracts")
+                  assert added == {("tests.test_ci_test_quality", case, "passed"): 1 for case in expected}, added
+              else:
+                  assert not removed and not added, name
+          means = {arm: sum(records[arm + n]["net_seconds"] for n in ("1", "2")) / 2 for arm in ("A", "B")}
+          pairs = [records["A1"]["net_seconds"] - records["B1"]["net_seconds"], records["A2"]["net_seconds"] - records["B2"]["net_seconds"]]
+          report = {"scope": "changed rationalization modules and delta scanner; serial, no full suite claim",
+                    "records": records, "mean_net_seconds": means, "paired_savings_seconds": pairs,
+                    "mean_saving_seconds": means["A"] - means["B"], "same_sign_positive": all(x > 0 for x in pairs)}
+          (out / "net-receipt.json").write_text(json.dumps(report, indent=2) + "\n")
+          print("NET_RECEIPT", json.dumps(report), flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scoped-net-abba
+          path: ${{ runner.temp }}/8216-net/
+          retention-days: 7
