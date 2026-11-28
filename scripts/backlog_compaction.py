@@ -557,8 +557,14 @@ class GitStage:
         try:
             yield
         except Refusal as exc:
-            # main drift is a definite guard refusal, not an ambiguous remote mutation.
-            if str(exc) == "main changed":
+            # Definite pre-write authorization or guard failures are recoverable.
+            # Unknown/ambiguous transport, post-write, or malformed responses keep
+            # the lock for explicit operator reconciliation, never automatic theft.
+            if str(exc) in {"main changed", "backlog CI active or queued",
+                            "local authorization scope mismatch", "checkout is dirty",
+                            "checkout is not exact main", "no staging journal",
+                            "not a resumable progress journal", "staging digest mismatch",
+                            "execution lock held; reconcile before recovery"}:
                 release()
             raise
         else:
