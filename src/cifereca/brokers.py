@@ -375,6 +375,23 @@ class SynchronizationBrokerImpl:
         terminal = self._closed_last_cycle(value.get("last_cycle"))
         if terminal is not None:
             state["last_cycle"] = terminal
+        if state.get("status") == "running" and type(value.get("attempt_pid")) is int:
+            import os
+            pid = value["attempt_pid"]
+            if pid > 0 and pid != os.getpid():
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    # No live owner. The remote outcome is unknown, not success.
+                    recovered = dict(state, status="interrupted")
+                    if recovered.get("inventory_status") == "running":
+                        recovered["inventory_status"] = "failed"
+                    encoded = json.dumps(recovered, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":"))
+                    if self.service.storage.metadata_compare_publish(key, raw, encoded):
+                        return recovered
+                except OSError:
+                    pass  # Permission/other uncertainty is not proof of death.
         if legacy:
             self._set_state(source_id, state)
         return state
@@ -1082,7 +1099,8 @@ class SynchronizationBrokerImpl:
         if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
         from secrets import token_hex
-        provisional = json.dumps({**state, "attempt_token": token_hex(16)},
+        import os
+        provisional = json.dumps({**state, "attempt_token": token_hex(16), "attempt_pid": os.getpid()},
                                  ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if not self.service.storage.metadata_compare_publish(state_key, previous_raw, provisional):
             return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
