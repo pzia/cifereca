@@ -298,9 +298,10 @@ class _Storage(EncryptedCaptureVault):
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
-                 policy=None, health=None, selection_current=None):
+                 policy=None, health=None, selection_current=None, restore_current=None):
         self._health = health
         self._selection_current = selection_current
+        self._restore_current = restore_current
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -641,6 +642,15 @@ class _DiagnosticsPort(_Port):
                     entry.get("outcome") == "in_progress" for entry in snapshot["exchanges"]):
                 raise VaultError("vault_trace_incomplete")
             snapshot["session_ref"] = source_ref
+            observation = next((row for row in health.retained_observations(exact)
+                                if row.evidence_ref == source_ref), None)
+            if observation is None:
+                raise VaultError("vault_scope_denied")
+            snapshot["health_observation"] = {
+                "schema": "cifereca.health-observation/1",
+                "capability": capability, "outcome": observation.outcome.value,
+                "version": observation.version, "observed_at": observation.observed_at,
+            }
             payload = build_http_trace_zip(snapshot)
             self._check_selection(scope, capability, source_ref, None, generation)
             if HTTP_TRACE.status()["active"] is not True:
@@ -717,6 +727,54 @@ class _DiagnosticsPort(_Port):
         return write_capture_zip(Path(destination), payload, confirmed=True,
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,
                                  before_publish=check_publication if guarded else None)
+
+    def restore_provider_health_history(self, scope, generation, *, confirmed=False):
+        """Read only retained encrypted archives; never restore a live verdict."""
+        from .provider_health_projection import Scope, Observation, Outcome
+        from ..http_trace import project_archived_http_zip
+        from io import BytesIO
+        from zipfile import ZipFile
+        health = self._service._health
+        validator = self._service._restore_current
+        def current():
+            self._check(scope)
+            if (health is None or not callable(validator) or scope == CaptureScope()
+                    or validator(scope, generation) is not True):
+                raise VaultError("vault_scope_denied")
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        current()
+        lease = health.lease()
+        restored = []
+        # The vault owns retention, authentication and pending-marker filtering.
+        # Missing or legacy metadata never becomes an inferred observation.
+        for summary in self.sessions(scope):
+            current()
+            if summary.state != "completed":
+                continue
+            try:
+                row = self.read(scope, summary.capture_id)
+                payload = project_archived_http_zip(row.payload, include_binary=True,
+                                                     source_session_ref=summary.source_session_ref)
+                with ZipFile(BytesIO(payload)) as archive:
+                    index = json.loads(archive.read("index.json"))
+                meta = index.get("health_observation")
+                if (type(meta) is not dict or meta.get("schema") != "cifereca.health-observation/1"
+                        or meta.get("capability") not in ("search", "detail", "rights", "loans", "personal_library")
+                        or not index.get("exchanges")
+                        or any(entry.get("task_ref") != summary.source_session_ref
+                               for entry in index["exchanges"])):
+                    continue
+                exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
+                              scope.identity_id, meta["capability"])
+                obs = Observation(Outcome(meta["outcome"]), meta["version"],
+                                  meta["observed_at"], summary.source_session_ref,
+                                  summary.capture_id)
+                restored.append((exact, obs))
+            except (VaultError, ValueError, KeyError, TypeError):
+                continue
+        current()
+        return health.restore_history(tuple(restored), lease=lease)
 
     def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False,
                                       expected_binary=None):

@@ -120,6 +120,7 @@ class CiferecaCore:
                    else build_public_brokers(library, task_admission=notice_work_admission))
         from .capture_vault_service import CoreCaptureVault, capture_scope_authorizer
         from .provider_health_inventory import diagnostic_health_selection_current
+        from .provider_health_recipe import recipe_options
         from ..paths import data_dir
         capture_root = database_path.parent if database_path is not None else data_dir(create=False)
         brokers["capture.vault"] = CoreCaptureVault(
@@ -127,6 +128,9 @@ class CiferecaCore:
             authorize_scope=capture_scope_authorizer(library),
             health=library._provider_health,
             selection_current=lambda *args: diagnostic_health_selection_current(library, *args),
+            restore_current=lambda scope, generation: any(
+                row["scope"] == scope and row["generation"] == generation
+                for row in recipe_options(library)),
             policy=lambda: (config.get('diagnostics.capture_retention_days', 90),
                             config.get('diagnostics.capture_retention_bytes', 128 * 1024 * 1024)),
         )

@@ -159,6 +159,48 @@ class PassiveHealth:
             return tuple(row for row in self._witnesses.get(scope.provider, ())
                          if row[0] == scope)
 
+    def retained_observations(self, scope):
+        latest, baseline, anomalies = self.snapshot(scope)
+        return tuple(row for row in (latest, baseline, *anomalies) if row is not None)
+
+    def restore_history(self, rows, *, lease):
+        """Rehydrate historical evidence only, without notifications or latest PASS."""
+        with self._lock:
+            if not self._enabled or lease != self._generation:
+                return 0
+            count = 0
+            for scope, obs in rows:
+                if (type(scope) is not Scope or type(obs) is not Observation
+                        or not all(type(v) is str and 0 < len(v) <= 256
+                                   for v in (scope.provider, scope.instance, scope.account,
+                                             scope.identity, scope.capability, obs.version,
+                                             obs.observed_at, obs.evidence_ref, obs.capture_id))
+                        or obs.outcome is Outcome.UNKNOWN):
+                    continue
+                if scope not in self._rows:
+                    if len(self._rows) >= self._limit:
+                        continue
+                    self._rows[scope] = (None, None, deque(maxlen=3))
+                latest, baseline, anomalies = self._rows[scope]
+                if any(row.evidence_ref == obs.evidence_ref
+                       for row in self.retained_observations(scope)):
+                    continue
+                if any(row.evidence_ref == obs.evidence_ref
+                       for candidate in self._rows if candidate != scope
+                       for row in self.retained_observations(candidate)):
+                    continue
+                if obs.outcome in (Outcome.SUCCESS, Outcome.ATTESTED_EMPTY):
+                    if baseline is not None:
+                        continue
+                    baseline = obs
+                elif len(anomalies) < 3:
+                    anomalies.appendleft(obs)
+                else:
+                    continue
+                self._rows[scope] = (latest, baseline, anomalies)
+                count += 1
+            return count
+
     def snapshot(self, scope):
         with self._lock:
             latest, reference, anomalies = self._rows.get(scope, (None, None, ()))

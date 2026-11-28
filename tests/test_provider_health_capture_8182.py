@@ -401,3 +401,41 @@ def test_guarded_archive_and_export_revocation(tmp_path, monkeypatch):
         assert destination.stat().st_mode & 0o777 == 0o600
     finally:
         vault.close()
+
+
+def test_health_archive_restores_history_not_latest(tmp_path, monkeypatch):
+    import httpx
+    from cifereca import http_trace
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    exact = CaptureScope("fixture", "i", "a", "owner")
+    scope = Scope("fixture", "i", "a", "owner", "search")
+    health = PassiveHealth()
+    health.set_enabled(True)
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
+        exchange.entry["outcome"] = "completed"
+    health.observe(scope, Observation(Outcome.SUCCESS, "1", "now", ref), lease=health.lease())
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True, health=health)
+    try:
+        capture = vault.for_plugin("ui.page.diagnostics").archive_search_trace(exact, ref, consented=True)
+    finally:
+        vault.close()
+    fresh = PassiveHealth()
+    fresh.set_enabled(True)
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True, health=fresh,
+                             restore_current=lambda scope, generation: generation == (1,))
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        assert port.restore_provider_health_history(exact, (1,), confirmed=True) == 1
+        latest, baseline, anomalies = fresh.snapshot(scope)
+        assert latest is None and baseline.capture_id == capture and not anomalies
+        assert fresh.drain_transitions() == ()
+        assert port.restore_provider_health_history(exact, (1,), confirmed=True) == 0
+    finally:
+        vault.close()

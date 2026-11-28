@@ -51,7 +51,7 @@ def registered_health(service, health, identity_id):
             for instance, account, owner in coordinates:
                 scope = Scope(provider, instance, account, owner, capability)
                 latest = health.snapshot(scope)[0]
-                if latest is not None:
+                if health.retained_observations(scope):
                     rows.append((scope, enabled, latest))
     return tuple(rows)
 

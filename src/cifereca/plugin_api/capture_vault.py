@@ -73,6 +73,8 @@ class DiagnosticsCaptureVaultBroker(CaptureVaultBroker, Protocol):
     def archive_provider_trace(self, scope: CaptureScope, capability: str,
                                source_ref: str, *, consented: bool = False,
                                generation: tuple | None = None) -> str: ...
+    def restore_provider_health_history(self, scope: CaptureScope, generation: tuple, *,
+                                        confirmed: bool = False) -> int: ...
     def export_http_archive(self, capture_id: str, destination: str, *,
                             confirmed: bool = False,
                             scope: CaptureScope = CaptureScope(), capability: str | None = None,
