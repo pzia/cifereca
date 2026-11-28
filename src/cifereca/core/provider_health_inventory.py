@@ -47,3 +47,23 @@ def registered_health(service, health, identity_id):
                 scope = Scope(provider, instance, account, owner, capability)
                 rows.append((scope, enabled, health.snapshot(scope)[0]))
     return tuple(rows)
+
+
+def cached_virtual_health(manager, storage):
+    """Previously validated children of installed parents, without activation."""
+    from .provider_collection_cache import ProviderCollectionSnapshotStore
+    from ..plugin_api.provider_collection import ProviderCollectionValidationError
+    with manager.hold_descriptive_lifecycle():
+        parents = tuple(status for status in manager.statuses()
+                        if status.descriptor.type == "provider.collection")
+    store = ProviderCollectionSnapshotStore(storage)
+    rows = []
+    for parent in parents:
+        try:
+            snapshot = store.load(parent.descriptor.id)
+        except ProviderCollectionValidationError:
+            continue
+        if snapshot is not None:
+            rows.extend((child.plugin_id, parent.descriptor.id, parent.enabled,
+                         child.capabilities, child.status) for child in snapshot.children)
+    return tuple(rows)

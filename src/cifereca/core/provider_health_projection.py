@@ -160,11 +160,18 @@ class PassiveHealth:
         with self._lock:
             return _unique_owner(self._rows, self._enabled, scope, reference)
 
-    def drain_transitions(self):
+    def drain_transitions(self, *, identity_id=None):
         """Bounded, single-consumer transition notifications; no callbacks under lock."""
         with self._lock:
-            rows = tuple(self._transitions)
-            self._transitions.clear()
+            if identity_id is None:
+                rows = tuple(self._transitions)
+                self._transitions.clear()
+                return rows
+            rows = tuple(row for row in self._transitions
+                         if not row[0].identity or row[0].identity == identity_id)
+            self._transitions = deque(
+                (row for row in self._transitions
+                 if row[0].identity and row[0].identity != identity_id), maxlen=256)
             return rows
 
     def inventory(self):

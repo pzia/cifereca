@@ -48,3 +48,27 @@ def test_registered_unobserved_private_and_public():
     assert all(row[2] is None for row in rows)
     assert {row[0].account for row in rows} == {"", "account"}
     assert registered_health(service, health, "foreign") == ()
+
+
+def test_notifications_preserve_foreign_identity():
+    health = PassiveHealth()
+    health.set_enabled(True)
+    for owner in ("a", "b"):
+        scope = Scope("fixture", "instance", owner, owner, "search")
+        health.observe(scope, Observation(Outcome.AUTH, "1", "now", owner),
+                       lease=health.lease())
+    assert [row[0].identity for row in health.drain_transitions(identity_id="a")] == ["a"]
+    assert health.drain_transitions(identity_id="a") == ()
+    assert [row[0].identity for row in health.drain_transitions(identity_id="b")] == ["b"]
+
+
+def test_cached_disabled_collection(monkeypatch):
+    from cifereca.core.provider_health_inventory import cached_virtual_health
+    from cifereca.core.provider_collection_cache import ProviderCollectionSnapshotStore
+    parent = SimpleNamespace(descriptor=SimpleNamespace(id="parent", type="provider.collection"), enabled=False)
+    manager = SimpleNamespace(hold_descriptive_lifecycle=nullcontext, statuses=lambda: [parent])
+    child = SimpleNamespace(plugin_id="virtual", capabilities=("catalog.search",), status="ready")
+    monkeypatch.setattr(ProviderCollectionSnapshotStore, "load",
+                        lambda self, parent: SimpleNamespace(children=(child,)))
+    assert cached_virtual_health(manager, object()) == (
+        ("virtual", "parent", False, ("catalog.search",), "ready"),)

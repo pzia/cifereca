@@ -211,7 +211,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         button = action_button("Diagnostics", "dialog-information-symbolic")
         button.connect("clicked", lambda _b: self.window.navigate("diagnostics"))
         self.outer.append(button)
-        for scope, previous, outcome, _when in health.drain_transitions():
+        for scope, previous, outcome, _when in health.drain_transitions(identity_id=identity or ''):
             if scope.identity and scope.identity != identity:
                 continue
             self._toast(f"Santé fournisseur : {scope.provider} — {outcome.value}")
