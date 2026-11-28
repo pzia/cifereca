@@ -119,7 +119,6 @@ def main():
             force_plugins=("core.ui.pages", "core.ui.titlebar", "core.ui.widgets",
                            "ui.page.diagnostics"),
         )
-        core.library._provider_health.set_enabled(True)
     else:
         core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     entry = {
@@ -1111,12 +1110,17 @@ def main():
 
     def complete_plugin_scroll():
         report["checks"]["P0_908_plugin_scroll_independent"] = True
-        report["status"] = "PASS"
         save()
-        rc[0] = 0
-        app.quit()
+        # The independent transient-window fixture must finish before the
+        # real shell navigates or schedules page/focus restoration.
+        later(150, start_real_health_navigation)
 
     def start_plugin_scroll():
+        start_synthetic_plugin_scroll()
+
+    def start_real_health_navigation():
+        core.library._provider_health.set_enabled(True)
+        window._plugin_page_widgets["plugins"].refresh()
         status = core.plugins.status("ui.page.diagnostics")
         assert status.enabled and status.state == "ready"
         plugin = core.plugins.service("ui.page.diagnostics")
@@ -1139,9 +1143,11 @@ def main():
         assert window.view_stack.get_visible_child_name() == "diagnostics"
         assert window._plugin_page_widgets["diagnostics"].get_mapped()
         report["checks"]["P0_8182_real_diagnostics_navigation"] = True
-        window.navigate("plugins")
         core.library._provider_health.set_enabled(False)
-        start_synthetic_plugin_scroll()
+        report["status"] = "PASS"
+        save()
+        rc[0] = 0
+        app.quit()
 
     def start_synthetic_plugin_scroll():
         # Same real MainWindow and synthetic 36-plugin GTK acceptance as before.
