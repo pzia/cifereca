@@ -298,8 +298,9 @@ class _Storage(EncryptedCaptureVault):
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
-                 policy=None, health=None):
+                 policy=None, health=None, selection_current=None):
         self._health = health
+        self._selection_current = selection_current
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -594,10 +595,26 @@ class _DiagnosticsPort(_Port):
         writer.save(payload, "completed", force=True)
         return writer.capture_id
 
-    def archive_search_trace(self, scope, source_ref, *, consented=False):
-        return self.archive_provider_trace(scope, "search", source_ref, consented=consented)
+    def _check_selection(self, scope, capability, source_ref, capture_id, generation):
+        self._check(scope)
+        validator = self._service._selection_current
+        if validator is None and generation is None:
+            return
+        if validator is None or generation is None:
+            raise VaultError("vault_scope_denied")
+        try:
+            valid = validator(scope, capability, source_ref, capture_id, generation)
+        except Exception:
+            valid = False
+        if valid is not True:
+            raise VaultError("vault_scope_denied")
 
-    def archive_provider_trace(self, scope, capability, source_ref, *, consented=False):
+    def archive_search_trace(self, scope, source_ref, *, consented=False, generation=None):
+        return self.archive_provider_trace(scope, "search", source_ref, consented=consented,
+                                           generation=generation)
+
+    def archive_provider_trace(self, scope, capability, source_ref, *, consented=False,
+                               generation=None):
         if consented is not True:
             raise VaultError("vault_confirmation_required")
         from .provider_health_projection import Scope
@@ -614,6 +631,7 @@ class _DiagnosticsPort(_Port):
         with health.archive_guard(exact, source_ref) as lease:
             if lease is None:
                 raise VaultError("vault_scope_denied")
+            self._check_selection(scope, capability, source_ref, None, generation)
             if HTTP_TRACE.status()["active"] is not True:
                 raise VaultError("vault_trace_inactive")
             snapshot = HTTP_TRACE.snapshot()
@@ -624,7 +642,7 @@ class _DiagnosticsPort(_Port):
                 raise VaultError("vault_trace_incomplete")
             snapshot["session_ref"] = source_ref
             payload = build_http_trace_zip(snapshot)
-            self._check(scope)
+            self._check_selection(scope, capability, source_ref, None, generation)
             if HTTP_TRACE.status()["active"] is not True:
                 raise VaultError("vault_trace_inactive")
             # Keep the new object private to this operation until commit or
@@ -643,11 +661,11 @@ class _DiagnosticsPort(_Port):
                     else self.read(exact_scope, capture_id))
                 try:
                     writer.save(payload, "completed", force=True)
-                    self._check(scope)
+                    self._check_selection(scope, capability, source_ref, None, generation)
                     if not health.link_capture(exact, source_ref, writer.capture_id,
                                                lease=lease, port=pending_reader, consented=True):
                         raise VaultError("vault_scope_denied")
-                    self._check(scope)
+                    self._check_selection(scope, capability, source_ref, writer.capture_id, generation)
                     service._storage.clear_pending(writer.capture_id, handle)
                 except Exception:
                     health.unlink_capture(exact, source_ref, writer.capture_id)
@@ -666,12 +684,27 @@ class _DiagnosticsPort(_Port):
                 return writer.capture_id
 
     def export_http_archive(self, capture_id, destination, *, confirmed=False,
-                            scope=CaptureScope()):
+                            scope=CaptureScope(), capability=None, evidence_ref=None,
+                            generation=None):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
         from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
         from .capture_export import write_capture_zip
+        guarded = scope != CaptureScope() and (
+            self._service._selection_current is not None or generation is not None)
+        def check_publication():
+            if guarded:
+                self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+            else:
+                self._check(scope)
+        if scope == CaptureScope() and any(
+                value is not None for value in (capability, evidence_ref, generation)):
+            raise VaultError("vault_scope_denied")
+        check_publication()
         row = self.read(scope, capture_id)
+        if guarded and (row.summary.source_session_ref != evidence_ref
+                        or row.summary.state != "completed"):
+            raise VaultError("vault_scope_denied")
         try:
             payload = project_archived_http_zip(
                 row.payload, include_binary=HTTP_TRACE.status()["include_binary"],
@@ -680,9 +713,10 @@ class _DiagnosticsPort(_Port):
             )
         except Exception as exc:
             raise VaultError("vault_invalid") from exc
-        self._check(scope)
+        check_publication()
         return write_capture_zip(Path(destination), payload, confirmed=True,
-                                 max_bytes=HTTP_TRACE_ZIP_LIMIT)
+                                 max_bytes=HTTP_TRACE_ZIP_LIMIT,
+                                 before_publish=check_publication if guarded else None)
 
 
 class _Writer:

@@ -320,3 +320,84 @@ def test_multicapability_archive_and_exact_export(tmp_path, monkeypatch):
             assert destination.stat().st_mode & 0o777 == 0o600
     finally:
         vault.close()
+
+
+def test_guarded_archive_and_export_revocation(tmp_path, monkeypatch):
+    import pytest
+    import httpx
+    from cifereca import http_trace
+    from cifereca.core import capture_export, capture_vault_service
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    from cifereca.plugin_api.capture_vault import VaultError
+
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "account", "owner", "search")
+    exact = CaptureScope("fixture", "instance", "account", "owner")
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
+        exchange.entry["outcome"] = "completed"
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+    generation = (0, 0, "fixture", 1)
+    revoked = [False]
+    def selection(s, cap, evidence, cid, token):
+        return (not revoked[0] and s == exact and cap == "search" and evidence == ref
+                and token == generation and health.snapshot(scope)[0].capture_id == cid)
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda *_: True, health=health,
+                             selection_current=selection)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.archive_provider_trace(exact, "search", ref, consented=True)
+        args = dict(consented=True, generation=generation)
+        original = capture_vault_service._Writer.save
+        def save_then_revoke(writer, *a, **kw):
+            original(writer, *a, **kw)
+            revoked[0] = True
+        with monkeypatch.context() as patch:
+            patch.setattr(capture_vault_service._Writer, "save", save_then_revoke)
+            with pytest.raises(VaultError, match="vault_scope_denied"):
+                port.archive_provider_trace(exact, "search", ref, **args)
+        assert vault._storage.pending_ids() == ()
+        assert port.sessions(exact) == ()
+        assert health.snapshot(scope)[0].capture_id is None
+        revoked[0] = False
+        original_link = health.link_capture
+        def link_then_revoke(*a, **kw):
+            result = original_link(*a, **kw)
+            revoked[0] = True
+            return result
+        with monkeypatch.context() as patch:
+            patch.setattr(health, "link_capture", link_then_revoke)
+            with pytest.raises(VaultError, match="vault_scope_denied"):
+                port.archive_provider_trace(exact, "search", ref, **args)
+        assert vault._storage.pending_ids() == ()
+        assert port.sessions(exact) == ()
+        assert health.snapshot(scope)[0].capture_id is None
+        revoked[0] = False
+        cid = port.archive_provider_trace(exact, "search", ref, **args)
+        destination = tmp_path / "private.zip"
+        export_args = dict(confirmed=True, scope=exact, capability="search",
+                           evidence_ref=ref, generation=generation)
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.export_http_archive(cid, str(destination), confirmed=True, scope=exact)
+        original_fsync = capture_export.os.fsync
+        def fsync_then_revoke(fd):
+            original_fsync(fd)
+            revoked[0] = True
+        with monkeypatch.context() as patch:
+            patch.setattr(capture_export.os, "fsync", fsync_then_revoke)
+            with pytest.raises(VaultError, match="vault_scope_denied"):
+                port.export_http_archive(cid, str(destination), **export_args)
+        assert not destination.exists()
+        assert not list(tmp_path.glob(".cifereca-export-*"))
+        revoked[0] = False
+        port.export_http_archive(cid, str(destination), **export_args)
+        assert destination.stat().st_mode & 0o777 == 0o600
+    finally:
+        vault.close()
