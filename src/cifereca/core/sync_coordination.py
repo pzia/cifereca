@@ -61,23 +61,43 @@ def _record_opening_observation_timing(detail: dict, phase: str, started: float)
         pass
 
 
-def _read_sync_loan_inventory(account: Account, session: Any, *, scope_current=None):
+def _read_sync_loan_inventory(account: Account, session: Any, *, scope_current=None,
+                              health_service=None):
     """One validated envelope, including installed v1 positive-only readers."""
     from ..plugin_api import Cancelled
     from ..plugin_api.loan_inventory import read_loan_inventory
+    from ..diagnostic_task_context import diagnostic_task_scope
+    from .provider_health_search import (
+        begin_account_read, finish_account_read, loan_inventory_outcome,
+    )
+    from contextlib import nullcontext
 
-    try:
-        snapshot = read_loan_inventory(
-            session, account, descriptor=getattr_static(session, "descriptor", None),
-            scope_current=scope_current,
-        )
-    except ValueError as exc:
-        raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
-    if snapshot.status == "cancelled":
-        raise Cancelled("loan_inventory_cancelled")
-    if snapshot.status == "failed":
-        raise ProviderConfigurationError("loan_inventory_read_unavailable")
-    return snapshot, list(snapshot.loans)
+    # Only the existing Core-admitted reader is observed. Direct ABI callers
+    # without a registered owner retain their original correlation scope.
+    with diagnostic_task_scope() if health_service is not None else nullcontext():
+        health_call = (begin_account_read(health_service, session, account, "loans")
+                       if health_service is not None else None)
+        try:
+            snapshot = read_loan_inventory(
+                session, account, descriptor=getattr_static(session, "descriptor", None),
+                scope_current=scope_current,
+            )
+        except ValueError as exc:
+            raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
+        if health_call is not None:
+            try:
+                # The adapter revalidates the envelope; the Core guard also
+                # rejects epoch changes, retired accounts and disabled sources.
+                if scope_current is not None and scope_current() is True:
+                    finish_account_read(health_service, session, account, health_call,
+                                        loan_inventory_outcome(snapshot))
+            except Exception:
+                pass  # Optional observation must not change Sync semantics.
+        if snapshot.status == "cancelled":
+            raise Cancelled("loan_inventory_cancelled")
+        if snapshot.status == "failed":
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+        return snapshot, list(snapshot.loans)
 
 
 def _opening_loan_scope(self, account: Account, session: Any) -> tuple[Any, ...]:
@@ -101,7 +121,7 @@ def _sync_loan_inventory_observation(self, account: Account, session: Any, *, sc
     return _read_sync_loan_inventory(
         account, session, scope_current=lambda: _registered_typed_loan_scope_current(
             self, account, session, scope,
-        ),
+        ), health_service=self,
     )
 
 
@@ -176,7 +196,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # The lease is checked before and after the provider's single read.
         with measure("loan_refresh_ms"):
             snapshot, loans = _read_sync_loan_inventory(
-                account, session, scope_current=still_bound,
+                account, session, scope_current=still_bound, health_service=self,
             )
         if not _opening_loans_scoped(account, source_scope[0], loans, session=session):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
@@ -211,8 +231,26 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     if session.capabilities.personal_library:
         # A provider may expose a one-shot iterable: consume it once for
         # the scoped catalogue observation, never for a rights projection.
-        with measure("library_read_ms"):
-            rows = list(session.library())
+        from ..diagnostic_task_context import diagnostic_task_scope
+        from ..plugin_api import Cancelled
+        from .provider_health_search import (
+            begin_account_read, finish_account_read, personal_library_outcome, classify_failure,
+        )
+        with measure("library_read_ms"), diagnostic_task_scope():
+            health_call = begin_account_read(self, session, account, "personal_library")
+            try:
+                rows = list(session.library())
+            except Cancelled:
+                raise
+            except Exception as error:
+                if health_call is not None:
+                    try:
+                        if private_source_current():
+                            finish_account_read(self, session, account, health_call,
+                                                classify_failure(error))
+                    except Exception:
+                        pass
+                raise
         if not private_source_current():
             raise ProviderConfigurationError("private_inventory_source_changed")
         from .private_inventory_row_scope import (
@@ -232,6 +270,8 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # have been rebound or disabled during validation.
         if not private_source_current():
             raise ProviderConfigurationError("private_inventory_source_changed")
+        finish_account_read(self, session, account, health_call,
+                            personal_library_outcome(rows, account))
         with measure("catalog_mirror_ms"):
             result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
     if deep:

@@ -199,3 +199,67 @@ def test_personal_library_health_requires_exact_positive_rows():
                       unique_id="account", identity_id="viewer")
     assert personal_library_outcome([], account) == "unknown"
     assert personal_library_outcome([object()], account) == "unknown"
+
+def test_sync_loan_reader_observes_once_and_refuses_revoked_scope(monkeypatch):
+    from cifereca.core import sync_coordination, provider_health_search, loan_action_scope
+    from cifereca.core import capture_vault_service
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+    from cifereca.plugin_api import loan_inventory
+    from cifereca.models import Account
+
+    service, session, health = _public_fixture()
+    session.credential_id = "instance"
+    service._sessions = {("fixture", "instance"): session}
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    monkeypatch.setattr(loan_action_scope, "_inert_session_state", lambda s: vars(s))
+    monkeypatch.setattr(loan_action_scope, "_inert_session_accounts", lambda s: [account])
+    monkeypatch.setattr(capture_vault_service, "capture_scope_authorizer",
+                        lambda s: lambda producer, scope: True)
+    calls = []
+    current = [True]
+    envelope = LoanInventorySnapshot(
+        LoanInventoryScope("viewer", "fixture", "instance", "account"), ())
+    def read(*args, **kwargs):
+        calls.append(provider_health_search.diagnostic_task_reference())
+        return envelope
+    monkeypatch.setattr(loan_inventory, "read_loan_inventory", read)
+    scope = Scope("fixture", "instance", "account", "viewer", "loans")
+    def run():
+        return sync_coordination._read_sync_loan_inventory(
+            account, session, scope_current=lambda: current[0], health_service=service)
+    assert run() == (envelope, [])
+    observed = health.snapshot(scope)[0]
+    assert observed.outcome is Outcome.UNKNOWN
+    assert len(calls) == 1 and calls[0]
+    current[0] = False
+    assert run() == (envelope, [])
+    assert len(calls) == 2 and calls[0] != calls[1]
+    assert health.snapshot(scope)[0] == observed
+
+
+def test_sync_loan_reader_preserves_cancellation_and_no_owner(monkeypatch):
+    import pytest
+    from cifereca.core import sync_coordination, provider_health_search
+    from cifereca.models import Account
+    from cifereca.plugin_api import Cancelled, loan_inventory
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    session, service = object(), object()
+    seen = []
+    envelope = LoanInventorySnapshot(
+        LoanInventoryScope("viewer", "fixture", "instance", "account"), (),
+        status="cancelled")
+    monkeypatch.setattr(loan_inventory, "read_loan_inventory", lambda *a, **k: envelope)
+    monkeypatch.setattr(provider_health_search, "begin_account_read",
+                        lambda *a: object())
+    monkeypatch.setattr(provider_health_search, "finish_account_read",
+                        lambda *a: seen.append(a[-1]) if a[-1] is not None else None)
+    with pytest.raises(Cancelled):
+        sync_coordination._read_sync_loan_inventory(
+            account, session, scope_current=lambda: True, health_service=service)
+    with pytest.raises(Cancelled):
+        sync_coordination._read_sync_loan_inventory(account, session)
+    assert seen == []
