@@ -584,9 +584,11 @@ def main() -> int:
     for name, scenario in select(args.scenario, args.plugin):
         with tempfile.TemporaryDirectory(prefix="cifereca-e2e-") as tmp:
             fixture_env = materialize_fixture(scenario["fixture"], Path(tmp))
-            if scenario.get("plugin_scroll_only"):
+            if (scenario.get("plugin_scroll_only")
+                    or scenario.get("runner") == "gtk-llm-settings"):
                 # Install the real local Diagnostics package in this disposable
-                # fixture only. No package download or provider activation.
+                # fixture only. No package download or provider activation;
+                # the IA recipe explicitly activates only this plugin on restart.
                 source = ROOT / "src/plugins/diagnostics-page"
                 manifest = json.loads((source / "cifereca-plugin.json").read_text(encoding="utf-8"))
                 package = manifest["package"]

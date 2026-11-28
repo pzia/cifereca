@@ -73,8 +73,12 @@ def test_disabled_defaults_original_tree_order_and_no_network():
     assert ui.timeout.text == "5"
     assert ui.input_limit.text == "4000"
     assert ui.output_limit.text == "256"
-    assert section.children[-2].label == "Désactivé"
-    assert section.children[-1].children == [ui.test_button, ui.reset_button]
+    # The original probe controls keep their position; profile management
+    # follows them so the existing GTK/XTEST route stays visible.
+    assert section.children[3] is ui.status and ui.status.label == "Désactivé"
+    assert section.children[4].children == [ui.test_button, ui.reset_button]
+    assert section.children[5].title == "Configurations IA enregistrées"
+    assert section.children[-1].children == [ui.profile_add, ui.profile_select, ui.profile_delete]
     assert style == [("caption", "dim-label")]
 
 

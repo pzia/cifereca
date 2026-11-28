@@ -163,8 +163,19 @@ def test_metrics_have_bounded_labels_and_no_payload(monkeypatch):
 
 def test_revocation_drops_inflight_result_and_preserves_no_fallback(monkeypatch):
     from io import BytesIO
-    from threading import Event, Thread
+    from threading import BoundedSemaphore, Event, Thread
+    from cifereca.core import llm_service as module
 
+    # Own the worker slots and join the actual worker, not just its caller.
+    monkeypatch.setattr(module, "_LLM_SLOTS", BoundedSemaphore(2))
+    workers = []
+
+    def tracked_thread(*args, **kwargs):
+        worker = Thread(*args, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(module, "Thread", tracked_thread)
     cfg = normalize_profiles({**LOCAL, "enabled": True})
     root = {"llm": cfg}
     service = optional_llm_service(root)
@@ -195,12 +206,17 @@ def test_revocation_drops_inflight_result_and_preserves_no_fallback(monkeypatch)
         release.set()
         caller.join(5)
         assert exited.wait(5)
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
 
 
 def test_two_slots_saturate_without_retry_or_fallback(monkeypatch):
     from io import BytesIO
-    from threading import Event, Lock, Thread
+    from threading import BoundedSemaphore, Event, Lock, Thread
+    from cifereca.core import llm_service as module
 
+    monkeypatch.setattr(module, "_LLM_SLOTS", BoundedSemaphore(2))
     cfg = normalize_profiles({**LOCAL, "enabled": True})
     service = optional_llm_service({"llm": cfg})
     entered, release = Event(), Event()

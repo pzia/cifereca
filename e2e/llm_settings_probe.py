@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 from time import monotonic
@@ -27,7 +28,6 @@ from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 from cifereca.core.llm_profiles import selected_settings
-from cifereca.plugin_api import LLMRequest
 
 
 def walk(widget):
@@ -397,23 +397,49 @@ def main():
     fixture.close()
     try:
         if result[0] == 0 and restart_fixture[0] is not None:
-            # Close/reopen the entire Core graph; no real user data, backend
-            # or external network. This is not a full process/plugin recipe.
-            with CiferecaCore.open(no_plugins=True, activate_plugins=False) as restarted:
-                llm = restarted.plugins.service('llm')
-                assert llm is not None and llm.available()
-                assert restarted.config.get('llm.active_profile') == 'local-one'
-                assert restart_fixture[0].requests == []
-                plain = llm.generate(LLMRequest(
-                    'Test de connexion technique. Réponds uniquement OK.', max_output_tokens=8))
-                structured = llm.generate(LLMRequest(
-                    'Test JSON synthétique.', task='structured', max_output_tokens=8))
-                assert plain.ok and plain.text == 'OK'
-                assert structured.ok and structured.structured == {'ok': True}
-                assert len(restart_fixture[0].requests) == 2
-                assert all(row['synthetic_only'] for row in restart_fixture[0].requests)
-                assert all(row['authorization_present'] for row in restart_fixture[0].requests)
-                report['checks']['core_restart_named_profile_http_text_json'] = True
+            # The runner has installed only the real local Diagnostics
+            # package in the isolated XDG fixture. A fresh process verifies
+            # activation, public service resolution, and absence after disable.
+            child = subprocess.run(
+                [sys.executable, "-c", """
+from cifereca.core import CiferecaCore
+from cifereca.plugin_api import LLMRequest
+
+opts = dict(no_plugins=True, force_plugins=("ui.page.diagnostics",))
+with CiferecaCore.open(**opts) as core:
+    plugin = core.plugins.service("ui.page.diagnostics")
+    assert plugin is not None, "diagnostics_activation"
+    llm = core.plugins.service("llm")
+    assert llm is not None and llm.available(), "named_service"
+    assert plugin.llm is llm and plugin.context.service("llm") is llm, "plugin_contract"
+    assert core.config.get("llm.active_profile") == "local-one", "active_profile"
+    plain = plugin.llm.generate(LLMRequest(
+        "Test de connexion technique. Réponds uniquement OK.", max_output_tokens=8))
+    structured = plugin.llm.generate(LLMRequest(
+        "Test JSON synthétique.", task="structured", max_output_tokens=8))
+    assert plain.ok and plain.text == "OK", "plain_http"
+    assert structured.ok and structured.structured == {"ok": True}, "structured_http"
+    core.config.set("llm.enabled", False)
+    core.config.save()
+    assert not llm.available(), "old_service_revocation"
+with CiferecaCore.open(**opts) as core:
+    plugin = core.plugins.service("ui.page.diagnostics")
+    assert plugin is not None and plugin.pages(), "diagnostics_without_llm"
+    assert plugin.llm is None and plugin.context.service("llm") is None, "disabled_service"
+print("CIFERECA_LLM_RESTART_OK")
+"""],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+            # Never include subprocess logs or arbitrary exception messages
+            # in the verdict, even though the fixture is synthetic.
+            assert child.returncode == 0, f"LLM restart child exit {child.returncode}"
+            assert "CIFERECA_LLM_RESTART_OK" in child.stdout.splitlines()
+            assert len(restart_fixture[0].requests) == 2
+            assert all(row['synthetic_only'] for row in restart_fixture[0].requests)
+            assert all(row['authorization_present'] for row in restart_fixture[0].requests)
+            report['checks']['core_restart_named_profile_http_text_json'] = True
+            report['checks']['real_diagnostics_plugin_after_process_restart'] = True
+            report['checks']['real_diagnostics_plugin_without_llm'] = True
             report['status'] = 'PASS'
         elif report['status'] == 'RUNNING':
             result[0] = 1

@@ -132,3 +132,25 @@ Le Core maintient des compteurs bornés en mémoire par catégorie de résultat
 et destination locale/distante (nombre, durée cumulée et maximale).
 Pas de journal de contenu, de clé, de modèle ou d'URL, ni de comptabilité
 financière. Les compteurs disparaissent au redémarrage.
+
+
+## Réception technique et terrain
+
+Les scénarios existants `llm-settings-1366` et `llm-settings-1600`
+vérifient les opérations sur les profils dans un XDG jetable, puis démarrent
+un nouveau processus avec le seul vrai plugin Diagnostics activé. Les deux
+requêtes texte/JSON vont vers une fixture HTTP loopback synthétique.
+Après désactivation, Diagnostics reste activable sans service IA.
+Les valeurs de clé, prompts utilisateur et journaux réels ne font pas
+partie de ces recettes.
+
+Ce banc ne qualifie ni la qualité d'un modèle d'inférence, ni un serveur
+HTTPS distant réel, ni un lecteur d'écran AT-SPI. Pour les recettes terrain,
+utiliser une installation isolée, un modèle effectivement disponible et
+des données synthétiques ; contrôler texte, JSON objet, indisponibilité,
+annulation et absence de fallback. Pour le distant, autorisation
+propriétaire explicite préalable, endpoint HTTPS maîtrisé, confirmation
+du coût éventuel et secret fourni uniquement par environnement.
+Vérifier également le refus après modification de destination et le
+fonctionnement du plugin sans IA. Ne pas mettre URL réelle, clé,
+prompt, réponse ou données de livre dans les artefacts publiés.

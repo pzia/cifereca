@@ -105,6 +105,16 @@ def build_ai_settings_section(
     ai_notice.set_wrap(True)
     add_css(ai_notice, "caption", "dim-label")
     ai_box.append(ai_notice)
+    ai_status = Gtk.Label(label="Désactivé" if not ai_enabled.get_active() else "Configuré (non testé)", xalign=0)
+    ai_status.set_wrap(True)
+    ai_box.append(ai_status)
+    ai_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    ai_test = Gtk.Button(label="Tester la connexion")
+    ai_reset = Gtk.Button(label="Annuler les modifications")
+    ai_buttons.append(ai_test)
+    ai_buttons.append(ai_reset)
+    ai_box.append(ai_buttons)
+
     profile_group = Adw.PreferencesGroup()
     profile_group.set_title("Configurations IA enregistrées")
     ai_box.append(profile_group)
@@ -122,16 +132,6 @@ def build_ai_settings_section(
     profile_buttons.append(profile_select)
     profile_buttons.append(profile_delete)
     ai_box.append(profile_buttons)
-
-    ai_status = Gtk.Label(label="Désactivé" if not ai_enabled.get_active() else "Configuré (non testé)", xalign=0)
-    ai_status.set_wrap(True)
-    ai_box.append(ai_status)
-    ai_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    ai_test = Gtk.Button(label="Tester la connexion")
-    ai_reset = Gtk.Button(label="Annuler les modifications")
-    ai_buttons.append(ai_test)
-    ai_buttons.append(ai_reset)
-    ai_box.append(ai_buttons)
 
     return AISettingsWidgets(
         enabled=ai_enabled, endpoint=ai_endpoint, model=ai_model,
