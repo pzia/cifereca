@@ -41,3 +41,23 @@ def test_archive_guard_serializes_disable():
     assert done.is_set()
     with health.archive_guard(scope, "ref") as lease:
         assert lease is None
+
+
+def test_archive_guard_does_not_block_worker_observation():
+    from threading import Event, Thread
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "a", "owner", "search")
+    lease = health.lease()
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", "ref"), lease=lease)
+    done = Event()
+    def worker():
+        health.observe(scope, Observation(Outcome.SUCCESS, "1", "later", "new"), lease=lease)
+        done.set()
+    with health.archive_guard(scope, "ref") as admitted:
+        assert admitted == lease
+        thread = Thread(target=worker)
+        thread.start()
+        assert done.wait(2), "projection lock retained during archival"
+    thread.join(2)
+    assert not thread.is_alive()

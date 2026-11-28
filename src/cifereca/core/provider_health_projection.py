@@ -49,6 +49,7 @@ class PassiveHealth:
         self._enabled = False
         self._rows = {}
         self._lock = RLock()
+        self._archive_lock = RLock()
         self._generation = 0
         self._transitions = deque(maxlen=256)
         self._overflow = False
@@ -56,7 +57,7 @@ class PassiveHealth:
     def set_enabled(self, enabled):
         if type(enabled) is not bool:
             raise ValueError("invalid activation")
-        with self._lock:
+        with self._archive_lock, self._lock:
             if enabled != self._enabled:
                 self._generation += 1
             self._enabled = enabled
@@ -130,7 +131,8 @@ class PassiveHealth:
                                              scope.account, scope.identity)):
             return False
         with self._lock:
-            if not self._enabled or lease != self._generation or scope not in self._rows:
+            if (not self._enabled or lease != self._generation
+                    or not _unique_owner(self._rows, self._enabled, scope, observation_ref)):
                 return False
             latest, reference, anomalies = self._rows[scope]
             if not any(row is not None and row.evidence_ref == observation_ref
@@ -147,7 +149,8 @@ class PassiveHealth:
         except VaultError:
             return False
         with self._lock:
-            if not self._enabled or lease != self._generation or scope not in self._rows:
+            if (not self._enabled or lease != self._generation
+                    or not _unique_owner(self._rows, self._enabled, scope, observation_ref)):
                 return False
             latest, reference, anomalies = self._rows[scope]
             def link(row):
@@ -191,11 +194,13 @@ class PassiveHealth:
     @contextmanager
     def archive_guard(self, scope, reference):
         """Serialize consented archival against projection revocation."""
-        with self._lock:
-            if not _unique_owner(self._rows, self._enabled, scope, reference):
-                yield None
-            else:
-                yield self._generation
+        # Never retain the projection lock across vault, storage or HTTP I/O.
+        # Only disable/enable and archival acquire the outer gate.
+        with self._archive_lock:
+            with self._lock:
+                lease = (self._generation if _unique_owner(
+                    self._rows, self._enabled, scope, reference) else None)
+            yield lease
 
 
 def _unique_owner(rows, enabled, scope, reference):

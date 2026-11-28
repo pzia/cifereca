@@ -215,12 +215,20 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         label.set_wrap(True)
         self.outer.append(label)
         button = action_button("Diagnostics", "dialog-information-symbolic")
-        button.connect("clicked", lambda _b: self.window.navigate("diagnostics"))
+        button.set_name("provider-health-diagnostics")
+        button.connect("clicked", self._open_health_diagnostics)
         self.outer.append(button)
         for scope, previous, outcome, _when in health.drain_transitions(identity_id=identity or ''):
             if scope.identity and scope.identity != identity:
                 continue
             self._toast(f"Santé fournisseur : {scope.provider} — {outcome.value}")
+
+    def _open_health_diagnostics(self, _button):
+        # The plugin may be disabled or may have failed to mount since refresh.
+        if "diagnostics" not in getattr(self.window, "_pages", {}):
+            self._toast("Diagnostics indisponible : vérifiez l’activation du plugin.")
+            return
+        self.window.navigate("diagnostics")
 
     def _restore_viewport(
         self, scroll: float, anchor_id: str | None, offset: float | None,
