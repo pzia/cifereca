@@ -444,6 +444,7 @@ def collect_closure(api, event_issue, current):
                 "snapshots": [public_projection(snapshots[n]) for n in sorted(snapshots)]}
     if not lot:
         manifest["standard_batches"] = True
+        manifest["batch_size"] = standard_batch_size(manifest)
     if lot:
         require(snapshot(api, lot[0]) == lot[2], "master inventory drift")
         manifest["master"] = lot[0]
@@ -585,6 +586,25 @@ def same_after_write(before, after):
     return (issue_timestamp_only(before["issue"], after["issue"])
             and before["comments"] == after["comments"])
 
+def standard_batch_size(manifest):
+    # Stable scan: two issue reads, paginated comments, and native edges.
+    # Include the parent journal growth margin. Keep the nominal first run
+    # (collection, two staging guards, batch and two final guards) bounded.
+    scans = sum(3 + (len(s["comments"]) + (LOT_BATCH + 2 if s["issue"]["number"] == manifest["p0"] else 0)) // 100 + 1
+                for s in manifest["snapshots"])
+    return min(LOT_BATCH, max(1, 300 // scans))
+
+
+def batch_size(manifest):
+    if manifest.get("standard_batches") is True:
+        size = manifest.get("batch_size", LOT_BATCH)
+        require(type(size) is int and 1 <= size <= LOT_BATCH, "invalid standard batch size")
+        if "batch_size" in manifest:
+            require(size == standard_batch_size(manifest), "standard batch size mismatch")
+        return size
+    return LOT_BATCH
+
+
 def lot_plan(manifest):
     """Stable write order based solely on the verified original manifest."""
     parent = manifest["p0"]
@@ -625,7 +645,7 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
     """Verify the entire real prefix separately from the durable journal cursor."""
     if journal_count is None:
         journal_count = count
-    require(0 <= journal_count <= count <= journal_count + LOT_BATCH,
+    require(0 <= journal_count <= count <= journal_count + batch_size(manifest),
             "invalid partial prefix")
     parent = manifest["p0"]
     if "master" in manifest:
@@ -641,7 +661,7 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
         journals = [c for c in observed["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
         if n == parent:
             markers = [START + digest + " " + commit] + [
-                progress_marker(digest, commit, i) for i in range(LOT_BATCH, journal_count + 1, LOT_BATCH)]
+                progress_marker(digest, commit, i) for i in range(batch_size(manifest), journal_count + 1, batch_size(manifest))]
             require([c["body"] for c in journals] == markers
                     and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
                             for c in journals), "lot journal or cursor mismatch")
@@ -700,7 +720,7 @@ def consolidate(api, stage, event_issue, current, clock=None, recovery=None):
     require(mutations == lot_plan(manifest), "unstable mutation plan")
     before = metrics([t for snap in states.values() for t in issue_texts(snap)])
     # Count both persistent journals, even before the commit SHA is known.
-    progress = [progress_marker(digest, "0" * 40, i) for i in range(LOT_BATCH, len(mutations), LOT_BATCH)]
+    progress = [progress_marker(digest, "0" * 40, i) for i in range(batch_size(manifest), len(mutations), batch_size(manifest))]
     estimate = metrics(projected + [START + digest + " " + "0" * 40, DONE + digest + " " + "0" * 40] + progress)
     require(all(before[k] > estimate[k] for k in ("characters", "bytes")), "no positive contextual gain")
     commit = None
@@ -735,7 +755,7 @@ def consolidate(api, stage, event_issue, current, clock=None, recovery=None):
         states[parent] = after
         written.add(parent)
     mark(START + digest + " " + commit)
-    batch = mutations[:LOT_BATCH]
+    batch = mutations[:batch_size(manifest)]
     for n, cid, body in batch:
         guard()
         if cid is None:
@@ -792,9 +812,9 @@ def continue_lot(api, stage, event_issue, current):
     require(parent in numbers and control not in numbers and 8195 not in numbers, "invalid staged corpus")
     mutations = lot_plan(manifest)
     cursor = data["cursor"]
-    require(type(cursor) is int and 0 <= cursor < len(mutations) and cursor % LOT_BATCH == 0
+    require(type(cursor) is int and 0 <= cursor < len(mutations) and cursor % batch_size(manifest) == 0
             and (recovery or cursor > 0), "invalid progress cursor")
-    end = min(cursor + LOT_BATCH, len(mutations))
+    end = min(cursor + batch_size(manifest), len(mutations))
     applied = data["applied"] if recovery else cursor
     require(type(applied) is int and cursor <= applied <= end
             and (not recovery or cursor == 0 or applied > cursor), "invalid applied prefix")
@@ -835,8 +855,16 @@ def continue_lot(api, stage, event_issue, current):
     states[parent] = after
     written.add(parent)
     guard()
-    return {"status": "STAGED_AND_COMPACTED" if end == len(mutations) else "LOT_PENDING",
-            "p0": parent, "stage_sha": commit, "manifest_sha256": digest, "cursor": end, "total": len(mutations)}
+    result = {"status": "STAGED_AND_COMPACTED" if end == len(mutations) else "LOT_PENDING",
+              "p0": parent, "stage_sha": commit, "manifest_sha256": digest, "cursor": end, "total": len(mutations)}
+    if end == len(mutations):
+        before = metrics([t for snap in manifest["snapshots"] for t in
+                          [snap["issue"]["body"] or "", *(c["body"] for c in snap["comments"])]])
+        after = metrics([t for snap in states.values() for t in issue_texts(snap)])
+        result.update(before=before, after=after, staging_bytes=len(raw),
+                      context_gain={k: before[k] - after[k] for k in before},
+                      capitalized=False, global_gain_proven=False)
+    return result
 
 def recovery_preview(api, stage, parent, current):
     """Read-only authorization input; no staging creation or corpus mutation."""
@@ -853,6 +881,7 @@ def recovery_preview(api, stage, parent, current):
             "main_sha": current, "manifest_sha256": sha256(raw),
             "issues": [s["issue"]["number"] for s in manifest["snapshots"]],
             "staging_bytes": len(raw), "mutations": len(lot_plan(manifest)),
+            "batch_size": batch_size(manifest),
             "destruction_enabled": False}
 
 
@@ -912,7 +941,7 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
                         and xl_controls(snap["issue"]) == manifest["xl_controls"], "XL attachment drift")
             expected_journals = [start]
             if "master" in manifest or manifest.get("standard_batches") is True:
-                expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
+                expected_journals += [progress_marker(digest, commit, i) for i in range(batch_size(manifest), len(lot_plan(manifest)), batch_size(manifest))]
             if completed:
                 expected_journals.append(DONE + digest + " " + commit)
             require([c["body"] for c in journals] == expected_journals
