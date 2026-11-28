@@ -1364,9 +1364,10 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             return opening_service.opening_sync(
                 progress=lambda event: progress(event, report), deep=deep,
             )
-        except Cancelled:
-            raise Cancelled("opening_sync_cancelled") from None
         except Exception as exc:
+            from cifereca.plugin_api import Cancelled
+            if isinstance(exc, Cancelled):
+                raise Cancelled("opening_sync_cancelled") from None
             from cifereca.locking import LockBusyError
             from cifereca.providers import ProviderConfigurationError
             if (isinstance(exc, ProviderConfigurationError)
