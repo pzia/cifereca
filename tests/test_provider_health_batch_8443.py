@@ -140,3 +140,53 @@ def parse_projection(capability, read):
     assert replay() == {"outcome": "unknown"}
     assert projection_digest(()) is not None
     assert projection_digest(None) is None
+
+
+@pytest.mark.parametrize("html, rows", [
+    ('<section class="active-loans"></section>', ()),
+    ('<section class="active-loans"><div class="js-loan">'
+     '<a href="/loans/loan1">Prêt</a><a href="/resources/book1">Livre</a>'
+     '</div></section>', (("loan1", "book1", "Livre", ""),)),
+    ('<html>login</html>', None),
+])
+def test_installed_real_parser_in_shared_confined_worker(monkeypatch, html, rows):
+    """Use actual installed-source snapshot and actual parser, not a fake callback."""
+    from contextlib import nullcontext
+    from pathlib import Path
+    from cifereca.core.provider_health_replay import projection_digest, replay_archived_observation
+    from cifereca.plugin_api.capture_vault import CaptureScope
+
+    root = Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret"
+    class Plugin:
+        health_replay_modules = ("cifereca_bnf_pret_web", "cifereca_bnf_pret_health_replay")
+
+    provider = "provider.bnf-pret"
+    record = SimpleNamespace(
+        descriptor=SimpleNamespace(id=provider, type="provider.library", version="test"),
+        package=SimpleNamespace(root=root, sha256="test",
+                                manifest=SimpleNamespace(package=SimpleNamespace(version="test"))),
+        enabled=True, state="ready", service=Plugin())
+    manager = SimpleNamespace(_records={provider: record}, hold_descriptive_lifecycle=nullcontext)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    capture = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = capture.begin(httpx.Request("GET", "https://pret.bnf.fr/my_profile/activity"), provider)
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}))
+        exchange.observe("response", html.encode("utf-8"))
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    snapshot = capture.snapshot()
+    snapshot["session_ref"] = ref
+    snapshot["health_observation"] = {
+        "schema": "cifereca.health-observation/1", "capability": "loans",
+        "version": "test", "business_digest": projection_digest(rows if rows is not None else ())}
+    result = replay_archived_observation(manager, CaptureScope(provider, "i", "a", "owner"),
+                                         "loans", ref, http_trace.build_http_trace_zip(snapshot))
+    if rows is None:
+        assert result == {"outcome": "unknown"}
+    else:
+        assert result == {"outcome": "equal", "observed_version": "test",
+                          "replay_version": "test", "rows": len(rows),
+                          "empty_attested": not rows}
