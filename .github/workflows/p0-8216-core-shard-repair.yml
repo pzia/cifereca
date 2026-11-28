@@ -35,6 +35,8 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = 2e2d31ffc471553facb924ed32d1e7033503b73f
           git fetch origin 1db4a1203b5c644436fa804f652a60b372d82818
           test "$(git rev-parse FETCH_HEAD)" = 1db4a1203b5c644436fa804f652a60b372d82818
+          git fetch origin 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
+          test "$(git rev-parse FETCH_HEAD)" = 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
           python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
           python -m pip freeze > "$out/dependencies.txt"
           for label in A B; do
@@ -46,11 +48,14 @@ jobs:
             test "$(git rev-parse HEAD:tests/test_core_placement_observation_handoff.py)" = e371df65dfdba81be1d854b94c021da45a2cf651
             git checkout 1db4a1203b5c644436fa804f652a60b372d82818 -- tests/test_core_placement_observation_handoff.py
             test "$(git rev-parse :tests/test_core_placement_observation_handoff.py)" = 5f6b325ff81b8063d0b505ab6194a4cac1d905cc
+            test "$(git rev-parse HEAD:tests/test_core_p0_2975_complete_digital_inventory.py)" = 43de2c2c7e0ef39ad3efbd17ef7b005087ad1550
+            git checkout 18af69e0b18c6a85461c9248a03c0d3e4fd3013c -- tests/test_core_p0_2975_complete_digital_inventory.py
+            test "$(git rev-parse :tests/test_core_p0_2975_complete_digital_inventory.py)" = 06233dd72522531c934491c1399d8f5d356abdf9
             git diff --cached --binary > "$out/$label.isolation.patch"
             if [ "$label" = B ]; then cmp "$out/A.isolation.patch" "$out/B.isolation.patch"; fi
             git rev-parse HEAD > "$out/$label.sha"
             git diff --cached --name-only > "$out/$label.changed"
-            test "$(wc -l < "$out/$label.changed")" = 3
+            test "$(wc -l < "$out/$label.changed")" = 4
             python - <<'PY' > "$out/$label.files"
           import hashlib, os, subprocess
           paths=subprocess.check_output(["git","ls-files","tests"],text=True).splitlines()
@@ -62,15 +67,16 @@ jobs:
             test "${#files[@]}" -gt 0
             /usr/bin/time -p -o "$out/$label.plain.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --junitxml="$out/$label.plain.xml" > "$out/$label.plain.log" 2>&1 || { tail -c 16000 "$out/$label.plain.log"; exit 1; }
             tail -c 2000 "$out/$label.plain.log"
-            export COVERAGE_FILE="$out/$label.coverage"
-            mkdir -p "$out/clocks"
-            /usr/bin/time -p -o "$out/clocks/$label.coverage.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/$label.coverage.xml" > "$out/$label.coverage.log" 2>&1 || { tail -c 16000 "$out/$label.coverage.log"; exit 1; }
+            mkdir -p "$RUNNER_TEMP/coverage-data/$label"
+            export COVERAGE_FILE="$RUNNER_TEMP/coverage-data/$label/.coverage"
+            /usr/bin/time -p -o "$out/$label.coverage.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/$label.coverage.xml" > "$out/$label.coverage.log" 2>&1 || { tail -c 16000 "$out/$label.coverage.log"; exit 1; }
             tail -c 2000 "$out/$label.coverage.log"
             test -z "$(git diff --name-only)"
             git diff --cached --binary > "$out/$label.final.patch"
             cmp "$out/$label.isolation.patch" "$out/$label.final.patch"
             git reset --hard "$sha"
-            mv "$out/clocks/$label.coverage.time" "$out/$label.coverage.time"
+            test -s "$COVERAGE_FILE"
+            cp "$COVERAGE_FILE" "$out/$label.coverage"
           done
       - uses: actions/upload-artifact@v4
         if: always()
