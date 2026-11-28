@@ -50,6 +50,7 @@ class PassiveHealth:
         self._rows = {}
         self._lock = RLock()
         self._generation = 0
+        self._transitions = deque(maxlen=256)
 
     def set_enabled(self, enabled):
         if type(enabled) is not bool:
@@ -60,6 +61,7 @@ class PassiveHealth:
             self._enabled = enabled
             if not enabled:
                 self._rows.clear()
+                self._transitions.clear()
 
     def lease(self):
         """Capture before an operation; stale completions must not be admitted."""
@@ -102,7 +104,11 @@ class PassiveHealth:
         elif observation.outcome is not Outcome.UNKNOWN:
             anomalies.append(observation)
         self._rows[scope] = (observation, reference, anomalies)
-        return previous is None or previous.outcome != observation.outcome
+        changed = previous is None or previous.outcome != observation.outcome
+        if changed and observation.outcome is not Outcome.UNKNOWN:
+            self._transitions.append((scope, previous.outcome if previous else None,
+                                      observation.outcome, observation.observed_at))
+        return changed
 
     def snapshot(self, scope):
         with self._lock:
@@ -153,6 +159,13 @@ class PassiveHealth:
     def owns_reference(self, scope, reference):
         with self._lock:
             return _unique_owner(self._rows, self._enabled, scope, reference)
+
+    def drain_transitions(self):
+        """Bounded, single-consumer transition notifications; no callbacks under lock."""
+        with self._lock:
+            rows = tuple(self._transitions)
+            self._transitions.clear()
+            return rows
 
     def inventory(self):
         """Immutable snapshot of observed scopes, not installed providers."""

@@ -305,6 +305,13 @@ class CiferecaCore:
         with InterProcessLock(acquisition_lock_file()):
             return DirectoryMigration(config, storage, root).abort()
 
+    def provider_health_inventory(self):
+        from .provider_health_inventory import installed_health
+        return installed_health(self.plugins, self.library._provider_health)
+
+    def drain_provider_health_transitions(self):
+        return self.library._provider_health.drain_transitions()
+
     def close(self) -> None:
         self._notice_age_hold = None
         health = getattr(self.library, '_provider_health', None)
