@@ -96,3 +96,39 @@ class CapturedReadTransport(httpx.BaseTransport):
     def close(self):
         self._closed = True
         self._entries = ()
+
+
+def compare_business_projection(baseline, replayed, *, baseline_version, replay_version):
+    """Compare exact bounded normalized record projections, not HTTP status.
+
+    Inputs must be supplied by an independently qualified parser composition.
+    No assertion of parser isolation or capture ownership is made here.
+    """
+    def normalize(rows):
+        if type(rows) is not tuple or len(rows) > 10000:
+            raise ValueError
+        result = {}
+        for row in rows:
+            if (type(row) is not tuple or len(row) != 4
+                    or not all(type(v) is str and len(v) <= 4096 for v in row)
+                    or not row[0] or not row[1]):
+                raise ValueError
+            key = row[:2]
+            if key in result:
+                raise ValueError
+            result[key] = row[2:]
+        return result
+    try:
+        if not all(type(v) is str and v and v != "unknown"
+                   for v in (baseline_version, replay_version)):
+            raise ValueError
+        before, after = normalize(baseline), normalize(replayed)
+        if not before or not after:
+            raise ValueError
+    except ValueError:
+        return {"outcome": "unknown"}
+    return {"outcome": "equal" if before == after else "different",
+            "added": len(after.keys() - before.keys()),
+            "removed": len(before.keys() - after.keys()),
+            "changed": sum(before[k] != after[k] for k in before.keys() & after.keys()),
+            "version_changed": baseline_version != replay_version}

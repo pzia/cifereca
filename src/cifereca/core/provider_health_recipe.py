@@ -172,6 +172,29 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                             return report("unknown", "scope_or_trace_unavailable")
                         finish_account_read(service, session, account, call, outcome, rows=rows)
                         put("search", outcome, "typed_search")
+                        # A single bounded second page, only after a positive
+                        # first page and an explicit page-index contract.
+                        if (outcome == "success" and response.catalogue_complete is False
+                                and search_caps.pagination == "page"
+                                and type(search_caps.max_pages) is int
+                                and search_caps.max_pages >= 2
+                                and current()):
+                            with diagnostic_task_scope():
+                                try:
+                                    page_rows = session.search(_INITIAL_QUERY, "all", page=1, field="all")
+                                    first = {(row.docbase, row.record_id) for row in rows}
+                                    valid = (_exact_recipe_rows(page_rows, scope)
+                                             and any((row.docbase, row.record_id) not in first
+                                                     for row in page_rows))
+                                    if not current():
+                                        return report("unknown", "scope_or_trace_unavailable")
+                                    put("pagination", "success" if valid else "unknown",
+                                        "bounded_second_page")
+                                except Cancelled:
+                                    return report("unknown", "cancelled")
+                                except Exception:
+                                    put("pagination", "unknown", "page_unavailable")
+
             if not current():
                 return report("unknown", "scope_or_trace_unavailable")
             # Existing read ABI; never mirror into the catalogue or fetch a file.
