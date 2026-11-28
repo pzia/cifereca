@@ -31,3 +31,20 @@ def test_transition_deduplication_and_disable():
     health.observe(scope, Observation(Outcome.AUTH, "1", "now", "ref"), lease=health.lease())
     health.set_enabled(False)
     assert health.drain_transitions() == ()
+
+
+def test_registered_unobserved_private_and_public():
+    from cifereca.core.provider_health_inventory import registered_health
+    health = PassiveHealth()
+    caps = SimpleNamespace(search=True, loans=True)
+    public = SimpleNamespace(descriptor=SimpleNamespace(id="public", capabilities=caps, credential_fields=()))
+    private = SimpleNamespace(descriptor=SimpleNamespace(id="private", capabilities=caps, credential_fields=("login",)))
+    account = SimpleNamespace(provider_id="private", identity_id="owner", credential_id="instance", unique_id="account")
+    service = SimpleNamespace(identities=[SimpleNamespace(identity_id="owner")],
+        accounts_for_identity=lambda owner: [account], registry=SimpleNamespace(all=lambda: [public, private]),
+        _provider_enabled_for_identity=lambda provider, owner: provider == "public")
+    rows = registered_health(service, health, "owner")
+    assert len(rows) == 4
+    assert all(row[2] is None for row in rows)
+    assert {row[0].account for row in rows} == {"", "account"}
+    assert registered_health(service, health, "foreign") == ()

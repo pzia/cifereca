@@ -134,6 +134,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         )
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
+        self._append_health_summary()
         inventory = self.manager.package_inventory(include_expected=True)
 
         filters = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -187,6 +188,33 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             None if reset_scroll else anchor_offset,
             restore_focus and not reset_scroll,
         )
+
+    def _append_health_summary(self):
+        service = getattr(self.window, "service", None)
+        health = getattr(service, "_provider_health", None)
+        if health is None or health.lease() is None:
+            return
+        from ..core.provider_health_inventory import installed_health, registered_health
+        from ..core.provider_health_projection import Outcome
+        identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+        installed = installed_health(self.manager, health)
+        scopes = registered_health(service, health, identity)
+        anomalies = sum(row is not None and row.outcome not in
+                        (Outcome.SUCCESS, Outcome.ATTESTED_EMPTY, Outcome.UNKNOWN)
+                        for _, enabled, row in scopes if enabled)
+        unknown = sum(row is None or row.outcome is Outcome.UNKNOWN
+                      for _, enabled, row in scopes if enabled)
+        label = Gtk.Label(label=f"Santé : {len(installed)} fournisseurs installés · "
+                                f"{anomalies} anomalies · {unknown} non qualifiés", xalign=0)
+        label.set_wrap(True)
+        self.outer.append(label)
+        button = action_button("Diagnostics", "dialog-information-symbolic")
+        button.connect("clicked", lambda _b: self.window.navigate("diagnostics"))
+        self.outer.append(button)
+        for scope, previous, outcome, _when in health.drain_transitions():
+            if scope.identity and scope.identity != identity:
+                continue
+            self._toast(f"Santé fournisseur : {scope.provider} — {outcome.value}")
 
     def _restore_viewport(
         self, scroll: float, anchor_id: str | None, offset: float | None,

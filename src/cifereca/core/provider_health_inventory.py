@@ -21,3 +21,29 @@ def installed_health(manager, health):
         for status in statuses
         if status.descriptor.type in ("provider.library", "provider.collection")
     )
+
+
+def registered_health(service, health, identity_id):
+    """Metadata-only inventory, scoped to the current identity."""
+    from .provider_health_projection import Scope
+    if not identity_id or identity_id not in {row.identity_id for row in service.identities}:
+        return ()
+    accounts = tuple(service.accounts_for_identity(identity_id))
+    rows = []
+    for plugin in service.registry.all():
+        descriptor = plugin.descriptor
+        provider = descriptor.id
+        caps = getattr(descriptor, "capabilities", None)
+        enabled = service._provider_enabled_for_identity(provider, identity_id) is True
+        coordinates = [(a.credential_id, a.unique_id, identity_id) for a in accounts
+                       if a.provider_id == provider and a.identity_id == identity_id
+                       and a.credential_id and a.unique_id and a.credential_id != "__public__"]
+        if not getattr(descriptor, "credential_fields", ()):
+            coordinates.append(("", "", ""))
+        for capability in ("search", "personal_library", "loans"):
+            if getattr(caps, capability, None) is not True:
+                continue
+            for instance, account, owner in coordinates:
+                scope = Scope(provider, instance, account, owner, capability)
+                rows.append((scope, enabled, health.snapshot(scope)[0]))
+    return tuple(rows)
