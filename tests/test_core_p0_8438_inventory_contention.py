@@ -159,3 +159,22 @@ def test_contention_marker_cannot_mask_concurrent_terminal_state(tmp_path):
         assert row.contention_observed is False
     finally:
         service.storage.close()
+
+
+def test_recovery_cas_conflict_has_bounded_readback(tmp_path, monkeypatch):
+    from cifereca.core import process_liveness
+    service, account, _, _ = _source(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker._set_state(sid, {"status": "running", "inventory_status": "running", "attempt_pid": 123})
+        monkeypatch.setattr(process_liveness, "owner_proven_dead", lambda pid: True)
+        calls = []
+        def reject(*args):
+            calls.append(args)
+            return False
+        monkeypatch.setattr(type(service.storage), "metadata_compare_publish", lambda self, *args: reject(*args))
+        assert broker._state(sid)["status"] == "running"
+        assert len(calls) == 1
+    finally:
+        service.storage.close()

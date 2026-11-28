@@ -12,3 +12,9 @@ def test_windows_wait_is_non_destructive(handle, wait, dead):
                 CloseHandle=lambda h: closed.append(h))
     assert _windows_dead(123,kernel) is dead
     assert closed == ([handle] if handle else [])
+
+
+@pytest.mark.parametrize("error,dead", [(87,True),(5,False),(6,False),(0,False)])
+def test_windows_open_failure_is_conservative(error, dead):
+    kernel = NS(OpenProcess=lambda *args: 0)
+    assert _windows_dead(123, kernel, lambda: error) is dead

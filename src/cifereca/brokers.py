@@ -336,7 +336,7 @@ class SynchronizationBrokerImpl:
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
         return source_enabled(raw)
 
-    def _state(self, source_id: str) -> dict[str, Any]:
+    def _state(self, source_id: str, *, _recover: bool = True) -> dict[str, Any]:
         key = "sync.source.state." + source_id
         raw = self.service.storage.metadata_get(key)
         if not raw:
@@ -396,8 +396,7 @@ class SynchronizationBrokerImpl:
         terminal = self._closed_last_cycle(value.get("last_cycle"))
         if terminal is not None:
             state["last_cycle"] = terminal
-        if state.get("status") == "running" and type(value.get("attempt_pid")) is int:
-            import os
+        if _recover and state.get("status") == "running" and type(value.get("attempt_pid")) is int:
             pid = value["attempt_pid"]
             from .core.process_liveness import owner_proven_dead
             if owner_proven_dead(pid):
@@ -410,9 +409,11 @@ class SynchronizationBrokerImpl:
                 if self.service.storage.metadata_compare_publish(key, raw, encoded):
                     return recovered
                 # A concurrent publisher won; never migrate the stale snapshot.
-                return self._state(source_id)
-        if legacy:
-            self._set_state(source_id, state)
+                return self._state(source_id, _recover=False)
+        if legacy and _recover:
+            encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if not self.service.storage.metadata_compare_publish(key, raw, encoded):
+                return self._state(source_id, _recover=False)
         return state
 
     @classmethod
