@@ -199,3 +199,78 @@ def test_revocation_after_link_and_rollback_failure(tmp_path, monkeypatch):
             reopened.close()
     finally:
         vault.close()
+
+
+def test_pending_slots_and_bytes_count_once(tmp_path, monkeypatch):
+    import os
+    import pytest
+    from cifereca.core import capture_vault as engine
+    from cifereca.core import capture_vault_service as module
+    from cifereca.plugin_api.capture_vault import VaultError
+    monkeypatch.setattr(engine, "MAX_SESSIONS", 2)
+    monkeypatch.setattr(module, "MAX_SESSIONS", 2)
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True)
+    handles = []
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        exact = CaptureScope("fixture", "instance", "account", "owner")
+        first = port.begin(exact, "first", consented=True)
+        second = port.begin(exact, "second", consented=True)
+        storage = vault._storage
+        key = vault._key()
+        for writer in (first, second):
+            handles.append(storage.open_pending(writer.capture_id, key, create=True))
+        fd = storage._open_dir(create=False)
+        try:
+            assert storage._entries(fd) == (2, 64)
+        finally:
+            os.close(fd)
+        with pytest.raises(VaultError, match="vault_limit"):
+            storage.open_pending("f" * 32, key, create=True)
+        first.save(b"fixture", "completed")
+        fd = storage._open_dir(create=False)
+        try:
+            count, total = storage._entries(fd)
+            assert count == 2
+            assert total == 64 + (storage.path / (first.capture_id + ".cbrv")).stat().st_size
+        finally:
+            os.close(fd)
+        assert port.sessions(exact) == ()
+        storage.clear_pending(first.capture_id, handles[0])
+        assert port.read(exact, first.capture_id).payload == b"fixture"
+    finally:
+        for handle in handles:
+            os.close(handle)
+        vault.close()
+
+
+def test_live_pending_capture_not_pruned_by_other_core(tmp_path):
+    import os
+    import pytest
+    from datetime import datetime, timezone, timedelta
+    from cifereca.plugin_api.capture_vault import VaultError
+    def open_vault():
+        return CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                                authorize_scope=lambda producer, scope: True)
+    vault = open_vault()
+    other = open_vault()
+    handle = None
+    try:
+        exact = CaptureScope("fixture", "instance", "account", "owner")
+        writer = vault.for_plugin("ui.page.diagnostics").begin(exact, "live", consented=True)
+        handle = vault._storage.open_pending(writer.capture_id, vault._key(), create=True)
+        writer.save(b"fixture", "completed")
+        assert other.maintain(now=datetime.now(timezone.utc) + timedelta(days=366)) == (0, 0)
+        assert other._storage.list_ids() == (writer.capture_id,)
+        port = other.for_plugin("ui.page.diagnostics")
+        assert port.sessions(exact) == ()
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.read(exact, writer.capture_id)
+        vault._storage.clear_pending(writer.capture_id, handle)
+        assert port.read(exact, writer.capture_id).payload == b"fixture"
+    finally:
+        if handle is not None:
+            os.close(handle)
+        vault.close()
+        other.close()

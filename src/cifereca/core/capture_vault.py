@@ -116,6 +116,10 @@ class EncryptedCaptureVault:
                 found.append((name, info))
         return tuple(found)
 
+    def _reserved_ids(self, fd):
+        """Storage codec may reserve opaque IDs under the directory lock."""
+        return frozenset()
+
     def _entries(self, fd):
         """Count encrypted archives, labels AND orphan writes toward the quota."""
         total = count = 0
@@ -358,7 +362,10 @@ class EncryptedCaptureVault:
             fcntl.flock(fd, fcntl.LOCK_EX)
             count, total = self._entries(fd)
             rows = []
+            reserved = self._reserved_ids(fd)
             for sid in self.list_ids():
+                if sid in reserved:
+                    continue
                 stored = self.open(sid, key)
                 try:
                     fingerprint, size = self._retention_fingerprint(fd, sid)
@@ -412,6 +419,7 @@ class EncryptedCaptureVault:
         _aead()
         fd = self._open_dir(create=True)
         try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
             count, total = self._entries(fd)
             if count >= MAX_SESSIONS or total >= self.max_vault_bytes:
                 raise VaultError("vault_limit")
@@ -537,8 +545,9 @@ class SessionWriter:
                 # A purged or explicitly deleted snapshot must not reappear.
                 raise VaultError("vault_sealed")
             previous_size = old.st_size if old is not None else 0
+            new_slot = old is None and self.session_id not in self.vault._reserved_ids(fd)
             if (total - previous_size + len(data) > self.vault.max_vault_bytes
-                    or (count >= MAX_SESSIONS and old is None)):
+                    or count + int(new_slot) > MAX_SESSIONS):
                 raise VaultError("vault_limit")
             handle = os.open(
                 tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL

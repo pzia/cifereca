@@ -126,17 +126,39 @@ class _Storage(EncryptedCaptureVault):
     def max_vault_bytes(self):
         return self._policy()[1]
 
+    def _reserved_ids(self, fd):
+        ids = frozenset(name[:-8] for name in os.listdir(fd)
+                        if re.fullmatch(r"[0-9a-f]{32}\.pending", name))
+        if len(ids) > MAX_SESSIONS:
+            raise VaultError("vault_limit")
+        return ids
+
+    def _entries(self, fd):
+        count, total = super()._entries(fd)
+        try:
+            for sid in self._reserved_ids(fd):
+                info = os.stat(sid + ".pending", dir_fd=fd, follow_symlinks=False)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600
+                        or not 0 <= info.st_size <= 32):
+                    raise VaultError("vault_unsafe_file")
+                # Even an incomplete marker reserves its full fixed-size slot.
+                total += 32
+                try:
+                    os.stat(sid + ".cbrv", dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    count += 1
+            return count, total
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+
     def pending_ids(self):
         """Opaque transaction markers, in the same private vault directory."""
         if not self.path.exists() and not self.path.is_symlink():
             return ()
         fd = self._open_dir(create=False)
         try:
-            ids = tuple(name[:-8] for name in os.listdir(fd)
-                        if re.fullmatch(r"[0-9a-f]{32}\.pending", name))
-            if len(ids) > MAX_SESSIONS:
-                raise VaultError("vault_limit")
-            return ids
+            return tuple(sorted(self._reserved_ids(fd)))
         finally:
             os.close(fd)
 
@@ -154,8 +176,17 @@ class _Storage(EncryptedCaptureVault):
         try:
             flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
             if create:
-                if len(self.pending_ids()) >= MAX_SESSIONS:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                count, total = self._entries(fd)
+                if count >= MAX_SESSIONS or total + 32 > self.max_vault_bytes:
                     raise VaultError("vault_limit")
+                # A reservation cannot attach to a pre-existing archive.
+                try:
+                    os.stat(capture_id + ".cbrv", dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise VaultError("vault_invalid")
                 flags |= os.O_CREAT | os.O_EXCL
             handle = os.open(capture_id + ".pending", flags, 0o600, dir_fd=fd)
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -185,6 +216,7 @@ class _Storage(EncryptedCaptureVault):
     def clear_pending(self, capture_id, handle):
         fd = self._open_dir(create=False)
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             info = os.stat(capture_id + ".pending", dir_fd=fd, follow_symlinks=False)
             held = os.fstat(handle)
             if (info.st_dev, info.st_ino) != (held.st_dev, held.st_ino):
@@ -430,10 +462,18 @@ class _Port:
             return _Writer(self, scope, source_session_ref, writer, key)
 
     def _open(self, scope, capture_id, key, *, pending=False):
-        if not pending and (capture_id in self._service._failed_archives
-                            or capture_id in self._service._storage.pending_ids()):
-            raise VaultError("vault_scope_denied")
-        stored = self._service._storage.open(capture_id, key)
+        storage = self._service._storage
+        fd = storage._open_dir(create=False)
+        try:
+            # Admission, publish and rollback share the directory writer lock.
+            # Hold the read lock from visibility check through decryption.
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            if not pending and (capture_id in self._service._failed_archives
+                                or capture_id in storage._reserved_ids(fd)):
+                raise VaultError("vault_scope_denied")
+            stored = storage.open(capture_id, key)
+        finally:
+            os.close(fd)
         if stored.producer != self._producer or stored.summary.scope != scope:
             self._service._storage._release(stored)
             raise VaultError("vault_scope_denied")
@@ -588,7 +628,7 @@ class _DiagnosticsPort(_Port):
                 if len(service._failed_archives) >= MAX_SESSIONS:
                     raise VaultError("vault_archive_rollback_failed")
                 writer = self._begin(scope, source_ref, consented=True,
-                                     reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
+                                     reserve_bytes=len(payload) + _HEADER_LIMIT + 128 + 32)
                 handle = service._storage.open_pending(writer.capture_id, service._key(), create=True)
                 from types import SimpleNamespace
                 pending_reader = SimpleNamespace(read=lambda exact_scope, capture_id:
