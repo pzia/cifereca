@@ -1,0 +1,56 @@
+name: P0 8216 targeted native GTK receipt
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-native-gtk-receipt.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 9bfd3458d61dbb562bf02bcdc0d8958814ee689a
+      - name: Install existing GTK E2E runtime
+        run: bash scripts/ci-install-gtk-e2e-runtime.sh
+      - name: Execute only the eleven unresolved native GTK cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 9bfd3458d61dbb562bf02bcdc0d8958814ee689a
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/native-venv"
+          py="$RUNNER_TEMP/native-venv/bin/python"
+          "$py" -m pip install --disable-pip-version-check -e . 'pytest>=8,<9'
+          "$py" -m pip freeze > "$RUNNER_TEMP/native-dependencies.txt"
+          PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo" dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' "$py" -m pytest -q -rA --junitxml="$RUNNER_TEMP/native-gtk.xml" \
+            tests/test_core_p0_1354_exact_source_session.py::test_search_borrow_action_refuses_stale_B_when_A_connected \
+            tests/test_core_p0_2975_opening_loan_ui_identity_isolation.py::test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller \
+            tests/test_core_p0_2975_opening_loan_ui_identity_isolation.py::test_gui_refresh_callback_rejects_old_a_b_a_request \
+            tests/test_core_ui_bnf_acsm_native.py
+          "$py" - <<'PY'
+          import collections, os, xml.etree.ElementTree as ET
+          root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "native-gtk.xml"))
+          cases = root.findall(".//testcase")
+          assert len(cases) == 11, len(cases)
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases)
+          actual = collections.Counter((c.attrib["classname"], c.attrib["name"].split("[", 1)[0]) for c in cases)
+          expected = {
+              ("tests.test_core_p0_1354_exact_source_session", "test_search_borrow_action_refuses_stale_B_when_A_connected"): 1,
+              ("tests.test_core_p0_2975_opening_loan_ui_identity_isolation", "test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller"): 1,
+              ("tests.test_core_p0_2975_opening_loan_ui_identity_isolation", "test_gui_refresh_callback_rejects_old_a_b_a_request"): 1,
+              ("tests.test_core_ui_bnf_acsm_native", "test_native_bnf_actions_are_distinct_and_explain_safe_failure"): 6,
+              ("tests.test_core_ui_bnf_acsm_native", "test_native_advisory_click_is_read_only_and_scope_bound"): 2,
+          }
+          assert actual == expected, actual
+          print("NATIVE_GTK_RECEIPT", len(cases), "passed; no skip")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-gtk-receipt
+          path: |
+            ${{ runner.temp }}/native-gtk.xml
+            ${{ runner.temp }}/native-dependencies.txt
+          retention-days: 7
