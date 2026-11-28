@@ -509,7 +509,7 @@ class Tests(unittest.TestCase):
                     "manifest_sha256":preview["manifest_sha256"], "unstarted_review":True}
             control = dict(event, number=999, id=999, labels=[], assignees=[], comments=0,
                            title=c.RECOVER_TITLE+"123", body=c.encode(data).decode(),
-                           closed_at=clock().isoformat())
+                           closed_at=clock().strftime("%Y-%m-%dT%H:%M:%SZ"))
             self.api.pilot = control
             for key, bad in (("main_sha", "b"*40), ("manifest_sha256", "0"*64),
                              ("unstarted_review", False)):
@@ -530,6 +530,27 @@ class Tests(unittest.TestCase):
             with self.assertRaises(c.Refusal):
                 c.recovery_preview(self.api, stage, 123, HEAD)
             self.assertEqual(stage.published, 1)
+
+    def test_legacy_standard_manifest_without_progress(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            manifest = c.collect_closure(self.api, event, HEAD)
+            manifest.pop("standard_batches")
+            manifest.pop("batch_size")
+            raw = c.encode(manifest)
+            digest = c.sha256(raw)
+            stage.publish(123, raw)
+            self.api.mark(123, c.START + digest + " " + STAGE)
+            for n, cid, body in c.lot_plan(manifest):
+                if cid is None:
+                    self.api.replace_body(n, body)
+                else:
+                    self.api.replace_comment(cid, body)
+            self.api.mark(123, c.DONE + digest + " " + STAGE)
+            self.assertIn(123, c.verify_compacted_corpus(
+                self.api, manifest, digest, STAGE, 999, completed=True))
+            self.assertFalse(any(row["body"].startswith(c.PROGRESS) for row in self.api.comments))
 
     def test_snapshot_retries_only_stable_timestamp_drift(self):
         self.staging_issue()
