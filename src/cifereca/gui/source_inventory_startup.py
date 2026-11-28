@@ -142,9 +142,10 @@ def dispatch_after_opening(window: Any) -> bool:
                 receipt = broker.synchronize_scheduled_inventory(
                     identity_id, "startup",
                 )
-                if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial"}:
+                if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial", "failed"}:
                     deferred += int(receipt.facts.get("deferred", 0) > 0)
                     partials += int(receipt.facts.get("status") == "partial")
+                    failures += int(receipt.facts.get("status") == "failed" or receipt.facts.get("failed", 0) > 0)
                     continue
                 progressed, failed = _scheduled_inventory_progress(receipt)
                 completed += int(progressed)
@@ -169,6 +170,10 @@ def dispatch_after_opening(window: Any) -> bool:
             return SyncResult(ok=False, facts={"status": "partial",
                                                "completed": completed,
                                                "failed": failures})
+        if failures and deferred:
+            return SyncResult(ok=False, facts={"status": "failed",
+                                               "failed": failures,
+                                               "deferred": deferred})
         if failures:
             raise RuntimeError(
                 "Actualisation initiale des notices des comptes indisponible"
