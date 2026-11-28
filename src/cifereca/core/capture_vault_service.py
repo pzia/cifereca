@@ -187,7 +187,8 @@ class _Storage(EncryptedCaptureVault):
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
-                 policy=None):
+                 policy=None, health=None):
+        self._health = health
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -410,6 +411,42 @@ class _DiagnosticsPort(_Port):
         writer = self._begin(scope, source, consented=True,
                              reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
         writer.save(payload, "completed", force=True)
+        return writer.capture_id
+
+    def archive_search_trace(self, scope, source_ref, *, consented=False):
+        if consented is not True:
+            raise VaultError("vault_confirmation_required")
+        from .provider_health_projection import Scope
+        from ..http_trace import HTTP_TRACE, build_http_trace_zip
+        self._check(scope)
+        health = self._service._health
+        exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
+                      scope.identity_id, "search")
+        if (scope == CaptureScope() or health is None
+                or not health.owns_reference(exact, source_ref)):
+            raise VaultError("vault_scope_denied")
+        lease = health.lease()
+        if HTTP_TRACE.status()["active"] is not True:
+            raise VaultError("vault_trace_inactive")
+        snapshot = HTTP_TRACE.snapshot()
+        snapshot["exchanges"] = [entry for entry in snapshot["exchanges"]
+                                 if entry.get("task_ref") == source_ref]
+        if not snapshot["exchanges"] or any(
+                entry.get("outcome") == "in_progress" for entry in snapshot["exchanges"]):
+            raise VaultError("vault_trace_incomplete")
+        snapshot["session_ref"] = source_ref
+        payload = build_http_trace_zip(snapshot)
+        self._check(scope)
+        if (lease != health.lease() or not health.owns_reference(exact, source_ref)
+                or HTTP_TRACE.status()["active"] is not True):
+            raise VaultError("vault_scope_denied")
+        writer = self._begin(scope, source_ref, consented=True,
+                             reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
+        writer.save(payload, "completed", force=True)
+        if not health.link_capture(exact, source_ref, writer.capture_id,
+                                   lease=lease, port=self, consented=True):
+            self.delete(scope, writer.capture_id, confirmed=True)
+            raise VaultError("vault_scope_denied")
         return writer.capture_id
 
     def export_http_archive(self, capture_id, destination, *, confirmed=False):

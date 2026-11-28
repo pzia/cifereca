@@ -148,3 +148,21 @@ class PassiveHealth:
             self._rows[scope] = (link(latest), link(reference),
                                  deque((link(row) for row in anomalies), maxlen=3))
             return True
+
+    def owns_reference(self, scope, reference):
+        """Only a retained, unique Core observation can authorize correlation."""
+        with self._lock:
+            if not self._enabled:
+                return False
+            owners = set()
+            for candidate, (latest, baseline, anomalies) in self._rows.items():
+                if any(row is not None and row.evidence_ref == reference
+                       for row in (latest, baseline, *anomalies)):
+                    owners.add(candidate)
+            return owners == {scope}
+
+    def inventory(self):
+        """Immutable snapshot of observed scopes, not installed providers."""
+        with self._lock:
+            return tuple((scope, latest, baseline, tuple(anomalies))
+                         for scope, (latest, baseline, anomalies) in self._rows.items())

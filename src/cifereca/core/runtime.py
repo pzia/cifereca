@@ -124,6 +124,7 @@ class CiferecaCore:
         brokers["capture.vault"] = CoreCaptureVault(
             capture_root / "capture-vault-v1", config.path.parent / "capture-secrets",
             authorize_scope=capture_scope_authorizer(library),
+            health=library._provider_health,
             policy=lambda: (config.get('diagnostics.capture_retention_days', 90),
                             config.get('diagnostics.capture_retention_bytes', 128 * 1024 * 1024)),
         )
