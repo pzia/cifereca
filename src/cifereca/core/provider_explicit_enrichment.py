@@ -201,7 +201,9 @@ def enrich_provider_detail_once(
                     ) != kind
                     or not _preserves_detail_scope(item, result)):
                 raise ValueError("scope_or_metadata_changed")
-        identity = getattr(service, "current_identity", None)
+        # Use the admitted identity, never mutable navigation in the worker.
+        from types import SimpleNamespace
+        identity = SimpleNamespace(identity_id=expected_identity_id)
         return observe_detail(service, session, identity, lambda: action(item), item, accept)
     except Exception:
         raise ProviderCapabilityError(_ERROR) from None
