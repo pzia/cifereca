@@ -789,6 +789,8 @@ class SynchronizationBrokerImpl:
         total = 0
         attempted = 0
         failed = 0
+        deferred = 0
+        partial = 0
         for account in sorted(
             self.service.accounts_for_identity(identity_id),
             key=self._source_id,
@@ -882,14 +884,30 @@ class SynchronizationBrokerImpl:
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
             total += result.changed
-            if not result.ok:
+            if result.facts.get("reason") == "operation_busy":
+                deferred += 1
+                attempted -= 1
+                with self._scheduled_inventory_lock:
+                    self._scheduled_inventory_requested.discard(source_id)
+            elif result.facts.get("status") == "partial":
+                partial += 1
+            elif not result.ok:
                 failed += 1
+        facts = {"phase": "discover_rights", "trigger": trigger,
+                 "attempted": attempted, "failed": failed,
+                 "acquisition_authorized": False}
+        if deferred:
+            facts["deferred"] = deferred
+        if partial:
+            facts["partial"] = partial
+        if deferred or partial:
+            facts["status"] = ("busy" if not attempted else "partial")
+            if not attempted:
+                facts["reason"] = "operation_busy"
         return SyncResult(
-            ok=failed == 0, changed=total,
-            warnings=("synchronisation planifiée partielle",) if failed else (),
-            facts={"phase": "discover_rights", "trigger": trigger,
-                   "attempted": attempted, "failed": failed,
-                   "acquisition_authorized": False},
+            ok=not (failed or deferred or partial), changed=total,
+            warnings=("synchronisation planifiée partielle",) if failed or partial else (),
+            facts=facts,
         )
 
     def source_sync_consent(self, source_id: str) -> dict[str, object]:
@@ -1020,6 +1038,7 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+        previous_state = dict(state)
 
         def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
@@ -1178,7 +1197,14 @@ class SynchronizationBrokerImpl:
             from .providers import ProviderConfigurationError
             busy = (isinstance(exc, ProviderConfigurationError)
                     and isinstance(exc.__cause__, LockBusyError))
-            terminal_cycle("busy" if busy else "failed")
+            if busy:
+                # No Core admission: retain prior clocks and terminal evidence.
+                self._set_state(source_id, previous_state); self._notify()
+                return SyncResult(
+                    ok=False, warnings=("Synchronisation déjà en cours",),
+                    facts={"status": "busy", "reason": "operation_busy"},
+                )
+            terminal_cycle("failed")
             state.update(
                 status="busy" if busy else "error",
                 error="" if busy else _SYNC_PUBLIC_FAILURE,
