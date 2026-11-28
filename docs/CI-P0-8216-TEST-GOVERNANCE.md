@@ -100,3 +100,69 @@ Cette section actualise les constats intermédiaires précédents. Les référen
 Instantané documenté dans #8216 avant réception des deux derniers shards : 24 846 secondes de jobs terminés, dont baseline Core 23 596 s (4 884 succès, 3 112 échecs, 15 600 annulations), consolidation 429 s, diagnostics 707 s et candidats 114 s. Mesure REST started_at/completed_at, somme de temps écoulé par job, non facturation ni durée critique. Jobs encore actifs, CI PR courante, autres campagnes initiales/plugins et coût récurrent du contrôle préventif exclus. Les reprises infructueuses représentent 79,3 % de ce sous-ensemble baseline. Privilégier la preuve ciblée; ne pas transformer une campagne d'audit complète en gate permanent.
 
 **Réception non finale** : shards 1 et 7, couverture globale, coûts nets récurrents, skips spécialisés et accords métier restent à recevoir. Aucun quota de suppression, aucun nouveau gate permanent.
+
+
+## Réception des huit shards — 28 novembre 2026
+
+Les deux derniers shards ont terminé avec succès dans les quatre passages A/B, plain et coverage. Les correctifs d'isolation sont symétriques; les révisions historiques restent celles indiquées plus haut.
+
+| Shard | Preuve / archive | Cas réussis et skips par passage | Durée pytest A plain / coverage | Durée pytest B plain / coverage |
+|---|---|---|---|---|
+| 1 | [46115593440](https://github.com/pzia/cifereca/actions/runs/46115593440), job 140888588322, artefact 15251836589 | 3 559 + 7 | 123,82 / 246,14 s | 128,70 / 241,51 s |
+| 7 | [46115259643](https://github.com/pzia/cifereca/actions/runs/46115259643), job 140887533359, artefact 15251284951 | 3 606 + 1 | 249,05 / 563,73 s | 125,75 / 254,10 s |
+
+Le workflow de consolidation intégrale [46116894778](https://github.com/pzia/cifereca/actions/runs/46116894778), PR #8419, HEAD `eb063a95d8c65d14cbfeb3b6dd7984b6c54425e3`, réutilise les huit archives et la collecte canonique 46115728502. Au contrôle intermédiaire, inventaires, patches symétriques (1/4/7), multiensembles JUnit et projection des nodeids canoniques ont passé leurs étapes respectives : A 29 014 réussis + 32 skips, B 29 017 + 32; 29 041 / 29 044 cas collectés (cinq skips de collecte hors nodeids par bras). Recouvrements et motifs exacts des skips restent à réceptionner. Ne pas présenter le job comme terminé avant son verdict. Aucun nouveau passage pytest n'a été lancé. Les fortes différences de durée du shard 7 ne permettent pas d'attribuer le gain apparent aux seules modifications : ordre fixe A puis B, charge runner non contrôlée; les chronomètres externes coverage manquent encore pour cinq shards historiques.
+
+### Pont vérifié vers main
+
+Comparaisons GitHub A→B (9 commits, 13 fichiers) et B→main épinglé `41d29f82a58ed935ae97a29c34b4e3f078ea8ee5` (19 commits, 13 fichiers) : pas de modification de src/cifereca ni du runtime des plugins. Trois fichiers de tests plugins modifiés, six correctifs d'isolation Core, outillage/documentation et deux fichiers de backlog hors périmètre.
+
+Les six blobs Core de contrôle du harnais shard 1 correspondent à ce main : `b8c2f002c4cc74f20052ddb943d19ba5a3a62198`, `3740785a046c49370e72c0b3430b9f1db50c90ae`, `5f6b325ff81b8063d0b505ab6194a4cac1d905cc`, `06233dd72522531c934491c1399d8f5d356abdf9`, `a8b5006eb8a1100d2fdc7c13da51dda80e4f274c`, `272434a0ab304fc832bb3013e31e912047079664`. Les trois blobs de tests plugins correspondent aux HEAD fusionnés #8270, #8299 et #8375, CI exactes [46063453198](https://github.com/pzia/cifereca/actions/runs/46063453198), [46063950220](https://github.com/pzia/cifereca/actions/runs/46063950220), [46067390174](https://github.com/pzia/cifereca/actions/runs/46067390174) vertes. Journaux ciblés : Kobo 1 629 réussis, Numilog après second lot 2 398 réussis et deux skips. Les 21 autres suites plugins n'ont pas de diff propre A→main dans ce périmètre. Ce pont n'est ni une nouvelle exécution instrumentée sur main, ni une recette des modifications backlog.
+
+### Gains locaux appariés, métrique homogène
+
+Relecture des journaux des quatre campagnes ABBA; moyennes arithmétiques des deux durées **affichées par pytest** par bras, en secondes, sur les modules concernés. Pour #8238, retenir le mode séquentiel seul dans la somme; l'alternative xdist (138,205 → 28,055 s) n'est pas un gain supplémentaire.
+
+| Lot fusionné / preuve | Cas par passage | A1 / A2 | B1 / B2 | Moyenne A → B | Réduction locale |
+|---|---:|---:|---:|---:|---:|
+| #8238 [46059532585](https://github.com/pzia/cifereca/actions/runs/46059532585), job 140710141005 | 30 | 139,08 / 136,79 | 27,84 / 27,91 | 137,935 → 27,875 | 110,060 s |
+| #8270 [46063477794](https://github.com/pzia/cifereca/actions/runs/46063477794) | 39 | 2,10 / 2,01 | 0,26 / 0,25 | 2,055 → 0,255 | 1,800 s |
+| #8357 [46065197369](https://github.com/pzia/cifereca/actions/runs/46065197369) | 14 | 0,69 / 0,66 | 0,39 / 0,39 | 0,675 → 0,390 | 0,285 s |
+| #8375 [46067082676](https://github.com/pzia/cifereca/actions/runs/46067082676) | 24 | 2,41 / 2,28 | 0,43 / 0,42 | 2,345 → 0,425 | 1,920 s |
+| Somme descriptive | 107 | — | — | 143,010 → 28,945 | 114,065 s |
+
+Ces quatre lots conservent leurs identités et résultats sur chaque passage. La somme décrit quatre expériences locales distinctes, pas un pipeline ni un gain de temps facturé. Elle n'inclut ni candidats non fusionnés #8393/#8402 ni réduction par suppression SourceKey. L'instrumentation et le coût d'audit ponctuel sont distincts du coût de fonctionnement récurrent. Le contrôle qualité incrémental a réussi sur sept PR (runs 46116325037, 46115581413, 46115053505, 46114723518, 46114601789, 46114073006, 46068401908), durées de l'étape 1/0/0/0/0/0/0 s à résolution d'une seconde; zéro ne signifie pas gratuit et l'échantillon ne mesure pas tous les changements possibles.
+
+**Réception restant ouverte :** verdict complet et artefact #8419, éventuels écarts d'arcs et motifs des skips, preuve de gain net global ou décision explicite de limiter la réception aux gains locaux, avis métier sur #8393/#8402. Les 58 échecs JUnit qualifiés concernent sept mutants ADEPT/Kobo distincts. Aucune clôture ni suppression supplémentaire.
+
+
+## Réception consolidée de #8419
+
+[Run 46116894778](https://github.com/pzia/cifereca/actions/runs/46116894778), job 140892639402, terminé success. Archive [15252455936](https://github.com/pzia/cifereca/actions/runs/46116894778/artifacts/15252455936), 612 234 octets, SHA256 `95dfc55f9814197b349e9bf595337b792207261b2e267cc6a4c8406d74c198fd` vérifié après téléchargement; les quatre JSON ont été relus. Cette section remplace le statut provisoire de la précédente.
+
+| Mesure Core historique corrigée | A | B |
+|---|---:|---:|
+| Nodeids canoniques | 29 041 | 29 044 |
+| Réussis | 29 014 | 29 017 |
+| Skips de cas collectés / de collecte | 27 / 5 | 27 / 5 |
+| Arcs observés (union) | 187 419 | 187 427 |
+| Somme temps muraux externes plain (s) | 1 192,26 | 1 076,44 |
+| Somme temps suite pytest plain (s) | 1 185,074 | 1 071,936 |
+| Somme temps suite pytest coverage (s) | 2 349,066 | 2 034,621 |
+| Contextes run enregistrés | 26 495 | 26 495 |
+| Signatures d'arcs distinctes | 17 369 | 17 366 |
+| Groupes répétés / membres | 3 489 / 12 615 | 3 488 / 12 617 |
+| Groupes intermodules / membres | 357 / 1 887 | 358 / 1 891 |
+
+Zéro erreur/échec, collision inter-shards, nodeid manquant, inattendu, ambigu ou hors partition; multiensembles identité/statut plain et coverage identiques par bras. Seul delta de cas : un retrait SourceKey (#8256) et quatre ajouts de tests qualité. Aucun arc A-only sur sources byte-identiques, huit B-only : library_inspection_cache.py +1, notice_c_work_runtime.py +1, provider_sessions.py +2, diagnostics.py +2, task_runtime.py +2. Aucun chemin d'arc non mappé. Ce n'est pas un taux de couverture des branches possibles, ni une preuve d'équivalence ou d'exécution de tous les contextes.
+
+Les 32 skips par passage ont mêmes identités, types et motifs (détail conservé). Cinq de collecte, huit GTK/Xvfb, cinq namespaces bubblewrap, trois gi, trois pymupdf, deux archives plugins, trois opt-ins Chromium/réseau/proxy/CDN, un affichage complet Xvfb/DBus, un E2E dédié, un test installation ciblée. Ne pas les assimiler à des contrats exercés.
+
+Le temps mural plain observé baisse de 115,82 s; hors shard 7 il **augmente** de 7,95 s (942,23 → 950,18). Le temps suite coverage hors shard 7 baisse de 4,821 s (1 785,350 → 1 780,529). Temps externe coverage global indisponible. Ordre fixe et charge runner empêchent d'attribuer le delta global observé aux changements; les quatre ABBA ciblées restent les preuves causales locales. Aucune économie facturée ni gain net global établi.
+
+### Triage des recouvrements supplémentaires
+
+- Plus grand groupe (154 contextes, 54 arcs par signature) : #976/#7244. Les matrices se recouvrent sur huit coordonnées plates et quatre caractères de contrôle; #976 couvre aussi statut/licence et longueur avec suffixe FORGED, #7244 general l'absence de mutation de toute la ligne et drapeaux de non-autorisation, #7244 historical les preuves imbriquées, l'absence d'état fournisseur vérifié et des lignes malformées. Conserver pour l'instant : une fusion éventuelle doit préserver la matrice distincte et les oracles, avec revue métier et mutation; le coût individuel n'est pas établi par la signature.
+- #5056 : prix absent/invalide, droit historique, achat descriptif et support numérique/physique ne remplacent pas les refus d'attestation de possession ni les champs identité/compte/révision. #5073 : conserver les classes booléen/None/entier, fournisseurs fictifs, source étrangère/périmée et absence de lecture du ledger. #1120 : conserver les flags de retry invalides et le refus des routes retirées avant I/O. Aucune suppression supplémentaire justifiée.
+
+La consolidation Core est reçue; les accords métier ADEPT/Kobo, la recette des prérequis spécialisés, l'instabilité à long terme et le gain net global restent non établis. Le P0 demeure ouvert.
