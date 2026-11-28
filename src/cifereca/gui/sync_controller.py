@@ -1441,6 +1441,17 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def err(exc: BaseException) -> None:
         if not opening_scope_current():
             return
+        from cifereca.locking import LockBusyError
+        if isinstance(exc, LockBusyError):
+            self.diagnostics.add("SYNC", "opening sync", "warning",
+                                 detail={"reason": "operation_busy"})
+            self._render_dashboard()
+            return
+        if isinstance(exc, Cancelled):
+            self.diagnostics.add("SYNC", "opening sync", "warning",
+                                 detail={"reason": "opening_sync_cancelled"})
+            self._render_dashboard()
+            return
         self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
         if control is not None:
