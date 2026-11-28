@@ -26,3 +26,19 @@ def test_bundle_manifest_and_exact_bytes(monkeypatch):
         bundle.build_health_bundle((("download", b"x"),), include_binary=False)
     with pytest.raises(VaultError):
         bundle.build_health_bundle((), include_binary=False)
+
+
+def test_bundle_reports_observed_version_without_attesting_source(monkeypatch):
+    monkeypatch.setattr(bundle, "core_contract_kit", lambda: {})
+    stream = BytesIO()
+    with ZipFile(stream, "w") as archive:
+        archive.writestr("index.json", json.dumps({"health_observation": {
+            "schema": "cifereca.health-observation/1", "capability": "search",
+            "version": "2.1", "observed_at": "2026-11-28T12:00:00+00:00",
+            "outcome": "success"}}))
+    payload = bundle.build_health_bundle((("search", stream.getvalue()),), include_binary=False)
+    with ZipFile(BytesIO(payload)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["captures"][0]["observed_provider_version"] == "2.1"
+        assert manifest["provider_source"] == "not_included"
+        assert manifest["provider_version"] == "not_attested_in_bundle"

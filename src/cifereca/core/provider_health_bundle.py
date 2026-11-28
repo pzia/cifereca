@@ -1,7 +1,8 @@
 """Local multi-evidence package using the existing capture ZIP and public kit."""
 import json
 from hashlib import sha256
-from zipfile import ZIP_STORED
+from zipfile import ZIP_STORED, ZipFile, BadZipFile
+from io import BytesIO
 
 from .capture_export import build_capture_zip
 from .capture_devkit import core_contract_kit
@@ -25,8 +26,25 @@ def build_health_bundle(rows, *, include_binary):
             raise VaultError("private_zip_limit")
         name = f"captures/{number:02d}.zip"
         members[name] = payload
-        manifest.append({"member": name, "capability": capability,
-                         "sha256": sha256(payload).hexdigest()})
+        evidence = {"member": name, "capability": capability,
+                    "sha256": sha256(payload).hexdigest(),
+                    "observed_provider_version": "unknown"}
+        # Metadata is part of the authenticated scoped archive, not evidence
+        # of the version of any locally installed or exported source code.
+        try:
+            with ZipFile(BytesIO(payload)) as archive:
+                if archive.getinfo("index.json").file_size > 8 * 1024 * 1024:
+                    raise ValueError
+                meta = json.loads(archive.read("index.json")).get("health_observation")
+            if (type(meta) is dict and meta.get("schema") == "cifereca.health-observation/1"
+                    and meta.get("capability") == capability):
+                for key in ("version", "observed_at", "outcome"):
+                    value = meta.get(key)
+                    if type(value) is str and 0 < len(value) <= 256 and value.isprintable():
+                        evidence["observed_provider_version" if key == "version" else key] = value
+        except (BadZipFile, KeyError, ValueError, TypeError, AttributeError):
+            pass
+        manifest.append(evidence)
     members.update(core_contract_kit())
     members["manifest.json"] = json.dumps({
         "schema": "cifereca.provider-health-bundle/1",
@@ -42,7 +60,8 @@ def build_health_bundle(rows, *, include_binary):
         "Review locally before sharing. No automatic upload or correction.\n"
         "Read the public Core contract kit. Compare only equivalent exact-scope "
         "observations; distinguish unknown, attested empty and parser regression.\n"
-        "Provider code/version and correlated logs are not included; do not infer "
+        "Provider source and correlated logs are not included. Observed versions "
+        "in the manifest do not attest the version of available source code; do not infer "
         "a root cause or claim a successful replay from HTTP status alone.\n"
         "Do not execute captured requests against a real supplier.\n"
     ).encode()

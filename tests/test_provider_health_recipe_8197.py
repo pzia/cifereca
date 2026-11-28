@@ -55,3 +55,23 @@ def test_availability_never_infers_from_empty_or_wrong_source():
     assert recipe._availability_outcome(replace(detail, holdings=[]), item) == "unknown"
     assert recipe._availability_outcome(replace(detail, source_credential="other"), item) == "unknown"
     assert recipe._availability_outcome(replace(detail, availability_status="unknown"), item) == "unknown"
+
+
+def test_quota_only_new_exact_typed_snapshot():
+    from cifereca.plugin_api.lending_borrower_eligibility import BorrowerEligibilitySnapshot
+    from cifereca.plugin_api.lending_capabilities import BorrowerOperationEvidence
+    from dataclasses import replace
+    scope = CaptureScope("fixture", "i", "a", "owner")
+    row = BorrowerOperationEvidence("owner", "fixture", "i", "a", "db",
+                                    "loan.borrow", remaining_loans=0)
+    snapshot = BorrowerEligibilitySnapshot(100, 1, (row,))
+    def check(value, previous=None, branches=frozenset({"db"})):
+        return recipe._quota_read_outcome(value, previous, scope, 1, 100,
+                                          branches, now=101)
+    assert check(snapshot) == ("success", "quota_exhausted")
+    assert check(snapshot, snapshot)[0] == "unknown"
+    assert check(replace(snapshot, observed_at=99))[0] == "unknown"
+    assert check(replace(snapshot, account_evidence=(row, row)))[0] == "unknown"
+    assert check(replace(snapshot, account_evidence=(replace(row, account_id="other"),)))[0] == "unknown"
+    assert check(replace(snapshot, account_evidence=(replace(row, remaining_loans=True),)))[0] == "unknown"
+    assert check(snapshot, branches=frozenset({"db", "other"}))[0] == "unknown"

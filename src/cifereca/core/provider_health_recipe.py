@@ -5,6 +5,9 @@ delivery or fallback. Unsupported steps are reported as unknown. Only a
 currently selected identity with an exact registered account can execute.
 """
 from inspect import getattr_static
+from time import time
+from ..plugin_api.lending_borrower_eligibility import BorrowerEligibilitySnapshot
+from ..plugin_api.lending_capabilities import BorrowerOperationEvidence
 
 from ..models import Account, SearchResult, ItemDetail, Holding
 from ..plugin_api import ProviderSearchResponse, Cancelled
@@ -104,6 +107,41 @@ def _availability_outcome(detail, item):
             and any(row.is_available is True for row in detail.holdings) else "unknown")
 
 
+def _quota_read_outcome(snapshot, previous, scope, epoch, started, branches, *, now):
+    """Only newly published typed account facts from existing recipe reads.
+
+    Zero remaining loans is a successful quota observation, not permission
+    to borrow. Never use a stale snapshot, local preference or stock count.
+    """
+    if (type(snapshot) is not BorrowerEligibilitySnapshot or snapshot is previous
+            or type(epoch) not in (int, str)
+            or type(snapshot.session_epoch) is not type(epoch)
+            or snapshot.session_epoch != epoch
+            or type(snapshot.observed_at) is not int
+            or not started <= snapshot.observed_at <= now
+            or now - snapshot.observed_at > 300
+            or type(snapshot.account_evidence) is not tuple
+            or len(snapshot.account_evidence) > 512
+            or not branches):
+        return "unknown", "quota_not_attested"
+    values = []
+    for branch in branches:
+        if type(branch) is not str or not branch:
+            return "unknown", "quota_not_attested"
+        matches = [row for row in snapshot.account_evidence
+                   if type(row) is BorrowerOperationEvidence
+                   and (row.identity_id, row.provider_id, row.credential_id,
+                        row.account_id, row.branch, row.operation) ==
+                       (scope.identity_id, scope.provider_id, scope.instance_id,
+                        scope.account_id, branch, "loan.borrow")]
+        if (len(matches) != 1 or type(matches[0].remaining_loans) is not int
+                or matches[0].remaining_loans < 0):
+            return "unknown", "quota_not_attested"
+        values.append(matches[0].remaining_loans)
+    return "success", ("quota_exhausted" if all(value == 0 for value in values)
+                       else "quota_observed")
+
+
 def run_recipe(service, scope, generation, *, confirmed=False, control=None):
     """One explicit account; all steps reported, unsupported never success."""
     def report(status, reason):
@@ -168,6 +206,8 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
             caps = descriptor.capabilities
             search_caps = descriptor.search_capabilities
             search_rows = ()
+            quota_previous = _inert_session_state(session).get("borrower_eligibility_snapshot")
+            quota_started = int(time())
             if (caps.search is True and search_caps.supports_field("all")
                     and search_caps.supports_scope("all")
                     and callable(getattr_static(session, "search_with_response_facets", None))):
@@ -308,6 +348,19 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                 if not current():
                     return report("unknown", "scope_or_trace_unavailable")
                 put("rights", rights_outcome(snapshot), "typed_rights")
+            if not current():
+                return report("unknown", "scope_or_trace_unavailable")
+            # No additional call: only inspect a fresh publication made by
+            # one of the already executed reads. Do not invent a trace link.
+            state_now = _inert_session_state(session)
+            quota_snapshot = state_now.get("borrower_eligibility_snapshot")
+            branches = frozenset(row.docbase for row in (*search_rows, *library_rows))
+            quota_outcome, quota_reason = _quota_read_outcome(
+                quota_snapshot, quota_previous, scope, session_epoch, quota_started,
+                branches, now=int(time()))
+            if not current() or state_now.get("borrower_eligibility_snapshot") is not quota_snapshot:
+                return report("unknown", "scope_or_trace_unavailable")
+            put("quotas", quota_outcome, quota_reason)
             return tuple(results[name] for name in _STEPS)
     except LockBusyError:
         return report("unknown", "busy")
