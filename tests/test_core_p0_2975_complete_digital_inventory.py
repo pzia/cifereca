@@ -53,10 +53,20 @@ def bound_session(a, *, branch, alias=None, connected=True,
     return instance
 
 
+def _isolate_opening_lock(tmp_path, monkeypatch):
+    from cifereca import services
+    from cifereca.core import sync_coordination
+
+    lock_path = tmp_path / "opening-acquisition.lock"
+    monkeypatch.setattr(services, "acquisition_lock_file", lambda: lock_path)
+    monkeypatch.setattr(sync_coordination, "acquisition_lock_file", lambda: lock_path)
+
+
 @pytest.mark.parametrize("provider", ["paris", "bnf-pret"])
 def test_opening_realizes_only_exact_complete_borrower(
-    tmp_path, provider,
+    tmp_path, provider, monkeypatch,
 ):
+    _isolate_opening_lock(tmp_path, monkeypatch)
     service = _service(tmp_path)
     try:
         a = account(provider, credential="first",
@@ -81,7 +91,8 @@ def test_opening_realizes_only_exact_complete_borrower(
 
 @pytest.mark.parametrize("condition", ["unknown", "partial", "other_branch",
                                        "unclassified", "failed"])
-def test_unproven_typed_coverage_cannot_close_existing_loan(tmp_path, condition):
+def test_unproven_typed_coverage_cannot_close_existing_loan(tmp_path, condition, monkeypatch):
+    _isolate_opening_lock(tmp_path, monkeypatch)
     a = account()
     coverage, status, extra = "complete", "success", ()
     if condition in ("unknown", "partial"):
