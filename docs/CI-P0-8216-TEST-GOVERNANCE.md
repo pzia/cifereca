@@ -56,3 +56,27 @@ Les gains locaux d'environ 113 s ne constituent ni un gain global mesuré ni une
 - Les artefacts de campagnes sont temporaires (rétention sept jours). Reporter avant expiration les métriques et résultats décisionnels dans le ticket ou ce document, avec références de runs, SHA, limites et méthode reproductible. La conservation des archives brutes au-delà de cette rétention n'est pas acquise.
 
 La clôture #8216 exige encore la réception Core, la consolidation des garanties et coûts nets, et la qualification proportionnée des groupes comportementaux pertinents. Ce registre intermédiaire n'est pas un certificat de clôture.
+
+
+## Réception intermédiaire du 28 novembre 2026
+
+Les résultats ci-dessous complètent, sans remplacer, la réception du 27 novembre. Les deux révisions historiques restent A `4fd07df843b9d940746bbfe962a1877eec15d431` et B `e8ed298116e57d44645c37cd3fa7ad91e1e9077e`. Les reprises appliquent des correctifs de tests explicitement tracés aux deux bras; elles ne constituent pas une exécution historique pure.
+
+| Preuve | Résultat et périmètre |
+|---|---|
+| Collecte canonique [46068678396](https://github.com/pzia/cifereca/actions/runs/46068678396) | 29 041 nodeids A, 29 044 B; zéro identifiant ambigu, zéro hors partition, rapprochement exact des cinq shards reçus. |
+| Consolidation [46068572203](https://github.com/pzia/cifereca/actions/runs/46068572203), confirmation [46068678157](https://github.com/pzia/cifereca/actions/runs/46068678157) | Shards 0,2,3,5,6 : 18 195 → 18 198 pass, 23 skips par bras dont cinq de collection; identités/statuts identiques plain/couverture dans chaque bras. Une suppression SourceKey et quatre ajouts de tests qualité. |
+| Arcs et durées sur ces cinq shards | 164 332 → 164 343 arcs observés, zéro arc A-only sur fichiers source identiques, 11 B-only; aucun chemin non mappé. Somme temps muraux plain 612,61 → 609,17 s; temps externes instrumentés incomplets. Somme durées suite pytest plain 607,760 → 606,425 s, instrumentées 1 169,469 → 1 174,090 s. Pas un gain global ni une mesure de facturation. |
+| Recouvrements [46101626072](https://github.com/pzia/cifereca/actions/runs/46101626072) | 16 549 contextes run A/B; signatures distinctes 11 032 → 11 026; groupes répétés 2 161 → 2 159 (7 678 → 7 682 membres); intermodules 153 → 154 (779 → 786 membres). Candidats, pas équivalence d'oracles. |
+| #8377 | CI [46068401908](https://github.com/pzia/cifereca/actions/runs/46068401908), fusion `efa31ffd72b5bbbc7eeebf10a8037b30cb183f54`: garde d'absence d'I/O compatible instrumentation sans retrait d'assertion. |
+| #8395 | Témoin [46114214215](https://github.com/pzia/cifereca/actions/runs/46114214215): ancien cas échoue sous contention réelle; module corrigé 14 pass deux fois, détenteur indépendant vivant. CI [46114073006](https://github.com/pzia/cifereca/actions/runs/46114073006), fusion `a3e2a1953e913d0a8f61765e9366721a12bcad81`, blob main vérifié. |
+
+### Candidats et limites
+
+- Préserver #5225 (extensions/formats/validité et témoins réels), #6397/#2797 (preuves d'URL distinctes), #1120 (refus PNB et vérification ADEPT-first distincts), #3196 W1/W2 (propriété, non-réintroduction et archives). Un recouvrement d'arcs ne permet pas de supprimer les frontières.
+- #8393 ADEPT : trois refus successifs et contrôle d'absence de mutation après chaque appel, au lieu de trois setups de 1/2/3 appels. Campagne [46114405647](https://github.com/pzia/cifereca/actions/runs/46114405647), ABBA 14/12/12/14 cas, durée JUnit moyenne 0,103 → 0,0855 s; trois mutants identiques tués dans les deux bras (code, accès runtime, écriture persistante archive). Gain local de 17 %, faible valeur absolue, temps de démarrage bruité. Candidat non fusionné, avis métier requis; diminution de répétitions sur fixtures fraîches à arbitrer.
+- Kobo executor retries : plusieurs libellés de panne ne sont pas injectés dans le harnais; candidat à qualifier, pas un retrait autorisé. Le cas fichier préexistant a un oracle supplémentaire.
+- Shard 1 : deux refus de transfert canonique sous coverage, cause non établie; une exécution diagnostique modifiée a réussi mais n'est pas une preuve baseline. Shards 4 et 7 : annulations et reprises, dont contention réelle pour 4. Le harnais sépare désormais bases coverage, logs et chronomètres pour éviter collision des fichiers de combinaison. Nouvelle campagne [46114204645](https://github.com/pzia/cifereca/actions/runs/46114204645) et diagnostic [46114531406](https://github.com/pzia/cifereca/actions/runs/46114531406) à réceptionner. Ne pas neutraliser le garde de transfert.
+- Les workflows #8372/#8382/#8384/#8398 sont des brouillons de preuve temporaires, pas des jobs permanents à fusionner. La couverture globale, l'instabilité, les coûts nets, les skips spécialisés et l'arbitrage métier restent incomplets.
+
+Aucune clôture ni certification de gain net global à cette étape.
