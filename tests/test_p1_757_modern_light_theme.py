@@ -10,7 +10,8 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui.modern_light_theme import (
-    MODERN_LIGHT_CLASS, MODERN_LIGHT_CSS, install_modern_light,
+    DARK_CONTRAST_CLASS, DARK_CONTRAST_CSS, MODERN_LIGHT_CLASS,
+    MODERN_LIGHT_CSS, install_modern_light,
     modern_light_enabled, release_modern_light, update_light_class,
 )
 from cifereca.gui.shell_stylesheet_controller import install_css
@@ -88,7 +89,7 @@ def test_light_mode_uses_one_additive_scoped_overlay_for_all_core_and_plugin_pag
     window, manager, gtk, gdk, adw, providers, registrations = fixture()
     install_css(window, Gtk=gtk, Gdk=gdk, Adw=adw)
     assert len(providers) == 2  # existing Core UI + selected V2 overlay
-    assert providers[-1].css == MODERN_LIGHT_CSS
+    assert providers[-1].css == MODERN_LIGHT_CSS + DARK_CONTRAST_CSS
     assert len(registrations) == 2
     assert registrations[0][2] == gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     assert registrations[1][2] == gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
@@ -99,19 +100,19 @@ def test_light_mode_uses_one_additive_scoped_overlay_for_all_core_and_plugin_pag
     assert manager.calls == ["notify::dark"]
     assert registrations[-1][1] is providers[-1]  # base CSS still reinstalls
     assert registrations[-1][2] < registrations[1][2]  # overlay still wins
-    assert sum(item.css == MODERN_LIGHT_CSS for item in providers) == 1
+    assert sum(item.css == MODERN_LIGHT_CSS + DARK_CONTRAST_CSS for item in providers) == 1
 
 
 def test_dark_mode_never_receives_the_v2_light_palette_even_when_changed_live():
     window, manager, gtk, gdk, adw, providers, registrations = fixture(dark=True)
     install_css(window, Gtk=gtk, Gdk=gdk, Adw=adw)
-    assert MODERN_LIGHT_CLASS not in window.classes
+    assert window.classes == {DARK_CONTRAST_CLASS}
     manager.change(False)
-    assert MODERN_LIGHT_CLASS in window.classes
+    assert window.classes == {MODERN_LIGHT_CLASS}
     manager.change(True)
-    assert MODERN_LIGHT_CLASS not in window.classes
+    assert window.classes == {DARK_CONTRAST_CLASS}
     manager.change(False)
-    assert MODERN_LIGHT_CLASS in window.classes
+    assert window.classes == {MODERN_LIGHT_CLASS}
     assert len(manager.callbacks) == 1
 
 
@@ -131,7 +132,7 @@ def test_non_boolean_dark_state_is_not_mistaken_for_light(value):
     assert not modern_light_enabled(manager)
     window = Window()
     update_light_class(window, manager)
-    assert MODERN_LIGHT_CLASS not in window.classes
+    assert not window.classes
 
 
 def test_exceptional_appearance_fails_closed():
@@ -274,6 +275,41 @@ def test_actual_v2_css_text_colours_remain_accessible_across_surfaces():
         assert _contrast(ink, surface) >= 4.5, (
             f"Actual V2 CSS contrast below WCAG AA normal text: {name}"
         )
+
+
+@pytest.mark.parametrize("selector", [
+    ".dim-label:not(:disabled)",
+    "row:not(:disabled) label.subtitle:not(:disabled)",
+    "row.entry:not(:disabled) .editable-area > label.title.dimmed:not(:disabled)",
+])
+def test_v2_replaces_adwaita_opacity_only_for_enabled_secondary_labels(selector):
+    import re
+
+    css = MODERN_LIGHT_CSS.decode()
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    full_selector = "window.cifereca-modern-light " + selector
+    matching_rules = [
+        declarations for selectors, declarations in re.findall(
+            r"([^{}]+)\{([^{}]*)\}", css,
+        )
+        if full_selector in (part.strip() for part in selectors.split(","))
+    ]
+    assert len(matching_rules) == 1
+    assert re.search(r"(?m)^\s*opacity:\s*1\s*;", matching_rules[0])
+
+
+@pytest.mark.parametrize("selector", [
+    "button.suggested-action:not(:disabled)",
+    ".sidebar row:selected:not(:disabled)",
+    ".sidebar row:checked:not(:disabled)",
+])
+def test_dark_action_and_selection_text_use_accessible_local_colours(selector):
+    css = DARK_CONTRAST_CSS.decode()
+    scoped = "window.cifereca-dark-contrast " + selector
+    assert _contrast(
+        _css_declared_color(css, scoped, "color"),
+        _css_declared_color(css, scoped, "background-color"),
+    ) >= 4.5
 
 
 def test_actual_v2_focus_ring_contrasts_with_light_surfaces():

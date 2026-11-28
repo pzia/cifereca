@@ -10,6 +10,7 @@ from weakref import ref
 
 
 MODERN_LIGHT_CLASS = "cifereca-modern-light"
+DARK_CONTRAST_CLASS = "cifereca-dark-contrast"
 
 # GTK4 CSS uses a private namespace for the V2 colours, avoiding overrides
 # of Adwaita's global accent and error/success theme tokens.
@@ -87,6 +88,13 @@ window.cifereca-modern-light .detail-title {
 window.cifereca-modern-light .dim-label {
   color: @cifereca_light_muted;
 }
+/* Adwaita also dims the whole label. Restore readable secondary text
+   on enabled widgets while keeping disabled controls at native opacity. */
+window.cifereca-modern-light .dim-label:not(:disabled),
+window.cifereca-modern-light row:not(:disabled) label.subtitle:not(:disabled),
+window.cifereca-modern-light row.entry:not(:disabled) .editable-area > label.title.dimmed:not(:disabled) {
+  opacity: 1;
+}
 window.cifereca-modern-light button {
   border-radius: 10px;
 }
@@ -122,16 +130,33 @@ window.cifereca-modern-light .facet-value:focus {
 """
 
 
-def modern_light_enabled(style_manager: object) -> bool:
-    """Unknown appearance means no extra palette; never force a light mode."""
+# Older Adwaita versions render white on a blue that reaches only 3.77:1.
+# Keep the native dark surfaces and use the accessible action/selection pair
+# only for these enabled controls within the Cifereca window.
+DARK_CONTRAST_CSS = b"""
+window.cifereca-dark-contrast button.suggested-action:not(:disabled),
+window.cifereca-dark-contrast .sidebar row:selected:not(:disabled),
+window.cifereca-dark-contrast .sidebar row:checked:not(:disabled) {
+  background-color: #1d5fcb;
+  color: white;
+}
+"""
+
+
+def _dark_mode(style_manager: object) -> bool | None:
     reader = getattr(style_manager, "get_dark", None)
     if not callable(reader):
-        return False
+        return None
     try:
         value = reader()
     except Exception:
-        return False
-    return type(value) is bool and not value
+        return None
+    return value if type(value) is bool else None
+
+
+def modern_light_enabled(style_manager: object) -> bool:
+    """Unknown appearance means no extra palette; never force a light mode."""
+    return _dark_mode(style_manager) is False
 
 
 def update_light_class(window: object, style_manager: object) -> None:
@@ -141,10 +166,15 @@ def update_light_class(window: object, style_manager: object) -> None:
     remove = getattr(window, "remove_css_class", None)
     if not callable(add) or not callable(remove):
         return
-    if modern_light_enabled(style_manager):
-        add(MODERN_LIGHT_CLASS)
-    else:
-        remove(MODERN_LIGHT_CLASS)
+    dark_mode = _dark_mode(style_manager)
+    for name, enabled in (
+        (MODERN_LIGHT_CLASS, dark_mode is False),
+        (DARK_CONTRAST_CLASS, dark_mode is True),
+    ):
+        if enabled:
+            add(name)
+        else:
+            remove(name)
 
 
 def install_modern_light(window, *, Gtk, Gdk, Adw) -> None:
@@ -177,7 +207,7 @@ def install_modern_light(window, *, Gtk, Gdk, Adw) -> None:
     except TypeError:
         return
     css = Gtk.CssProvider()
-    css.load_from_data(MODERN_LIGHT_CSS)
+    css.load_from_data(MODERN_LIGHT_CSS + DARK_CONTRAST_CSS)
 
     def changed(style_manager, *_args):
         current = reference()
@@ -239,6 +269,7 @@ def release_modern_light(window: object) -> None:
     if callable(remove_class):
         try:
             remove_class(MODERN_LIGHT_CLASS)
+            remove_class(DARK_CONTRAST_CLASS)
         except Exception:
             pass
     window._modern_light_css_installed = False
