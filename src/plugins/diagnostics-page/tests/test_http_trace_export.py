@@ -284,3 +284,63 @@ def test_binary_policy_is_unavailable_on_legacy_core(setup):
     )
     assert checkbox.active and not checkbox.sensitive
     assert s.button.sensitive
+
+
+@pytest.mark.parametrize("change", ["none", "selection", "policy", "revoked", "invalidated"])
+def test_scoped_archive_pins_exact_scope_and_revokes_queued_consent(setup, change):
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    from diagnostics_http_export import ScopedHTTPArchive
+    s = setup
+    s.export.close()
+    scope = CaptureScope("fixture", "instance", "account", "owner")
+    selected = ScopedHTTPArchive("capture", scope, "loans", "evidence")
+    state = {"selected": selected, "policy": True, "authorized": True}
+    s.broker.http_trace_status = lambda: {"active": False, "include_binary": state["policy"]}
+    vault = SimpleNamespace(export_http_archive=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: state["selected"],
+        archive_current=lambda token: token == state["selected"] and state["authorized"],
+    )
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "private.zip")
+    s.export.chose_file(dialog, 1)
+    if change == "selection":
+        state["selected"] = ScopedHTTPArchive(
+            "capture", CaptureScope("fixture", "instance", "other", "owner"),
+            "loans", "evidence")
+        s.export.refresh()
+    elif change == "policy":
+        state["policy"] = False
+    elif change == "revoked":
+        state["authorized"] = False
+    elif change == "invalidated":
+        s.export.invalidate()
+    s.tasks.run()
+    if change == "none":
+        vault.export_http_archive.assert_called_once_with(
+            "capture", dialog.output, confirmed=True, scope=scope)
+    else:
+        vault.export_http_archive.assert_not_called()
+    s.broker.export_http_trace.assert_not_called()
+
+
+def test_manual_archive_keeps_legacy_export_signature(setup):
+    s = setup
+    s.export.close()
+    s.broker.http_trace_status = lambda: {"active": False, "include_binary": True}
+    vault = SimpleNamespace(export_http_archive=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: "manual-capture",
+    )
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "manual.zip")
+    s.export.chose_file(dialog, 1)
+    s.tasks.run()
+    vault.export_http_archive.assert_called_once_with(
+        "manual-capture", dialog.output, confirmed=True)

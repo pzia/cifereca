@@ -2,6 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, repr=False)
+class ScopedHTTPArchive:
+    capture_id: str
+    scope: object
+    capability: str
+    evidence_ref: str
 
 
 class HTTPTraceExport:
@@ -12,7 +21,7 @@ class HTTPTraceExport:
 
     def __init__(self, button, *, broker, tasks, host, current, folder,
                  gtk=None, gio=None, glib=None, include_binary=None,
-                 vault=None, archive_source=None):
+                 vault=None, archive_source=None, archive_current=None):
         if gtk is None:
             from gi.repository import Gtk, Gio, GLib
             gtk, gio, glib = Gtk, Gio, GLib
@@ -24,6 +33,8 @@ class HTTPTraceExport:
         self.timer = None
         self.include_binary = include_binary
         self.vault, self.archive_source = vault, archive_source
+        self.archive_current = archive_current
+        self._submission = None
         self._armed_source = self._chosen_source = None
         if archive_source is not None:
             self.LABEL = "Exporter l’archive HTTP sélectionnée…"
@@ -48,11 +59,35 @@ class HTTPTraceExport:
             return None
         sid = self.archive_source()
         policy = self._status().get("include_binary")
-        return (sid, policy) if sid and type(policy) is bool else None
+        if type(policy) is not bool:
+            return None
+        if type(sid) is str and sid:
+            return sid, policy
+        if type(sid) is ScopedHTTPArchive:
+            from cifereca.plugin_api.capture_vault import CaptureScope
+            if (type(sid.scope) is CaptureScope
+                    and all(type(value) is str and bool(value) for value in (
+                        sid.capture_id, sid.evidence_ref, sid.scope.provider_id,
+                        sid.scope.instance_id, sid.scope.account_id, sid.scope.identity_id))
+                    and type(sid.capability) is str
+                    and sid.capability in ("search", "detail", "rights", "loans", "personal_library")
+                    and callable(self.archive_current)):
+                return sid, policy
+        return None
+
+    def _archive_still_current(self, source):
+        if source is None or self._status().get("include_binary") != source[1]:
+            return False
+        if type(source[0]) is ScopedHTTPArchive:
+            try:
+                return self.archive_current(source[0]) is True
+            except Exception:
+                return False
+        return True
 
     def invalidate(self):
         self.armed = False
-        self._armed_source = self._chosen_source = None
+        self._armed_source = self._chosen_source = self._submission = None
         self.button.set_label(self.LABEL)
         if self.chooser is not None:
             chooser, self.chooser = self.chooser, None
@@ -95,11 +130,7 @@ class HTTPTraceExport:
         value = widget.get_active()
         if value == status["include_binary"]:
             return
-        self.armed = False
-        self.button.set_label(self.LABEL)
-        if self.chooser is not None:
-            chooser, self.chooser = self.chooser, None
-            chooser.destroy()
+        self.invalidate()
         try:
             setter(value)
         except Exception:
@@ -118,7 +149,8 @@ class HTTPTraceExport:
         if self.archive_source is not None:
             source = self._source()
             if ((self.armed and source != self._armed_source)
-                    or (self.chooser is not None and source != self._chosen_source)):
+                    or ((self.chooser is not None or self._submission is not None)
+                        and source != self._chosen_source)):
                 self.invalidate()
         self.button.set_sensitive(active)
         self.button.set_tooltip_text(
@@ -137,8 +169,13 @@ class HTTPTraceExport:
         if not self.active():
             self.refresh()
             return
+        if self.handle is not None and self._submission is not None:
+            return
         if not self.armed:
             self._armed_source = self._source()
+            if self.archive_source is not None and not self._archive_still_current(self._armed_source):
+                self.invalidate()
+                return
             self.armed = True
             button.set_label(self.CONFIRM)
             self.host.toast(
@@ -147,7 +184,9 @@ class HTTPTraceExport:
                 "choisir une destination locale."
             )
             return
-        if self.archive_source is not None and self._source() != self._armed_source:
+        if self.archive_source is not None and (
+                self._source() != self._armed_source
+                or not self._archive_still_current(self._armed_source)):
             self.invalidate()
             return
         if self.chooser is not None:
@@ -185,13 +224,18 @@ class HTTPTraceExport:
                 self.host.toast("Export HTTP indisponible : Trace est désactivé")
                 return
             source = self._chosen_source
-            if self.archive_source is not None and self._source() != source:
+            if self.archive_source is not None and (
+                    self._source() != source or not self._archive_still_current(source)):
+                self.invalidate()
                 return
             output = dialog.get_file()
             destination = output.get_path() if output is not None else None
             if not destination:
                 self.host.toast("Destination locale requise")
                 return
+
+            submission = object()
+            self._submission = submission
 
             def write(control):
                 if control.cancelled() or self.closed or not self.current():
@@ -202,10 +246,16 @@ class HTTPTraceExport:
                     # The worker must not read GTK selection widgets.
                     # Selection changes invalidate the immutable source token
                     # on the GTK thread; the broker reports current policy.
-                    if (self._chosen_source != source
-                            or self._status().get("include_binary") != source[1]):
+                    if (self._submission is not submission
+                            or self._chosen_source != source
+                            or not self._archive_still_current(source)):
                         return False
-                    self.vault.export_http_archive(source[0], destination, confirmed=True)
+                    selected = source[0]
+                    if type(selected) is ScopedHTTPArchive:
+                        self.vault.export_http_archive(
+                            selected.capture_id, destination, confirmed=True, scope=selected.scope)
+                    else:
+                        self.vault.export_http_archive(selected, destination, confirmed=True)
                 return True
 
             try:
@@ -213,6 +263,7 @@ class HTTPTraceExport:
                     write, label="Export local des échanges HTTP", kind="diagnostics",
                 )
             except Exception:
+                self._submission = None
                 self.host.toast("Export HTTP indisponible")
                 return
             self.handle.add_done_callback(self.completed)
@@ -234,6 +285,9 @@ class HTTPTraceExport:
                                   if code == "private_zip_exists" else "Export HTTP impossible")
 
         def show_status():
+            if self.handle is handle:
+                self.handle = None
+                self._submission = None
             if not self.closed and self.current():
                 self.host.toast("Échanges HTTP exportés localement" if okay
                                 else error or "Export HTTP annulé")
@@ -246,6 +300,7 @@ class HTTPTraceExport:
             return
         self.closed = True
         self.armed = False
+        self._submission = None
         if self.include_binary is not None:
             self.include_binary.set_sensitive(False)
         if self.timer is not None:
