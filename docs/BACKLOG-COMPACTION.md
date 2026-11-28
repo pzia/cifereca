@@ -194,3 +194,50 @@ capitalisation, PURGED authentifié, CI SUCCESS et ref absente pour l'ancre.
 Ne pas compter les fermetures not_planned des sources comme avancement.
 Les tranches et la latence REST peuvent exiger des cycles supplémentaires ;
 mesurer leur coût réel et le gain logique, sans promettre de purge physique.
+
+
+## Transition locale V3 (#8207) — poursuite du staging existant
+
+Le CLI local `scripts/backlog_local.py` conserve le moteur de compaction
+unique. `plan --master M` et `reconcile --anchor N` restent en lecture seule.
+La réconciliation vérifie le préfixe contigu exact ou un DONE complet, et
+ne vaut ni capitalisation ni réception de purge.
+
+Après fusion et recette, depuis un checkout propre de main au SHA exact,
+avec le jeton du propriétaire (lecture Actions, écriture Issues et Contents) :
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"
+python3 scripts/backlog_local.py reconcile --anchor N
+python3 scripts/backlog_local.py continue --anchor N --master M \
+  --stage-sha COMMIT --manifest-sha256 DIGEST --expect-main SHA --apply
+```
+
+La commande est limitée à un staging historique existant, déclaré public.
+Elle n'ouvre et ne ferme aucun ticket, ne réserve aucun lot, ne publie
+aucun nouveau staging et ne purge aucune référence de corpus. Les SHA et
+le maître doivent correspondre à la réconciliation. Aucun rejeu : chaque
+tranche reste bornée à dix mutations, les marqueurs PROGRESS et DONE sont
+les checkpoints persistants. Le CLI local accepte les journaux exacts
+du bot GitHub Actions et du propriétaire authentifié ; le parcours CI
+historique garde sa validation du bot seul. Un lot poursuivi localement
+ne peut donc pas être purgé par l'ancien parcours CI sans adaptation
+explicite du contrat de réception.
+
+Le workflow de clôture et le CLI mutateur partagent un bail Git distant
+`staging/backlog/execution-lock`, acquis par push avec bail d'absence et
+libéré uniquement sur le SHA détenu. Il ne contient aucun corpus. Les
+nettoyeurs de branches excluent ce namespace. Au cutover, vérifier
+l'absence de runs CI en attente ou actifs et d'anciens exécuteurs locaux ;
+le CLI contrôle aussi les états Actions. Le verrou protège les
+exécuteurs coopératifs, pas une édition manuelle via GitHub. Le gel du
+corpus et les contrôles REST/Git restent obligatoires.
+
+Après interruption ou résultat ambigu, le bail peut rester présent.
+Ne jamais le voler ni supprimer sa référence automatiquement : vérifier
+l'absence de tout exécuteur, réconcilier le corpus et les journaux avant
+un déverrouillage explicite sur le SHA exact, puis reprendre. Aucun
+rejeu aveugle. Un changement de main interrompt l'exécution ; mettre à
+jour le checkout et réconcilier avant une nouvelle autorisation liée au
+nouveau SHA. La capitalisation sémantique et la purge globale restent
+hors de ce mode de poursuite.
