@@ -153,6 +153,35 @@ Relecture statique des témoins sur `6e2720af6c84149c8e5d7dee792321d0b2933630`. 
 
 La relecture ne constitue ni une nouvelle exécution des suites ni une recette utilisateur réelle.
 
+## CI, migrations Core et socle E2E — capitalisation résiduelle #8418
+
+Synthèse reprise de la relecture statique #8421 des 20 issues et de leurs commentaires, manifeste `fd175c4944366101f0b0ea0c37686e659a79b838939eae1fd37c1c8badf1e568`, témoins sur `41d29f82a58ed935ae97a29c34b4e3f078ea8ee5`. Les conclusions historiques de CI ne constituent pas une nouvelle réception au HEAD courant.
+
+### Gates et livraison (#169, #170, #172, #174, #175, #177, #183)
+
+- #169 : gate Core historique sur PR et main ; aujourd'hui [PR CI](../.github/workflows/pr-ci.yml) sélectionne les suites Core et plugins, [Test Core](../.github/workflows/core-tests.yml) couvre push main et déclenchement manuel, avec sélection et repli exhaustif. Ne pas confondre contrat historique exhaustif et routage actuel.
+- #170/#172 : [Validate installed Core](../.github/workflows/core-install.yml) construit le wheel sans isolation de build, matrice 3.11/3.12/3.13 ; [smoke installé](../scripts/ci-smoke-installed-wheel.sh) dans un venv et hors arbre source, vérifie import, SHA attendu et CLI/entrypoints. La matrice porte ici sur l'installation, pas sur l'intégralité des tests Core.
+- #174 ([#185](https://github.com/pzia/cifereca/pull/185)) : permissions, Python explicite, timeouts, annulation des runs obsolètes et cache lorsque pertinent ; historique plugins/packaging/dataset/wheel verts, Core encore rouge sur six assertions préexistantes. Les workflows de publication ont une politique de concurrence distincte (pas d'annulation en cours) ; pas de garantie de pinning SHA généralisé.
+- #175/#183 : [release](../.github/workflows/release.yml) sur tag/commande explicite, vérification commit intégré et métadonnées/version, validations avant publication, wheel/archives, ensemble exact d'artefacts, SHA-256 et signatures, draft avec relecture des assets téléchargés avant publication, distinction prerelease/stable. Aucune release déclenchée pour cette capitalisation, ni preuve de publication actuelle.
+- #177 : [E2E Smoke](../.github/workflows/e2e-smoke.yml) séparé de Core, sélection sur PR, replay intégré sur main selon chemins, runtime GTK/headless et scénarios synthétiques ; pas de validation fournisseur réel induite.
+
+### Migrations Core et baseline (#171, #173, #176, #193, #194, #200, #207, #211, #221)
+
+- #171/#173/#176 : migrations de #165 déjà capitalisées ci-dessus ; [DetailsAndActions #186](../tests/test_core0933_details_actions.py) (actions dédupliquées, colonnes et budget, facettes source et rebinding), [ResponsiveWidgets #188](../tests/test_core0933_responsive_widgets.py) (objets boutons, accessibilité, ordre, restauration, sensibilité miroir), [DeveloperExamples #191](../tests/test_core0933_developer_examples.py) (manifeste, capacité de recherche, provenance et enregistrement sans GTK). Ne pas restaurer un module historique monolithique.
+- #193 : 14 échecs historiques (617 pass, 2 skipped), [#206](https://github.com/pzia/cifereca/pull/206) corrige les faux positifs de tests, découple PluginManager du transport et préfère provenance de symbole à identité d'objet. Témoins actuels : [builtin UI](../tests/test_builtin_ui_rationalization.py), [Step B](../tests/test_cifereca_step_b.py), [dépendances Python](../tests/test_core037_python_dependencies.py), [placement](../tests/test_core0933_source_placement.py). Le DONE historique n'est pas une nouvelle mesure de baseline.
+- #194 : [#205](https://github.com/pzia/cifereca/pull/205), #195 obsolète après migration ; [résilience Paris](../src/plugins/provider-paris/tests/test_legacy_client_resilience.py) utilise le stub Diagnostics.add(category, operation, status, duration_ms, detail, **kwargs), avec cas login, résultats physiques conservés, retry réduit et arrêt après deuxième erreur protocole. #200 : imports locaux de [recommendation_service](../src/plugins/recommendations/tests/test_recommendation_service.py) et module présent dans le package ; [runner plugins](../scripts/ci-run-plugin-tests.sh) exécute chaque package dans son répertoire via python -m pytest -q, propage l'échec. Pas de preuve de collecte réexécutée.
+- #207 : [Kobo boundary](../tests/test_kobo_boundary_rationalization.py), chemin unique src/plugins/provider-kobo/cifereca_kobo_vault.py, AST des classes KoboVaultError/KoboVaultClient, absence du pont Core ; pas de fallback legacy. #211 : [statistics](../tests/test_core0929_statistics.py), comparaison AST sur cmd et constante statistics, appel identity_statistics ; indépendant des quotes d'ast.unparse.
+- #221 ([#224](https://github.com/pzia/cifereca/pull/224)) : six assertions corrigées historiquement sans xfail/skip ni modification de production ; témoins spécialisés actuels [ADEPT attach initial faux](../tests/test_adept_manual_binding.py), [GTK lifecycle](../tests/test_core0927_gtk_lifecycle.py), [QueryState](../tests/test_core0927_list_filter_contract.py), [guide/first_spine](../tests/test_core0929_cover_c03.py), statistics et DetailsAndActions ci-dessus. Les assertions structurelles ne prouvent pas à elles seules le comportement GTK ou le fallback EPUB réel.
+
+### Socle E2E (#196–#199)
+
+- #196 : [runner](../e2e/run.py) et [guide](../e2e/README.md), ciblage scénario ou plugin, startup et core-navigation ; [contrat](../tests/test_e2e_runner_contract.py) vérifie la sélection. Le LOCK historique n'est pas un DONE ; pas d'attestation exhaustive d'absence de sleeps ni de déterminisme de tous les parcours.
+- #197 ([#228](https://github.com/pzia/cifereca/pull/228)) : runner avec artefacts par scénario, stdout/stderr expurgés, trace JSONL horodatée, capture sur échec selon le contrat historique ; ne pas déduire une garantie universelle de masquage de tout secret ni la présence effective d'une capture dans chaque run.
+- #198 ([#227](https://github.com/pzia/cifereca/pull/227), [#231](https://github.com/pzia/cifereca/pull/231)) : fixtures versionnées startup et autres, HOME/XDG temporaire, bibliothèque vide et aucun compte réel pour startup ; [tests simulation](../simulation/tests/test_e2e_fixtures.py) vérifient état explicite empty/smoke, digest reproductible après contamination, chemins XDG isolés, cleanup y compris exception. Pas de profil réel nécessaire dans ces témoins.
+- #199 ([#230](https://github.com/pzia/cifereca/pull/230)) : E2E Smoke distinct, résumé/artefacts de debug et rétention 7 jours dans le DONE historique ; workflow actuel avec sélection et politique de replay. Les preuves exactes d'une recette dépendent de son run et de ses artefacts, non de l'existence du YAML.
+
+Aucune nouvelle exécution des suites métier, collecte plugin, recette GTK, benchmark de temps ou publication de release n'est revendiquée par cette relecture.
+
 ## Validation minimale d'une migration de test
 
 Pour chaque invariant historique retenu :
