@@ -383,7 +383,12 @@ class Tests(unittest.TestCase):
             with self.subTest(size=size):
                 self.exercise_standard(size)
 
-    def exercise_standard(self, size):
+    def test_standard_interrupted_at_each_boundary(self):
+        for boundary in (0, 3, 10, 13, 20, 23, 30, 33, 39):
+            with self.subTest(boundary=boundary):
+                self.assertEqual(self.exercise_standard(20, boundary), 39)
+
+    def exercise_standard(self, size, boundary=None):
         self.api = API()
         event = self.staging_issue()
         members = list(range(200, 200 + size - 1))
@@ -412,25 +417,43 @@ class Tests(unittest.TestCase):
             comments[n].append(value)
             issues[n]["comments"] += 1
             return dict(value)
+        writes = []
+        interrupted = False
+        def check_interrupt():
+            nonlocal interrupted
+            if boundary is not None and not interrupted and len(writes) == boundary:
+                interrupted = True
+                raise c.Refusal("simulated standard interruption")
+        def replace_body(n, body):
+            check_interrupt()
+            writes.append((n, None))
+            issues[n]["body"] = body
         def replace_comment(cid, body):
+            check_interrupt()
+            writes.append((None, cid))
             next(x for rows in comments.values() for x in rows if x["id"] == cid)["body"] = body
+        def guarded_mark(n, body):
+            if body.startswith((c.PROGRESS, c.DONE)):
+                check_interrupt()
+            return mark(n, body)
         stage = Stage()
         with patch.object(self.api, "get", side_effect=get), \
-             patch.object(self.api, "mark", side_effect=mark), \
-             patch.object(self.api, "replace_body", side_effect=lambda n,b: issues[n].update(body=b)), \
+             patch.object(self.api, "mark", side_effect=guarded_mark), \
+             patch.object(self.api, "replace_body", side_effect=replace_body), \
              patch.object(self.api, "replace_comment", side_effect=replace_comment):
             if size == 21:
                 with self.assertRaisesRegex(c.Refusal, "corpus issue limit"):
                     c.consolidate(self.api, stage, issues[123], HEAD, clock=lambda: NOW)
                 self.assertEqual(stage.published, 0)
                 return
-            result = c.consolidate(self.api, stage, dict(issues[123]), HEAD, clock=lambda: NOW)
             control = 900
-            while result["status"] == "LOT_PENDING":
+            def resume(cursor, applied=None):
+                nonlocal control
                 control += 1
                 data = {"version":1,"p0":123,"stage_sha":STAGE,
-                        "manifest_sha256":result["manifest_sha256"],"main_sha":HEAD,
-                        "cursor":result["cursor"]}
+                        "manifest_sha256":c.sha256(stage.raw),"main_sha":HEAD,"cursor":cursor}
+                if applied is not None:
+                    data.update(version=2, applied=applied)
                 issues[control] = dict(event, number=control, id=control, labels=[],
                     assignees=[], comments=0, title=c.CONTINUE_TITLE+"123",
                     body=c.encode(data).decode())
@@ -438,10 +461,75 @@ class Tests(unittest.TestCase):
                 result = c.continue_lot(self.api, stage, issues[control], HEAD)
                 with self.assertRaises(c.Refusal):
                     c.continue_lot(self.api, stage, issues[control], HEAD)
+                return result
+            def recover(cursor):
+                self.assertEqual(len(writes), boundary)
+                self.assertEqual(stage.commit, STAGE)
+                # Refuse a divergent unmodified text before applying another write.
+                n = members[-1]
+                prior = issues[n]["title"]
+                issues[n]["title"] = "External drift"
+                with self.assertRaisesRegex(c.Refusal, "divergent"):
+                    resume(cursor, boundary)
+                issues[n]["title"] = prior
+                self.assertEqual(len(writes), boundary)
+                return resume(cursor, boundary)
+            try:
+                result = c.consolidate(self.api, stage, dict(issues[123]), HEAD, clock=lambda: NOW)
+            except c.Refusal as exc:
+                self.assertEqual(str(exc), "simulated standard interruption")
+                result = recover(0)
+            while result["status"] == "LOT_PENDING":
+                cursor = result["cursor"]
+                try:
+                    result = resume(cursor)
+                except c.Refusal as exc:
+                    self.assertEqual(str(exc), "simulated standard interruption")
+                    result = recover(cursor)
             self.assertEqual(result["status"], "STAGED_AND_COMPACTED")
             manifest = c.strict_json(stage.raw)
             self.assertEqual(len(manifest["snapshots"]), size)
             c.verify_compacted_corpus(self.api, manifest, c.sha256(stage.raw), STAGE, 999, completed=True)
+            self.assertEqual(len(writes), size * 2 - 1)
+            self.assertEqual(len(set(writes)), len(writes))
+            return len(writes)
+
+    def test_recovery_preview_and_fresh_control(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        clock = lambda: NOW + dt.timedelta(days=2)
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            preview = c.recovery_preview(self.api, stage, 123, HEAD)
+            self.assertEqual(preview["status"], "READ_ONLY_RECOVERY_PREVIEW")
+            self.assertFalse(preview["destruction_enabled"])
+            self.assertEqual(preview["issues"], [123])
+            self.assertEqual(self.api.writes, [])
+            self.assertEqual(stage.published, 0)
+            data = {"version":1, "p0":123, "main_sha":HEAD,
+                    "manifest_sha256":preview["manifest_sha256"], "unstarted_review":True}
+            control = dict(event, number=999, id=999, labels=[], assignees=[], comments=0,
+                           title=c.RECOVER_TITLE+"123", body=c.encode(data).decode(),
+                           closed_at=clock().isoformat())
+            self.api.pilot = control
+            for key, bad in (("main_sha", "b"*40), ("manifest_sha256", "0"*64),
+                             ("unstarted_review", False)):
+                self.api.pilot["body"] = c.encode(dict(data, **{key:bad})).decode()
+                with self.assertRaises(c.Refusal):
+                    c.recover_unstarted(self.api, stage, dict(self.api.pilot), HEAD, clock=clock)
+            self.api.pilot["body"] = c.encode(data).decode()
+            self.api.comments[0]["body"] += " drift"
+            with self.assertRaisesRegex(c.Refusal, "recovery corpus mismatch"):
+                c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            self.api.comments[0]["body"] = self.api.comments[0]["body"][:-6]
+            self.assertEqual(self.api.writes, [])
+            self.assertEqual(stage.published, 0)
+            result = c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            self.assertEqual(result["status"], "STAGED_AND_COMPACTED")
+            with self.assertRaises(c.Refusal):
+                c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            with self.assertRaises(c.Refusal):
+                c.recovery_preview(self.api, stage, 123, HEAD)
+            self.assertEqual(stage.published, 1)
 
     def test_snapshot_retries_only_stable_timestamp_drift(self):
         self.staging_issue()
