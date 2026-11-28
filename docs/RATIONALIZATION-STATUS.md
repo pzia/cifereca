@@ -63,11 +63,11 @@ Voir [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Recommendations
 
-L'entrypoint actif utilise les primitives publiques actuelles, mais la hiérarchie conserve du code legacy de threading dans une base historique. Nettoyage à traiter séparément.
+[#189](https://github.com/pzia/cifereca/pull/189) : entrypoint aplati, exécution longue via le broker `tasks`, sans orchestration privée des threads. Les `Event`/`Lock` actuels servent à la synchronisation, notamment du cache, pas à lancer des workers. Voir [README](../src/plugins/recommendations/README.md) et [contrat](../src/plugins/recommendations/tests/test_legacy_hierarchy_contract.py).
 
 ### Numilog EPUB strict
 
-Le validateur local reste plus strict que l'inspection Core sur plusieurs invariants ZIP/OPF/protection. Ne pas le supprimer avant équivalence démontrée.
+[#202](https://github.com/pzia/cifereca/pull/202) : structure ZIP/OPF déléguée au Core strict ; Numilog conserve sa politique DRM (refus Adobe/LCP et chiffrement hors obfuscation de polices). Voir [matrice](EPUB-VALIDATION-RATIONALIZATION.md). Ne pas supprimer cette couche provider.
 
 ### Sessions HTTP fournisseur
 
@@ -108,6 +108,4 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 ## Prochaines étapes de rationalisation
 
 1. poursuivre le triage historique `0921 → 0933` ;
-2. réexaminer les résidus Core/provider selon les contrats courants, sans rouvrir les migrations builtin_ui/Paris/Kobo ;
-3. nettoyer la hiérarchie legacy Recommendations ;
-4. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
+2. réexaminer les résidus Core/provider selon les contrats courants, sans rouvrir les rationalisations déjà livrées.
