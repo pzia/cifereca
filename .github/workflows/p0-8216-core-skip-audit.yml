@@ -1,0 +1,71 @@
+name: P0 8216 Core skip evidence audit
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-skip-audit.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46065388826
+          pattern: core-shard-[2356]
+          path: ${{ runner.temp }}/original
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46066816167
+          name: repaired-core-shard-0
+          path: ${{ runner.temp }}/repaired/core-shard-0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114204645
+          name: repaired-core-shard-4
+          path: ${{ runner.temp }}/repaired/core-shard-4
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections,json,os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          report={"selected":[0,2,3,4,5,6],"missing":[1,7],"shards":{}}
+          bad=False
+          for shard in report["selected"]:
+              folder=root/("repaired" if shard in (0,4) else "original")/f"core-shard-{shard}"
+              rec=report["shards"][str(shard)]={}
+              counters={}
+              for arm in ("A","B"):
+                  for mode in ("plain","coverage"):
+                      rows=[]
+                      for case in ET.parse(folder/f"{arm}.{mode}.xml").findall(".//testcase"):
+                          skip=case.find("skipped")
+                          if skip is not None:
+                              rows.append({"class":case.get("classname"),"name":case.get("name"),"type":skip.get("type"),"message":skip.get("message"),"detail":skip.text})
+                      key=f"{arm}.{mode}"
+                      rec[key]=rows
+                      counters[key]=collections.Counter((r["class"],r["name"],r["type"],r["message"]) for r in rows)
+                      if mode=="plain":
+                          for r in rows:
+                              print("SKIP",shard,arm,json.dumps({k:v for k,v in r.items() if k!="detail"})[:800])
+              if not all(c==counters["A.plain"] for c in counters.values()):
+                  bad=True
+                  print("SKIP_REASON_MISMATCH",shard)
+          (root/"core-skip-audit.json").write_text(json.dumps(report,indent=2))
+          totals={f"{a}.{m}":sum(len(r[f"{a}.{m}"]) for r in report["shards"].values()) for a in ("A","B") for m in ("plain","coverage")}
+          print("SKIP_TOTALS",totals)
+          assert all(n==24 for n in totals.values())
+          assert not bad,"Skip identity/type/reason differs; inspect report"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-skip-audit
+          path: ${{ runner.temp }}/core-skip-audit.json
+          retention-days: 7
