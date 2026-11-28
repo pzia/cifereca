@@ -1926,7 +1926,11 @@ class DiagnosticsBrokerImpl:
 
 
 class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
-    """Immediate preference write, only supplied to the Diagnostics page."""
+    """Page-only diagnostic preferences and scoped passive observations."""
+
+    def provider_health_observations(self, identity_id: str):
+        from .core.provider_health_inventory import diagnostic_health_observations
+        return diagnostic_health_observations(self.service, identity_id)
 
     def set_http_trace_include_binary(self, value: bool) -> bool:
         from copy import deepcopy

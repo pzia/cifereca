@@ -95,3 +95,53 @@ def test_notification_saturation_is_explicit():
     assert health.notifications_saturated()
     health.set_enabled(False)
     assert not health.notifications_saturated()
+
+
+def test_page_health_projection_exact_identity_and_no_foreign_evidence():
+    from cifereca.brokers import DiagnosticsBrokerFactory
+    health = PassiveHealth()
+    health.set_enabled(True)
+    caps = SimpleNamespace(search=True)
+    public = SimpleNamespace(descriptor=SimpleNamespace(
+        id="public", capabilities=caps, credential_fields=()))
+    private = SimpleNamespace(descriptor=SimpleNamespace(
+        id="private", capabilities=caps, credential_fields=("login",)))
+    owners = [SimpleNamespace(identity_id=owner) for owner in ("a", "b")]
+    accounts = [SimpleNamespace(provider_id="private", identity_id=owner,
+                  credential_id="instance-" + owner, unique_id="account-" + owner)
+                for owner in ("a", "b")]
+    service = SimpleNamespace(
+        _provider_health=health, identities=owners, current_identity=owners[0],
+        accounts_for_identity=lambda owner: [a for a in accounts if a.identity_id == owner],
+        identity_for_connection=lambda provider, instance: next(
+            row for row in owners if instance == "instance-" + row.identity_id),
+        registry=SimpleNamespace(all=lambda: [public, private]),
+        _provider_enabled_for_identity=lambda provider, owner: True)
+    for scope, ref in ((Scope("public", "", "", "", "search"), "public-ref"),
+                       (Scope("private", "instance-a", "account-a", "a", "search"), "a-ref"),
+                       (Scope("private", "instance-b", "account-b", "b", "search"), "b-ref")):
+        health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+    factory = DiagnosticsBrokerFactory(service)
+    assert not hasattr(factory.for_plugin("other"), "provider_health_observations")
+    page = factory.for_plugin("ui.page.diagnostics")
+    assert page.provider_health_observations("") == ()
+    assert page.provider_health_observations("b") == ()
+    rows = page.provider_health_observations("a")
+    assert {row["identity_id"] for row in rows} == {"", "a"}
+    assert {row["evidence_ref"] for row in rows} == {None, "a-ref"}
+    assert all(row["outcome"] == "auth" for row in rows)
+    # A reference shared with another scope cannot authorize an archive.
+    health.observe(Scope("private", "instance-b", "account-b", "b", "search"),
+                   Observation(Outcome.AUTH, "1", "now", "a-ref"), lease=health.lease())
+    assert all(row["evidence_ref"] is None for row in page.provider_health_observations("a"))
+    service.current_identity = owners[1]
+    assert page.provider_health_observations("a") == ()
+    # Revocation during projection discards the whole snapshot.
+    original = service.accounts_for_identity
+    def revoked(owner):
+        service._source_context_epoch = 1
+        return original(owner)
+    service.accounts_for_identity = revoked
+    assert page.provider_health_observations("b") == ()
+    health.set_enabled(False)
+    assert page.provider_health_observations("b") == ()

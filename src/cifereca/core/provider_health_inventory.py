@@ -81,3 +81,59 @@ def provider_health_count(installed, registered, cached):
     return len({row.plugin_id for row in installed}
                | {scope.provider for scope, _, _ in registered}
                | {row[0] for row in cached})
+
+
+def diagnostic_health_observations(service, identity_id):
+    """Page-only bounded metadata projection, never access provider sessions."""
+    from .source_context import source_context_epoch
+    from .capture_vault_service import capture_scope_authorizer
+    from ..plugin_api.capture_vault import CaptureScope
+
+    health = getattr(service, "_provider_health", None)
+    if type(identity_id) is not str or not identity_id or health is None:
+        return ()
+    def current():
+        return getattr(getattr(service, "current_identity", None),
+                       "identity_id", None) == identity_id
+    if not current():
+        return ()
+    lease = health.lease()
+    if lease is None:
+        return ()
+    epoch = source_context_epoch(service)
+    authorize = capture_scope_authorizer(service)
+    rows = []
+    for scope, enabled, _ in registered_health(service, health, identity_id):
+        if scope.identity not in ("", identity_id):
+            continue
+        exact = CaptureScope(scope.provider, scope.instance, scope.account, scope.identity)
+        private = bool(scope.identity) and authorize("ui.page.diagnostics", exact)
+        if scope.identity and not private:
+            continue
+        latest, baseline, anomalies = health.snapshot(scope)
+        seen = set()
+        for role, observation in (("latest", latest), ("baseline", baseline),
+                                  *(("anomaly", row) for row in reversed(anomalies))):
+            if observation is None or observation.evidence_ref in seen:
+                continue
+            seen.add(observation.evidence_ref)
+            owned = private and health.owns_reference(scope, observation.evidence_ref)
+            rows.append({
+                "provider_id": scope.provider,
+                "instance_id": scope.instance,
+                "account_id": scope.account,
+                "identity_id": scope.identity,
+                "capability": scope.capability,
+                "enabled": enabled,
+                "role": role,
+                "outcome": observation.outcome.value,
+                "version": observation.version,
+                "observed_at": observation.observed_at,
+                "evidence_ref": observation.evidence_ref if owned else None,
+                "capture_id": observation.capture_id if owned else None,
+            })
+    if (not current() or source_context_epoch(service) != epoch
+            or health.lease() != lease
+            or getattr(service, "_provider_health", None) is not health):
+        return ()
+    return tuple(rows)

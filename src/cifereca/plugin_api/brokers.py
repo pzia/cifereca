@@ -266,6 +266,22 @@ class DiagnosticsHttpPolicyBroker(Protocol):
 
 
 @runtime_checkable
+class DiagnosticsProviderHealthBroker(Protocol):
+    """Optional page-only passive projection; never triggers provider I/O."""
+
+    def provider_health_observations(
+        self, identity_id: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Only the current explicit identity and registered public scopes.
+
+        Rows carry scope coordinates, capability, outcome, version, observation
+        time and role. Private uniquely owned evidence may expose opaque
+        evidence/capture references; neither is permission to archive or export.
+        """
+        ...
+
+
+@runtime_checkable
 class DiagnosticsCaptureRetentionBroker(Protocol):
     """Optional Core-owned common capture retention settings."""
     def capture_retention_policy(self) -> Mapping[str, int]: ...
