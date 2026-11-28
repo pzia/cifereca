@@ -173,10 +173,20 @@ def test_gui_refresh_callback_rejects_old_a_b_a_request(tmp_path):
         # sufficient to authorize publication of the former worker result.
         service.select_identity("alex")
         service.select_identity("default")
-        stale.done(["PRIVATE stale loan"])
+        # Match the worker's (rows, cover_rows) return contract. A malformed
+        # stale payload could otherwise make a removed epoch guard fail for
+        # the wrong reason, before it ever publishes the private rows.
+        prior_projection = object()
+        host._loan_cover_projection = prior_projection
+        stale.done((["PRIVATE stale loan"], ("PRIVATE stale cover",)))
         assert applied == []
+        assert host._loan_cover_projection is prior_projection
         refresh_loans(host, force=False)
-        submitted[-1].done(["fresh"])
+        fresh_covers = ("fresh cover",)
+        submitted[-1].done((["fresh"], fresh_covers))
         assert applied == [["fresh"]]
+        assert host._loan_cover_projection == (
+            service._account_context_epoch, "default", fresh_covers,
+        )
     finally:
         service.close()
