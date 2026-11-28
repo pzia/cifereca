@@ -866,6 +866,9 @@ class SynchronizationBrokerImpl:
                     source_id, SyncRequest(identity_id=identity_id), control,
                     inventory_only=True,
                 )
+                if result.facts.get("reason") == "operation_busy":
+                    with self._scheduled_inventory_lock:
+                        self._scheduled_inventory_requested.discard(source_id)
             except Cancelled:
                 # Cancellation is a lifecycle signal, not a provider fault.
                 raise
@@ -887,8 +890,6 @@ class SynchronizationBrokerImpl:
             if result.facts.get("reason") == "operation_busy":
                 deferred += 1
                 attempted -= 1
-                with self._scheduled_inventory_lock:
-                    self._scheduled_inventory_requested.discard(source_id)
             elif result.facts.get("status") == "partial":
                 partial += 1
             elif not result.ok:
@@ -1205,22 +1206,13 @@ class SynchronizationBrokerImpl:
                     facts={"status": "busy", "reason": "operation_busy"},
                 )
             terminal_cycle("failed")
-            state.update(
-                status="busy" if busy else "error",
-                error="" if busy else _SYNC_PUBLIC_FAILURE,
-            )
+            state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
             if refreshes_private_inventory:
-                state["inventory_status"] = "busy" if busy else "failed"
+                state["inventory_status"] = "failed"
             self._set_state(source_id, state); self._notify()
-            return (
-                SyncResult(
-                    ok=False, warnings=("Synchronisation déjà en cours",),
-                    facts={"status": "busy", "reason": "operation_busy"},
-                )
-                if busy else SyncResult(
-                    ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
-                    facts={"reason": "source_unavailable"},
-                )
+            return SyncResult(
+                ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
+                facts={"reason": "source_unavailable"},
             )
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:
