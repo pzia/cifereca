@@ -349,6 +349,12 @@ def _refresh_sync_page(self) -> None:
         }
         for notice in unavailable_connections
     )
+    if any(getattr(source, "contention_observed", False) is True for source in rows):
+        def expire_contention():
+            if sync_action_scope_current(self, scope):
+                self._refresh_sync_page()
+            return False
+        GLib.timeout_add_seconds(30, expire_contention)
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
     # carry that disclosure state into another identity or retain stale rows.

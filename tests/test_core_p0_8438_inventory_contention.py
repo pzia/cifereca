@@ -143,3 +143,19 @@ def test_opening_projection_does_not_replace_running_attempt(tmp_path):
         assert broker._state(sid) == before
     finally:
         service.storage.close()
+
+
+def test_contention_marker_cannot_mask_concurrent_terminal_state(tmp_path):
+    service, account, _, _ = _source(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        key = "sync.source.state." + sid
+        before = service.storage.metadata_get(key)
+        broker._set_state(sid, {"status": "ok", "inventory_status": "success"})
+        broker._mark_contention(sid, before)
+        row = broker.sources()[0]
+        assert row.status == "ok"
+        assert row.contention_observed is False
+    finally:
+        service.storage.close()
