@@ -26,6 +26,12 @@ jobs:
           run-id: 46066816167
           name: repaired-core-shard-0
           path: ${{ runner.temp }}/repaired/core-shard-0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114204645
+          name: repaired-core-shard-4
+          path: ${{ runner.temp }}/repaired/core-shard-4
       - shell: bash
         run: |
           set -euo pipefail
@@ -35,8 +41,8 @@ jobs:
           import collections, hashlib, json, os, pathlib, sqlite3, subprocess, xml.etree.ElementTree as ET
           root = pathlib.Path(os.environ["RUNNER_TEMP"])
           refs = {"A": "4fd07df843b9d940746bbfe962a1877eec15d431", "B": "e8ed298116e57d44645c37cd3fa7ad91e1e9077e"}
-          selected = {0, 2, 3, 5, 6}
-          report = {"selected_shards": sorted(selected), "missing_shards": sorted(set(range(8))-selected), "refs": refs, "shards": {}, "totals": {}}
+          selected = {0, 2, 3, 4, 5, 6}
+          report = {"selected_shards": sorted(selected), "missing_shards": sorted(set(range(8))-selected), "refs": refs, "source_runs":{"0":46066816167,"2":46065388826,"3":46065388826,"4":46114204645,"5":46065388826,"6":46065388826}, "shards": {}, "totals": {}}
           inventories = {a: subprocess.check_output(["git","ls-tree","-r","--name-only",sha,"tests"],text=True).splitlines() for a,sha in refs.items()}
           def junit(path):
               tree = ET.parse(path)
@@ -63,7 +69,12 @@ jobs:
           totals = {a:collections.Counter() for a in refs}
           allcases = {a:collections.Counter() for a in refs}
           for shard in sorted(selected):
-              folder = root/("repaired" if shard == 0 else "original")/f"core-shard-{shard}"
+              folder = root/("repaired" if shard in (0,4) else "original")/f"core-shard-{shard}"
+              if shard == 4:
+                  for arm,sha in refs.items():
+                      assert (folder/f"{arm}.sha").read_text().strip()==sha
+                      assert (folder/f"{arm}.isolation.patch").read_bytes()==(folder/f"{arm}.final.patch").read_bytes()
+                  assert (folder/"A.isolation.patch").read_bytes()==(folder/"B.isolation.patch").read_bytes()
               rec = report["shards"][str(shard)] = {}
               parsed = {}
               for arm in refs:

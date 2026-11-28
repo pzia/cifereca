@@ -29,6 +29,12 @@ jobs:
           run-id: 46066816167
           name: repaired-core-shard-0
           path: ${{ runner.temp }}/repaired/core-shard-0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114204645
+          name: repaired-core-shard-4
+          path: ${{ runner.temp }}/repaired/core-shard-4
       - shell: bash
         run: |
           set -euo pipefail
@@ -53,7 +59,7 @@ jobs:
           from _pytest.junitxml import mangle_test_address
           root = pathlib.Path(os.environ["RUNNER_TEMP"])
           out = root/"collection"
-          selected = {0,2,3,5,6}
+          selected = {0,2,3,4,5,6}
           report = {"missing_shards":sorted(set(range(8))-selected),"arms":{}}
           bad = False
           for arm,sha in (("A","4fd07df843b9d940746bbfe962a1877eec15d431"),("B","e8ed298116e57d44645c37cd3fa7ad91e1e9077e")):
@@ -79,7 +85,7 @@ jobs:
               rec = report["arms"][arm] = {"source_sha":sha,"collected":len(items),"matrix":inv["matrix"],"shard_collected_counts":{str(s):sum(expected[s].values()) for s in range(8)},"non_file_sharded":non_file_sharded,"junit_key_collisions":collisions,"shards":{}}
               if collisions or non_file_sharded: bad = True
               for s in sorted(selected):
-                  folder = root/("repaired" if s==0 else "original")/f"core-shard-{s}"
+                  folder = root/("repaired" if s in (0,4) else "original")/f"core-shard-{s}"
                   actual = collections.Counter()
                   extra = []
                   for case in ET.parse(folder/f"{arm}.plain.xml").findall(".//testcase"):

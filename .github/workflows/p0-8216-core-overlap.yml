@@ -23,20 +23,26 @@ jobs:
           run-id: 46066816167
           name: repaired-core-shard-0
           path: ${{ runner.temp }}/repaired/core-shard-0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114204645
+          name: repaired-core-shard-4
+          path: ${{ runner.temp }}/repaired/core-shard-4
       - shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import collections, hashlib, json, os, pathlib, sqlite3, xml.etree.ElementTree as ET
           root=pathlib.Path(os.environ["RUNNER_TEMP"])
-          selected=(0,2,3,5,6)
-          result={"shards":selected,"missing_shards":[1,4,7],"arms":{}}
+          selected=(0,2,3,4,5,6)
+          result={"shards":selected,"missing_shards":[1,7],"arms":{}}
           for arm in ("A","B"):
               signatures=collections.defaultdict(list)
               all_contexts=0
               zero_contexts=0
               for shard in selected:
-                  folder=root/("repaired" if shard==0 else "original")/f"core-shard-{shard}"
+                  folder=root/("repaired" if shard in (0,4) else "original")/f"core-shard-{shard}"
                   db=folder/f"{arm}.coverage"
                   con=sqlite3.connect(db.as_uri()+"?mode=ro",uri=True)
                   assert con.execute("select value from meta where key='has_arcs'").fetchone()[0]=="1"
@@ -77,7 +83,7 @@ jobs:
               result["arms"][arm]={"stats":stats,"groups":groups}
               print("OVERLAP",arm,json.dumps(stats))
               for g in cross[:10]:
-                  print("CROSS_MODULE_CANDIDATE",arm,len(g),g[0]["arc_count"],json.dumps([m["nodeid"] for m in g[:6]]))
+                  print("CROSS_MODULE_CANDIDATE",arm,len(g),g[0]["arc_count"],json.dumps([m["nodeid"][:300] for m in g[:6]]))
           (root/"core-overlap-partial.json").write_text(json.dumps(result,indent=2))
           PY
       - uses: actions/upload-artifact@v4
