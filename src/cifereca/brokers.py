@@ -1039,7 +1039,8 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
-        previous_state = dict(state)
+        state_key = "sync.source.state." + source_id
+        previous_raw = self.service.storage.metadata_get(state_key)
 
         def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
@@ -1072,7 +1073,10 @@ class SynchronizationBrokerImpl:
         refreshes_private_inventory = "personal_library" in current.capabilities
         if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
-        self._set_state(source_id, state); self._notify()
+        from secrets import token_hex
+        provisional = json.dumps({**state, "attempt_token": token_hex(16)},
+                                 ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        self.service.storage.metadata_set(state_key, provisional); self._notify()
         try:
             # A scheduled refresh is not a public source Sync: only its
             # dedicated Core implementation can guarantee no delivery B.
@@ -1200,7 +1204,9 @@ class SynchronizationBrokerImpl:
                     and isinstance(exc.__cause__, LockBusyError))
             if busy:
                 # No Core admission: retain prior clocks and terminal evidence.
-                self._set_state(source_id, previous_state); self._notify()
+                self.service.storage.metadata_compare_restore(
+                    state_key, provisional, previous_raw,
+                ); self._notify()
                 return SyncResult(
                     ok=False, warnings=("Synchronisation déjà en cours",),
                     facts={"status": "busy", "reason": "operation_busy"},
