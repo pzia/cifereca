@@ -257,7 +257,6 @@ def expected_change(before, after, *, body=None, comment=None, marker=None):
             "unexpected post-mutation state; stop")
 
 
-STAGE_LIMIT = 1024 * 1024
 OWNER_ID = 11092036
 PRIORITIES = {"P0", "P-1", "P1", "P2", "P3"}
 SCOPE = re.compile(r"(?m)^<!-- backlog-staging-v1: (none|[1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
@@ -454,7 +453,7 @@ def collect_closure(api, event_issue, current):
             for n in selected:
                 validate_xl_claim(snapshots[n], lot[0], root, (str(n), declarations[str(n)]))
             manifest["xl_controls"] = selected
-    require(len(encode(manifest)) <= (LOT_STAGE_LIMIT if lot else STAGE_LIMIT), "staging corpus too large")
+    require(len(encode(manifest)) <= LOT_STAGE_LIMIT, "staging corpus too large")
     return manifest
 
 STAGE_PREFIX = "refs/heads/staging/backlog/p0-"
@@ -839,6 +838,24 @@ def continue_lot(api, stage, event_issue, current):
     return {"status": "STAGED_AND_COMPACTED" if end == len(mutations) else "LOT_PENDING",
             "p0": parent, "stage_sha": commit, "manifest_sha256": digest, "cursor": end, "total": len(mutations)}
 
+def recovery_preview(api, stage, parent, current):
+    """Read-only authorization input; no staging creation or corpus mutation."""
+    require(number(parent) not in (8195, 8207), "historical recovery excluded")
+    target = snapshot(api, parent)["issue"]
+    require(not target["title"].startswith(LOT_TITLE), "historical recovery excluded")
+    require(stage.remote_head(parent) is None, "staging already exists")
+    manifest = collect_closure(api, target, current)
+    require("master" not in manifest, "historical recovery excluded")
+    raw = encode(manifest)
+    require(stage.remote_head(parent) is None, "staging already exists")
+    main_guard(api, current)
+    return {"status": "READ_ONLY_RECOVERY_PREVIEW", "p0": parent,
+            "main_sha": current, "manifest_sha256": sha256(raw),
+            "issues": [s["issue"]["number"] for s in manifest["snapshots"]],
+            "staging_bytes": len(raw), "mutations": len(lot_plan(manifest)),
+            "destruction_enabled": False}
+
+
 def recover_unstarted(api, stage, event_issue, current, clock=None):
     """Fresh owner control, never a rerun; bind the reviewed untouched corpus."""
     require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
@@ -909,14 +926,15 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
             expected["issue"]["body"] = compact_text(expected["issue"]["body"], parent)
         # Compare preserved public provenance; server timestamps are allowed to change
         # only for items which were compacted (parent also received the journal).
-        if n == parent or expected["issue"]["body"] != original["issue"]["body"]:
-            expected["issue"].pop("updated_at")
-            projected["issue"].pop("updated_at")
+        if (n == parent or expected["issue"]["body"] != original["issue"]["body"]
+                or any(compact_text(c["body"], parent) != c["body"] for c in original["comments"])):
+            require(timestamp(expected["issue"].pop("updated_at")) <= timestamp(projected["issue"].pop("updated_at")),
+                    "issue timestamp regressed")
         for old, want, seen in zip(original["comments"], expected["comments"], projected["comments"]):
             want["body"] = compact_text(old["body"], parent)
             if want["body"] != old["body"]:
-                want.pop("updated_at")
-                seen.pop("updated_at")
+                require(timestamp(want.pop("updated_at")) <= timestamp(seen.pop("updated_at")),
+                        "comment timestamp regressed")
         require(expected == projected, "incomplete or divergent compacted corpus")
         subs = api.get(f"/issues/{n}/sub_issues?per_page=100&page=1")
         require(sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
@@ -1042,6 +1060,10 @@ def main(argv=None):
                                  else continue_lot if event_issue["title"].startswith(CONTINUE_TITLE)
                                  else consolidate)
                     result = operation(api, stage, event_issue, current)
+        elif re.fullmatch(r"recovery:[1-9]\d*", args.issues):
+            with tempfile.TemporaryDirectory(prefix="backlog-preview-") as directory:
+                stage = GitStage(directory, token)
+                result = recovery_preview(api, stage, int(args.issues.split(":")[1]), current)
         else:
             require(bool(re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*){0,2}", args.issues)), "invalid audit list")
             numbers = issue_numbers([int(n) for n in args.issues.split(",")])
