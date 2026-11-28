@@ -125,6 +125,7 @@ def dispatch_after_opening(window: Any) -> bool:
         completed = 0
         deferred = 0
         partials = 0
+        changed = 0
         interrupted = False
         for identity_id in identities:
             if not current():
@@ -142,6 +143,8 @@ def dispatch_after_opening(window: Any) -> bool:
                 receipt = broker.synchronize_scheduled_inventory(
                     identity_id, "startup",
                 )
+                if type(receipt) is SyncResult and type(receipt.changed) is int and 0 <= receipt.changed <= 256_000_000:
+                    changed += receipt.changed
                 if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial", "failed"}:
                     deferred += int(receipt.facts.get("deferred", 0) > 0)
                     partials += int(receipt.facts.get("status") == "partial")
@@ -158,20 +161,20 @@ def dispatch_after_opening(window: Any) -> bool:
                 interrupted = True
                 break
         if partials or (completed and (failures or deferred)):
-            return SyncResult(ok=False, facts={"status": "partial",
+            return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                "completed": completed,
                                                "failed": failures,
                                                "deferred": deferred})
         if deferred and not failures:
-            return SyncResult(ok=False, facts={"status": "busy",
+            return SyncResult(ok=False, changed=changed, facts={"status": "busy",
                                                "reason": "operation_busy",
                                                "deferred": deferred})
         if completed and failures:
-            return SyncResult(ok=False, facts={"status": "partial",
+            return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                "completed": completed,
                                                "failed": failures})
         if failures and deferred:
-            return SyncResult(ok=False, facts={"status": "failed",
+            return SyncResult(ok=False, changed=changed, facts={"status": "failed",
                                                "failed": failures,
                                                "deferred": deferred})
         if failures:
@@ -182,9 +185,9 @@ def dispatch_after_opening(window: Any) -> bool:
         # wrapper returns None; do not label that positive Core evidence as
         # a cancelled TaskRunner operation. No attempted source => no success.
         if completed and (interrupted or not current()):
-            return SyncResult(ok=False, facts={"status": "partial",
+            return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                "completed": completed})
-        return SyncResult(ok=True) if completed else None
+        return SyncResult(ok=True, changed=changed) if completed else None
 
     def after_inventory(_result=None):
         # Scheduled inventory never grants an acquisition or starts a
