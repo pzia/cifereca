@@ -11,6 +11,7 @@ import os
 import re
 from ipaddress import ip_address
 from threading import BoundedSemaphore, Event, Thread
+from copy import deepcopy
 from time import monotonic
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -118,13 +119,22 @@ def _safe_model_name(value: object) -> str:
 class OptionalLLMService:
     """One bounded generate()/structured-JSON transport, no implicit retries."""
 
-    def __init__(self, config: Mapping[str, Any], *, opener=None):
+    def __init__(self, config: Mapping[str, Any], *, opener=None, admission=None):
         self._config = dict(config)
+        self._admission = admission
         self._opener = opener or build_opener(ProxyHandler({}), _NoRedirect()).open
+
+    def _admitted(self) -> bool:
+        if self._admission is None:
+            return True
+        try:
+            return self._admission() is True
+        except Exception:
+            return False
 
     def _settings(self) -> tuple[bool, bool, str, str, str, float, int, int]:
         cfg = self._config
-        enabled = cfg.get("enabled") is True
+        enabled = cfg.get("enabled") is True and self._admitted()
         provided = cfg.get("provider") or "openai-compatible"
         # Never reflect arbitrary unsupported provider labels from a manually
         # edited config into diagnostics, consent UI or failure envelopes.
@@ -233,6 +243,11 @@ class OptionalLLMService:
             try:
                 # Never emit prompts, responses, URLs, API keys or exception
                 # messages to logs, diagnostics, or user-visible errors.
+                # A persisted configuration change revokes the old runtime
+                # admission before any newly started HTTP exchange.
+                if not self._admitted():
+                    result.append(failed("unavailable"))
+                    return
                 with self._opener(http_request, timeout=timeout) as response:
                     data = response.read(_MAX_RESPONSE_BYTES + 1)
                 if len(data) > _MAX_RESPONSE_BYTES:
@@ -311,11 +326,22 @@ class OptionalLLMService:
 
 
 def optional_llm_service(config) -> OptionalLLMService | None:
-    """Absent entirely unless explicitly enabled in Core configuration."""
+    """Resolve exactly one profile at startup, retaining legacy flat support."""
+    from .llm_profiles import is_profile_config, selected_settings, LLMSettingsError
+
     settings = config.get("llm", {})
     if not isinstance(settings, Mapping) or settings.get("enabled") is not True:
         return None
-    return OptionalLLMService(settings)
+    snapshot = deepcopy(dict(settings))
+    try:
+        effective = selected_settings(snapshot) if is_profile_config(snapshot) else snapshot
+    except LLMSettingsError:
+        return None
+    if effective.get("enabled") is not True:
+        return None
+    # A running service can be revoked, never silently redirected. A restart
+    # constructs the new service; a config change is not a hot reload.
+    return OptionalLLMService(effective, admission=lambda: config.get("llm", {}) == snapshot)
 
 
 __all__ = ["OptionalLLMService", "optional_llm_service"]

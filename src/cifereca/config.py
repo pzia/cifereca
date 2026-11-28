@@ -165,6 +165,12 @@ class Config:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     self.data = _merge(DEFAULT_CONFIG, raw)
+                    # Versioned LLM profiles are an atomic subtree, not a
+                    # recursive merge with legacy flat defaults. Malformed
+                    # profile markers must not fall back to those defaults.
+                    from .core.llm_profiles import is_profile_config
+                    if is_profile_config(raw.get("llm")):
+                        self.data["llm"] = deepcopy(raw["llm"])
                     # One-time in-memory bridge from 0.2.x: carry the remembered
                     # Paris username into the first provider account. The
                     # password was never stored by 0.2.x and must be entered
