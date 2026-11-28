@@ -443,6 +443,8 @@ def collect_closure(api, event_issue, current):
     manifest = {"version": 1, "repository": REPO, "p0": root, "main_sha": current,
                 "edges": {str(n): edges[n] for n in sorted(edges)},
                 "snapshots": [public_projection(snapshots[n]) for n in sorted(snapshots)]}
+    if not lot:
+        manifest["standard_batches"] = True
     if lot:
         require(snapshot(api, lot[0]) == lot[2], "master inventory drift")
         manifest["master"] = lot[0]
@@ -464,6 +466,7 @@ PROGRESS = "BACKLOG-STAGING-PROGRESS v1 "
 CONTINUE_TITLE = "Poursuite consolidation #8195 — "
 PURGE_TITLE = "Capitalisation #8195 — "
 RECEIVE_TITLE = "Réception consolidation #8195 — "
+RECOVER_TITLE = "Nouvelle consolidation #8195 — "
 
 def stage_ref(n):
     return STAGE_PREFIX + str(number(n))
@@ -667,10 +670,14 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
                 and sorted(number(child["number"]) for child in subs) == manifest["edges"][str(n)], "scope drift")
     return states
 
-def consolidate(api, stage, event_issue, current, clock=None):
+def consolidate(api, stage, event_issue, current, clock=None, recovery=None):
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
     manifest = collect_closure(api, event_issue, current)
     parent = manifest["p0"]
+    if recovery is not None:
+        control, control_before, expected_digest = recovery
+        require("master" not in manifest and control not in [s["issue"]["number"] for s in manifest["snapshots"]]
+                and sha256(encode(manifest)) == expected_digest, "recovery corpus mismatch")
     raw = encode(manifest)
     digest = sha256(raw)
     require(stage.remote_head(parent) is None, "staging already exists")
@@ -703,7 +710,10 @@ def consolidate(api, stage, event_issue, current, clock=None):
         if "master" in manifest:
             require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"],
                     "master inventory drift")
-        require(clock() < timestamp(event_issue["closed_at"]) + dt.timedelta(hours=24), "closure expired")
+        authorization = event_issue if recovery is None else control_before["issue"]
+        require(clock() < timestamp(authorization["closed_at"]) + dt.timedelta(hours=24), "closure expired")
+        if recovery is not None:
+            require(snapshot(api, control) == control_before, "recovery control changed")
         main_guard(api, current)
         for n, snap in states.items():
             observed = snapshot(api, n)
@@ -777,7 +787,7 @@ def continue_lot(api, stage, event_issue, current):
     require(digest == data["manifest_sha256"], "staging digest mismatch")
     manifest = strict_json(raw)
     require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent
-            , "invalid lot manifest")
+            and ("master" in manifest or manifest.get("standard_batches") is True), "invalid lot manifest")
     numbers = issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
                             XL_CORPUS_LIMIT if "xl_controls" in manifest else (3 if "master" in manifest else STANDARD_CORPUS_LIMIT))
     require(parent in numbers and control not in numbers and 8195 not in numbers, "invalid staged corpus")
@@ -829,6 +839,30 @@ def continue_lot(api, stage, event_issue, current):
     return {"status": "STAGED_AND_COMPACTED" if end == len(mutations) else "LOT_PENDING",
             "p0": parent, "stage_sha": commit, "manifest_sha256": digest, "cursor": end, "total": len(mutations)}
 
+def recover_unstarted(api, stage, event_issue, current, clock=None):
+    """Fresh owner control, never a rerun; bind the reviewed untouched corpus."""
+    require(event_issue["state"] == "closed" and event_issue["state_reason"] == "completed"
+            and not event_issue["labels"] and not event_issue["assignees"]
+            and event_issue["user"]["id"] == OWNER_ID, "invalid recovery control")
+    control = number(event_issue["number"])
+    before = snapshot(api, control)
+    require(all(before["issue"].get(k) == event_issue.get(k) for k in
+                ("id", "number", "body", "title", "state", "state_reason", "closed_at", "labels", "assignees")),
+            "recovery control changed")
+    data = strict_json(event_issue["body"].encode())
+    exact_keys(data, ("version", "p0", "main_sha", "manifest_sha256", "unstarted_review"))
+    parent = number(data["p0"])
+    require(type(data["version"]) is int and data["version"] == 1
+            and data["main_sha"] == current and data["unstarted_review"] is True
+            and parent not in (8195, 8207, control)
+            and event_issue["title"] == RECOVER_TITLE + str(parent), "invalid recovery authorization")
+    target = snapshot(api, parent)["issue"]
+    require(not target["title"].startswith(LOT_TITLE), "historical recovery excluded")
+    require(stage.remote_head(parent) is None, "staging already exists")
+    return consolidate(api, stage, target, current, clock=clock,
+                       recovery=(control, before, data["manifest_sha256"]))
+
+
 def canonical_evidence(ref, path):
     checked_sha(ref)
     require(type(path) is str and (path == "AGENTS.md" or
@@ -860,7 +894,7 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
                 require(master == manifest["master"] and set(members) == set(numbers) - {parent}
                         and xl_controls(snap["issue"]) == manifest["xl_controls"], "XL attachment drift")
             expected_journals = [start]
-            if "master" in manifest or len(lot_plan(manifest)) > LOT_BATCH:
+            if "master" in manifest or manifest.get("standard_batches") is True:
                 expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
             if completed:
                 expected_journals.append(DONE + digest + " " + commit)
@@ -1004,6 +1038,7 @@ def main(argv=None):
                     stage = GitStage(directory, token)
                     operation = (purge_capitalized if event_issue["title"].startswith(PURGE_TITLE)
                                  else receive_completed if event_issue["title"].startswith(RECEIVE_TITLE)
+                                 else recover_unstarted if event_issue["title"].startswith(RECOVER_TITLE)
                                  else continue_lot if event_issue["title"].startswith(CONTINUE_TITLE)
                                  else consolidate)
                     result = operation(api, stage, event_issue, current)
