@@ -531,6 +531,30 @@ class Tests(unittest.TestCase):
                 c.recovery_preview(self.api, stage, 123, HEAD)
             self.assertEqual(stage.published, 1)
 
+    def test_standard_journal_pagination_capacity_before_staging(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        template = self.api.comments[0]
+        self.api.comments = [dict(template, id=1000+i, body="Short evidence")
+                             for i in range(99)]
+        self.api.issue["comments"] = len(self.api.comments)
+        def get(path):
+            if "/sub_issues?" in path:
+                return []
+            return original_get(path)
+        # One page with a maximum of 99 returned comments; reserve the four
+        # initial/final and purge markers before creating the staging ref.
+        with patch.object(c, "MAX_PAGES", 1), patch.object(self.api, "get", side_effect=get):
+            with self.assertRaisesRegex(c.Refusal, "journal"):
+                c.consolidate(self.api, stage, dict(self.api.issue), HEAD, clock=lambda: NOW)
+        self.assertEqual(self.api.writes, [])
+        self.assertEqual(stage.published, 0)
+        self.api.comments = self.api.comments[:95]
+        self.api.issue["comments"] = 95
+        with patch.object(c, "MAX_PAGES", 1), patch.object(self.api, "get", side_effect=get):
+            manifest = c.collect_closure(self.api, dict(self.api.issue), HEAD)
+        self.assertEqual(len(manifest["snapshots"][0]["comments"]), 95)
+
     def test_legacy_standard_manifest_without_progress(self):
         event, stage = self.consolidation_fixture()
         original_get = self.api.get
