@@ -298,6 +298,20 @@ def test_v2_replaces_adwaita_opacity_only_for_enabled_secondary_labels(selector)
     assert re.search(r"(?m)^\s*opacity:\s*1\s*;", matching_rules[0])
 
 
+def test_enabled_placeholder_text_contrasts_with_the_entry_surface():
+    css = MODERN_LIGHT_CSS.decode()
+    selector = "window.cifereca-modern-light entry:not(:disabled) > text > placeholder"
+    ink = _css_declared_color(css, selector, "color")
+    assert _contrast(ink, "#e1e4ec") >= 4.5
+
+
+def test_enabled_off_switch_track_contrasts_with_its_handle_and_card():
+    css = MODERN_LIGHT_CSS.decode()
+    selector = "window.cifereca-modern-light switch:not(:checked):not(:disabled)"
+    track = _css_declared_color(css, selector, "background-color")
+    assert _contrast(track, "#ffffff") >= 3.0
+
+
 @pytest.mark.parametrize("selector", [
     "button.suggested-action:not(:disabled)",
     ".sidebar row:selected:not(:disabled)",

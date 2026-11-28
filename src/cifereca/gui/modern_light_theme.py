@@ -95,6 +95,10 @@ window.cifereca-modern-light row:not(:disabled) label.subtitle:not(:disabled),
 window.cifereca-modern-light row.entry:not(:disabled) .editable-area > label.title.dimmed:not(:disabled) {
   opacity: 1;
 }
+window.cifereca-modern-light entry:not(:disabled) > text > placeholder {
+  color: @cifereca_light_muted;
+  opacity: 1;
+}
 window.cifereca-modern-light button {
   border-radius: 10px;
 }
@@ -110,6 +114,9 @@ window.cifereca-modern-light button.flat:hover {
 window.cifereca-modern-light button.suggested-action {
   background-color: @cifereca_light_accent;
   color: white;
+}
+window.cifereca-modern-light switch:not(:checked):not(:disabled) {
+  background-color: @cifereca_light_muted;
 }
 window.cifereca-modern-light switch:checked {
   background-color: @cifereca_light_accent;
