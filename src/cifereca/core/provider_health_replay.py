@@ -11,6 +11,7 @@ from zipfile import ZipFile
 import httpx
 
 from ..http_trace import project_archived_http_zip
+from .notice_consolidator_worker import projection_digest
 
 
 class ReplayUnavailable(RuntimeError):
@@ -107,6 +108,24 @@ class CapturedReadTransport(httpx.BaseTransport):
         return httpx.Response(status, content=body,
                               headers=[(b"content-type", content_types[0])] if content_types else [])
 
+    def isolated_entries(self):
+        """Pass only exact read coordinates, content type and body, no headers."""
+        from base64 import b64encode
+        entries = []
+        total = 0
+        if self._closed or self._failed or self._cursor or not 1 <= len(self._entries) <= 32:
+            raise ReplayUnavailable("replay_incomplete")
+        for method, url, _, status, headers, body in self._entries:
+            total += len(body)
+            if total > 4 * 1024 * 1024:
+                raise ReplayUnavailable("replay_body_limit")
+            content_types = [value for key, value in headers if key == b"content-type"]
+            if len(content_types) > 1:
+                raise ReplayUnavailable("replay_metadata")
+            content_type = content_types[0].decode("latin-1") if content_types else ""
+            entries.append((method, url, status, content_type, b64encode(body).decode("ascii")))
+        return entries
+
     def require_complete(self):
         if self._closed or self._failed or self._cursor != len(self._entries):
             raise ReplayUnavailable("replay_incomplete")
@@ -152,23 +171,6 @@ def compare_business_projection(baseline, replayed, *, baseline_version, replay_
             "version_changed": baseline_version != replay_version}
 
 
-def projection_digest(rows):
-    """Bounded canonical digest, with explicit empty distinct from unknown."""
-    from hashlib import sha256
-    if type(rows) is not tuple or len(rows) > 2048:
-        return None
-    seen = set()
-    for row in rows:
-        if (type(row) is not tuple or len(row) != 4
-                or not all(type(value) is str and len(value) <= 4096 for value in row)
-                or not row[0] or not row[1] or row[0] in seen):
-            return None
-        seen.add(row[0])
-    payload = json.dumps(sorted(rows), ensure_ascii=True, separators=(",", ":")).encode()
-    if len(payload) > 2_000_000:
-        return None
-    return sha256(payload).hexdigest()
-
 
 def loan_snapshot_digest(snapshot, account):
     from ..plugin_api.loan_inventory import LoanInventorySnapshot
@@ -187,12 +189,52 @@ def loan_snapshot_digest(snapshot, account):
         return None
 
 
-def replay_archived_observation(manager, scope, capability, evidence_ref, payload):
-    """One generic dispatch to an already active optional parser adapter.
+def _run_isolated_replay(modules, entries, capability):
+    from pathlib import Path
+    import subprocess
+    import sys
+    from .notice_consolidator_worker import MAX_REPLAY_REQUEST_BYTES, MAX_RESPONSE_BYTES
+    wire = json.dumps({"modules": modules, "entries": entries, "capability": capability},
+                      ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+    if len(wire) > MAX_REPLAY_REQUEST_BYTES:
+        raise ReplayUnavailable("replay_request_limit")
+    completed = subprocess.run(
+        [sys.executable, "-I", str(Path(__file__).with_name("notice_consolidator_worker.py")),
+         "--provider-health-replay"], input=wire, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, timeout=5, check=False,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, close_fds=True)
+    if completed.returncode or len(completed.stdout) > MAX_RESPONSE_BYTES:
+        raise ReplayUnavailable("replay_worker")
+    response = json.loads(completed.stdout)
+    if type(response) is not dict or set(response) != {"ok", "result"} or response["ok"] is not True:
+        raise ReplayUnavailable("replay_worker")
+    result = response["result"]
+    if (type(result) is not dict or set(result) != {"digest", "rows"}
+            or type(result["digest"]) is not str or len(result["digest"]) != 64
+            or any(c not in "0123456789abcdef" for c in result["digest"])
+            or type(result["rows"]) is not int or not 0 <= result["rows"] <= 2048):
+        raise ReplayUnavailable("replay_worker")
+    return result
 
-    Never activate a plugin, create a provider session or execute archived source.
-    Plugin code is trusted installed code, not an OS-level sandbox.
-    """
+
+def _declared_modules(manager, record):
+    import re
+    from .provider_health_source import snapshot_provider_source
+    service = record.service
+    # Inert class data only. No provider getter or adapter invocation in Core.
+    declaration = vars(type(service)).get("health_replay_modules")
+    if (type(declaration) is not tuple or not 1 <= len(declaration) <= 16
+            or any(type(name) is not str or re.fullmatch(r"[a-zA-Z_][a-zA-Z_0-9]{0,127}", name) is None
+                   for name in declaration) or len(set(declaration)) != len(declaration)):
+        raise ReplayUnavailable("replay_unsupported")
+    snapshot = snapshot_provider_source(manager, record.descriptor.id)
+    if snapshot is None or snapshot["version"] != record.descriptor.version:
+        raise ReplayUnavailable("replay_source")
+    return tuple((name, snapshot["files"][name + ".py"].decode("utf-8")) for name in declaration)
+
+
+def replay_archived_observation(manager, scope, capability, evidence_ref, payload):
+    """One exact historical capture, one isolated parser, no live session."""
     unknown = {"outcome": "unknown"}
     try:
         checked = project_archived_http_zip(payload, include_binary=True, source_session_ref=evidence_ref)
@@ -213,26 +255,23 @@ def replay_archived_observation(manager, scope, capability, evidence_ref, payloa
                 return unknown
             service = record.service
             replay_version = record.descriptor.version
-            adapter = getattr(service, "health_replay_projection", None)
-        if not callable(adapter) or type(replay_version) is not str or not replay_version:
+            modules = _declared_modules(manager, record)
+        if type(replay_version) is not str or not replay_version or replay_version == "unknown":
             return unknown
         tape = CapturedReadTransport(checked, evidence_ref=evidence_ref, producer=scope.provider_id)
         try:
-            rows = adapter(capability, tape.read_recorded)
-            tape.require_complete()
-            actual = projection_digest(rows)
+            actual = _run_isolated_replay(modules, tape.isolated_entries(), capability)
         finally:
             tape.close()
-        if actual is None:
-            return unknown
         with manager.hold_descriptive_lifecycle():
             current = manager._records.get(scope.provider_id)
             if (current is not record or current.service is not service or not current.enabled
                     or current.state not in ("ready", "degraded")
-                    or current.descriptor.version != replay_version):
+                    or current.descriptor.version != replay_version
+                    or _declared_modules(manager, current) != modules):
                 return unknown
-        return {"outcome": "equal" if actual == baseline else "different",
+        return {"outcome": "equal" if actual["digest"] == baseline else "different",
                 "observed_version": version, "replay_version": replay_version,
-                "rows": len(rows), "empty_attested": not rows}
+                "rows": actual["rows"], "empty_attested": actual["rows"] == 0}
     except Exception:
         return unknown

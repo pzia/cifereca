@@ -105,13 +105,20 @@ def test_generic_replay_matches_initial_digest_and_refuses_extra_reads(monkeypat
         "version": "1", "business_digest": projection_digest(rows)}
     payload = http_trace.build_http_trace_zip(snapshot)
 
-    def parse(capability, read):
-        assert capability == "loans"
-        response = read("GET", "https://fixture.invalid/read")
-        assert response.content == b"fixture" and "set-cookie" not in response.headers
-        return rows
+    from cifereca.core import provider_health_source
+    class Plugin:
+        health_replay_modules = ("fixture_parser",)
 
-    service = SimpleNamespace(health_replay_projection=parse)
+    source = {"fixture_parser.py": b"""
+def parse_projection(capability, read):
+    assert capability == 'loans'
+    response = read('GET', 'https://fixture.invalid/read')
+    assert response.content == b'fixture' and 'set-cookie' not in response.headers
+    return (('loan', 'book', 'Title', ''),)
+"""}
+    monkeypatch.setattr(provider_health_source, "snapshot_provider_source",
+                        lambda manager, provider_id: {"version": "2", "files": dict(source)})
+    service = Plugin()
     record = SimpleNamespace(descriptor=SimpleNamespace(id="fixture", type="provider.library", version="2"),
                              enabled=True, state="ready", service=service)
     manager = SimpleNamespace(_records={"fixture": record}, hold_descriptive_lifecycle=nullcontext)
@@ -119,11 +126,15 @@ def test_generic_replay_matches_initial_digest_and_refuses_extra_reads(monkeypat
     replay = lambda: replay_archived_observation(manager, scope, "loans", ref, payload)
     assert replay() == {"outcome": "equal", "observed_version": "1", "replay_version": "2",
                         "rows": 1, "empty_attested": False}
-    service.health_replay_projection = lambda capability, read: (read("GET", "https://fixture.invalid/read"), ())[1]
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    read('GET', 'https://fixture.invalid/read')\n    return ()"
     assert replay()["outcome"] == "different"
-    service.health_replay_projection = lambda capability, read: rows
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    return ()"
     assert replay() == {"outcome": "unknown"}
-    service.health_replay_projection = lambda capability, read: read("GET", "https://fixture.invalid/other")
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    read('GET', 'https://fixture.invalid/other')\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    open('/etc/passwd').read()\n    read('GET', 'https://fixture.invalid/read')\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    source["fixture_parser.py"] = b"import socket\ndef parse_projection(capability, read):\n    return ()"
     assert replay() == {"outcome": "unknown"}
     record.enabled = False
     assert replay() == {"outcome": "unknown"}
