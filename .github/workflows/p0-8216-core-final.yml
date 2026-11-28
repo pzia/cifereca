@@ -1,0 +1,321 @@
+name: P0 8216 complete Core evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-final.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46065388826
+          pattern: core-shard-[2356]
+          path: ${{ runner.temp }}/original
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46066816167
+          name: repaired-core-shard-0
+          path: ${{ runner.temp }}/repaired/core-shard-0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46115593440
+          name: repaired-core-shard-1
+          path: ${{ runner.temp }}/repaired/core-shard-1
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114204645
+          name: repaired-core-shard-4
+          path: ${{ runner.temp }}/repaired/core-shard-4
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46115259643
+          name: repaired-core-shard-7
+          path: ${{ runner.temp }}/repaired/core-shard-7
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46115728502
+          name: core-canonical-collection
+          path: ${{ runner.temp }}/collection
+      - name: Consolidate eight shards and compare identical-source arcs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          test "$(git rev-parse FETCH_HEAD)" = e8ed298116e57d44645c37cd3fa7ad91e1e9077e
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, sqlite3, subprocess, xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          refs = {"A": "4fd07df843b9d940746bbfe962a1877eec15d431", "B": "e8ed298116e57d44645c37cd3fa7ad91e1e9077e"}
+          selected = {0, 1, 2, 3, 4, 5, 6, 7}
+          report = {"selected_shards": sorted(selected), "missing_shards": sorted(set(range(8))-selected), "refs": refs, "source_runs":{"0":46066816167,"1":46115593440,"7":46115259643,"2":46065388826,"3":46065388826,"4":46114204645,"5":46065388826,"6":46065388826}, "shards": {}, "totals": {}}
+          inventories = {a: subprocess.check_output(["git","ls-tree","-r","--name-only",sha,"tests"],text=True).splitlines() for a,sha in refs.items()}
+          def junit(path):
+              tree = ET.parse(path)
+              cases = tree.findall(".//testcase")
+              keys = [(c.get("classname"),c.get("name")) for c in cases]
+              assert all(k[1] for k in keys), (str(path),"missing JUnit testcase name")
+              # Pytest emits collection-skip records with an empty classname.
+              # Keep the original attribute values (including missing vs empty).
+
+              def state(c):
+                  return next((s for s in ("error","failure","skipped") if c.find(s) is not None),"passed")
+              counts = collections.Counter(zip(keys,map(state,cases)))
+              assert not any(s in ("error","failure") for _,s in counts), path
+              return counts, sum(float(c.get("time","0")) for c in cases), sum(float(t.get("time","0")) for t in tree.findall(".//testsuite"))
+          def serial(counter):
+              return [{"class":k[0],"name":k[1],"status":s,"count":n} for (k,s),n in sorted(counter.items(),key=lambda item:repr(item[0]))]
+          def arcpath(p):
+              p = p.replace(chr(92),"/")
+              if "/src/cifereca/" in p:
+                  return "src/cifereca/"+p.split("/src/cifereca/",1)[1]
+              return p
+          aggregate = sqlite3.connect(root/"union.sqlite")
+          aggregate.execute("CREATE TABLE arcs(arm TEXT,path TEXT,src INT,dst INT,PRIMARY KEY(arm,path,src,dst)) WITHOUT ROWID")
+          totals = {a:collections.Counter() for a in refs}
+          allcases = {a:collections.Counter() for a in refs}
+          for shard in sorted(selected):
+              folder = root/("repaired" if shard in (0,1,4,7) else "original")/f"core-shard-{shard}"
+              if shard in (1,4,7):
+                  for arm,sha in refs.items():
+                      assert (folder/f"{arm}.sha").read_text().strip()==sha
+                      assert (folder/f"{arm}.isolation.patch").read_bytes()==(folder/f"{arm}.final.patch").read_bytes()
+                  assert (folder/"A.isolation.patch").read_bytes()==(folder/"B.isolation.patch").read_bytes()
+              rec = report["shards"][str(shard)] = {}
+              parsed = {}
+              for arm in refs:
+                  expected = {p for p in inventories[arm] if p.endswith(".py") and pathlib.PurePosixPath(p).name.startswith("test") and int(hashlib.sha256(p.encode()).hexdigest(),16)%8==shard}
+                  listed = (folder/f"{arm}.files").read_text().splitlines()
+                  assert set(listed)==expected and len(listed)==len(expected), (arm,shard)
+                  plain, jt, pt = junit(folder/f"{arm}.plain.xml")
+                  cov, ct, cst = junit(folder/f"{arm}.coverage.xml")
+                  if plain != cov:
+                      report.setdefault("identity_mismatches",[]).append({"arm":arm,"shard":shard,"plain_only":serial(plain-cov),"coverage_only":serial(cov-plain)})
+                  overlap = set(k for k,_ in allcases[arm]) & set(k for k,_ in plain)
+                  if overlap:
+                      report.setdefault("cross_shard_collisions",[]).append({"arm":arm,"shard":shard,"keys":sorted(overlap,key=repr)})
+                  incomplete = collections.Counter({(k,s):n for (k,s),n in plain.items() if not k[0]})
+                  repeated = collections.Counter({(k,s):n for (k,s),n in plain.items() if n>1})
+                  if incomplete:
+                      print("INCOMPLETE CLASSNAME",arm,shard,json.dumps(serial(incomplete)))
+                  allcases[arm].update(plain)
+                  parsed[arm] = plain
+                  stats = collections.Counter()
+                  for (_,s),n in plain.items(): stats[s]+=n
+                  timings = {}
+                  for kind in ("plain","coverage"):
+                      clock = folder/f"{arm}.{kind}.time"
+                      timings[kind] = float(next(line.split()[1] for line in clock.read_text().splitlines() if line.startswith("real "))) if clock.is_file() else None
+                  if any(v is None for v in timings.values()):
+                      print("MISSING external wall clock",arm,shard,timings)
+                  rec[arm] = {"cases":dict(stats),"files":len(expected),"junit_seconds_plain":jt,"junit_seconds_coverage":ct,"wall_seconds":timings,"pytest_suite_seconds":{"plain":pt,"coverage":cst},"incomplete_classname":serial(incomplete),"repeated_junit_keys":serial(repeated),"plain_coverage_equal":plain==cov}
+                  totals[arm].update(stats)
+                  dbpath = folder/f"{arm}.coverage"
+                  con = sqlite3.connect(dbpath.as_uri()+"?mode=ro",uri=True)
+                  assert con.execute("select value from meta where key='has_arcs'").fetchone()[0]=="1"
+                  aggregate.executemany("INSERT OR IGNORE INTO arcs VALUES(?,?,?,?)", ((arm,arcpath(p),s,d) for p,s,d in con.execute("SELECT DISTINCT file.path,arc.fromno,arc.tono FROM arc JOIN file ON file.id=arc.file_id")))
+                  con.close()
+                  aggregate.commit()
+              rec["removed_or_changed_status"] = serial(parsed["A"]-parsed["B"])
+              rec["added_or_changed_status"] = serial(parsed["B"]-parsed["A"])
+              print("SHARD",shard, json.dumps(rec))
+          for arm in refs:
+              report["totals"][arm] = {"cases":dict(totals[arm]),"runner_seconds":{k:sum(r[arm]["wall_seconds"][k] for r in report["shards"].values()) if all(r[arm]["wall_seconds"][k] is not None for r in report["shards"].values()) else None for k in ("plain","coverage")},"pytest_suite_seconds":{k:sum(r[arm]["pytest_suite_seconds"][k] for r in report["shards"].values()) for k in ("plain","coverage")},"distinct_arcs":aggregate.execute("SELECT count(*) FROM arcs WHERE arm=?",(arm,)).fetchone()[0]}
+          assert totals["A"]=={"passed":29014,"skipped":32} and totals["B"]=={"passed":29017,"skipped":32}, totals
+          # Only compare line-number arcs on byte-identical source files.
+          trees = {}
+          for arm,sha in refs.items():
+              rows = subprocess.check_output(["git","ls-tree","-r",sha,"src/cifereca"],text=True).splitlines()
+              trees[arm] = {line.split("\t",1)[1]:line.split()[2] for line in rows}
+          same = {p for p,h in trees["A"].items() if trees["B"].get(p)==h}
+          aggregate.execute("CREATE TABLE same(path TEXT PRIMARY KEY)")
+          aggregate.executemany("INSERT INTO same VALUES(?)",((p,) for p in same))
+          for a,b in (("A","B"),("B","A")):
+              rows = aggregate.execute("SELECT x.path,count(*) FROM arcs x JOIN same USING(path) WHERE x.arm=? AND NOT EXISTS(SELECT 1 FROM arcs y WHERE y.arm=? AND y.path=x.path AND y.src=x.src AND y.dst=x.dst) GROUP BY x.path ORDER BY x.path",(a,b)).fetchall()
+              report[f"unchanged_source_arcs_{a}_only"] = dict(rows)
+          report["unmapped_arc_paths"] = [p for p, in aggregate.execute("SELECT DISTINCT path FROM arcs") if p not in trees["A"] and p not in trees["B"]]
+          aggregate.close()
+          (root/"core-consolidation.json").write_text(json.dumps(report,indent=2))
+          print("TOTAL",json.dumps(report["totals"]))
+          assert not report["missing_shards"]
+          if report.get("identity_mismatches") or report.get("cross_shard_collisions"):
+              raise SystemExit("Unresolved JUnit identity mismatches or collisions; report retained")
+          PY
+      - name: Reconcile existing canonical nodeids without recollecting
+        shell: bash
+        run: |
+          set -euo pipefail
+          spec="$(grep '^pytest==' "$RUNNER_TEMP/collection/dependencies.txt")"
+          test -n "$spec"
+          python -m pip install "$spec"
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, xml.etree.ElementTree as ET
+          from _pytest.junitxml import mangle_test_address
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          out = root/"collection"
+          selected = {0,1,2,3,4,5,6,7}
+          report = {"missing_shards":sorted(set(range(8))-selected),"arms":{}}
+          bad = False
+          for arm,sha in (("A","4fd07df843b9d940746bbfe962a1877eec15d431"),("B","e8ed298116e57d44645c37cd3fa7ad91e1e9077e")):
+              inv = json.loads((out/f"{arm}.json").read_text())
+              assert inv["source_sha"]==sha and inv["collection_exit_code"]==0
+              items = inv["items"]
+              assert len(items)==inv["count_collected"]
+              expected = collections.defaultdict(collections.Counter)
+              mapping = collections.defaultdict(list)
+              non_file_sharded = []
+              for item in items:
+                  node = item["nodeid"]
+                  path = node.split("::",1)[0]
+                  if not(path.startswith("tests/") and pathlib.PurePosixPath(path).name.startswith("test") and path.endswith(".py")):
+                      non_file_sharded.append(node)
+                      continue
+                  shard = int(hashlib.sha256(path.encode()).hexdigest(),16)%8
+                  parts = mangle_test_address(node)
+                  key = (".".join(parts[:-1]),parts[-1])
+                  mapping[(shard,key)].append(node)
+                  expected[shard][key]+=1
+              collisions = [{"shard":s,"key":key,"nodeids":nodes} for (s,key),nodes in mapping.items() if len(nodes)>1]
+              rec = report["arms"][arm] = {"source_sha":sha,"collected":len(items),"matrix":inv["matrix"],"shard_collected_counts":{str(s):sum(expected[s].values()) for s in range(8)},"non_file_sharded":non_file_sharded,"junit_key_collisions":collisions,"shards":{}}
+              if collisions or non_file_sharded: bad = True
+              for s in sorted(selected):
+                  folder = root/("repaired" if s in (0,1,4,7) else "original")/f"core-shard-{s}"
+                  actual = collections.Counter()
+                  extra = []
+                  for case in ET.parse(folder/f"{arm}.plain.xml").findall(".//testcase"):
+                      key = (case.get("classname"),case.get("name"))
+                      if not key[0]:
+                          extra.append({"class":key[0],"name":key[1],"collection_skip":case.find("skipped") is not None})
+                      else:
+                          actual[key]+=1
+                  def rows(c):
+                      return [{"class":k[0],"name":k[1],"count":n} for k,n in sorted(c.items(),key=lambda i:repr(i[0]))]
+                  missing, added = expected[s]-actual,actual-expected[s]
+                  rec["shards"][str(s)] = {"collected":sum(expected[s].values()),"junit_items":sum(actual.values()),"classless_records":extra,"missing":rows(missing),"unexpected":rows(added)}
+                  if missing or added or any(not x["collection_skip"] for x in extra): bad=True
+                  print("RECONCILE",arm,s,"collected",sum(expected[s].values()),"JUnit",sum(actual.values()),"classless",len(extra),"missing",sum(missing.values()),"unexpected",sum(added.values()))
+              print("COLLECTED",arm,len(items),"unsharded",len(non_file_sharded),"ambiguous",len(collisions))
+          (out/"reconciliation.json").write_text(json.dumps(report,indent=2))
+          assert report["arms"]["A"]["collected"]==29041 and report["arms"]["B"]["collected"]==29044
+          assert all(sum(len(s["classless_records"]) for s in a["shards"].values())==5 for a in report["arms"].values())
+          if bad: raise SystemExit("Unresolved collection reconciliation; see artifact")
+          PY
+      - name: Compute behavioral overlap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, sqlite3, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          selected=(0,1,2,3,4,5,6,7)
+          result={"shards":selected,"missing_shards":[],"arms":{}}
+          for arm in ("A","B"):
+              signatures=collections.defaultdict(list)
+              all_contexts=0
+              zero_contexts=0
+              for shard in selected:
+                  folder=root/("repaired" if shard in (0,1,4,7) else "original")/f"core-shard-{shard}"
+                  db=folder/f"{arm}.coverage"
+                  con=sqlite3.connect(db.as_uri()+"?mode=ro",uri=True)
+                  assert con.execute("select value from meta where key='has_arcs'").fetchone()[0]=="1"
+                  # Stream one ordered SQL cursor, not one full arc list per test.
+                  cur=con.execute("""SELECT context.id,context.context,file.path,arc.fromno,arc.tono
+                      FROM arc JOIN context ON context.id=arc.context_id
+                      JOIN file ON file.id=arc.file_id
+                      WHERE context.context LIKE '%|run'
+                      ORDER BY context.id,file.path,arc.fromno,arc.tono""")
+                  from itertools import groupby
+                  nonempty=0
+                  for (cid,ctx),rows in groupby(cur,key=lambda r:(r[0],r[1])):
+                      h=hashlib.sha256()
+                      count=0
+                      for _,_,path,a,b in rows:
+                          p=path.replace(chr(92),"/")
+                          if "/src/cifereca/" in p:
+                              p="src/cifereca/"+p.split("/src/cifereca/",1)[1]
+                          if not p.startswith("src/cifereca/"):
+                              continue
+                          h.update(json.dumps([p,a,b],separators=(",",":")).encode()+b"\n")
+                          count+=1
+                      if count:
+                          signatures[h.hexdigest()].append({"nodeid":ctx[:-4],"shard":shard,"arc_count":count})
+                          nonempty+=1
+                  total=con.execute("SELECT count(*) FROM context WHERE context LIKE '%|run'").fetchone()[0]
+                  all_contexts+=total
+                  zero_contexts+=total-nonempty
+                  con.close()
+              groups=[members for members in signatures.values() if len(members)>1]
+              groups.sort(key=lambda g:(-len(g),-g[0]["arc_count"],g[0]["nodeid"]))
+              # Same module and multiple modules kept distinct for review.
+              for g in groups:
+                  for m in g:
+                      m["module"]=m["nodeid"].split("::",1)[0]
+              cross=[g for g in groups if len({m["module"] for m in g})>1]
+              stats={"run_contexts":all_contexts,"empty_or_noncore":zero_contexts,"distinct_nonempty_signatures":len(signatures),"repeated_groups":len(groups),"members_of_repeated_groups":sum(map(len,groups)),"cross_module_groups":len(cross),"cross_module_members":sum(map(len,cross))}
+              result["arms"][arm]={"stats":stats,"groups":groups}
+              print("OVERLAP",arm,json.dumps(stats))
+              for g in cross[:10]:
+                  print("CROSS_MODULE_CANDIDATE",arm,len(g),g[0]["arc_count"],json.dumps([m["nodeid"][:300] for m in g[:6]]))
+          (root/"core-overlap-final.json").write_text(json.dumps(result,indent=2))
+          PY
+      - name: Compare exact skip identities and reasons
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections,json,os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          report={"selected":[0,1,2,3,4,5,6,7],"missing":[],"shards":{}}
+          bad=False
+          for shard in report["selected"]:
+              folder=root/("repaired" if shard in (0,1,4,7) else "original")/f"core-shard-{shard}"
+              rec=report["shards"][str(shard)]={}
+              counters={}
+              for arm in ("A","B"):
+                  for mode in ("plain","coverage"):
+                      rows=[]
+                      for case in ET.parse(folder/f"{arm}.{mode}.xml").findall(".//testcase"):
+                          skip=case.find("skipped")
+                          if skip is not None:
+                              rows.append({"class":case.get("classname"),"name":case.get("name"),"type":skip.get("type"),"message":skip.get("message"),"detail":skip.text})
+                      key=f"{arm}.{mode}"
+                      rec[key]=rows
+                      counters[key]=collections.Counter((r["class"],r["name"],r["type"],r["message"]) for r in rows)
+                      if mode=="plain":
+                          for r in rows:
+                              print("SKIP",shard,arm,json.dumps({k:v for k,v in r.items() if k!="detail"})[:800])
+              if not all(c==counters["A.plain"] for c in counters.values()):
+                  bad=True
+                  print("SKIP_REASON_MISMATCH",shard)
+          (root/"core-skip-audit.json").write_text(json.dumps(report,indent=2))
+          totals={f"{a}.{m}":sum(len(r[f"{a}.{m}"]) for r in report["shards"].values()) for a in ("A","B") for m in ("plain","coverage")}
+          print("SKIP_TOTALS",totals)
+          assert all(n==32 for n in totals.values())
+          assert not bad,"Skip identity/type/reason differs; inspect report"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-final-evidence
+          path: |
+            ${{ runner.temp }}/core-consolidation.json
+            ${{ runner.temp }}/collection/reconciliation.json
+            ${{ runner.temp }}/core-overlap-final.json
+            ${{ runner.temp }}/core-skip-audit.json
+          retention-days: 7
