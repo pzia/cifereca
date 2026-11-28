@@ -399,7 +399,7 @@ class SynchronizationBrokerImpl:
         if state.get("status") == "running" and type(value.get("attempt_pid")) is int:
             import os
             pid = value["attempt_pid"]
-            if pid > 0 and pid != os.getpid():
+            if os.name == "posix" and 0 < pid <= 2**31 - 1 and pid != os.getpid():
                 try:
                     os.kill(pid, 0)
                 except ProcessLookupError:

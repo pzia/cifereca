@@ -30,9 +30,11 @@ def test_busy_does_not_consume_startup_or_inventory_clock(tmp_path):
         assert result.facts["attempted"] == result.facts["failed"] == 0
         assert result.facts["deferred"] == 1
         assert broker._state(sid) == before
+        assert broker.sources()[0].contention_observed is True
         assert calls == []
         retry = broker.synchronize_scheduled_inventory("fixture-identity", "startup")
         assert retry.ok and retry.facts["attempted"] == 1
+        assert broker.sources()[0].contention_observed is False
         assert len(calls) == 1
         assert calls[0][2]["inventory_only"] is True
         assert broker.synchronize_scheduled_inventory(
