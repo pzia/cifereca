@@ -125,6 +125,9 @@ window.cifereca-modern-light .facet-value:focus {
   outline: 2px solid @cifereca_light_accent;
   outline-offset: 2px;
 }
+window.cifereca-modern-light .settings-tabs button:focus-visible {
+  outline-offset: -2px;
+}
 /* Existing Adwaita error/warning/success tokens and disabled opacity are
    deliberately untouched: danger actions must never look like safe CTAs. */
 """
@@ -139,6 +142,13 @@ window.cifereca-dark-contrast .sidebar row:selected:not(:disabled),
 window.cifereca-dark-contrast .sidebar row:checked:not(:disabled) {
   background-color: #1d5fcb;
   color: white;
+}
+window.cifereca-dark-contrast button:focus-visible {
+  outline: 2px solid #b5d7ff;
+  outline-offset: 2px;
+}
+window.cifereca-dark-contrast .settings-tabs button:focus-visible {
+  outline-offset: -2px;
 }
 """
 

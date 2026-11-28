@@ -67,6 +67,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         self.set_min_content_width(0)
         self.set_valign(Gtk.Align.START)
         self.set_child(self.box)
+        self.set_focusable(False)  # An empty scroller has no visible keyboard target.
         if self.overflow:
             self.overflow_button = Gtk.MenuButton()
             self.overflow_button.set_icon_name('view-more-symbolic')
@@ -102,6 +103,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
                     button.set_child(content)
                 except (AttributeError, TypeError): button.set_label(caption)
         self._buttons.append(button); self.box.append(button)
+        self.set_focusable(True)
         button.set_valign(Gtk.Align.CENTER)
         self._widths[button] = max(button.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32)
         self._compact = None
@@ -116,6 +118,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
             elif self.overflow and parent is self.overflow_box:
                 self.overflow_box.remove(button)
         self._buttons.clear(); self._widths.clear(); self._compact = None
+        self.set_focusable(False)
         self._primary_full_width = None
         self._primary_fit_budget = None
         self._primary_variant = None

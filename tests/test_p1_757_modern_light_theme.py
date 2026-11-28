@@ -312,6 +312,18 @@ def test_dark_action_and_selection_text_use_accessible_local_colours(selector):
     ) >= 4.5
 
 
+@pytest.mark.parametrize(("css", "scope"), [
+    (MODERN_LIGHT_CSS, "cifereca-modern-light"),
+    (DARK_CONTRAST_CSS, "cifereca-dark-contrast"),
+])
+def test_settings_tab_focus_outline_is_inside_the_scroll_viewport(css, scope):
+    assert (
+        f"window.{scope} .settings-tabs button:focus-visible {{\n"
+        "  outline-offset: -2px;\n"
+        "}"
+    ) in css.decode()
+
+
 def test_actual_v2_focus_ring_contrasts_with_light_surfaces():
     # The blue focus outline must remain discernible against all explicitly
     # painted light surfaces. This is a static colour oracle, not a claim

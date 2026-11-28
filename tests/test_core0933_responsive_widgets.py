@@ -32,6 +32,12 @@ def test_adaptive_bar_compacts_without_replacing_button_objects():
     assert "self._buttons =" not in resize
 
 
+def test_adaptive_bar_omits_the_empty_scroller_from_keyboard_navigation():
+    assert "self.set_focusable(False)" in _method_source("AdaptiveActionBar", "__init__")
+    assert "self.set_focusable(True)" in _method_source("AdaptiveActionBar", "append")
+    assert "self.set_focusable(False)" in _method_source("AdaptiveActionBar", "clear")
+
+
 def test_compact_mode_preserves_accessible_label_and_button_order():
     resize = _method_source("AdaptiveActionBar", "_resize")
 
