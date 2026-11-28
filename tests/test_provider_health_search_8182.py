@@ -24,3 +24,13 @@ def test_registered_public_search_and_retirement():
     finish_public_search(service, session, identity, call, "success")
     assert health.snapshot(scope)[0].outcome is Outcome.ATTESTED_EMPTY
     assert begin_public_search(service, session, identity) is None
+
+
+def test_failure_classification():
+    import httpx
+    from cifereca.core.provider_health_search import classify_failure
+    request = httpx.Request("GET", "https://example.invalid")
+    for status, expected in [(401, "auth"), (403, "auth"), (429, "rate_limit")]:
+        error = httpx.HTTPStatusError("fixture", request=request,
+                                     response=httpx.Response(status, request=request))
+        assert classify_failure(error) == expected

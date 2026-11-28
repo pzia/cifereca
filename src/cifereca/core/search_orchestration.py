@@ -1430,7 +1430,7 @@ def _search_provider_session(
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
         return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
-    from .provider_health_search import begin_public_search, finish_public_search
+    from .provider_health_search import begin_public_search, finish_public_search, classify_failure
     health_call = begin_public_search(self, session, identity)
     variants = self._search_query_variants(query)
     primary_ok = False
@@ -1551,6 +1551,7 @@ def _search_provider_session(
             # terminal outage for the source, even when it is variant N>1,
             # so the caller can use the same bounded, read-only public
             # catalogue fallback as for a failure on the first attempt.
+            health_outcome = classify_failure(exc)
             terminal_error_code = failure_code
             terminal_error_message = _search_problem_label(failure_code)
             warnings.append(
@@ -1571,7 +1572,7 @@ def _search_provider_session(
         provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
     if request_cancelled is None or not request_cancelled():
         finish_public_search(self, session, identity, health_call,
-                             'unknown' if terminal_error_code else health_outcome)
+                             health_outcome if not terminal_error_code or health_outcome not in ('success', 'attested_empty') else 'unknown')
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
@@ -1585,7 +1586,7 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         code = "SearchTemporarilyUnavailable"
         message = _search_problem_label(code)
         return [], [message], code, message
-    from .provider_health_search import begin_public_search, finish_public_search
+    from .provider_health_search import begin_public_search, finish_public_search, classify_failure
     health_call = begin_public_search(self, session, identity)
     try:
         outcome = consume_provider_stream(
@@ -1631,7 +1632,7 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         )
     except Exception as exc:
         if not cancelled():
-            finish_public_search(self, session, identity, health_call, 'unknown')
+            finish_public_search(self, session, identity, health_call, classify_failure(exc))
         _log_observed_stream_failure(
             session.provider_id, "stream_delivery", exc,
         )
