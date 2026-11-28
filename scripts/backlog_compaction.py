@@ -24,7 +24,7 @@ DOCS = ("AGENTS.md", *(".agents/roles/" + n + ".md" for n in
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REFERENCE = re.compile(r"https?://[^\s<>()\]\`]+|(?<![\w/])#\d+\b")
 MAX_PAGES = 20
-MAX_REMOVALS = 10
+STANDARD_CORPUS_LIMIT = 20
 LOT_BATCH = 10
 XL_GROUP_SIZES = (5, 10)
 XL_CORPUS_LIMIT = 31  # anchor + ten original controls + twenty members
@@ -66,7 +66,7 @@ def number(value):
 
 def issue_numbers(values, limit=3):
     require(type(values) is list and 1 <= len(values) <= limit,
-            "pilot limited to 1–3 issues" if limit == 3 else "XL corpus limit exceeded")
+            "corpus issue limit exceeded")
     for value in values:
         number(value)
     require(len(set(values)) == len(values), "duplicate issue")
@@ -412,7 +412,7 @@ def collect_closure(api, event_issue, current):
         require(len(matches) == 1, "missing or ambiguous public closure scope")
         children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
     selected = xl_controls(event_issue) if lot else []
-    numbers = issue_numbers([root, *children], XL_CORPUS_LIMIT if selected else 3)
+    numbers = issue_numbers([root, *children], XL_CORPUS_LIMIT if selected else (3 if lot else STANDARD_CORPUS_LIMIT))
     require(8195 not in numbers, "infrastructure issue excluded")
     snapshots = {n: snapshot(api, n) for n in numbers}
     require(closure_identity(snapshots[root]["issue"]) == identity, "closure event drift")
@@ -626,9 +626,9 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
     require(0 <= journal_count <= count <= journal_count + LOT_BATCH,
             "invalid partial prefix")
     parent = manifest["p0"]
-    require("master" in manifest, "not a historical lot")
-    require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"],
-            "master inventory drift")
+    if "master" in manifest:
+        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"],
+                "master inventory drift")
     states = {}
     originals = {s["issue"]["number"]: s for s in manifest["snapshots"]}
     for expected in expected_prefix(manifest, count):
@@ -643,10 +643,11 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
             require([c["body"] for c in journals] == markers
                     and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
                             for c in journals), "lot journal or cursor mismatch")
-            master, members, _ = lot_attachment(api, snap["issue"])
-            require(master == manifest["master"] and set(members) == set(originals) - {parent}
-                    and xl_controls(snap["issue"]) == manifest.get("xl_controls", []),
-                    "lot attachment drift")
+            if "master" in manifest:
+                master, members, _ = lot_attachment(api, snap["issue"])
+                require(master == manifest["master"] and set(members) == set(originals) - {parent}
+                        and xl_controls(snap["issue"]) == manifest.get("xl_controls", []),
+                        "lot attachment drift")
             observed["comments"] = [c for c in observed["comments"] if c not in journals]
             expected["issue"].pop("updated_at", None)
         else:
@@ -691,11 +692,9 @@ def consolidate(api, stage, event_issue, current, clock=None):
                 mutations.append((n, c["id"], new))
             projected.append(new)
     require(mutations == lot_plan(manifest), "unstable mutation plan")
-    require("master" in manifest or sum(cid is not None for _, cid, _ in mutations) <= MAX_REMOVALS,
-            "pilot comment limit exceeded")
     before = metrics([t for snap in states.values() for t in issue_texts(snap)])
     # Count both persistent journals, even before the commit SHA is known.
-    progress = [progress_marker(digest, "0" * 40, i) for i in range(LOT_BATCH, len(mutations), LOT_BATCH)] if "master" in manifest else []
+    progress = [progress_marker(digest, "0" * 40, i) for i in range(LOT_BATCH, len(mutations), LOT_BATCH)]
     estimate = metrics(projected + [START + digest + " " + "0" * 40, DONE + digest + " " + "0" * 40] + progress)
     require(all(before[k] > estimate[k] for k in ("characters", "bytes")), "no positive contextual gain")
     commit = None
@@ -727,7 +726,7 @@ def consolidate(api, stage, event_issue, current, clock=None):
         states[parent] = after
         written.add(parent)
     mark(START + digest + " " + commit)
-    batch = mutations[:LOT_BATCH] if "master" in manifest else mutations
+    batch = mutations[:LOT_BATCH]
     for n, cid, body in batch:
         guard()
         if cid is None:
@@ -778,9 +777,9 @@ def continue_lot(api, stage, event_issue, current):
     require(digest == data["manifest_sha256"], "staging digest mismatch")
     manifest = strict_json(raw)
     require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent
-            and "master" in manifest, "invalid lot manifest")
+            , "invalid lot manifest")
     numbers = issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
-                            XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
+                            XL_CORPUS_LIMIT if "xl_controls" in manifest else (3 if "master" in manifest else STANDARD_CORPUS_LIMIT))
     require(parent in numbers and control not in numbers and 8195 not in numbers, "invalid staged corpus")
     mutations = lot_plan(manifest)
     cursor = data["cursor"]
@@ -795,7 +794,8 @@ def continue_lot(api, stage, event_issue, current):
     def guard():
         main_guard(api, current)
         require(snapshot(api, control) == control_before, "continuation control changed")
-        require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
+        if "master" in manifest:
+            require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
         for n, snap in states.items():
             observed = snapshot(api, n)
             require(observed == snap or (n in written and same_after_write(snap, observed)), "corpus drift")
@@ -841,7 +841,7 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
     parent = manifest["p0"]
     originals = manifest["snapshots"]
     numbers = issue_numbers([x["issue"]["number"] for x in originals],
-                            XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
+                            XL_CORPUS_LIMIT if "xl_controls" in manifest else (3 if "master" in manifest else STANDARD_CORPUS_LIMIT))
     if "master" in manifest:
         require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
     require(parent in numbers and control not in numbers and 8195 not in numbers,
@@ -860,7 +860,7 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
                 require(master == manifest["master"] and set(members) == set(numbers) - {parent}
                         and xl_controls(snap["issue"]) == manifest["xl_controls"], "XL attachment drift")
             expected_journals = [start]
-            if "master" in manifest:
+            if "master" in manifest or len(lot_plan(manifest)) > LOT_BATCH:
                 expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
             if completed:
                 expected_journals.append(DONE + digest + " " + commit)
