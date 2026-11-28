@@ -178,16 +178,24 @@ def test_never_open_source_sqlite_even_when_image_is_unavailable(tmp_path, monke
     opened = []
 
     def memory_only(name, *args, **kwargs):
+        # Coverage can flush its own SQLite database while tracing this call.
+        # Only its direct instrumentation connection is outside the oracle.
+        if sys._getframe(1).f_globals.get("__name__") == "coverage.sqlitedb":
+            return real_connect(name, *args, **kwargs)
         opened.append(name)
         assert name == ":memory:"
         return real_connect(name, *args, **kwargs)
 
-    monkeypatch.setattr(diagnostic.sqlite3, "connect", memory_only)
-    assert diagnostic.diagnose_local_adept(database_path=path)["status"] == "complete"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(diagnostic.sqlite3, "connect", memory_only)
+        report = diagnostic.diagnose_local_adept(database_path=path)
+    assert report["status"] == "complete"
     assert opened == [":memory:"]
     # A WAL without a coherent SHM must not be opened or ignored.
     wal.write_bytes(b"incomplete private WAL")
-    report = diagnostic.diagnose_local_adept(database_path=path)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(diagnostic.sqlite3, "connect", memory_only)
+        report = diagnostic.diagnose_local_adept(database_path=path)
     assert report["code"] == "snapshot_live_unavailable"
     assert not shm.exists()
     assert opened == [":memory:"]
