@@ -77,7 +77,7 @@ class LocalReadOnlyTests(unittest.TestCase):
         self.assertEqual(len(local.journal(snap, local.LOCAL_AUTHORS)), 1)
 
     def test_continue_uses_shared_engine_and_journal_only_checkpoint(self):
-        api, stage = MagicMock(), MagicMock()
+        api, stage = MagicMock(spec=engine.WriteAPI), MagicMock(spec=engine.GitStage)
         raw = engine.encode(self.manifest)
         digest = engine.sha256(raw)
         stage.read_remote.return_value = raw
@@ -105,7 +105,7 @@ class LocalReadOnlyTests(unittest.TestCase):
         self.assertIsNone(api.write_guard)
 
     def test_local_scope_mismatch_never_applies(self):
-        api, stage = MagicMock(), MagicMock()
+        api, stage = MagicMock(spec=engine.WriteAPI), MagicMock(spec=engine.GitStage)
         receipt = {"status": "READ_ONLY_PREFIX_VERIFIED", "master": 98,
                    "stage_sha": self.commit, "manifest_sha256": self.digest}
         with patch.object(local, "local_checkout"), \
