@@ -298,10 +298,12 @@ class _Storage(EncryptedCaptureVault):
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
-                 policy=None, health=None, selection_current=None, restore_current=None):
+                 policy=None, health=None, selection_current=None, restore_current=None,
+                 provider_source=None):
         self._health = health
         self._selection_current = selection_current
         self._restore_current = restore_current
+        self._provider_source = provider_source
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -835,8 +837,11 @@ class _DiagnosticsPort(_Port):
         journal = provider_health_correlated_journal(
             log_file(), provider_id=scope.provider_id,
             evidence_refs=tuple(selection[1] for selection in selections))
+        source_reader = self._service._provider_source
+        source = source_reader(scope.provider_id) if source_reader is not None else None
+        check_publication()
         payload = build_health_bundle(tuple(rows), include_binary=policy,
-                                      correlated_journal=journal)
+                                      correlated_journal=journal, provider_source=source)
         check_publication()
         return write_capture_zip(Path(destination), payload, confirmed=True,
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,

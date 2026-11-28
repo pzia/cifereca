@@ -10,7 +10,7 @@ from .capture_vault import VaultError
 from ..http_trace import HTTP_TRACE_ZIP_LIMIT
 
 
-def build_health_bundle(rows, *, include_binary, correlated_journal=None):
+def build_health_bundle(rows, *, include_binary, correlated_journal=None, provider_source=None):
     if (type(rows) is not tuple or not 1 <= len(rows) <= 25
             or type(include_binary) is not bool):
         raise VaultError("vault_invalid")
@@ -57,12 +57,25 @@ def build_health_bundle(rows, *, include_binary, correlated_journal=None):
             raise VaultError("private_zip_limit")
         members["journal/correlated.json"] = journal_bytes
         journal_status = correlated_journal["coverage"]
+    source_status = "not_included"
+    source_version = "not_attested_in_bundle"
+    if provider_source is not None:
+        files = provider_source["files"]
+        source_manifest = {key: value for key, value in provider_source.items() if key != "files"}
+        source_manifest["files"] = []
+        for name, data in sorted(files.items()):
+            member = "provider-source/" + name
+            members[member] = data
+            source_manifest["files"].append({"member": member, "sha256": sha256(data).hexdigest()})
+        members["provider-source/manifest.json"] = json.dumps(source_manifest, indent=2).encode()
+        source_status = "current_installed_sources"
+        source_version = provider_source["version"]
     members["manifest.json"] = json.dumps({
         "schema": "cifereca.provider-health-bundle/1",
         "include_binary": include_binary,
         "captures": manifest,
-        "provider_source": "not_included",
-        "provider_version": "not_attested_in_bundle",
+        "provider_source": source_status,
+        "provider_version": source_version,
         "correlated_logs": journal_status,
         "business_comparison": "not_attested",
     }, indent=2).encode()
@@ -71,7 +84,8 @@ def build_health_bundle(rows, *, include_binary, correlated_journal=None):
         "Review locally before sharing. No automatic upload or correction.\n"
         "Read the public Core contract kit. Compare only equivalent exact-scope "
         "observations; distinguish unknown, attested empty and parser regression.\n"
-        "Provider source is not included. Consult journal coverage in the manifest; "
+        "Provider source, if included, is a snapshot of current installed files, not historical source. "
+        "Review it before sharing. Consult journal coverage in the manifest; "
         "retained matches are not proof of a complete historical journal. Observed versions "
         "in the manifest do not attest the version of available source code; do not infer "
         "a root cause or claim a successful replay from HTTP status alone.\n"

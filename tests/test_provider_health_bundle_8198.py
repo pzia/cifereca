@@ -68,3 +68,30 @@ def test_correlated_journal_exact_provider_and_reference(monkeypatch, tmp_path):
         assert manifest["correlated_logs"] == "retained_matches"
         assert json.loads(archive.read("journal/correlated.json")) == result
         assert archive.testzip() is None
+
+
+def test_installed_source_snapshot_excludes_non_source(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace as NS
+    from cifereca.core.provider_health_source import snapshot_provider_source
+    root = tmp_path / "package"
+    root.mkdir()
+    (root / "cifereca-plugin.json").write_text("{}")
+    (root / "parser.py").write_text("x = 1")
+    (root / "config.json").write_text("private")
+    record = NS(descriptor=NS(id="fixture", type="provider.library", version="2"),
+                package=NS(root=root, sha256="unknown", manifest=NS(package=NS(version="2"))))
+    manager = NS(_records={"fixture": record}, hold_descriptive_lifecycle=nullcontext)
+    snapshot = snapshot_provider_source(manager, "fixture")
+    assert set(snapshot["files"]) == {"cifereca-plugin.json", "parser.py"}
+    monkeypatch.setattr(bundle, "core_contract_kit", lambda: {})
+    payload = bundle.build_health_bundle((("search", b"fixture"),),
+                                         include_binary=False, provider_source=snapshot)
+    with ZipFile(BytesIO(payload)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["provider_source"] == "current_installed_sources"
+        assert manifest["provider_version"] == "2"
+        assert archive.read("provider-source/parser.py") == b"x = 1"
+        assert "provider-source/config.json" not in archive.namelist()
+    (root / "unsafe.py").symlink_to(root / "config.json")
+    assert snapshot_provider_source(manager, "fixture") is None
