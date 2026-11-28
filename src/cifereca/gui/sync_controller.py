@@ -20,7 +20,7 @@ from .sync_view import (
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
 )
 from .task_runner import TaskPriority
-from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
+from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current, schedule_contention_expiry
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_source_details import add_sync_detail
 
@@ -349,12 +349,7 @@ def _refresh_sync_page(self) -> None:
         }
         for notice in unavailable_connections
     )
-    if any(getattr(source, "contention_observed", False) is True for source in rows):
-        def expire_contention():
-            if sync_action_scope_current(self, scope):
-                self._refresh_sync_page()
-            return False
-        GLib.timeout_add_seconds(30, expire_contention)
+    schedule_contention_expiry(self, scope, rows, GLib.timeout_add_seconds)
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
     # carry that disclosure state into another identity or retain stale rows.
