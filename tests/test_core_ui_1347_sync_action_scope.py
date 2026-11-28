@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.gui.sync_action_scope import (
-    capture_sync_action_scope, sync_action_scope_current,
+    capture_sync_action_scope, sync_action_scope_current, schedule_contention_expiry,
 )
 from cifereca.gui.sync_view import (
     sync_identity_action_label, sync_source_presentation, sync_source_attention,
@@ -118,8 +118,11 @@ def _methods():
         Align=NS(CENTER=3),
     )
     adw = NS(PreferencesGroup=Widget, ActionRow=Widget)
+    timers = []
     env = dict(
         Gtk=gtk, Adw=adw,
+        GLib=NS(timeout_add_seconds=lambda delay, callback: timers.append((delay, callback))),
+        contention_timers=timers,
         Pango=NS(WrapMode=NS(WORD_CHAR=1)),
         AdaptiveActionBar=lambda **kwargs: Widget(),
         add_css=lambda widget, *classes: (
@@ -142,6 +145,7 @@ def _methods():
         sync_local_reconciliation_presentation=sync_local_reconciliation_presentation,
         capture_sync_action_scope=capture_sync_action_scope,
         sync_action_scope_current=sync_action_scope_current,
+        schedule_contention_expiry=schedule_contention_expiry,
         SyncRequest=lambda identity_id: NS(identity_id=identity_id),
         TaskPriority=NS(USER_ACTION=2),
     )
@@ -190,6 +194,7 @@ def _fixture(identity_id="alice", sources=None):
         refresh_library=lambda scan: calls.append(("refresh-library", scan)),
         show_error=lambda msg, title: calls.append(("error", msg, title)),
     )
+    window._contention_test_timers = methods["contention_timers"]
     window._refresh_sync_page = lambda: methods["_refresh_sync_page"](window)
     build = lambda: methods["_build_sync_page"](window)
     page = build()
@@ -564,3 +569,22 @@ def test_native_opt_in_sync_revokes_hidden_and_previous_visit_actions():
     dispatcher.dispose()
     assert not sync_action_scope_current(window, latest)
     assert capture_sync_action_scope(window, page_token=token) is None
+
+
+def test_controller_expiry_refreshes_only_the_live_contention_snapshot():
+    source = _source(contention_observed=True)
+    window, _, calls, _, _ = _fixture(sources=[source])
+    timers = window._contention_test_timers
+    assert timers
+    delay, callback = timers[-1]
+    assert delay == 30
+    source.contention_observed = False
+    before = len(calls)
+    scheduled = len(timers)
+    assert callback() is False
+    assert calls[before:] == [("sources", "alice")]
+    assert len(timers) == scheduled
+    assert not window.runner.tasks
+    before = len(calls)
+    assert callback() is False
+    assert len(calls) == before
