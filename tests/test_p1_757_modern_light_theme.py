@@ -326,6 +326,20 @@ def test_dark_action_and_selection_text_use_accessible_local_colours(selector):
     ) >= 4.5
 
 
+def test_dark_sidebar_selection_edge_contrasts_with_the_fill_and_panel():
+    import re
+
+    css = DARK_CONTRAST_CSS.decode()
+    match = re.search(r"box-shadow: inset 0 0 0 1px (#[0-9a-f]{6});", css)
+    assert match
+    selection_fill = _css_declared_color(
+        css, "window.cifereca-dark-contrast .sidebar row:selected:not(:disabled)",
+        "background-color",
+    )
+    for adjacent in (selection_fill, "#2e2e32"):
+        assert _contrast(match[1], adjacent) >= 3.0
+
+
 @pytest.mark.parametrize("background", ["#544446", "#514144"])
 def test_dark_destructive_text_contrasts_with_observed_action_surfaces(background):
     colour = _css_declared_color(

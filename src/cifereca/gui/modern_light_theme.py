@@ -150,6 +150,11 @@ window.cifereca-dark-contrast .sidebar row:checked:not(:disabled) {
   background-color: #1d5fcb;
   color: white;
 }
+/* A visible inner edge distinguishes the selected row from the sidebar. */
+window.cifereca-dark-contrast .sidebar row:selected:not(:disabled),
+window.cifereca-dark-contrast .sidebar row:checked:not(:disabled) {
+  box-shadow: inset 0 0 0 1px #b5d7ff;
+}
 window.cifereca-dark-contrast button.destructive-action:not(:disabled) {
   color: #ffaeaa;
 }

@@ -154,6 +154,18 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    def stack_transition_running(widget) -> bool:
+        if not widget.get_mapped():
+            return False
+        if isinstance(widget, Gtk.Stack) and widget.get_transition_running():
+            return True
+        child = widget.get_first_child()
+        while child is not None:
+            if stack_transition_running(child):
+                return True
+            child = child.get_next_sibling()
+        return False
+
     def capture(route: str, appearance: str):
         # Capture evidence must reflect Adwaita's *observed* state at the
         # actual PNG frame, not only the requested label or an earlier
@@ -164,6 +176,7 @@ def main() -> int:
         assert w.get_mapped() and (
             w.has_css_class(MODERN_LIGHT_CLASS) is (observed == "light")
         ), "Classe thème V2 incohérente à la capture"
+        assert not stack_transition_running(w), "Transition GTK encore active à la capture"
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
         assert image.size == (args.width, 1000 if args.width == 1600 else 900)
         assert image.getbbox() is not None, "Capture GTK vide"
@@ -200,6 +213,33 @@ def main() -> int:
                 fail(exc)
             return False
         GLib.timeout_add(delay, callback)
+
+    def later_capture(delay: int, action):
+        # A timeout alone can expire while a navigation or list crossfade is
+        # still visible. Once the stacks settle, wait for a painted frame
+        # before ImageGrab reads the X11 framebuffer.
+        def prepare_frame():
+            w = active["window"]
+            if stack_transition_running(w):
+                later(40, prepare_frame)
+                return
+            clock = w.get_frame_clock()
+            assert clock is not None, "Fenêtre GTK sans horloge de rendu"
+
+            def after_paint(frame_clock):
+                frame_clock.disconnect(handler)
+                later(1, capture_frame)
+
+            handler = clock.connect("after-paint", after_paint)
+            w.queue_draw()
+
+        def capture_frame():
+            if stack_transition_running(active["window"]):
+                prepare_frame()
+            else:
+                action()
+
+        later(delay, prepare_frame)
 
     def check_appearance(light: bool):
         w = active["window"]
@@ -259,14 +299,14 @@ def main() -> int:
             w.run_search(False)
             later(320, await_search)
         else:
-            later(260, light_route)
+            later_capture(260, light_route)
 
     def await_search():
         w = active["window"]
         if w.search_page.store.get_n_items() != 1:
             later(200, await_search)
             return
-        light_route()
+        later_capture(0, light_route)
 
     def light_route():
         route = ROUTES[state["route"]]
@@ -310,7 +350,7 @@ def main() -> int:
         # Explicitly exercise the live libadwaita switch, rather than mocking
         # style manager values or GTK CSS classes on a fake window.
         manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        later(240, dark_route)
+        later_capture(240, dark_route)
 
     def dark_route():
         route = ROUTES[state["route"]]
@@ -336,7 +376,7 @@ def main() -> int:
             w = active["window"]
             assert w.search_page.store.get_n_items() == 1
             w.search_page.selection.set_selected(0)
-            later(260, capture_search_detail)
+            later_capture(260, capture_search_detail)
             return
         state["route"] += 1
         later(90, start_route)
@@ -349,7 +389,7 @@ def main() -> int:
         capture("search-detail", "light")
         report["checks"]["P1_757_real_search_detail_light"] = True
         manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        later(240, capture_search_detail_dark)
+        later_capture(240, capture_search_detail_dark)
 
     def capture_search_detail_dark():
         check_appearance(False)
