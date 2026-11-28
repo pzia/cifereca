@@ -115,3 +115,49 @@ def test_classic_read_path(monkeypatch):
                                            facade_type=object) == ([], [], "", "")
     assert calls == ["fixture"]
     assert health.snapshot(Scope("fixture", "", "", "", "search"))[0].outcome is Outcome.UNKNOWN
+
+
+def test_version_is_installed_supplier_version_and_rebind_is_not_credited():
+    service, session, health = _public_fixture()
+    descriptor = SimpleNamespace(type="provider.library", version="2.4.1")
+    service._provider_plugin_status = lambda provider: SimpleNamespace(
+        descriptor=descriptor, state="ready", enabled=True)
+    identity = service.current_identity
+    scope = Scope("fixture", "", "", "", "search")
+    call = begin_public_search(service, session, identity)
+    finish_public_search(service, session, identity, call, "success")
+    assert health.snapshot(scope)[0].version == "2.4.1"
+    call = begin_public_search(service, session, identity)
+    descriptor.version = "2.5.0"
+    finish_public_search(service, session, identity, call, "auth")
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+    descriptor.type = "provider.collection"
+    call = begin_public_search(service, session, identity)
+    finish_public_search(service, session, identity, call, "success")
+    assert health.snapshot(scope)[0].version == "collection:2.5.0"
+
+
+def test_detail_observation_is_separate_and_requires_business_acceptance():
+    import pytest
+    from cifereca.core.provider_health_search import observe_detail
+    service, session, health = _public_fixture()
+    original = SimpleNamespace(publisher=None)
+    enriched = SimpleNamespace(publisher="fixture")
+    calls = []
+    def action():
+        calls.append("read")
+        return enriched
+    scope = Scope("fixture", "", "", "", "detail")
+    def refuse(result):
+        raise ValueError("scope changed")
+    with pytest.raises(ValueError, match="scope changed"):
+        observe_detail(service, session, service.current_identity, action, original, refuse)
+    assert health.snapshot(scope)[0] is None
+    assert observe_detail(service, session, service.current_identity, action, original,
+                          lambda result: None) is enriched
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+    assert health.snapshot(Scope("fixture", "", "", "", "search"))[0] is None
+    observe_detail(service, session, service.current_identity, lambda: original, original,
+                   lambda result: None)
+    assert health.snapshot(scope)[0].outcome is Outcome.UNKNOWN
+    assert calls == ["read", "read"]

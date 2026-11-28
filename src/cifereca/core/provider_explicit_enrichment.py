@@ -140,11 +140,13 @@ def admit_provider_detail_enrichment(service, item: SearchResult, *,
             current()
             # Pass the provider a separate DTO; comparison always uses the
             # admitted snapshot, even if the plugin mutates its argument.
-            result = action(deepcopy(row))
-            current()
-            if not _preserves_detail_scope(row, result):
-                raise ValueError("scope_or_metadata_changed")
-            return result
+            from .provider_health_search import observe_detail
+            def accept(result):
+                current()
+                if not _preserves_detail_scope(row, result):
+                    raise ValueError("scope_or_metadata_changed")
+            return observe_detail(service, session, identity,
+                                  lambda: action(deepcopy(row)), row, accept)
         except Exception:
             raise ProviderCapabilityError(_ERROR) from None
 
@@ -190,15 +192,17 @@ def enrich_provider_detail_once(
         action = getattr(session, method, None)
         if not callable(action):
             raise ValueError("method_unavailable")
-        result = action(item)
-        if (not context_current()
-                or source_context_epoch(service) != epoch
-                or _scope(
-                    service, item, expected_identity_id, selected_identity_id,
-                ) != kind
-                or not _preserves_detail_scope(item, result)):
-            raise ValueError("scope_or_metadata_changed")
-        return result
+        from .provider_health_search import observe_detail
+        def accept(result):
+            if (not context_current()
+                    or source_context_epoch(service) != epoch
+                    or _scope(
+                        service, item, expected_identity_id, selected_identity_id,
+                    ) != kind
+                    or not _preserves_detail_scope(item, result)):
+                raise ValueError("scope_or_metadata_changed")
+        identity = getattr(service, "current_identity", None)
+        return observe_detail(service, session, identity, lambda: action(item), item, accept)
     except Exception:
         raise ProviderCapabilityError(_ERROR) from None
 
