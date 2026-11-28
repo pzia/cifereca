@@ -134,3 +134,35 @@ Relecture des journaux des quatre campagnes ABBA; moyennes arithmétiques des de
 Ces quatre lots conservent leurs identités et résultats sur chaque passage. La somme décrit quatre expériences locales distinctes, pas un pipeline ni un gain de temps facturé. Elle n'inclut ni candidats non fusionnés #8393/#8402 ni réduction par suppression SourceKey. L'instrumentation et le coût d'audit ponctuel sont distincts du coût de fonctionnement récurrent. Le contrôle qualité incrémental a réussi sur sept PR (runs 46116325037, 46115581413, 46115053505, 46114723518, 46114601789, 46114073006, 46068401908), durées de l'étape 1/0/0/0/0/0/0 s à résolution d'une seconde; zéro ne signifie pas gratuit et l'échantillon ne mesure pas tous les changements possibles.
 
 **Réception restant ouverte :** verdict complet et artefact #8419, éventuels écarts d'arcs et motifs des skips, preuve de gain net global ou décision explicite de limiter la réception aux gains locaux, avis métier sur #8393/#8402. Les 58 échecs JUnit qualifiés concernent sept mutants ADEPT/Kobo distincts. Aucune clôture ni suppression supplémentaire.
+
+
+## Réception consolidée de #8419
+
+[Run 46116894778](https://github.com/pzia/cifereca/actions/runs/46116894778), job 140892639402, terminé success. Archive [15252455936](https://github.com/pzia/cifereca/actions/runs/46116894778/artifacts/15252455936), 612 234 octets, SHA256 `95dfc55f9814197b349e9bf595337b792207261b2e267cc6a4c8406d74c198fd` vérifié après téléchargement; les quatre JSON ont été relus. Cette section remplace le statut provisoire de la précédente.
+
+| Mesure Core historique corrigée | A | B |
+|---|---:|---:|
+| Nodeids canoniques | 29 041 | 29 044 |
+| Réussis | 29 014 | 29 017 |
+| Skips de cas collectés / de collecte | 27 / 5 | 27 / 5 |
+| Arcs observés (union) | 187 419 | 187 427 |
+| Somme temps muraux externes plain (s) | 1 192,26 | 1 076,44 |
+| Somme temps suite pytest plain (s) | 1 185,074 | 1 071,936 |
+| Somme temps suite pytest coverage (s) | 2 349,066 | 2 034,621 |
+| Contextes run enregistrés | 26 495 | 26 495 |
+| Signatures d'arcs distinctes | 17 369 | 17 366 |
+| Groupes répétés / membres | 3 489 / 12 615 | 3 488 / 12 617 |
+| Groupes intermodules / membres | 357 / 1 887 | 358 / 1 891 |
+
+Zéro erreur/échec, collision inter-shards, nodeid manquant, inattendu, ambigu ou hors partition; multiensembles identité/statut plain et coverage identiques par bras. Seul delta de cas : un retrait SourceKey (#8256) et quatre ajouts de tests qualité. Aucun arc A-only sur sources byte-identiques, huit B-only : library_inspection_cache.py +1, notice_c_work_runtime.py +1, provider_sessions.py +2, diagnostics.py +2, task_runtime.py +2. Aucun chemin d'arc non mappé. Ce n'est pas un taux de couverture des branches possibles, ni une preuve d'équivalence ou d'exécution de tous les contextes.
+
+Les 32 skips par passage ont mêmes identités, types et motifs (détail conservé). Cinq de collecte, huit GTK/Xvfb, cinq namespaces bubblewrap, trois gi, trois pymupdf, deux archives plugins, trois opt-ins Chromium/réseau/proxy/CDN, un affichage complet Xvfb/DBus, un E2E dédié, un test installation ciblée. Ne pas les assimiler à des contrats exercés.
+
+Le temps mural plain observé baisse de 115,82 s; hors shard 7 il **augmente** de 7,95 s (942,23 → 950,18). Le temps suite coverage hors shard 7 baisse de 4,821 s (1 785,350 → 1 780,529). Temps externe coverage global indisponible. Ordre fixe et charge runner empêchent d'attribuer le delta global observé aux changements; les quatre ABBA ciblées restent les preuves causales locales. Aucune économie facturée ni gain net global établi.
+
+### Triage des recouvrements supplémentaires
+
+- Plus grand groupe (154 contextes, 54 arcs par signature) : #976/#7244. Les matrices se recouvrent sur huit coordonnées plates et quatre caractères de contrôle; #976 couvre aussi statut/licence et longueur avec suffixe FORGED, #7244 general l'absence de mutation de toute la ligne et drapeaux de non-autorisation, #7244 historical les preuves imbriquées, l'absence d'état fournisseur vérifié et des lignes malformées. Conserver pour l'instant : une fusion éventuelle doit préserver la matrice distincte et les oracles, avec revue métier et mutation; le coût individuel n'est pas établi par la signature.
+- #5056 : prix absent/invalide, droit historique, achat descriptif et support numérique/physique ne remplacent pas les refus d'attestation de possession ni les champs identité/compte/révision. #5073 : conserver les classes booléen/None/entier, fournisseurs fictifs, source étrangère/périmée et absence de lecture du ledger. #1120 : conserver les flags de retry invalides et le refus des routes retirées avant I/O. Aucune suppression supplémentaire justifiée.
+
+La consolidation Core est reçue; les accords métier ADEPT/Kobo, la recette des prérequis spécialisés, l'instabilité à long terme et le gain net global restent non établis. Le P0 demeure ouvert.
