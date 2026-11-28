@@ -143,6 +143,9 @@ window.cifereca-dark-contrast .sidebar row:checked:not(:disabled) {
   background-color: #1d5fcb;
   color: white;
 }
+window.cifereca-dark-contrast button.destructive-action:not(:disabled) {
+  color: #ffaeaa;
+}
 window.cifereca-dark-contrast button:focus-visible {
   outline: 2px solid #b5d7ff;
   outline-offset: 2px;

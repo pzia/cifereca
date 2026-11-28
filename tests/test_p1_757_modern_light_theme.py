@@ -312,6 +312,16 @@ def test_dark_action_and_selection_text_use_accessible_local_colours(selector):
     ) >= 4.5
 
 
+@pytest.mark.parametrize("background", ["#544446", "#514144"])
+def test_dark_destructive_text_contrasts_with_observed_action_surfaces(background):
+    colour = _css_declared_color(
+        DARK_CONTRAST_CSS.decode(),
+        "window.cifereca-dark-contrast button.destructive-action:not(:disabled)",
+        "color",
+    )
+    assert _contrast(colour, background) >= 4.5
+
+
 @pytest.mark.parametrize(("css", "scope"), [
     (MODERN_LIGHT_CSS, "cifereca-modern-light"),
     (DARK_CONTRAST_CSS, "cifereca-dark-contrast"),

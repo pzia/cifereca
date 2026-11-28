@@ -54,7 +54,8 @@ pas le contraste WCAG AA sur l'accent bleu. Le contraste des libellés
 secondaires clairs tient aussi compte de l'opacité native des labels activés.
 Dans l'apparence sombre, les boutons suggérés et la sélection de navigation
 activés utilisent la même paire bleue/blanche à 5,91:1, localement à la
-fenêtre Cifereca. Les autres fonds sombres restent ceux d'Adwaita.
+fenêtre Cifereca. L'encre des boutons destructifs reste rouge et devient
+plus claire. Les autres fonds sombres restent ceux d'Adwaita.
 
 Ces rapports **ne remplacent pas** un audit du rendu effectif GTK :
 transparences, disabled, hover, support CSS, mise en page et widgets tiers
