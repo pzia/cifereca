@@ -176,6 +176,97 @@ class Tests(unittest.TestCase):
             c.lot_attachment(self.api, control)
         self.assertEqual(self.api.writes, [])
 
+    def test_xl_group_pilot_and_twenty_members(self):
+        for size in (5, 10):
+            with self.subTest(size=size):
+                self.exercise_xl_group(size)
+
+    def exercise_xl_group(self, size):
+        master = self.staging_issue()
+        selected = list(range(100, 100 + size))
+        members = list(range(200, 200 + 2 * size))
+        declarations = {n: members[2*i:2*i+2] for i, n in enumerate(selected)}
+        master["body"] = "\n".join(
+            f"<!-- backlog-master-lot-v1: {n} ; {a},{b} ; public -->"
+            for n, (a, b) in declarations.items())
+        group = dict(master, number=999, id=999, title=c.LOT_TITLE+"123",
+                     labels=[], assignees=[], comments=0,
+                     body=f"<!-- backlog-xl-v1: 123 ; {','.join(map(str, selected))} ; public -->")
+        issues = {123: dict(master, comments=0), 999: group}
+        comments = {123: [], 999: []}
+        template = self.api.comments[0]
+        for n, (a, b) in declarations.items():
+            issues[n] = dict(group, number=n, id=n, state_reason="not_planned",
+                             body=f"<!-- backlog-lot-v1: 123 ; {a},{b} ; public -->", comments=1)
+            comments[n] = [dict(template, id=1000+n, body=c.XL_CLAIM+"999")]
+        for n in members:
+            issues[n] = dict(group, number=n, id=n, body="Historical #123 " * 100)
+            comments[n] = []
+        writes = []
+        def get(path):
+            if path == "/git/ref/heads/main":
+                return {"ref":"refs/heads/main","object":{"sha":HEAD}}
+            parts = path.split("/")
+            n = int(parts[2])
+            if len(parts) == 3:
+                return dict(issues[n])
+            if parts[3].startswith("sub_issues?"):
+                return []
+            return [dict(x) for x in comments[n]]
+        def mark(n, body):
+            value = dict(template, id=3000+len(comments[n]), body=body,
+                         user={"id":41898282,"login":"github-actions[bot]"})
+            comments[n].append(value)
+            issues[n]["comments"] += 1
+            return dict(value)
+        def replace_body(n, body):
+            writes.append(n)
+            issues[n]["body"] = body
+        def control(n, title, data):
+            issues[n] = dict(group, number=n, id=n, title=title+"999",
+                             body=c.encode(data).decode(), comments=0)
+            comments[n] = []
+            return dict(issues[n])
+        stage = Stage()
+        with patch.object(self.api,"get",side_effect=get), patch.object(self.api,"mark",side_effect=mark), patch.object(self.api,"replace_body",side_effect=replace_body):
+            original_claim = comments[selected[0]][0]["body"]
+            comments[selected[0]][0]["body"] = c.XL_CLAIM+"998"
+            with self.assertRaisesRegex(c.Refusal,"claim"):
+                c.consolidate(self.api,stage,dict(group),HEAD,clock=lambda:NOW)
+            comments[selected[0]][0]["body"] = original_claim
+            issues[selected[0]]["state_reason"] = "completed"
+            with self.assertRaisesRegex(c.Refusal,"claimed"):
+                c.collect_closure(self.api,dict(issues[selected[0]]),HEAD)
+            with self.assertRaisesRegex(c.Refusal,"source control"):
+                c.consolidate(self.api,stage,dict(group),HEAD,clock=lambda:NOW)
+            issues[selected[0]]["state_reason"] = "not_planned"
+            self.assertEqual(stage.published,0)
+            self.assertEqual(writes,[])
+            report = c.consolidate(self.api,stage,dict(group),HEAD,clock=lambda:NOW)
+            original = c.strict_json(stage.raw)
+            self.assertEqual(original["xl_controls"],selected)
+            self.assertEqual(len(original["snapshots"]),1+3*size)
+            data = {"version":1,"p0":999,"stage_sha":STAGE,
+                    "manifest_sha256":c.sha256(stage.raw),"main_sha":HEAD}
+            if size == 10:
+                self.assertEqual((report["status"],report["cursor"]),("LOT_PENDING",10))
+                resume = control(777,c.CONTINUE_TITLE,dict(data,cursor=10))
+                report = c.continue_lot(self.api,stage,resume,HEAD)
+            self.assertEqual(report["status"],"STAGED_AND_COMPACTED")
+            self.assertEqual(writes,members)
+            self.assertEqual(issues[123]["body"],master["body"])
+            for n in selected:
+                self.assertEqual(issues[n]["state_reason"],"not_planned")
+                self.assertEqual(comments[n][0]["body"],c.XL_CLAIM+"999")
+            review = control(778,c.PURGE_TITLE,dict(data,semantic_review=True,
+                             evidence=[{"path":"AGENTS.md","sha256":c.sha256(b"evidence")}]))
+            report = c.purge_capitalized(self.api,stage,review,HEAD,evidence_at=lambda *_:b"evidence")
+            self.assertEqual(report["status"],"STAGING_REFERENCE_PURGED")
+            self.assertIsNone(stage.commit)
+            self.assertTrue(comments[999][-1]["body"].startswith(c.PURGED))
+            with self.assertRaises(c.Refusal):
+                c.consolidate(self.api,stage,dict(group),HEAD,clock=lambda:NOW)
+
     def test_lot_prefix_plan_and_replay_cursor(self):
         event, stage = self.consolidation_fixture()
         original = c.public_projection(c.snapshot(self.api, 123))

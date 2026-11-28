@@ -26,6 +26,8 @@ REFERENCE = re.compile(r"https?://[^\s<>()\]\`]+|(?<![\w/])#\d+\b")
 MAX_PAGES = 20
 MAX_REMOVALS = 10
 LOT_BATCH = 10
+XL_GROUP_SIZES = (5, 10)
+XL_CORPUS_LIMIT = 31  # anchor + ten original controls + twenty members
 LOT_STAGE_LIMIT = 8 * 1024 * 1024
 
 class Refusal(Exception):
@@ -62,8 +64,9 @@ def number(value):
     require(type(value) is int and 0 < value < 2**53, "invalid issue/comment id")
     return value
 
-def issue_numbers(values):
-    require(type(values) is list and 1 <= len(values) <= 3, "pilot limited to 1–3 issues")
+def issue_numbers(values, limit=3):
+    require(type(values) is list and 1 <= len(values) <= limit,
+            "pilot limited to 1–3 issues" if limit == 3 else "XL corpus limit exceeded")
     for value in values:
         number(value)
     require(len(set(values)) == len(values), "duplicate issue")
@@ -287,13 +290,43 @@ LOT_TITLE = "Lot consolidation #8195 — "
 LOT_SCOPE = re.compile(r"(?m)^<!-- backlog-lot-v1: ([1-9]\d*) ; ([1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
 MASTER_SCOPE = re.compile(r"(?m)^<!-- backlog-master-lot-v1: ([1-9]\d*) ; ([1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
 
+XL_SCOPE = re.compile(r"(?m)^<!-- backlog-xl-v1: ([1-9]\d*) ; ([1-9]\d*(?:,[1-9]\d*)*) ; public -->$")
+XL_CLAIM = "BACKLOG-XL-CLAIM v1 #"
+
+def xl_controls(issue):
+    matches = XL_SCOPE.findall(issue["body"] or "")
+    if not matches:
+        return []
+    require(len(matches) == 1 and not LOT_SCOPE.findall(issue["body"] or ""),
+            "ambiguous XL attachment")
+    master, controls = matches[0]
+    require(issue["body"] == f"<!-- backlog-xl-v1: {master} ; {controls} ; public -->",
+            "invalid XL control body")
+    controls = issue_numbers([int(n) for n in controls.split(",")], 10)
+    require(len(controls) in XL_GROUP_SIZES, "XL group must contain five or ten lots")
+    return controls
+
+def validate_xl_claim(snap, master, group, declaration):
+    issue = snap["issue"]
+    n, members = declaration
+    require(issue["number"] == int(n) and issue["title"] == LOT_TITLE + str(master)
+            and issue["body"] == f"<!-- backlog-lot-v1: {master} ; {members} ; public -->"
+            and issue["state"] == "closed" and issue["state_reason"] == "not_planned"
+            and not issue["labels"] and not issue["assignees"]
+            and issue["user"]["id"] == OWNER_ID, "invalid XL source control")
+    comments = snap["comments"]
+    require(len(comments) == 1 and comments[0]["body"] == XL_CLAIM + str(group)
+            and comments[0]["user"]["id"] == OWNER_ID
+            and comments[0]["user"]["login"] == "pzia", "missing or conflicting XL claim")
+
 def lot_attachment(api, issue):
-    matches = LOT_SCOPE.findall(issue["body"] or "")
+    selected = xl_controls(issue)
+    matches = (XL_SCOPE if selected else LOT_SCOPE).findall(issue["body"] or "")
     require(len(matches) == 1, "invalid lot attachment")
     master, members = matches[0]
     master = int(master)
-    members = issue_numbers([int(n) for n in members.split(",")])
-    require(len(members) <= 2 and master not in members and master != issue["number"]
+    members = selected or issue_numbers([int(n) for n in members.split(",")])
+    require((selected or len(members) <= 2) and master not in members and master != issue["number"]
             and issue["number"] not in members and 8195 not in [master, *members],
             "invalid lot members")
     require(issue["title"] == LOT_TITLE + str(master), "lot master title mismatch")
@@ -312,8 +345,19 @@ def lot_attachment(api, issue):
             "overlapping master lots")
     require(all(1 <= len(group.split(",")) <= 2 for _, group in declarations),
             "invalid master lot size")
-    require((str(issue["number"]), ",".join(map(str, members))) in declarations,
-            "lot not bound to master")
+    if selected:
+        require(issue["number"] not in controls + all_members, "XL anchor overlaps master")
+        require(all(n in controls for n in selected), "XL source not bound to master")
+        first = controls.index(selected[0])
+        require(controls[first:first + len(selected)] == selected, "XL sources must be consecutive")
+        chosen = declarations[first:first + len(selected)]
+        require(all(len(group.split(",")) == 2 for _, group in chosen), "XL source must have two members")
+        for declaration in chosen:
+            validate_xl_claim(snapshot(api, int(declaration[0])), master, issue["number"], declaration)
+        members = selected + [int(n) for _, group in chosen for n in group.split(",")]
+    else:
+        require((str(issue["number"]), ",".join(map(str, members))) in declarations,
+                "lot not bound to master")
     return master, members, snap
 
 def closure_identity(issue):
@@ -367,12 +411,15 @@ def collect_closure(api, event_issue, current):
         matches = SCOPE.findall(identity["body"] or "")
         require(len(matches) == 1, "missing or ambiguous public closure scope")
         children = [] if matches[0] == "none" else [int(n) for n in matches[0].split(",")]
-    numbers = issue_numbers([root, *children])
+    selected = xl_controls(event_issue) if lot else []
+    numbers = issue_numbers([root, *children], XL_CORPUS_LIMIT if selected else 3)
     require(8195 not in numbers, "infrastructure issue excluded")
     snapshots = {n: snapshot(api, n) for n in numbers}
     require(closure_identity(snapshots[root]["issue"]) == identity, "closure event drift")
     edges = {}
     for n, snap in snapshots.items():
+        require(n in selected or not any(c["body"].startswith(XL_CLAIM) for c in snap["comments"]),
+                "corpus claimed by XL group")
         # snapshot() already requires closed state, independently of priority/reason.
         require(not any((text or "").startswith("Corpus transféré — P0 #")
                         for text in issue_texts(snap)), "corpus already transferred")
@@ -400,6 +447,11 @@ def collect_closure(api, event_issue, current):
         require(snapshot(api, lot[0]) == lot[2], "master inventory drift")
         manifest["master"] = lot[0]
         manifest["master_sha256"] = fingerprint(lot[2])
+        if selected:
+            declarations = dict(MASTER_SCOPE.findall(lot[2]["issue"]["body"] or ""))
+            for n in selected:
+                validate_xl_claim(snapshots[n], lot[0], root, (str(n), declarations[str(n)]))
+            manifest["xl_controls"] = selected
     require(len(encode(manifest)) <= (LOT_STAGE_LIMIT if lot else STAGE_LIMIT), "staging corpus too large")
     return manifest
 
@@ -592,7 +644,8 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
                     and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
                             for c in journals), "lot journal or cursor mismatch")
             master, members, _ = lot_attachment(api, snap["issue"])
-            require(master == manifest["master"] and set(members) == set(originals) - {parent},
+            require(master == manifest["master"] and set(members) == set(originals) - {parent}
+                    and xl_controls(snap["issue"]) == manifest.get("xl_controls", []),
                     "lot attachment drift")
             observed["comments"] = [c for c in observed["comments"] if c not in journals]
             expected["issue"].pop("updated_at", None)
@@ -726,7 +779,8 @@ def continue_lot(api, stage, event_issue, current):
     manifest = strict_json(raw)
     require(manifest["version"] == 1 and manifest["repository"] == REPO and manifest["p0"] == parent
             and "master" in manifest, "invalid lot manifest")
-    numbers = issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]])
+    numbers = issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
+                            XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
     require(parent in numbers and control not in numbers and 8195 not in numbers, "invalid staged corpus")
     mutations = lot_plan(manifest)
     cursor = data["cursor"]
@@ -786,7 +840,8 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
     """Verify the complete compacted projection and exact bot journals."""
     parent = manifest["p0"]
     originals = manifest["snapshots"]
-    numbers = issue_numbers([x["issue"]["number"] for x in originals])
+    numbers = issue_numbers([x["issue"]["number"] for x in originals],
+                            XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
     if "master" in manifest:
         require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
     require(parent in numbers and control not in numbers and 8195 not in numbers,
@@ -800,13 +855,18 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
         projected = public_projection(snap)
         journals = [c for c in projected["comments"] if c["body"].startswith("BACKLOG-STAGING-")]
         if n == parent:
+            if "xl_controls" in manifest:
+                master, members, _ = lot_attachment(api, snap["issue"])
+                require(master == manifest["master"] and set(members) == set(numbers) - {parent}
+                        and xl_controls(snap["issue"]) == manifest["xl_controls"], "XL attachment drift")
             expected_journals = [start]
             if "master" in manifest:
                 expected_journals += [progress_marker(digest, commit, i) for i in range(LOT_BATCH, len(lot_plan(manifest)), LOT_BATCH)]
             if completed:
                 expected_journals.append(DONE + digest + " " + commit)
             require([c["body"] for c in journals] == expected_journals
-                    and all(c["author"]["login"] == "github-actions[bot]" for c in journals), "missing exact START or progress")
+                    and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
+                            for c in journals), "missing exact START or progress")
         else:
             require(not journals, "unexpected child journal")
         projected["comments"] = [c for c in projected["comments"] if c not in journals]
