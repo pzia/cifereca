@@ -169,7 +169,7 @@ class PassiveHealth:
             if not self._enabled or lease != self._generation:
                 return 0
             count = 0
-            for scope, obs in rows:
+            for scope, obs, books in rows:
                 if (type(scope) is not Scope or type(obs) is not Observation
                         or not all(type(v) is str and 0 < len(v) <= 256
                                    for v in (scope.provider, scope.instance, scope.account,
@@ -198,6 +198,17 @@ class PassiveHealth:
                 else:
                     continue
                 self._rows[scope] = (latest, baseline, anomalies)
+                if (scope.capability == "search" and obs.outcome is Outcome.SUCCESS
+                        and type(books) is tuple and len(books) <= 3):
+                    witnesses = self._witnesses.setdefault(scope.provider, [])
+                    for book in books:
+                        if len(witnesses) >= 3:
+                            break
+                        if (type(book) is tuple and len(book) == 2
+                                and all(type(value) is str and 0 < len(value) <= 256
+                                        and value.isprintable() for value in book)
+                                and not any(existing == book for _, existing, _, _ in witnesses)):
+                            witnesses.append((scope, book, obs.version, obs.evidence_ref))
                 count += 1
             return count
 

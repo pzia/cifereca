@@ -418,7 +418,9 @@ def test_health_archive_restores_history_not_latest(tmp_path, monkeypatch):
         ref = diagnostic_task_reference()
         exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
         exchange.entry["outcome"] = "completed"
-    health.observe(scope, Observation(Outcome.SUCCESS, "1", "now", ref), lease=health.lease())
+    observation = Observation(Outcome.SUCCESS, "1", "now", ref)
+    health.observe(scope, observation, lease=health.lease())
+    health.retain_book_witnesses(scope, observation, (("db", "book-1"),), lease=health.lease())
     vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
                              authorize_scope=lambda producer, scope: True, health=health)
     try:
@@ -435,6 +437,8 @@ def test_health_archive_restores_history_not_latest(tmp_path, monkeypatch):
         assert port.restore_provider_health_history(exact, (1,), confirmed=True) == 1
         latest, baseline, anomalies = fresh.snapshot(scope)
         assert latest is None and baseline.capture_id == capture and not anomalies
+        assert fresh.book_witnesses(scope) == ((scope, ("db", "book-1"), "1", ref),)
+        assert fresh.book_witnesses(Scope("fixture", "i", "other", "owner", "search")) == ()
         assert fresh.drain_transitions() == ()
         assert port.restore_provider_health_history(exact, (1,), confirmed=True) == 0
     finally:

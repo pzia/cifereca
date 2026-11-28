@@ -64,7 +64,7 @@ def test_replay_exact_tape_no_fallback(monkeypatch):
         exchange.response(httpx.Response(200, headers={"content-type": "text/plain"}))
         exchange.observe("response", b"fixture")
         exchange.finish_body("response", "complete")
-        exchange.terminal("completed")
+        exchange.terminal("complete")
     snapshot = capture.snapshot()
     snapshot["session_ref"] = ref
     payload = http_trace.build_http_trace_zip(snapshot)

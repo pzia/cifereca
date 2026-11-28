@@ -650,6 +650,9 @@ class _DiagnosticsPort(_Port):
                 "schema": "cifereca.health-observation/1",
                 "capability": capability, "outcome": observation.outcome.value,
                 "version": observation.version, "observed_at": observation.observed_at,
+                "book_witnesses": [list(book) for _, book, version, ref
+                                   in health.book_witnesses(exact)
+                                   if version == observation.version and ref == source_ref],
             }
             payload = build_http_trace_zip(snapshot)
             self._check_selection(scope, capability, source_ref, None, generation)
@@ -770,7 +773,11 @@ class _DiagnosticsPort(_Port):
                 obs = Observation(Outcome(meta["outcome"]), meta["version"],
                                   meta["observed_at"], summary.source_session_ref,
                                   summary.capture_id)
-                restored.append((exact, obs))
+                books = meta.get("book_witnesses", [])
+                if type(books) is not list or len(books) > 3 or any(
+                        type(book) is not list or len(book) != 2 for book in books):
+                    books = []
+                restored.append((exact, obs, tuple(tuple(book) for book in books)))
             except (VaultError, ValueError, KeyError, TypeError):
                 continue
         current()

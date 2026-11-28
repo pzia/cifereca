@@ -51,7 +51,7 @@ class CapturedReadTransport(httpx.BaseTransport):
                     req, res = entry["request"], entry["response"]
                     if (entry.get("task_ref") != evidence_ref or req.get("producer") != producer
                             or req.get("method") not in ("GET", "HEAD")
-                            or entry["outcome"] != "completed"
+                            or entry["outcome"] != "complete"
                             or entry["request_body"]["observed_bytes"] != 0
                             or entry["response_body"]["state"] != "complete"
                             or entry["response_body"]["observed_bytes"] != entry["response_body"]["stored_bytes"]):
