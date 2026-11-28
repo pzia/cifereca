@@ -79,6 +79,16 @@ def reconcile(api, stage, anchor, current, authors=LOCAL_AUTHORS):
     engine.issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
                          engine.XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
     plan = engine.lot_plan(manifest)
+    if markers[-1] == engine.DONE + digest + " " + commit:
+        engine.verify_compacted_corpus(api, manifest, digest, commit, 8195,
+                                       completed=True, journal_authors=authors)
+        engine.require(stage.remote_head(anchor) == commit, "staging ref drift")
+        engine.main_guard(api, current)
+        return {"status": "READ_ONLY_DONE_VERIFIED", "p0": anchor,
+                "master": manifest["master"], "main_sha": current,
+                "stage_sha": commit, "manifest_sha256": digest,
+                "cursor": len(plan), "applied": len(plan), "total": len(plan),
+                "destruction_enabled": False}
     cursor = parse_progress(markers, digest, commit, len(plan))
     observed = {n: engine.snapshot(api, n) for n in {n for n, _, _ in plan}}
     applied = infer_prefix(manifest, observed)
@@ -191,6 +201,9 @@ def continue_local(api, stage, anchor, master, commit, digest, current):
             receipt = reconcile(api, stage, anchor, current)
             engine.require((receipt["master"], receipt["stage_sha"], receipt["manifest_sha256"])
                            == (master, commit, digest), "local authorization scope mismatch")
+            if receipt["status"] == "READ_ONLY_DONE_VERIFIED":
+                return {**receipt, "capitalized": False, "purge_enabled": False,
+                        "executor": "local-owner"}
             raw = stage.read_remote(anchor, commit)
             engine.require(engine.sha256(raw) == digest, "staging digest mismatch")
             manifest = engine.strict_json(raw)
@@ -200,7 +213,7 @@ def continue_local(api, stage, anchor, master, commit, digest, current):
                     api, stage, manifest, digest, commit, cursor, applied,
                     current, authority_guard, journal_authors=LOCAL_AUTHORS,
                     writer_author=engine.OWNER_AUTHOR)
-                cursor = result["cursor"]
+                old_cursor, cursor = cursor, result["cursor"]
                 if result["status"] == "STAGED_AND_COMPACTED":
                     engine.verify_compacted_corpus(api, manifest, digest, commit, 8195,
                                                    completed=True, journal_authors=LOCAL_AUTHORS)
@@ -211,7 +224,7 @@ def continue_local(api, stage, anchor, master, commit, digest, current):
                             "executor": "local-owner", "main_sha": current}
                 # Remote journal is the persistent checkpoint. Never assume that
                 # an interrupted write is applied; the next invocation reconciles.
-                engine.require(result["status"] == "LOT_PENDING" and cursor > applied,
+                engine.require(result["status"] == "LOT_PENDING" and cursor > old_cursor,
                                "unexpected tranche result")
                 applied = cursor
         finally:
