@@ -122,3 +122,40 @@ def test_profile_bounds_and_unknown_secret_fields():
     with pytest.raises(LLMSettingsError):
         normalize_profiles({**cfg, "profiles": {f"p{i}": LOCAL for i in range(33)},
                             "active_profile": None, "enabled": False})
+
+
+def test_saved_change_then_restore_never_reactivates_old_instance(tmp_path):
+    cfg = normalize_profiles({**LOCAL, "enabled": True})
+    c = Config(tmp_path / "config.json")
+    c.set("llm", cfg)
+    service = optional_llm_service(c)
+    assert service.available()
+    c.set("llm", select_profile(cfg, None))
+    c.set("llm", cfg)
+    assert not service.available()
+    assert optional_llm_service(c).available()
+
+
+def test_unrelated_settings_do_not_revoke_llm(tmp_path):
+    c = Config(tmp_path / "config.json")
+    c.set("llm", normalize_profiles({**LOCAL, "enabled": True}))
+    service = optional_llm_service(c)
+    c.set("ui.width", 1400)
+    c.save()
+    assert service.available()
+
+
+def test_metrics_have_bounded_labels_and_no_payload(monkeypatch):
+    cfg = normalize_profiles({**LOCAL, "enabled": True})
+    service = optional_llm_service({"llm": cfg})
+    def refuse(*args, **kwargs):
+        raise OSError("SECRET_SENTINEL")
+    monkeypatch.setattr(service, "_opener", refuse)
+    assert service.generate(LLMRequest("PRIVATE_PROMPT")).reason == "backend_unavailable"
+    metrics = service.metrics_snapshot()
+    assert set(metrics) == {"local:backend_unavailable"}
+    assert metrics["local:backend_unavailable"]["count"] == 1
+    assert "PRIVATE_PROMPT" not in repr(metrics)
+    assert "SECRET_SENTINEL" not in repr(metrics)
+    metrics["local:backend_unavailable"]["count"] = 99
+    assert service.metrics_snapshot()["local:backend_unavailable"]["count"] == 1

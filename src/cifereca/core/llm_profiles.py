@@ -180,6 +180,8 @@ def selected_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 def select_profile(raw: Mapping[str, Any], name: str | None) -> dict[str, Any]:
     cfg = normalize_profiles(raw)
+    if name is not None and (type(name) is not str or name not in cfg["profiles"]):
+        raise _error()
     if name != cfg["active_profile"]:
         cfg.update(active_profile=name, enabled=False, remote_approval=None)
     return normalize_profiles(cfg)
@@ -188,6 +190,8 @@ def select_profile(raw: Mapping[str, Any], name: str | None) -> dict[str, Any]:
 def store_profile(raw: Mapping[str, Any], name: str,
                   values: dict[str, Any]) -> dict[str, Any]:
     cfg = normalize_profiles(raw)
+    if type(name) is not str or not _PROFILE_ID.fullmatch(name):
+        raise _error()
     profile = _normalize_profile(values)
     if name == cfg["active_profile"] and _fingerprint(name, profile) != _fingerprint(
             name, cfg["profiles"][name]):
@@ -198,7 +202,7 @@ def store_profile(raw: Mapping[str, Any], name: str,
 
 def delete_profile(raw: Mapping[str, Any], name: str) -> dict[str, Any]:
     cfg = normalize_profiles(raw)
-    if name not in cfg["profiles"]:
+    if type(name) is not str or name not in cfg["profiles"]:
         raise _error()
     if name == cfg["active_profile"]:
         cfg.update(active_profile=None, enabled=False, remote_approval=None)

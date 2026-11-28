@@ -10,7 +10,7 @@ import math
 import os
 import re
 from ipaddress import ip_address
-from threading import BoundedSemaphore, Event, Thread
+from threading import BoundedSemaphore, Event, Lock, Thread
 from copy import deepcopy
 from time import monotonic
 from typing import Any, Mapping
@@ -122,15 +122,23 @@ class OptionalLLMService:
     def __init__(self, config: Mapping[str, Any], *, opener=None, admission=None):
         self._config = dict(config)
         self._admission = admission
+        self._revoked = Event()
+        self._metrics_lock = Lock()
+        self._metrics = {}
         self._opener = opener or build_opener(ProxyHandler({}), _NoRedirect()).open
 
     def _admitted(self) -> bool:
         if self._admission is None:
             return True
-        try:
-            return self._admission() is True
-        except Exception:
+        if self._revoked.is_set():
             return False
+        try:
+            if self._admission() is True:
+                return not self._revoked.is_set()
+        except Exception:
+            pass
+        self._revoked.set()
+        return False
 
     def _settings(self) -> tuple[bool, bool, str, str, str, float, int, int]:
         cfg = self._config
@@ -172,7 +180,33 @@ class OptionalLLMService:
     def capabilities(self) -> tuple[str, ...]:
         return ("generate", "structured") if self.available() else ()
 
+    def metrics_snapshot(self) -> dict[str, dict[str, int]]:
+        """Bounded process-local technical counters, never prompt/model/URL data."""
+        with self._metrics_lock:
+            return {key: dict(value) for key, value in self._metrics.items()}
+
     def generate(self, request: LLMRequest, *, control=None) -> LLMResult:
+        started = monotonic()
+        result = self._generate(request, control=control)
+        statuses = {
+            "unavailable", "invalid_request", "cancelled", "request_too_large",
+            "busy", "response_too_large", "invalid_response", "auth_refused",
+            "not_found", "rate_limited", "backend_unavailable", "timeout",
+        }
+        status = "success" if result.ok else (
+            result.reason if result.reason in statuses else "other")
+        key = ("remote" if result.remote else "local") + ":" + status
+        elapsed = min(60_000, max(0, int((monotonic() - started) * 1000)))
+        with self._metrics_lock:
+            metric = self._metrics.setdefault(key, {
+                "count": 0, "total_ms": 0, "max_ms": 0,
+            })
+            metric["count"] = min(2**31 - 1, metric["count"] + 1)
+            metric["total_ms"] = min(2**63 - 1, metric["total_ms"] + elapsed)
+            metric["max_ms"] = max(metric["max_ms"], elapsed)
+        return result
+
+    def _generate(self, request: LLMRequest, *, control=None) -> LLMResult:
         enabled, remote, provider, model, endpoint, timeout, max_input, max_tokens = self._settings()
 
         def failed(reason: str) -> LLMResult:
@@ -248,6 +282,10 @@ class OptionalLLMService:
                 if not self._admitted():
                     result.append(failed("unavailable"))
                     return
+                cancelled = cancellation_state()
+                if cancelled is not False:
+                    result.append(failed("cancelled" if cancelled is True else "invalid_request"))
+                    return
                 with self._opener(http_request, timeout=timeout) as response:
                     data = response.read(_MAX_RESPONSE_BYTES + 1)
                 if len(data) > _MAX_RESPONSE_BYTES:
@@ -302,8 +340,8 @@ class OptionalLLMService:
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:
-                done.set()
                 _LLM_SLOTS.release()
+                done.set()
 
         try:
             Thread(target=worker, daemon=True, name="cifereca-llm",).start()
@@ -341,7 +379,14 @@ def optional_llm_service(config) -> OptionalLLMService | None:
         return None
     # A running service can be revoked, never silently redirected. A restart
     # constructs the new service; a config change is not a hot reload.
-    return OptionalLLMService(effective, admission=lambda: config.get("llm", {}) == snapshot)
+    epoch_reader = getattr(config, "llm_admission_epoch", None)
+    epoch = epoch_reader() if callable(epoch_reader) else None
+
+    def admitted() -> bool:
+        return (config.get("llm", {}) == snapshot
+                and (not callable(epoch_reader) or epoch_reader() == epoch))
+
+    return OptionalLLMService(effective, admission=admitted)
 
 
 __all__ = ["OptionalLLMService", "optional_llm_service"]
