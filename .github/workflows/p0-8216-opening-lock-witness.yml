@@ -1,0 +1,66 @@
+name: P0 8216 opening lock witness
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-opening-lock-witness.yml'
+permissions:
+  contents: read
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          git fetch origin 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
+          test "$(git rev-parse FETCH_HEAD)" = 18af69e0b18c6a85461c9248a03c0d3e4fd3013c
+          out="$RUNNER_TEMP/witness"
+          mkdir -p "$out"
+          export XDG_STATE_HOME="$out/state"
+          python - <<'PY' > "$out/holder.log" 2>&1 &
+          import time
+          from cifereca.locking import InterProcessLock
+          from cifereca.paths import acquisition_lock_file
+          with InterProcessLock(acquisition_lock_file()):
+              print("LOCK_HELD",flush=True)
+              time.sleep(300)
+          PY
+          holder=$!
+          trap 'kill "$holder" 2>/dev/null || true' EXIT
+          for i in $(seq 1 50); do
+            if grep -q LOCK_HELD "$out/holder.log"; then break; fi
+            sleep .1
+          done
+          grep -q LOCK_HELD "$out/holder.log"
+          kill -0 "$holder"
+          target=tests/test_core_p0_2975_complete_digital_inventory.py
+          set +e
+          python -m pytest -q "$target::test_opening_realizes_only_exact_complete_borrower[bnf-pret]" > "$out/old.log" 2>&1
+          rc=$?
+          set -e
+          cat "$out/old.log"
+          test "$rc" = 1
+          grep -q 'LockBusyError' "$out/old.log"
+          git checkout 18af69e0b18c6a85461c9248a03c0d3e4fd3013c -- "$target"
+          test "$(git rev-parse ":$target")" = 06233dd72522531c934491c1399d8f5d356abdf9
+          for pass in 1 2; do
+            kill -0 "$holder"
+            python -m pytest -q -n 2 --dist=loadfile "$target" --junitxml="$out/new-$pass.xml" | tee "$out/new-$pass.log"
+          done
+          kill -0 "$holder"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opening-lock-witness
+          path: ${{ runner.temp }}/witness
+          retention-days: 7
