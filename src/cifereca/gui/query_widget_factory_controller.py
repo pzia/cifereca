@@ -17,7 +17,8 @@ def _provider_choices(window, *, library=False):
     if library:
         for row in window.service.catalog_entries():
             provider = str(row.get("provider_id") or "local")
-            providers.setdefault(provider, window.service.provider_display_name(provider))
+            if provider not in providers:
+                providers[provider] = window.service.provider_display_name(provider)
         # Core's *already loaded*, identity-scoped Library projection can
         # contain several origins even when the catalogue has only the
         # primary/local provider ID. These are filter choices, never proof
@@ -26,7 +27,8 @@ def _provider_choices(window, *, library=False):
         if (type(identity) is str
                 and getattr(window, "_library_origin_identity_id", None) == identity):
             for provider in getattr(window, "_library_origin_provider_ids", ()):
-                providers.setdefault(provider, window.service.provider_display_name(provider))
+                if provider not in providers:
+                    providers[provider] = window.service.provider_display_name(provider)
     # The source filter is a *route selector* (stable provider ID), not a
     # purchase/loan filter. Keep only discovered routes; their labels come
     # directly from plugin descriptors, never from Core brand aliases.

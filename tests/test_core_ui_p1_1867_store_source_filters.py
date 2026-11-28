@@ -149,3 +149,25 @@ def test_plugin_manager_uses_the_vocabulary_in_read_only_rendering():
     assert 'if d.instantiation == \'singleton_public\'' in render_source
     assert "activation.set_active(self.manager.enabled_for_identity" in render_source
     assert "self._identity_toggle(pid, iid, button.get_active())" in render_source
+
+
+def test_library_provider_names_resolved_once_per_missing_source_per_call():
+    window, _events = _window(
+        [("source-a", "Live A")],
+        historical=("local", "source-a", "source-b", "source-b"),
+    )
+    window.service.current_identity = NS(identity_id="profile")
+    window._library_origin_identity_id = "profile"
+    window._library_origin_provider_ids = ("source-b", "source-b-public")
+    lookup = Mock(side_effect=window.service.provider_display_name)
+    window.service.provider_display_name = lookup
+    assert dict(_provider_choices(window, library=True)) == {
+        "local": "Local", "source-a": "Live A", "source-b": "Source B",
+        "source-b-public": "Source B — Catalogue public",
+    }
+    assert [call.args for call in lookup.call_args_list] == [
+        ("source-b",), ("source-b-public",),
+    ]
+    lookup.reset_mock()
+    _provider_choices(window, library=True)
+    assert lookup.call_count == 2  # no persistent label cache
