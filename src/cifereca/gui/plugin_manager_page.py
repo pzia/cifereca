@@ -194,18 +194,24 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         health = getattr(service, "_provider_health", None)
         if health is None or health.lease() is None:
             return
-        from ..core.provider_health_inventory import installed_health, registered_health
+        from ..core.provider_health_inventory import (installed_health, registered_health,
+                                                     cached_virtual_health, provider_health_count)
         from ..core.provider_health_projection import Outcome
         identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
         installed = installed_health(self.manager, health)
         scopes = registered_health(service, health, identity)
+        storage = getattr(service, 'storage', None)
+        cached = cached_virtual_health(self.manager, storage) if storage is not None else ()
+        total = provider_health_count(installed, scopes, cached)
         anomalies = sum(row is not None and row.outcome not in
                         (Outcome.SUCCESS, Outcome.ATTESTED_EMPTY, Outcome.UNKNOWN)
                         for _, enabled, row in scopes if enabled)
         unknown = sum(row is None or row.outcome is Outcome.UNKNOWN
                       for _, enabled, row in scopes if enabled)
-        label = Gtk.Label(label=f"Santé : {len(installed)} fournisseurs installés · "
+        label = Gtk.Label(label=f"Santé : {total} fournisseurs installés · "
                                 f"{anomalies} anomalies · {unknown} non qualifiés", xalign=0)
+        if health.notifications_saturated():
+            label.set_text(label.get_text() + " · historique des notifications incomplet")
         label.set_wrap(True)
         self.outer.append(label)
         button = action_button("Diagnostics", "dialog-information-symbolic")

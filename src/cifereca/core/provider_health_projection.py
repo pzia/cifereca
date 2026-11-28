@@ -51,6 +51,7 @@ class PassiveHealth:
         self._lock = RLock()
         self._generation = 0
         self._transitions = deque(maxlen=256)
+        self._overflow = False
 
     def set_enabled(self, enabled):
         if type(enabled) is not bool:
@@ -62,6 +63,7 @@ class PassiveHealth:
             if not enabled:
                 self._rows.clear()
                 self._transitions.clear()
+                self._overflow = False
 
     def lease(self):
         """Capture before an operation; stale completions must not be admitted."""
@@ -106,6 +108,8 @@ class PassiveHealth:
         self._rows[scope] = (observation, reference, anomalies)
         changed = previous is None or previous.outcome != observation.outcome
         if changed and observation.outcome is not Outcome.UNKNOWN:
+            if len(self._transitions) == self._transitions.maxlen:
+                self._overflow = True
             self._transitions.append((scope, previous.outcome if previous else None,
                                       observation.outcome, observation.observed_at))
         return changed
@@ -159,6 +163,10 @@ class PassiveHealth:
     def owns_reference(self, scope, reference):
         with self._lock:
             return _unique_owner(self._rows, self._enabled, scope, reference)
+
+    def notifications_saturated(self):
+        with self._lock:
+            return self._overflow
 
     def drain_transitions(self, *, identity_id=None):
         """Bounded, single-consumer transition notifications; no callbacks under lock."""

@@ -72,3 +72,26 @@ def test_cached_disabled_collection(monkeypatch):
                         lambda self, parent: SimpleNamespace(children=(child,)))
     assert cached_virtual_health(manager, object()) == (
         ("virtual", "parent", False, ("catalog.search",), "ready"),)
+
+
+def test_health_count_deduplicates_cached_children():
+    from cifereca.core.provider_health_inventory import provider_health_count
+    installed = [SimpleNamespace(plugin_id="parent")]
+    registered = [(Scope("child", "", "", "", "search"), True, None)]
+    cached = [("child", "parent", True, (), "ready"),
+              ("disabled", "parent", False, (), "ready")]
+    assert provider_health_count(installed, registered, cached) == 3
+
+
+def test_notification_saturation_is_explicit():
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "", "", "", "search")
+    for n in range(257):
+        outcome = Outcome.AUTH if n % 2 else Outcome.SUCCESS
+        health.observe(scope, Observation(outcome, "1", "now", str(n)), lease=health.lease())
+    assert health.notifications_saturated()
+    assert len(health.drain_transitions()) == 256
+    assert health.notifications_saturated()
+    health.set_enabled(False)
+    assert not health.notifications_saturated()

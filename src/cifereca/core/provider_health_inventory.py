@@ -67,3 +67,10 @@ def cached_virtual_health(manager, storage):
             rows.extend((child.plugin_id, parent.descriptor.id, parent.enabled,
                          child.capabilities, child.status) for child in snapshot.children)
     return tuple(rows)
+
+
+def provider_health_count(installed, registered, cached):
+    """Count unique provider IDs, not collection children twice."""
+    return len({row.plugin_id for row in installed}
+               | {scope.provider for scope, _, _ in registered}
+               | {row[0] for row in cached})
