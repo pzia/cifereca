@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, repr=False)
 class ScopedHTTPArchive:
-    capture_id: str
+    capture_id: str | None
     scope: object
     capability: str
     evidence_ref: str
@@ -593,7 +593,9 @@ class ProviderEvidenceArchive:
                     continue
                 key = str(len(self.tokens))
                 self.tokens[key] = token
-                self.rows.append(key, f'{row["provider_id"]} · {row["capability"]} · '
+                # Exact account/instance must be distinguishable before consent.
+                self.rows.append(key, f'{row["provider_id"]} · {row["instance_id"]} · '
+                                      f'{row["account_id"]} · {row["capability"]} · '
                                       f'{row["observed_at"]} · {row["outcome"]} · '
                                       + ("archivée" if token.capture_id else "non archivée"))
             self.status.set_label(f"{len(self.tokens)} preuves privées disponibles ; aucun envoi.")

@@ -1576,7 +1576,8 @@ def _search_provider_session(
         provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
     if request_cancelled is None or not request_cancelled():
         finish_public_search(self, session, identity, health_call,
-                             health_outcome if not terminal_error_code or health_outcome not in ('success', 'attested_empty') else 'unknown')
+                             health_outcome if not terminal_error_code or health_outcome not in ('success', 'attested_empty') else 'unknown',
+                             rows=provider_rows)
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
@@ -1611,7 +1612,7 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         if not cancelled():
             finish_public_search(self, session, identity, health_call,
                                  'success' if outcome.rows and not outcome.warnings
-                                 and not outcome.error_code else 'unknown')
+                                 and not outcome.error_code else 'unknown', rows=rows)
         return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
     except SearchStreamCancelled:
         return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"

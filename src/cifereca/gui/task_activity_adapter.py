@@ -92,6 +92,8 @@ def task_finished(
         int(task_id), str(label), str(kind), **kwargs,
     )
     window._refresh_activity_history()
+    from .provider_health_notifications import notify_health_transitions
+    notify_health_transitions(window)
     if not hasattr(window, "busy_revealer"):
         return False
     if window._active_tasks:

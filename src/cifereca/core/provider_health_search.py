@@ -74,7 +74,7 @@ def begin_public_search(service, session, identity, *, capability="search"):
                 _installed_version(service, scope.provider))
 
 
-def finish_public_search(service, session, identity, call, outcome):
+def finish_public_search(service, session, identity, call, outcome, *, rows=()):
     if call is None or outcome is None:
         return
     with service._source_context_lock:
@@ -82,10 +82,32 @@ def finish_public_search(service, session, identity, call, outcome):
         if (_scope(service, session, identity, scope.capability) != scope
                 or _installed_version(service, scope.provider) != version):
             return
-        service._provider_health.observe(
-            scope, Observation(Outcome(outcome), version,
-                               datetime.now(timezone.utc).isoformat(),
-                               reference), lease=lease)
+        observation = Observation(Outcome(outcome), version,
+                                  datetime.now(timezone.utc).isoformat(), reference)
+        health = service._provider_health
+        health.observe(scope, observation, lease=lease)
+        if scope.capability == "search" and outcome == "success":
+            try:
+                from ..models import SearchResult
+                from ..document_classification import classification_for_search_result
+                books = []
+                for row in rows:
+                    if (type(row) is not SearchResult or row.source_provider != scope.provider
+                            or classification_for_search_result(row).meta_type not in
+                            ("EBOOK", "PRINTED_BOOK")):
+                        continue
+                    if scope.identity:
+                        if (row.source_credential != scope.instance
+                                or row.source_account_id != scope.account):
+                            continue
+                    elif row.source_credential != "__public__" or row.source_account_id is not None:
+                        continue
+                    books.append((row.docbase, row.record_id))
+                    if len(books) >= 32:
+                        break
+                health.retain_book_witnesses(scope, observation, tuple(books), lease=lease)
+            except Exception:
+                pass  # Witness collection cannot change search semantics.
 
 
 def classify_failure(error):

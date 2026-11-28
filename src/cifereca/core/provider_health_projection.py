@@ -49,6 +49,7 @@ class PassiveHealth:
         self._limit = max_scopes
         self._enabled = False
         self._rows = {}
+        self._witnesses = {}
         self._lock = RLock()
         self._archive_lock = RLock()
         self._generation = 0
@@ -65,6 +66,7 @@ class PassiveHealth:
             self._enabled = enabled
             if not enabled:
                 self._rows.clear()
+                self._witnesses.clear()
                 self._transitions.clear()
                 self._overflow = False
 
@@ -121,6 +123,41 @@ class PassiveHealth:
             self._transitions.append((scope, previous.outcome if previous else None,
                                       observation.outcome, observation.observed_at))
         return changed
+
+    def retain_book_witnesses(self, scope, observation, books, *, lease):
+        """Keep at most three exact, versioned book coordinates per provider.
+
+        Private candidates remain bound to the admitting scope; no title,
+        credential, URL or authorization is shared with another account.
+        Absence in a later result is not evidence of disappearance.
+        """
+        if type(books) is not tuple or type(scope) is not Scope or type(observation) is not Observation:
+            return
+        with self._lock:
+            if (not self._enabled or lease != self._generation
+                    or scope.capability != "search" or scope not in self._rows
+                    or self._rows[scope][0] != observation
+                    or observation.outcome is not Outcome.SUCCESS):
+                return
+            rows = self._witnesses.setdefault(scope.provider, [])
+            for book in books:
+                if len(rows) >= 3:
+                    break
+                if (type(book) is not tuple or len(book) != 2
+                        or not all(type(v) is str and 0 < len(v) <= 256
+                                   and all(c.isprintable() for c in v) for v in book)):
+                    continue
+                if any(old_book == book for _, old_book, _, _ in rows):
+                    continue
+                rows.append((scope, book, observation.version, observation.evidence_ref))
+
+    def book_witnesses(self, scope):
+        """Read only witnesses admitted under the identical search scope."""
+        with self._lock:
+            if not self._enabled or type(scope) is not Scope:
+                return ()
+            return tuple(row for row in self._witnesses.get(scope.provider, ())
+                         if row[0] == scope)
 
     def snapshot(self, scope):
         with self._lock:

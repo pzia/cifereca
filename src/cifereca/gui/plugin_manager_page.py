@@ -218,10 +218,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         button.set_name("provider-health-diagnostics")
         button.connect("clicked", self._open_health_diagnostics)
         self.outer.append(button)
-        for scope, previous, outcome, _when in health.drain_transitions(identity_id=identity or ''):
-            if scope.identity and scope.identity != identity:
-                continue
-            self._toast(f"Santé fournisseur : {scope.provider} — {outcome.value}")
+        from .provider_health_notifications import notify_health_transitions
+        notify_health_transitions(self.window)
 
     def _open_health_diagnostics(self, _button):
         # The plugin may be disabled or may have failed to mount since refresh.
