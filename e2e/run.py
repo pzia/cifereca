@@ -584,6 +584,18 @@ def main() -> int:
     for name, scenario in select(args.scenario, args.plugin):
         with tempfile.TemporaryDirectory(prefix="cifereca-e2e-") as tmp:
             fixture_env = materialize_fixture(scenario["fixture"], Path(tmp))
+            if scenario.get("plugin_scroll_only"):
+                # Install the real local Diagnostics package in this disposable
+                # fixture only. No package download or provider activation.
+                source = ROOT / "src/plugins/diagnostics-page"
+                manifest = json.loads((source / "cifereca-plugin.json").read_text(encoding="utf-8"))
+                package = manifest["package"]
+                target = Path(fixture_env["XDG_DATA_HOME"]) / "cifereca" / "plugins" / "packages" / package["id"]
+                shutil.copytree(source, target / package["version"],
+                                ignore=shutil.ignore_patterns("__pycache__", "tests", "*.pyc"))
+                (target / "current.json").write_text(json.dumps({
+                    "active": package["version"], "previous": None,
+                }), encoding="utf-8")
             if scenario.get("runner") == "gtk-maintenance" and not scenario.get("guided_only"):
                 # #4496: real opt-in only in this temporary XDG fixture.
                 # The GTK probe uses a simulated writer; never modify the

@@ -165,11 +165,24 @@ def test_revocation_after_link_and_rollback_failure(tmp_path, monkeypatch):
         allowed[0] = True
         assert port.sessions(exact) == ()
         assert health.snapshot(scope)[0].capture_id is None
-        def fail_cleanup(self):
+        discard = vault._discard_failed_archive
+        def fail_cleanup(*args):
             raise VaultError("vault_unsafe_file")
-        monkeypatch.setattr(module._Writer, "_rollback_completed", fail_cleanup)
+        monkeypatch.setattr(vault, "_discard_failed_archive", fail_cleanup)
         with pytest.raises(VaultError, match="vault_archive_rollback_failed"):
             port.archive_search_trace(exact, ref, consented=True)
         assert health.snapshot(scope)[0].capture_id is None
+        allowed[0] = True
+        assert port.sessions(exact) == ()
+        ids = vault._storage.list_ids()
+        assert len(ids) == 1
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.read(exact, ids[0])
+        vault.maintain()
+        assert vault._storage.list_ids() == ids
+        monkeypatch.setattr(vault, "_discard_failed_archive", discard)
+        vault.maintain()
+        assert vault._storage.list_ids() == ()
+        assert port.sessions(exact) == ()
     finally:
         vault.close()

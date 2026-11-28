@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import Event, RLock, Thread
 
 from .capture_key import CaptureKey
-from .capture_vault import EncryptedCaptureVault, VaultError, MAX_FILE
+from .capture_vault import EncryptedCaptureVault, VaultError, MAX_FILE, MAX_SESSIONS
 from ..plugin_api.capture_vault import CaptureScope, CaptureSummary, CapturedSession
 
 _ALLOWED = frozenset(("ui.page.browser-recorder", "ui.page.diagnostics"))
@@ -196,12 +196,40 @@ class CoreCaptureVault:
         self._lock = RLock()
         self._stop = Event()
         self._maintenance = None
+        # Core-owned, bounded quarantine of failed writes in this process.
+        # Only the exact authenticated writer binding can be retried.
+        self._failed_archives = {}
+
+    def _discard_failed_archive(self, capture_id, binding):
+        producer, scope, source_ref = binding
+        if capture_id not in self._storage.list_ids():
+            return
+        key = self._key()
+        stored = self._storage.open(capture_id, key)
+        try:
+            if (stored.producer != producer or stored.summary.scope != scope
+                    or stored.summary.source_session_ref != source_ref
+                    or stored.summary.state != "completed"):
+                raise VaultError("vault_scope_denied")
+        finally:
+            self._storage._release(stored)
+        self._storage.delete(capture_id, key, confirmed=True)
+
+    def _retry_failed_archives(self):
+        for capture_id, binding in tuple(self._failed_archives.items()):
+            try:
+                self._discard_failed_archive(capture_id, binding)
+            except VaultError:
+                # A physically unsafe/unreadable file must not be bypassed.
+                continue
+            self._failed_archives.pop(capture_id, None)
 
     def _policy(self):
         return validate_retention_policy(*self._policy_source())
 
     def maintain(self, *, reserve=False, reserve_bytes=None, now=None):
         with self._lock:
+            self._retry_failed_archives()
             if not self._storage.path.exists() and not self._storage.path.is_symlink():
                 return (0, 0)
             key = self._key()
@@ -299,6 +327,8 @@ class _Port:
             return _Writer(self, scope, source_session_ref, writer, key)
 
     def _open(self, scope, capture_id, key):
+        if capture_id in self._service._failed_archives:
+            raise VaultError("vault_scope_denied")
         stored = self._service._storage.open(capture_id, key)
         if stored.producer != self._producer or stored.summary.scope != scope:
             self._service._storage._release(stored)
@@ -315,6 +345,8 @@ class _Port:
             key = self._service._key()
             rows = []
             for sid in ids:
+                if sid in self._service._failed_archives:
+                    continue
                 stored = self._service._storage.open(sid, key)
                 try:
                     if stored.producer == self._producer and stored.summary.scope == scope:
@@ -441,25 +473,32 @@ class _DiagnosticsPort(_Port):
             self._check(scope)
             if HTTP_TRACE.status()["active"] is not True:
                 raise VaultError("vault_trace_inactive")
-            writer = self._begin(scope, source_ref, consented=True,
-                                 reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
-            writer.save(payload, "completed", force=True)
-            try:
-                self._check(scope)
-                if not health.link_capture(exact, source_ref, writer.capture_id,
-                                           lease=lease, port=self, consented=True):
-                    raise VaultError("vault_scope_denied")
-                self._check(scope)
-            except Exception:
-                # Remove any link published just before revocation, then
-                # roll back only the authenticated object created by this call.
-                health.unlink_capture(exact, source_ref, writer.capture_id)
+            # Keep the new object private to this operation until commit or
+            # quarantine; neither readers nor maintenance can race rollback.
+            service = self._service
+            with service._lock:
+                if len(service._failed_archives) >= MAX_SESSIONS:
+                    raise VaultError("vault_archive_rollback_failed")
+                writer = self._begin(scope, source_ref, consented=True,
+                                     reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
                 try:
-                    writer._rollback_completed()
-                except Exception as cleanup_error:
-                    raise VaultError("vault_archive_rollback_failed") from cleanup_error
-                raise
-            return writer.capture_id
+                    writer.save(payload, "completed", force=True)
+                    self._check(scope)
+                    if not health.link_capture(exact, source_ref, writer.capture_id,
+                                               lease=lease, port=self, consented=True):
+                        raise VaultError("vault_scope_denied")
+                    self._check(scope)
+                except Exception:
+                    health.unlink_capture(exact, source_ref, writer.capture_id)
+                    service._failed_archives[writer.capture_id] = (
+                        self._producer, scope, source_ref)
+                    try:
+                        writer._rollback_completed()
+                    except Exception as cleanup_error:
+                        raise VaultError("vault_archive_rollback_failed") from cleanup_error
+                    service._failed_archives.pop(writer.capture_id, None)
+                    raise
+                return writer.capture_id
 
     def export_http_archive(self, capture_id, destination, *, confirmed=False):
         if confirmed is not True:
@@ -496,14 +535,9 @@ class _Writer:
             key = service._key()
             if key != self._key:
                 raise VaultError("vault_key_unavailable")
-            stored = self._port._open(self._scope, self.capture_id, key)
-            try:
-                if (stored.summary.source_session_ref != self._source_session_ref
-                        or stored.summary.state != "completed"):
-                    raise VaultError("vault_scope_denied")
-            finally:
-                service._storage._release(stored)
-            service._storage.delete(self.capture_id, key, confirmed=True)
+            service._discard_failed_archive(
+                self.capture_id, (self._port._producer, self._scope,
+                                  self._source_session_ref))
 
     def save(self, payload, state="recording", *, force=False):
         service = self._port._service
