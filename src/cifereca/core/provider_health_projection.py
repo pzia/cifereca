@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from collections import deque
 from threading import RLock
+from contextlib import contextmanager
 
 
 class Outcome(Enum):
@@ -166,3 +167,12 @@ class PassiveHealth:
         with self._lock:
             return tuple((scope, latest, baseline, tuple(anomalies))
                          for scope, (latest, baseline, anomalies) in self._rows.items())
+
+    @contextmanager
+    def archive_guard(self, scope, reference):
+        """Serialize consented archival against projection revocation."""
+        with self._lock:
+            if not self.owns_reference(scope, reference):
+                yield None
+            else:
+                yield self._generation

@@ -18,3 +18,26 @@ def test_reference_binding_unique_and_revoked():
     health.set_enabled(False)
     assert not health.owns_reference(a, "ref")
     assert not health.inventory()
+
+
+def test_archive_guard_serializes_disable():
+    from threading import Event, Thread
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "a", "owner", "search")
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", "ref"), lease=health.lease())
+    started, done = Event(), Event()
+    def disable():
+        started.set()
+        health.set_enabled(False)
+        done.set()
+    with health.archive_guard(scope, "ref") as lease:
+        assert lease is not None
+        worker = Thread(target=disable)
+        worker.start()
+        assert started.wait(2)
+        assert not done.is_set()
+    worker.join(2)
+    assert done.is_set()
+    with health.archive_guard(scope, "ref") as lease:
+        assert lease is None
