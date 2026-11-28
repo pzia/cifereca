@@ -4,6 +4,7 @@ from enum import Enum
 from collections import deque
 from threading import RLock
 from contextlib import contextmanager
+from uuid import uuid4
 
 
 class Outcome(Enum):
@@ -51,6 +52,7 @@ class PassiveHealth:
         self._lock = RLock()
         self._archive_lock = RLock()
         self._generation = 0
+        self._diagnostic_nonce = uuid4().hex
         self._transitions = deque(maxlen=256)
         self._overflow = False
 
@@ -70,6 +72,11 @@ class PassiveHealth:
         """Capture before an operation; stale completions must not be admitted."""
         with self._lock:
             return self._generation if self._enabled else None
+
+    def diagnostic_generation(self):
+        """Opaque instance/activation identity, independent of evidence tokens."""
+        with self._lock:
+            return (self._diagnostic_nonce, self._generation) if self._enabled else None
 
     def observe(self, scope, observation, *, lease):
         with self._lock:

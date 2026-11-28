@@ -1932,6 +1932,16 @@ class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
         from .core.provider_health_inventory import diagnostic_health_observations
         return diagnostic_health_observations(self.service, identity_id)
 
+    def provider_health_active_observations(self):
+        from .core.provider_health_inventory import diagnostic_health_active_observations
+        return diagnostic_health_active_observations(self.service)
+
+    def provider_health_selection_current(self, scope, capability, evidence_ref,
+                                          capture_id, generation):
+        from .core.provider_health_inventory import diagnostic_health_selection_current
+        return diagnostic_health_selection_current(
+            self.service, scope, capability, evidence_ref, capture_id, generation)
+
     def set_http_trace_include_binary(self, value: bool) -> bool:
         from copy import deepcopy
         from .http_trace import HTTP_TRACE, HTTP_CAPTURE_INCLUDE_BINARY

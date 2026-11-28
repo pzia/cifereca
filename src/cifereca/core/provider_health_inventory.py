@@ -83,9 +83,17 @@ def provider_health_count(installed, registered, cached):
                | {row[0] for row in cached})
 
 
+def _diagnostic_generation(service, health):
+    from .source_context import source_context_epoch
+    account_epoch = getattr(service, "_account_context_epoch", 0)
+    activation = health.diagnostic_generation()
+    if type(account_epoch) is not int or account_epoch < 0 or activation is None:
+        return None
+    return (source_context_epoch(service), account_epoch, *activation)
+
+
 def diagnostic_health_observations(service, identity_id):
     """Page-only bounded metadata projection, never access provider sessions."""
-    from .source_context import source_context_epoch
     from .capture_vault_service import capture_scope_authorizer
     from ..plugin_api.capture_vault import CaptureScope
 
@@ -97,10 +105,9 @@ def diagnostic_health_observations(service, identity_id):
                        "identity_id", None) == identity_id
     if not current():
         return ()
-    lease = health.lease()
-    if lease is None:
+    generation = _diagnostic_generation(service, health)
+    if generation is None:
         return ()
-    epoch = source_context_epoch(service)
     authorize = capture_scope_authorizer(service)
     rows = []
     for scope, enabled, _ in registered_health(service, health, identity_id):
@@ -131,9 +138,46 @@ def diagnostic_health_observations(service, identity_id):
                 "observed_at": observation.observed_at,
                 "evidence_ref": observation.evidence_ref if owned else None,
                 "capture_id": observation.capture_id if owned else None,
+                "generation": generation if owned else None,
             })
-    if (not current() or source_context_epoch(service) != epoch
-            or health.lease() != lease
+    if (not current() or _diagnostic_generation(service, health) != generation
             or getattr(service, "_provider_health", None) is not health):
         return ()
     return tuple(rows)
+
+
+def diagnostic_health_active_observations(service):
+    identity_id = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    return diagnostic_health_observations(service, identity_id)
+
+
+def diagnostic_health_selection_current(service, scope, capability, evidence_ref,
+                                        capture_id, generation):
+    """Revalidate a previously displayed exact private selection; no provider I/O."""
+    from ..plugin_api.capture_vault import CaptureScope
+
+    if (type(scope) is not CaptureScope
+            or not all(type(value) is str and value for value in (
+                scope.provider_id, scope.instance_id, scope.account_id, scope.identity_id,
+                evidence_ref))
+            or type(capability) is not str
+            or capability not in ("search", "detail", "rights", "loans", "personal_library")
+            or (capture_id is not None and (type(capture_id) is not str or not capture_id))
+            or type(generation) is not tuple or len(generation) != 4
+            or not all(type(generation[i]) is int and generation[i] >= 0 for i in (0, 1, 3))
+            or type(generation[2]) is not str):
+        return False
+    try:
+        return any(
+            row["generation"] == generation
+            and row["provider_id"] == scope.provider_id
+            and row["instance_id"] == scope.instance_id
+            and row["account_id"] == scope.account_id
+            and row["identity_id"] == scope.identity_id
+            and row["capability"] == capability
+            and row["evidence_ref"] == evidence_ref
+            and row["capture_id"] == capture_id
+            for row in diagnostic_health_observations(service, scope.identity_id)
+        )
+    except Exception:
+        return False

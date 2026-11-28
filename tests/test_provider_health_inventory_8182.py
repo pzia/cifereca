@@ -123,6 +123,8 @@ def test_page_health_projection_exact_identity_and_no_foreign_evidence():
         health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
     factory = DiagnosticsBrokerFactory(service)
     assert not hasattr(factory.for_plugin("other"), "provider_health_observations")
+    assert not hasattr(factory.for_plugin("other"), "provider_health_active_observations")
+    assert not hasattr(factory.for_plugin("other"), "provider_health_selection_current")
     page = factory.for_plugin("ui.page.diagnostics")
     assert page.provider_health_observations("") == ()
     assert page.provider_health_observations("b") == ()
@@ -130,6 +132,49 @@ def test_page_health_projection_exact_identity_and_no_foreign_evidence():
     assert {row["identity_id"] for row in rows} == {"", "a"}
     assert {row["evidence_ref"] for row in rows} == {None, "a-ref"}
     assert all(row["outcome"] == "auth" for row in rows)
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    exact = CaptureScope("private", "instance-a", "account-a", "a")
+    selected = next(row for row in rows if row["evidence_ref"] == "a-ref")
+    generation = selected["generation"]
+    assert page.provider_health_active_observations() == rows
+    def valid(token=generation, scope=exact, capture_id=None, capability="search"):
+        return page.provider_health_selection_current(
+            scope, capability, "a-ref", capture_id, token)
+    assert valid()
+    assert not valid(scope=CaptureScope())
+    assert not valid(capability="loans")
+    assert not valid(capture_id="unlinked")
+    assert not valid(token=tuple())
+    # Account/identity round trip without any source reconfiguration.
+    service.current_identity = owners[1]
+    service._account_context_epoch = 1
+    assert not valid()
+    service.current_identity = owners[0]
+    service._account_context_epoch = 2
+    assert not valid()
+    refreshed = next(row for row in page.provider_health_active_observations()
+                     if row["evidence_ref"] == "a-ref")["generation"]
+    assert valid(token=refreshed)
+    # A new projection with the same lease and same evidence cannot revive consent.
+    replacement = PassiveHealth()
+    replacement.set_enabled(True)
+    replacement.observe(Scope("private", "instance-a", "account-a", "a", "search"),
+                        Observation(Outcome.AUTH, "1", "now", "a-ref"),
+                        lease=replacement.lease())
+    service._provider_health = replacement
+    assert not valid(token=refreshed)
+    service._provider_health = health
+    # Link and unlink alter the exact selection independently of the generation.
+    from cifereca.plugin_api.capture_vault import CaptureSummary, CapturedSession
+    summary = CaptureSummary("linked", exact, "a-ref", "completed", "now", 1)
+    port = SimpleNamespace(read=lambda scope, cid: CapturedSession(summary, b"x"))
+    private_scope = Scope("private", "instance-a", "account-a", "a", "search")
+    assert health.link_capture(private_scope, "a-ref", "linked", lease=health.lease(),
+                               port=port, consented=True)
+    assert not valid(token=refreshed)
+    assert valid(token=refreshed, capture_id="linked")
+    health.unlink_capture(private_scope, "a-ref", "linked")
+    assert not valid(token=refreshed, capture_id="linked")
     # A reference shared with another scope cannot authorize an archive.
     health.observe(Scope("private", "instance-b", "account-b", "b", "search"),
                    Observation(Outcome.AUTH, "1", "now", "a-ref"), lease=health.lease())

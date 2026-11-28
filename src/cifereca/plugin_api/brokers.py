@@ -276,8 +276,20 @@ class DiagnosticsProviderHealthBroker(Protocol):
 
         Rows carry scope coordinates, capability, outcome, version, observation
         time and role. Private uniquely owned evidence may expose opaque
-        evidence/capture references; neither is permission to archive or export.
+        evidence/capture references and an opaque generation tuple; none is
+        permission to archive or export.
         """
+        ...
+
+    def provider_health_active_observations(self) -> tuple[Mapping[str, Any], ...]:
+        """Resolve the current identity only, for the explicit page refresh."""
+        ...
+
+    def provider_health_selection_current(
+        self, scope: Any, capability: str, evidence_ref: str,
+        capture_id: str | None, generation: tuple,
+    ) -> bool:
+        """Revalidate the exact selection before consented local work."""
         ...
 
 
