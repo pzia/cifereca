@@ -1,0 +1,85 @@
+name: P0 8216 transfer import order witness
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-transfer-import-witness.yml'
+permissions:
+  contents: read
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 4fd07df843b9d940746bbfe962a1877eec15d431
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/transfer-order"
+          mkdir -p "$out" "$RUNNER_TEMP/probe" "$RUNNER_TEMP/cov-db"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo:$RUNNER_TEMP/probe"
+          export XDG_STATE_HOME="$out/state"
+          export COVERAGE_FILE="$RUNNER_TEMP/cov-db/.coverage"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          git fetch origin 43dcbd706bf725308c683b0af1e10aa3b11d2ec6
+          test "$(git rev-parse FETCH_HEAD)" = 43dcbd706bf725308c683b0af1e10aa3b11d2ec6
+          target=tests/test_p1_4291_shared_transfer_placement.py
+          test "$(git rev-parse "HEAD:$target")" = 94544e776734895d84d25099ee0d72120149b5c3
+          cat > "$RUNNER_TEMP/probe/transfer_order_probe.py" <<'PY'
+          import sys
+          import pytest
+
+          @pytest.hookimpl(hookwrapper=True)
+          def pytest_runtest_teardown(item, nextitem):
+              yield
+              if "test_canonical_bnf_send_survives_deep_scan" not in item.nodeid:
+                  return
+              p=sys.modules.get("cifereca.paths")
+              t=sys.modules.get("cifereca.core.canonical_transfer")
+              print("AFTER_TEARDOWN_ALIAS_MATCH",p is not None and t is not None and p.acquisition_lock_file is t.acquisition_lock_file,flush=True)
+          PY
+          cases=("$target::test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider" "tests/test_catalog_083.py::test_recent_materialization_to_other_identity_keeps_source" "tests/test_catalog_083.py::test_materialize_to_identity_uses_targeted_catalog_registration")
+          for arm in old new; do
+            if [ "$arm" = new ]; then
+              git checkout 43dcbd706bf725308c683b0af1e10aa3b11d2ec6 -- "$target"
+              test "$(git rev-parse ":$target")" = 272434a0ab304fc832bb3013e31e912047079664
+            fi
+            for mode in plain coverage; do
+              opts=()
+              if [ "$mode" = coverage ]; then opts=(--cov=src/cifereca --cov-branch --cov-context=test --cov-report=); fi
+              set +e
+              python -m pytest -q -s -p transfer_order_probe "${opts[@]}" "${cases[@]}" --junitxml="$out/$arm-$mode.xml" > "$out/$arm-$mode.log" 2>&1
+              rc=$?
+              set -e
+              cat "$out/$arm-$mode.log"
+              echo "$rc" > "$out/$arm-$mode.exit"
+            done
+          done
+          python - <<'PY'
+          import os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"transfer-order"
+          for mode in ("plain","coverage"):
+              old=ET.parse(root/f"old-{mode}.xml").findall(".//testcase")
+              new=ET.parse(root/f"new-{mode}.xml").findall(".//testcase")
+              assert len(old)==len(new)==3
+              assert not any(c.find("error") is not None or c.find("skipped") is not None for c in old+new)
+              assert old[0].find("failure") is None
+              assert all(c.find("failure") is not None and "canonical_transfer_authorization_required" in (c.find("failure").text or "") for c in old[1:])
+              assert all(c.find("failure") is None for c in new)
+              assert "AFTER_TEARDOWN_ALIAS_MATCH False" in (root/f"old-{mode}.log").read_text()
+              assert "AFTER_TEARDOWN_ALIAS_MATCH True" in (root/f"new-{mode}.log").read_text()
+              assert (root/f"old-{mode}.exit").read_text().strip()=="1"
+              assert (root/f"new-{mode}.exit").read_text().strip()=="0"
+              print("ORDER_WITNESS",mode,"old 1 pass 2 fail; new 3 pass; alias restored")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transfer-order-witness
+          path: ${{ runner.temp }}/transfer-order
+          retention-days: 7
