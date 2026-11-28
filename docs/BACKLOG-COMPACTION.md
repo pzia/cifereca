@@ -194,3 +194,38 @@ capitalisation, PURGED authentifié, CI SUCCESS et ref absente pour l'ancre.
 Ne pas compter les fermetures not_planned des sources comme avancement.
 Les tranches et la latence REST peuvent exiger des cycles supplémentaires ;
 mesurer leur coût réel et le gain logique, sans promettre de purge physique.
+
+## Clôture et capitalisation résiduelle #8207 (28 novembre 2026)
+
+Le chantier #8207 est abandonné (not_planned), sans reprise implicite du maître
+#8249. Bilan historique : 21/100 lots purgés ; le groupe #8418 reste incomplet.
+Journal authentifié START + PROGRESS 10, sans DONE ni PURGED. Dernier préfixe
+observé : 18/23 mutations (sondages, non réception exhaustive) ; #199, #200,
+#207, #211 et #221 encore non compactées au contrôle de clôture documentaire.
+Conserver la ref staging/backlog/p0-8418, commit
+`1523236e24d474ab50d8d37808a0d6a7458d9843`, manifeste SHA-256
+`fd175c4944366101f0b0ea0c37686e659a79b838939eae1fd37c1c8badf1e568`.
+Ne pas modifier les claims, le maître, les corps historiques ou les journaux
+pour simuler une réception. La synthèse métier est dans TEST-ORGANIZATION.md ;
+elle ne constitue pas une autorisation de purge.
+
+Retours d'expérience :
+- Les runs 46118182813 et 46118721307 ont refusé la poursuite sur changement
+  de main. Un curseur journalisé ne décrit pas nécessairement le préfixe
+  physique après interruption ; réconcilier exactement les textes, identités,
+  relations et empreintes avant toute reprise éventuellement autorisée.
+- Les contrôles successifs et les lectures REST répétées ont un coût
+  opérationnel important. Une orchestration locale pourrait réduire les
+  rebonds, mais ne dispense pas de l'autorisation et des preuves de réception.
+- La PR expérimentale #8432, fermée sans fusion, conserve les prototypes
+  d'inventaire en lecture seule, réconciliation exacte, continuation locale
+  bornée, verrou distant coopératif et checkpoints par journal. Ne pas les
+  considérer comme des commandes supportées sur main. Le verrou ne protège
+  pas contre un ancien exécuteur qui ne le respecte pas ; une migration
+  explicite et une stratégie de récupération de lease seraient nécessaires.
+  La CI 46119421887 a enregistré 37 succès et deux échecs de mocks ; correctif
+  8bd28af proposé ensuite. Aucune recette mutatrice réelle ni purge locale
+  globale n'est attestée ici.
+- Toute éventuelle réactivation relève d'un nouvel arbitrage propriétaire,
+  avec qualification de l'état réel et des preuves canoniques. Aucun
+  déclenchement automatique au titre de cette capitalisation.
