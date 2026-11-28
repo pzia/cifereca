@@ -1,0 +1,104 @@
+name: P0 8216 ADEPT repeat candidate evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-adept-repeat-evidence.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: cc8017d91d823718bd07b4e33b97475ceaca29eb
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/adept-evidence"
+          mkdir -p "$out"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          python -m pip freeze > "$out/dependencies.txt"
+          git fetch origin c5095cf764c4789c142d46e73d9ca6cc3b26aed7
+          test "$(git rev-parse FETCH_HEAD)" = c5095cf764c4789c142d46e73d9ca6cc3b26aed7
+          target=tests/test_adept_acquisition_return_orchestration.py
+          for run in A1 B1 B2 A2; do
+            case "$run" in A*) ref=cc8017d91d823718bd07b4e33b97475ceaca29eb; blob=2e4e3d3905baaf0afff3a317bc98c8123ea40cc8;; B*) ref=c5095cf764c4789c142d46e73d9ca6cc3b26aed7; blob=fb0fe681689656dec7e438dadfbc02a9bfd6553b;; esac
+            git checkout "$ref" -- "$target"
+            test "$(git rev-parse ":$target")" = "$blob"
+            /usr/bin/time -p -o "$out/$run.time" python -m pytest -q "$target" tests/test_adept_return.py --junitxml="$out/$run.xml"
+          done
+          # Identical local mutants for both candidate arms; no network or production deployment.
+          for mutant in wrong_code runtime_call transient_db_write; do
+            for arm in A B; do
+              git restore --source=HEAD --worktree src/cifereca/services.py
+              case "$arm" in A) ref=cc8017d91d823718bd07b4e33b97475ceaca29eb; node=test_legacy_inventory_shape_cannot_start_return;; B) ref=c5095cf764c4789c142d46e73d9ca6cc3b26aed7; node=test_three_legacy_return_attempts_remain_inert;; esac
+              git checkout "$ref" -- "$target"
+              MUTANT="$mutant" python - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path("src/cifereca/services.py")
+          s=p.read_text()
+          start=s.index("    def return_adept_acquisition(")
+          end=s.index("    def _return_adept_acquisition(",start)
+          body=s[start:end]
+          m=os.environ["MUTANT"]
+          if m=="wrong_code":
+              assert body.count('code="loan_return_removed"')==1
+              body=body.replace('code="loan_return_removed"','code="wrong_refusal"')
+          elif m=="runtime_call":
+              body=body.replace("        raise AttentionRequired(","        self._kobo_adapter()\n        raise AttentionRequired(",1)
+          elif m=="transient_db_write":
+              # Mutate archived metadata on first call and leave a detectable change.
+              body=body.replace("        raise AttentionRequired(","        row = self.storage.acquisition_get(acquisition_id)\n        row['metadata']['mutation_witness'] = True\n        self.storage.acquisition_put(row)\n        raise AttentionRequired(",1)
+          assert body!=s[start:end]
+          p.write_text(s[:start]+body+s[end:])
+          PY
+              python -m py_compile src/cifereca/services.py
+              git diff --binary src/cifereca/services.py > "$out/$mutant-$arm.patch"
+              set +e
+              python -m pytest -q "$target::$node" --junitxml="$out/$mutant-$arm.xml" > "$out/$mutant-$arm.log" 2>&1
+              rc=$?
+              set -e
+              test "$rc" = 1
+              MUTANT="$mutant" ARM="$arm" python - <<'PY'
+          import os, pathlib, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"adept-evidence"
+          m,a=os.environ["MUTANT"],os.environ["ARM"]
+          tree=ET.parse(root/f"{m}-{a}.xml")
+          cases=tree.findall(".//testcase")
+          assert len(cases)==(3 if a=="A" else 1)
+          assert all(c.find("failure") is not None and c.find("error") is None for c in cases)
+          print("MUTANT_KILLED",m,a,len(cases))
+          PY
+            done
+            cmp "$out/$mutant-A.patch" "$out/$mutant-B.patch"
+          done
+          python - <<'PY'
+          import os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"adept-evidence"
+          keys={}
+          for run in ("A1","B1","B2","A2"):
+              cases=ET.parse(root/f"{run}.xml").findall(".//testcase")
+              assert all(not any(c.find(t) is not None for t in ("error","failure","skipped")) for c in cases)
+              keys[run]={(c.get("classname"),c.get("name")) for c in cases}
+              assert len(keys[run])==len(cases)
+              print("ABBA",run,len(cases),sum(float(c.get("time","0")) for c in cases),(root/f"{run}.time").read_text().strip())
+          assert keys["A1"]==keys["A2"] and keys["B1"]==keys["B2"]
+          removed=keys["A1"]-keys["B1"]
+          added=keys["B1"]-keys["A1"]
+          assert len(removed)==3 and all(k[1].startswith("test_legacy_inventory_shape_cannot_start_return[") for k in removed)
+          assert len(added)==1 and next(iter(added))[1]=="test_three_legacy_return_attempts_remain_inert"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adept-repeat-evidence
+          path: ${{ runner.temp }}/adept-evidence
+          retention-days: 7
