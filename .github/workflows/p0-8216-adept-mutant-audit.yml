@@ -1,0 +1,67 @@
+name: P0 8216 ADEPT mutant oracle audit
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-adept-mutant-audit.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114405647
+          name: adept-repeat-evidence
+          path: ${{ runner.temp }}/evidence
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46114794116
+          name: kobo-retry-evidence
+          path: ${{ runner.temp }}/kobo
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          report=[]
+          specs={
+              "evidence":{
+                  "wrong_code":("assert caught.value.code", "AssertionError", 3, 1),
+                  "runtime_call":("retired return cannot read ADEPT inventory", "AssertionError",3,1),
+                  "transient_db_write":("assert service.storage.acquisition_get(aid) == before_row","AssertionError",3,1),
+              },
+              "kobo":{
+                  "wrong_code":("wrong_refusal","AssertionError",10,4),
+                  "provider_call":("retired D3 must not fetch or execute bytes","Failed",10,4),
+                  "executor_call":("retired D3 must not fetch or execute bytes","Failed",10,4),
+                  "destination_write":("assert path.read_bytes() == original","AssertionError",2,2),
+              },
+          }
+          for directory,mutants in specs.items():
+              for mutant,(oracle,kind,na,nb) in mutants.items():
+                  for arm,n in (("A",na),("B",nb)):
+                      cases=ET.parse(root/directory/f"{mutant}-{arm}.xml").findall(".//testcase")
+                      failures=[c.find("failure") for c in cases if c.find("failure") is not None]
+                      assert len(failures)==n
+                      assert not any(c.find("error") is not None or c.find("skipped") is not None for c in cases)
+                      for f in failures:
+                          lines=(f.text or "").splitlines()
+                          errors=[line.strip() for line in lines if line.lstrip().startswith("E ")]
+                          matched=oracle in (f.text or "") and any(kind in line for line in errors)
+                          report.append(dict(suite=directory,mutant=mutant,arm=arm,expected_oracle=oracle,matched=matched,last_error=errors[-1][:300] if errors else ""))
+                      print("AUDIT",directory,mutant,arm,"expected",n,"matched",sum(x["matched"] for x in report if x["suite"]==directory and x["mutant"]==mutant and x["arm"]==arm))
+          (root/"oracle-audit.json").write_text(json.dumps(report,indent=2))
+          assert all(x["matched"] for x in report), "Unexpected failure cause; inspect audit artifact"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutant-oracle-audit
+          path: ${{ runner.temp }}/oracle-audit.json
+          retention-days: 7
