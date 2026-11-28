@@ -508,8 +508,10 @@ def aggregate_performance_campaign(out, manifest):
             library = data["library_563_u0_comparison"]
             for renderer in ("baseline_u0", "extracted"):
                 add("library.cpu." + renderer, library["process_cpu_samples_ms"][renderer], 3)
-                for phase, values in library["phase_samples_ms"][renderer].items():
-                    add("library.phase." + renderer + "." + phase, values, 3)
+                for phase in ("row_constructor", "facets", "gtk_show_rows",
+                              "pending_selection", "selection_callback"):
+                    add("library.phase." + renderer + "." + phase,
+                        library["phase_samples_ms"][renderer][phase], 3)
             for name in ("mainwindow_constructor_ms", "library_filter_sync_ms",
                          "search_projection_sync_ms", "search_selection_sync_ms",
                          "search_selection_after_paint_ms"):
@@ -543,7 +545,16 @@ def run_performance_campaign(args):
     out = args.out.resolve()
     if out.is_relative_to(ROOT.resolve()):
         raise SystemExit("Performance campaign requires output outside the checkout")
-    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+    ci_mode = args.ci_synthetic_campaign
+    if ci_mode:
+        expected = os.environ.get("CIFERECA_PERF_EXPECTED_SHA", "")
+        actual = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+        if (os.environ.get("GITHUB_ACTIONS") != "true" or expected != actual
+                or len(expected) != 40 or any(c not in "0123456789abcdef" for c in expected)):
+            raise SystemExit("Synthetic CI campaign requires exact checkout SHA")
+    elif os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         raise SystemExit("Run performance campaign on an isolated measurement host")
     xvfb = shutil.which("xvfb-run")
     if not xvfb:
@@ -619,6 +630,24 @@ def run_performance_campaign(args):
     # Do not silently drop failed batches or substitute a partial percentile.
     manifest["aggregation"] = aggregate_performance_campaign(out, manifest)
     persist()
+    if ci_mode:
+        # Construct a separate closed numeric receipt; never publish the private
+        # campaign manifest, screen.json, diagnostic events, logs or screenshots.
+        receipt = {
+            "schema": "cifereca.gtk-baseline-ci/1",
+            "git_sha": manifest["git_sha"], "width": args.width,
+            "origin": "synthetic_gtk_hosted_runner",
+            "performance_verdict": "not_qualified",
+            "attempts": [
+                {"batch": a["batch"], "capture_enabled": a["capture_enabled"],
+                 "status": a["status"]} for a in manifest["attempts"]
+            ],
+            "rejected_count": len(manifest["aggregation"]["rejected_batches"]),
+            "cells": manifest["aggregation"]["cells"],
+        }
+        (out / "numeric-receipt.json").write_text(
+            json.dumps(receipt, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+        )
     return 0 if (all(a["status"] == "PASS" for a in manifest["attempts"])
                  and not manifest["aggregation"]["rejected_batches"]) else 1
 
@@ -633,9 +662,13 @@ def main() -> int:
                         help="Historical functional recipe: three retained warm pairs")
     parser.add_argument("--performance-campaign", action="store_true",
                         help="Private isolated 30-pair campaign per capture state")
+    parser.add_argument("--ci-synthetic-campaign", action="store_true",
+                        help="Closed numeric receipt on dedicated GitHub Actions runner")
     parser.add_argument("--performance-batch", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-detail", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.ci_synthetic_campaign and not args.performance_campaign:
+        parser.error("CI synthetic mode requires performance campaign")
     if args.performance_campaign:
         if args.window_baseline or args.slow_check or args.performance_batch or args.capture_detail:
             parser.error("Performance campaign is independent of functional acceptance")

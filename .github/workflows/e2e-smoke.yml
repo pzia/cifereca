@@ -7,6 +7,11 @@ on:
         description: 'Exact scenario ID from e2e/run.py. Leave empty to run the full smoke suite.'
         required: false
         type: string
+      performance_campaign:
+        description: 'Run isolated synthetic baseline campaign (no performance verdict).'
+        required: false
+        type: boolean
+        default: false
   # Integrated main reception: every path that requires PR GTK E2E also
   # requires a full replay after merge. Keep both lists in sync via tests.
   push:
@@ -329,5 +334,54 @@ jobs:
         with:
           name: notice-matrix-receipt
           path: ${{ runner.temp }}/notice-matrix-receipt.json
+          if-no-files-found: error
+          retention-days: 2
+
+  # Explicit one-PR pilot, plus manual dispatch for subsequent measurements.
+  # No dependency from the existing required gate to this optional job.
+  performance_campaign:
+    name: GTK synthetic performance baseline
+    needs: [startup]
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.performance_campaign) || (github.event_name == 'pull_request' && github.event.pull_request.number == 8473 && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'coreui/p0-8459-1741-warm-baseline') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install GTK E2E runtime
+        run: bash scripts/ci-install-gtk-e2e-runtime.sh
+      - name: Prepare isolated campaign runtime
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/perf-venv"
+          "$RUNNER_TEMP/perf-venv/bin/python" -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12"
+      - name: Execute both widths sequentially at exact SHA
+        env:
+          CIFERECA_PERF_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CIFERECA_PERF_EXPECTED_SHA"
+          status=0
+          for width in 1366 1600; do
+            out="$RUNNER_TEMP/perf-private-$width"
+            dbus-run-session -- "$RUNNER_TEMP/perf-venv/bin/python" e2e/diagnostics_navigation_probe.py --width "$width" --out "$out" --performance-campaign --ci-synthetic-campaign >/dev/null 2>&1 || status=1
+            if test -f "$out/numeric-receipt.json"; then
+              mkdir -p "$RUNNER_TEMP/perf-public"
+              cp "$out/numeric-receipt.json" "$RUNNER_TEMP/perf-public/receipt-$width.json"
+              cat "$RUNNER_TEMP/perf-public/receipt-$width.json"
+            else
+              echo "CIFERECA_PERF_RECEIPT_MISSING:$width"
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Upload closed numeric baseline receipts only
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: synthetic-performance-receipts
+          path: ${{ runner.temp }}/perf-public/receipt-*.json
           if-no-files-found: error
           retention-days: 2
