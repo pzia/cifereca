@@ -378,6 +378,71 @@ class Tests(unittest.TestCase):
             with self.assertRaises(c.Refusal):
                 c.continue_lot(self.api,stage,second,HEAD)
 
+    def test_standard_twenty_and_continuation(self):
+        for size in (1, 3, 5, 20, 21):
+            with self.subTest(size=size):
+                self.exercise_standard(size)
+
+    def exercise_standard(self, size):
+        self.api = API()
+        event = self.staging_issue()
+        members = list(range(200, 200 + size - 1))
+        event["body"] = "Evidence #42 " * 100 + "\n<!-- backlog-staging-v1: " + (
+            ",".join(map(str, members)) or "none") + " ; public -->"
+        issues = {123: dict(event, comments=0)}
+        comments = {123: []}
+        template = self.api.comments[0]
+        for n in members:
+            issues[n] = dict(event, number=n, id=n, labels=[], comments=1,
+                             body="Historical evidence #123 " * 100)
+            comments[n] = [dict(template, id=1000+n, body="Repeated proof #123 " * 100)]
+        def get(path):
+            if path == "/git/ref/heads/main":
+                return {"ref":"refs/heads/main","object":{"sha":HEAD}}
+            parts = path.split("/")
+            n = int(parts[2])
+            if len(parts) == 3:
+                return dict(issues[n])
+            if parts[3].startswith("sub_issues?"):
+                return []
+            return [dict(x) for x in comments[n]]
+        def mark(n, body):
+            value = dict(template, id=3000+len(comments[n]), body=body,
+                         user={"id":41898282,"login":"github-actions[bot]"})
+            comments[n].append(value)
+            issues[n]["comments"] += 1
+            return dict(value)
+        def replace_comment(cid, body):
+            next(x for rows in comments.values() for x in rows if x["id"] == cid)["body"] = body
+        stage = Stage()
+        with patch.object(self.api, "get", side_effect=get), \
+             patch.object(self.api, "mark", side_effect=mark), \
+             patch.object(self.api, "replace_body", side_effect=lambda n,b: issues[n].update(body=b)), \
+             patch.object(self.api, "replace_comment", side_effect=replace_comment):
+            if size == 21:
+                with self.assertRaisesRegex(c.Refusal, "corpus issue limit"):
+                    c.consolidate(self.api, stage, issues[123], HEAD, clock=lambda: NOW)
+                self.assertEqual(stage.published, 0)
+                return
+            result = c.consolidate(self.api, stage, dict(issues[123]), HEAD, clock=lambda: NOW)
+            control = 900
+            while result["status"] == "LOT_PENDING":
+                control += 1
+                data = {"version":1,"p0":123,"stage_sha":STAGE,
+                        "manifest_sha256":result["manifest_sha256"],"main_sha":HEAD,
+                        "cursor":result["cursor"]}
+                issues[control] = dict(event, number=control, id=control, labels=[],
+                    assignees=[], comments=0, title=c.CONTINUE_TITLE+"123",
+                    body=c.encode(data).decode())
+                comments[control] = []
+                result = c.continue_lot(self.api, stage, issues[control], HEAD)
+                with self.assertRaises(c.Refusal):
+                    c.continue_lot(self.api, stage, issues[control], HEAD)
+            self.assertEqual(result["status"], "STAGED_AND_COMPACTED")
+            manifest = c.strict_json(stage.raw)
+            self.assertEqual(len(manifest["snapshots"]), size)
+            c.verify_compacted_corpus(self.api, manifest, c.sha256(stage.raw), STAGE, 999, completed=True)
+
     def test_snapshot_retries_only_stable_timestamp_drift(self):
         self.staging_issue()
         original = self.api.get
