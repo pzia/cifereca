@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [4,7]
+        shard: [1,4,7]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,10 +60,12 @@ jobs:
           PY
             mapfile -t files < "$out/$label.files"
             test "${#files[@]}" -gt 0
-            /usr/bin/time -p -o "$out/$label.plain.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --junitxml="$out/$label.plain.xml" --durations=0 | tee "$out/$label.plain.log"
+            /usr/bin/time -p -o "$out/$label.plain.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --junitxml="$out/$label.plain.xml" > "$out/$label.plain.log" 2>&1 || { tail -c 16000 "$out/$label.plain.log"; exit 1; }
+            tail -c 2000 "$out/$label.plain.log"
             export COVERAGE_FILE="$out/$label.coverage"
             mkdir -p "$out/clocks"
-            /usr/bin/time -p -o "$out/clocks/$label.coverage.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/$label.coverage.xml" | tee "$out/$label.coverage.log"
+            /usr/bin/time -p -o "$out/clocks/$label.coverage.time" python -m pytest -q -n 3 --dist=loadfile "${files[@]}" --cov=src/cifereca --cov-branch --cov-context=test --cov-report= --junitxml="$out/$label.coverage.xml" > "$out/$label.coverage.log" 2>&1 || { tail -c 16000 "$out/$label.coverage.log"; exit 1; }
+            tail -c 2000 "$out/$label.coverage.log"
             test -z "$(git diff --name-only)"
             git diff --cached --binary > "$out/$label.final.patch"
             cmp "$out/$label.isolation.patch" "$out/$label.final.patch"
