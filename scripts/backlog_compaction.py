@@ -8,6 +8,8 @@ import json
 import os
 import re
 import subprocess
+import secrets
+from contextlib import contextmanager
 import sys
 import tempfile
 import urllib.error
@@ -94,7 +96,9 @@ class ReadOnlyAPI:
         return self._request("GET", path, 200)
 
     def _request(self, method, path, status, payload=None):
-        req = urllib.request.Request(API + path, method=method,
+        url = ("https://api.github.com/user" if method == "GET" and path == "/__authenticated_user__"
+               else API + path)
+        req = urllib.request.Request(url, method=method,
             data=None if payload is None else encode(payload), headers={
             "Authorization": "Bearer " + self.token,
             "Accept": "application/vnd.github+json",
@@ -115,14 +119,28 @@ class ReadOnlyAPI:
 
 class WriteAPI(ReadOnlyAPI):
     """Fixed issue mutation endpoints; staging must be verified first."""
+    write_guard = None
+
+    def authenticated_owner(self):
+        actor = self._request("GET", "/__authenticated_user__", 200)
+        require(actor.get("id") == OWNER_ID and actor.get("login") == "pzia",
+                "local token is not repository owner")
+
+    def guard_write(self):
+        if self.write_guard is not None:
+            self.write_guard()
+
     def mark(self, pilot, marker):
         require(marker.startswith(("BACKLOG-STAGING-START v1 ", "BACKLOG-STAGING-DONE v1 ", "BACKLOG-STAGING-PURGE-START v1 ", "BACKLOG-STAGING-PURGED v1 ", "BACKLOG-STAGING-PROGRESS v1 ")), "invalid staging marker")
+        self.guard_write()
         return self._request("POST", f"/issues/{number(pilot)}/comments", 201, {"body": marker})
 
     def replace_body(self, n, body):
+        self.guard_write()
         return self._request("PATCH", f"/issues/{number(n)}", 200, {"body": body})
 
     def replace_comment(self, comment_id, body):
+        self.guard_write()
         return self._request("PATCH", f"/issues/comments/{number(comment_id)}", 200, {"body": body})
 
 def issue_data(api, n, closed=True):
@@ -456,6 +474,9 @@ def collect_closure(api, event_issue, current):
     return manifest
 
 STAGE_PREFIX = "refs/heads/staging/backlog/p0-"
+EXECUTION_LOCK = "refs/heads/staging/backlog/execution-lock"
+BOT_AUTHOR = {"login": "github-actions[bot]", "id": 41898282}
+OWNER_AUTHOR = {"login": "pzia", "id": OWNER_ID}
 START = "BACKLOG-STAGING-START v1 "
 DONE = "BACKLOG-STAGING-DONE v1 "
 PURGE_START = "BACKLOG-STAGING-PURGE-START v1 "
@@ -476,6 +497,7 @@ class GitStage:
     """Isolated bare repo, fixed remote, no credentials in argv, leases on both writes."""
     def __init__(self, directory, token=None):
         self.directory = directory
+        self.lock_commit = None
         self.remote = "https://github.com/" + REPO + ".git"
         self.env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": directory,
                     "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
@@ -496,7 +518,11 @@ class GitStage:
             raise Refusal("Git staging operation failed; do not retry mutations") from None
 
     def remote_head(self, n):
-        ref = stage_ref(n)
+        return self.remote_ref(stage_ref(n))
+
+    def remote_ref(self, ref):
+        require(ref == EXECUTION_LOCK or re.fullmatch(r"refs/heads/staging/backlog/p0-[1-9]\d*", ref),
+                "invalid staging ref")
         lines = self.run("ls-remote", "--refs", self.remote, ref).splitlines()
         if not lines:
             return None
@@ -504,6 +530,39 @@ class GitStage:
         digest, name = lines[0].decode("ascii").split("\t")
         require(name == ref, "wrong staging ref")
         return checked_sha(digest)
+
+    def assert_execution_lock(self):
+        require(self.lock_commit is not None and
+                self.remote_ref(EXECUTION_LOCK) == self.lock_commit, "execution lock lost")
+
+    @contextmanager
+    def execution_lock(self):
+        """One cooperative writer across CLI/CI. Unknown write outcome retains the lease."""
+        require(self.lock_commit is None and self.remote_ref(EXECUTION_LOCK) is None,
+                "execution lock held; reconcile before recovery")
+        commit = self.make_commit(encode({"version": 1, "kind": "execution-lock",
+                                          "nonce": secrets.token_hex(32)}))
+        self.run("push", "--force-with-lease=" + EXECUTION_LOCK + ":", self.remote,
+                 commit + ":" + EXECUTION_LOCK)
+        self.lock_commit = commit
+        self.assert_execution_lock()
+
+        def release():
+            self.assert_execution_lock()
+            self.run("push", "--force-with-lease=" + EXECUTION_LOCK + ":" + commit,
+                     self.remote, ":" + EXECUTION_LOCK)
+            require(self.remote_ref(EXECUTION_LOCK) != commit, "execution lock still present")
+            self.lock_commit = None
+
+        try:
+            yield
+        except Refusal as exc:
+            # main drift is a definite guard refusal, not an ambiguous remote mutation.
+            if str(exc) == "main changed":
+                release()
+            raise
+        else:
+            release()
 
     def make_commit(self, raw):
         require(0 < len(raw) <= LOT_STAGE_LIMIT, "staging corpus too large")
@@ -531,6 +590,8 @@ class GitStage:
         return self.read_commit(commit)
 
     def publish(self, n, raw):
+        if self.lock_commit is not None:
+            self.assert_execution_lock()
         require(self.remote_head(n) is None, "staging already exists")
         commit = self.make_commit(raw)
         ref = stage_ref(n)
@@ -543,6 +604,8 @@ class GitStage:
         return commit
 
     def purge(self, n, commit):
+        if self.lock_commit is not None:
+            self.assert_execution_lock()
         require(self.remote_head(n) == checked_sha(commit), "staging ref drift")
         ref = stage_ref(n)
         self.run("push", "--force-with-lease=" + ref + ":" + commit, self.remote, ":" + ref)
@@ -619,7 +682,8 @@ def expected_prefix(manifest, count):
             c.pop("updated_at", None)
     return result
 
-def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
+def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None,
+                      journal_authors=(BOT_AUTHOR,)):
     """Verify the entire real prefix separately from the durable journal cursor."""
     if journal_count is None:
         journal_count = count
@@ -641,7 +705,7 @@ def verify_lot_prefix(api, manifest, digest, commit, count, journal_count=None):
             markers = [START + digest + " " + commit] + [
                 progress_marker(digest, commit, i) for i in range(LOT_BATCH, journal_count + 1, LOT_BATCH)]
             require([c["body"] for c in journals] == markers
-                    and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
+                    and all(c["author"] in journal_authors
                             for c in journals), "lot journal or cursor mismatch")
             master, members, _ = lot_attachment(api, snap["issue"])
             require(master == manifest["master"] and set(members) == set(originals) - {parent}
@@ -790,11 +854,28 @@ def continue_lot(api, stage, event_issue, current):
     applied = data["applied"] if recovery else cursor
     require(type(applied) is int and cursor <= applied <= end
             and (not recovery or cursor == 0 or applied > cursor), "invalid applied prefix")
-    states = verify_lot_prefix(api, manifest, digest, commit, applied, journal_count=cursor)
+    def authority_guard():
+        require(snapshot(api, control) == control_before, "continuation control changed")
+    return apply_lot_tranche(api, stage, manifest, digest, commit, cursor, applied,
+                             current, authority_guard)
+
+
+def apply_lot_tranche(api, stage, manifest, digest, commit, cursor, applied,
+                      current, authority_guard, journal_authors=(BOT_AUTHOR,),
+                      writer_author=None):
+    """Shared continuation engine; caller must establish authorization and writer lock."""
+    parent = manifest["p0"]
+    mutations = lot_plan(manifest)
+    require(type(cursor) is int and 0 <= cursor < len(mutations)
+            and cursor % LOT_BATCH == 0, "invalid progress cursor")
+    end = min(cursor + LOT_BATCH, len(mutations))
+    require(type(applied) is int and cursor <= applied <= end, "invalid applied prefix")
+    states = verify_lot_prefix(api, manifest, digest, commit, applied, journal_count=cursor,
+                               journal_authors=journal_authors)
     written = set()
     def guard():
         main_guard(api, current)
-        require(snapshot(api, control) == control_before, "continuation control changed")
+        authority_guard()
         require(fingerprint(snapshot(api, manifest["master"])) == manifest["master_sha256"], "master inventory drift")
         for n, snap in states.items():
             observed = snapshot(api, n)
@@ -821,6 +902,9 @@ def continue_lot(api, stage, event_issue, current):
     marker = DONE + digest + " " + commit if end == len(mutations) else progress_marker(digest, commit, end)
     response = api.mark(parent, marker)
     require(response.get("body") == marker, "continuation journal mismatch")
+    if writer_author is not None:
+        require({k: response["user"][k] for k in writer_author} == writer_author,
+                "unexpected journal writer")
     after = snapshot(api, parent)
     expected_change(states[parent], after, marker=response)
     states[parent] = after
@@ -836,7 +920,8 @@ def canonical_evidence(ref, path):
             and all(part not in ("", ".", "..") for part in path.split("/")), "invalid evidence path")
     return git("show", ref + ":" + path)
 
-def verify_compacted_corpus(api, manifest, digest, commit, control, completed=False):
+def verify_compacted_corpus(api, manifest, digest, commit, control, completed=False,
+                            journal_authors=(BOT_AUTHOR,)):
     """Verify the complete compacted projection and exact bot journals."""
     parent = manifest["p0"]
     originals = manifest["snapshots"]
@@ -865,7 +950,7 @@ def verify_compacted_corpus(api, manifest, digest, commit, control, completed=Fa
             if completed:
                 expected_journals.append(DONE + digest + " " + commit)
             require([c["body"] for c in journals] == expected_journals
-                    and all(c["author"] == {"login": "github-actions[bot]", "id": 41898282}
+                    and all(c["author"] in journal_authors
                             for c in journals), "missing exact START or progress")
         else:
             require(not journals, "unexpected child journal")
@@ -1006,7 +1091,9 @@ def main(argv=None):
                                  else receive_completed if event_issue["title"].startswith(RECEIVE_TITLE)
                                  else continue_lot if event_issue["title"].startswith(CONTINUE_TITLE)
                                  else consolidate)
-                    result = operation(api, stage, event_issue, current)
+                    with stage.execution_lock():
+                        api.write_guard = stage.assert_execution_lock
+                        result = operation(api, stage, event_issue, current)
         else:
             require(bool(re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*){0,2}", args.issues)), "invalid audit list")
             numbers = issue_numbers([int(n) for n in args.issues.split(",")])
