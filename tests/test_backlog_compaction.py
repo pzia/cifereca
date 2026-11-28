@@ -576,6 +576,47 @@ class Tests(unittest.TestCase):
         self.assertIsNone(stage.commit)
         self.assertEqual(self.api.writes, [])
 
+    def test_execution_lock_serializes_writers_and_releases_exact_lease(self):
+        with tempfile.TemporaryDirectory() as remote_dir, \
+                tempfile.TemporaryDirectory() as first_dir, \
+                tempfile.TemporaryDirectory() as second_dir:
+            remote = c.GitStage(remote_dir)
+            first, second = c.GitStage(first_dir), c.GitStage(second_dir)
+            first.remote = second.remote = remote.directory
+            with first.execution_lock():
+                first.assert_execution_lock()
+                held = first.remote_ref(c.EXECUTION_LOCK)
+                self.assertEqual(held, first.lock_commit)
+                with self.assertRaises(c.Refusal):
+                    with second.execution_lock():
+                        self.fail("concurrent writer acquired lock")
+                self.assertEqual(first.remote_ref(c.EXECUTION_LOCK), held)
+            self.assertIsNone(first.remote_ref(c.EXECUTION_LOCK))
+            with second.execution_lock():
+                second.assert_execution_lock()
+                self.assertNotEqual(second.lock_commit, held)
+            self.assertIsNone(second.remote_ref(c.EXECUTION_LOCK))
+
+    def test_execution_lock_retains_ambiguous_failure(self):
+        with tempfile.TemporaryDirectory() as remote_dir, \
+                tempfile.TemporaryDirectory() as first_dir, \
+                tempfile.TemporaryDirectory() as second_dir:
+            remote = c.GitStage(remote_dir)
+            first, second = c.GitStage(first_dir), c.GitStage(second_dir)
+            first.remote = second.remote = remote.directory
+            with self.assertRaisesRegex(c.Refusal, "main changed"):
+                with first.execution_lock():
+                    raise c.Refusal("main changed")
+            self.assertIsNone(first.remote_ref(c.EXECUTION_LOCK))
+            with self.assertRaisesRegex(c.Refusal, "GitHub request failed"):
+                with first.execution_lock():
+                    raise c.Refusal("GitHub request failed; do not retry mutations")
+            held = first.remote_ref(c.EXECUTION_LOCK)
+            self.assertEqual(held, first.lock_commit)
+            with self.assertRaises(c.Refusal):
+                with second.execution_lock():
+                    self.fail("retained lock was stolen")
+
     def test_ref_injection(self):
         with self.assertRaises(c.Refusal):
             c.stage_ref("1/../../main")
