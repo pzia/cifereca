@@ -797,6 +797,8 @@ class SyncSourceRef:
     sync_capabilities: tuple[str, ...] = ()
     phase_states: tuple[SyncPhaseState, ...] = ()
     last_cycle: SyncSourceCycleReceipt | None = None
+    # Presentation only; never used for admission or freshness.
+    contention_observed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

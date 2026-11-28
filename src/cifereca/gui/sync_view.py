@@ -588,6 +588,8 @@ def sync_source_phase_summary(source: object) -> str:
             continue
         row = matches[0]
         raw_status = getattr(row, "status", None)
+        if phase == "discover_rights" and getattr(source, "contention_observed", False) is True:
+            raw_status = "busy"
         status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
         # An unsupported phase must not be rewritten based on a supplier ID.
         # The capability projection is the only available generic evidence.
@@ -774,6 +776,8 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     # Each candidate is a fixed UI label. Phase and status values are used
     # solely as dictionary keys; arbitrary upstream data never becomes text.
     candidates: list[tuple[str, str]] = []
+    if getattr(source, "contention_observed", False) is True:
+        candidates.append(("warning", "Notices et droits : déjà en cours"))
     information_only = sync_source_informational_partial(source)
     entries = getattr(source, "phase_states", ())
     if isinstance(entries, (tuple, list)) and len(entries) <= 8:
@@ -914,6 +918,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         # Missing/malformed activation is not evidence that a source is OFF,
         # nor permission to show a historical success as current state.
         sync_label = "Activation non confirmée"
+    elif getattr(source, "contention_observed", False) is True:
+        sync_label = "Déjà en cours"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":

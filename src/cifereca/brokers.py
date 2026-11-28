@@ -279,6 +279,27 @@ class SynchronizationBrokerImpl:
     _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
+    _contention: dict[str, tuple[float, Any]] = field(default_factory=dict, repr=False)
+    _contention_lock: Any = field(default_factory=threading.Lock, repr=False)
+
+    def _mark_contention(self, source_id: str, snapshot: Any) -> None:
+        from time import monotonic
+        with self._contention_lock:
+            now = monotonic()
+            self._contention = {k: v for k, v in self._contention.items() if v[0] > now}
+            self._contention[source_id] = (now + 30, snapshot)
+
+    def _contention_observed(self, source_id: str) -> bool:
+        from time import monotonic
+        raw = self.service.storage.metadata_get("sync.source.state." + source_id)
+        with self._contention_lock:
+            marker = self._contention.get(source_id)
+            if marker is None:
+                return False
+            if marker[0] <= monotonic() or marker[1] != raw:
+                self._contention.pop(source_id, None)
+                return False
+            return True
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -685,6 +706,7 @@ class SynchronizationBrokerImpl:
                 account, state, tuple(declared_sync_caps),
             ),
             last_cycle=receipt,
+            contention_observed=self._contention_observed(source_id),
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
@@ -1104,6 +1126,8 @@ class SynchronizationBrokerImpl:
                                  ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if not self.service.storage.metadata_compare_publish(state_key, previous_raw, provisional):
             return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
+        with self._contention_lock:
+            self._contention.pop(source_id, None)
         self._notify()
 
         def publish_terminal():
@@ -1240,7 +1264,9 @@ class SynchronizationBrokerImpl:
                 # No Core admission: retain prior clocks and terminal evidence.
                 self.service.storage.metadata_compare_restore(
                     state_key, provisional, previous_raw,
-                ); self._notify()
+                )
+                self._mark_contention(source_id, previous_raw)
+                self._notify()
                 return SyncResult(
                     ok=False, warnings=("Synchronisation déjà en cours",),
                     facts={"status": "busy", "reason": "operation_busy"},
