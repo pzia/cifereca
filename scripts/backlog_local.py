@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only local preflight for #8207. Never writes GitHub issues or refs."""
+"""Local inventory, reconciliation and explicitly authorized staged-lot continuation (#8207)."""
 import argparse
 import json
 import os
@@ -12,7 +12,8 @@ if __package__:
 else:
     import backlog_compaction as engine
 
-BOT = {"login": "github-actions[bot]", "id": 41898282}
+BOT = engine.BOT_AUTHOR
+LOCAL_AUTHORS = (BOT, engine.OWNER_AUTHOR)
 
 
 def main_sha(api):
@@ -21,10 +22,10 @@ def main_sha(api):
     return engine.checked_sha(ref["object"]["sha"])
 
 
-def journal(snap):
+def journal(snap, authors=(BOT,)):
     markers = [c for c in snap["comments"]
                if c["body"].startswith("BACKLOG-STAGING-")]
-    engine.require(all({k: c["user"][k] for k in BOT} == BOT
+    engine.require(all({k: c["user"][k] for k in BOT} in authors
                        for c in markers), "unauthenticated staging journal")
     return [c["body"] for c in markers]
 
@@ -63,9 +64,9 @@ def infer_prefix(manifest, observed):
     return applied
 
 
-def reconcile(api, stage, anchor, current):
+def reconcile(api, stage, anchor, current, authors=LOCAL_AUTHORS):
     snap = engine.snapshot(api, anchor)
-    markers = journal(snap)
+    markers = journal(snap, authors)
     engine.require(bool(markers), "no staging journal")
     match = re.fullmatch(re.escape(engine.START) + r"([0-9a-f]{64}) ([0-9a-f]{40})", markers[0])
     engine.require(match is not None, "invalid START")
@@ -84,7 +85,8 @@ def reconcile(api, stage, anchor, current):
     engine.require(cursor <= applied <= min(cursor + engine.LOT_BATCH, len(plan)),
                    "mutation prefix outside journal tranche")
     # Use the authoritative engine, not just the text-based inference.
-    engine.verify_lot_prefix(api, manifest, digest, commit, applied, journal_count=cursor)
+    engine.verify_lot_prefix(api, manifest, digest, commit, applied, journal_count=cursor,
+                             journal_authors=authors)
     engine.require(stage.remote_head(anchor) == commit, "staging ref drift")
     engine.main_guard(api, current)
     version = 1 if cursor > 0 and applied == cursor else 2
@@ -138,7 +140,7 @@ def plan_inventory(api, master, current):
         lots.append(row)
     hints = []
     for anchor in sorted(anchors):
-        markers = journal(engine.snapshot(api, anchor))
+        markers = journal(engine.snapshot(api, anchor), LOCAL_AUTHORS)
         # Journal hints only: no CI receipt or ref-absence proof is inferred.
         last = markers[-1] if markers else ""
         kind = next((name for prefix, name in (
@@ -154,6 +156,68 @@ def plan_inventory(api, master, current):
             "qualification_complete": False, "purge_receipts_verified": False}
 
 
+def local_checkout(current):
+    engine.require(engine.head() == current, "checkout is not exact main")
+    engine.require(not engine.git("status", "--porcelain", "--untracked-files=normal"),
+                   "checkout is dirty")
+
+
+def ensure_no_closure_runs(api):
+    # Reject outstanding legacy CI runs during cutover. New closure runs also
+    # contend for the shared remote lease before any mutation.
+    for status in ("queued", "in_progress", "waiting", "pending", "requested"):
+        runs = api._request("GET", "/actions/workflows/backlog-compaction.yml/runs"
+                            "?status=" + status + "&per_page=1", 200)
+        engine.require(runs.get("total_count") == 0 and runs.get("workflow_runs") == [],
+                       "backlog CI active or queued")
+
+
+def continue_local(api, stage, anchor, master, commit, digest, current):
+    """Explicitly authorized existing stage only; no new stage and no purge."""
+    engine.require(anchor not in (8195, master), "invalid local anchor")
+    engine.require(bool(re.fullmatch(r"[0-9a-f]{64}", digest)), "invalid manifest digest")
+    engine.checked_sha(commit)
+    api.authenticated_owner()
+    local_checkout(current)
+    engine.main_guard(api, current)
+    ensure_no_closure_runs(api)
+    with stage.execution_lock():
+        api.write_guard = stage.assert_execution_lock
+        try:
+            ensure_no_closure_runs(api)
+            def authority_guard():
+                stage.assert_execution_lock()
+                local_checkout(current)
+            receipt = reconcile(api, stage, anchor, current)
+            engine.require((receipt["master"], receipt["stage_sha"], receipt["manifest_sha256"])
+                           == (master, commit, digest), "local authorization scope mismatch")
+            raw = stage.read_remote(anchor, commit)
+            engine.require(engine.sha256(raw) == digest, "staging digest mismatch")
+            manifest = engine.strict_json(raw)
+            cursor, applied = receipt["cursor"], receipt["applied"]
+            while True:
+                result = engine.apply_lot_tranche(
+                    api, stage, manifest, digest, commit, cursor, applied,
+                    current, authority_guard, journal_authors=LOCAL_AUTHORS,
+                    writer_author=engine.OWNER_AUTHOR)
+                cursor = result["cursor"]
+                if result["status"] == "STAGED_AND_COMPACTED":
+                    engine.verify_compacted_corpus(api, manifest, digest, commit, 8195,
+                                                   completed=True, journal_authors=LOCAL_AUTHORS)
+                    authority_guard()
+                    engine.main_guard(api, current)
+                    engine.require(stage.remote_head(anchor) == commit, "staging ref drift")
+                    return {**result, "capitalized": False, "purge_enabled": False,
+                            "executor": "local-owner", "main_sha": current}
+                # Remote journal is the persistent checkpoint. Never assume that
+                # an interrupted write is applied; the next invocation reconciles.
+                engine.require(result["status"] == "LOT_PENDING" and cursor > applied,
+                               "unexpected tranche result")
+                applied = cursor
+        finally:
+            api.write_guard = None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -161,18 +225,31 @@ def main(argv=None):
     plan.add_argument("--master", type=int, required=True)
     recover = sub.add_parser("reconcile")
     recover.add_argument("--anchor", type=int, required=True)
+    apply = sub.add_parser("continue")
+    apply.add_argument("--anchor", type=int, required=True)
+    apply.add_argument("--master", type=int, required=True)
+    apply.add_argument("--stage-sha", required=True)
+    apply.add_argument("--manifest-sha256", required=True)
+    apply.add_argument("--expect-main", required=True)
+    apply.add_argument("--apply", action="store_true", required=True)
     args = parser.parse_args(argv)
     try:
         token = os.environ.get("GITHUB_TOKEN", "")
-        api = engine.ReadOnlyAPI(token)
+        api = (engine.WriteAPI if args.command == "continue" else engine.ReadOnlyAPI)(token)
         current = main_sha(api)
         if args.command == "plan":
             result = plan_inventory(api, engine.number(args.master), current)
-        else:
-            # GitStage is used only via read_remote / remote_head, in a temp bare repo.
+        elif args.command == "reconcile":
             with tempfile.TemporaryDirectory(prefix="backlog-local-read-") as directory:
                 stage = engine.GitStage(directory, token)
                 result = reconcile(api, stage, engine.number(args.anchor), current)
+        else:
+            engine.require(engine.checked_sha(args.expect_main) == current, "stale local authorization")
+            with tempfile.TemporaryDirectory(prefix="backlog-local-write-") as directory:
+                stage = engine.GitStage(directory, token)
+                result = continue_local(api, stage, engine.number(args.anchor),
+                                        engine.number(args.master), args.stage_sha,
+                                        args.manifest_sha256, current)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except engine.Refusal as exc:
