@@ -24,20 +24,18 @@ def test_core_lock_busy_reaches_typed_task_and_gtk_as_busy(tmp_path, caplog):
         broker = fake_broker(storage)
         source_id = broker.sources()[0].source_id
         broker.service.synchronize_account_source = _busy
+        before = broker._state(source_id)
         with caplog.at_level(logging.INFO, logger="cifereca"):
             result = broker.synchronize_source(source_id)
         assert result.ok is False
         assert result.facts == {"status": "busy", "reason": "operation_busy"}
         assert "PRIVATE_" not in repr(result)
         row = broker.sources()[0]
-        assert row.status == "busy"
+        # A denied admission is observable in the task receipt, not a
+        # persistent running/busy state that could suppress future refresh.
+        assert broker._state(source_id) == before
+        assert row.status == "idle"
         assert row.error == ""
-        assert row.phase_states[0].status == "busy"
-        assert sync_source_attention(row) == (
-            "warning", "Notices et droits : déjà en cours",
-        )
-        assert sync_source_presentation(row).sync_label == "Déjà en cours"
-        assert "Déjà en cours" in sync_source_phase_summary(row)
         runner, displayed, flush, logger = _runner()
         try:
             with caplog.at_level(logging.INFO, logger=logger.name):

@@ -164,7 +164,7 @@ def dispatch_after_opening(window: Any) -> bool:
             return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                "completed": completed,
                                                "failed": failures,
-                                               "deferred": deferred})
+                                               **({"deferred": deferred} if deferred else {})})
         if deferred and not failures:
             return SyncResult(ok=False, changed=changed, facts={"status": "busy",
                                                "reason": "operation_busy",
