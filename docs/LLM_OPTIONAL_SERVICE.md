@@ -30,9 +30,11 @@ serveur parlant l'API de chat completions compatible OpenAI. Le Core ne dépend
 d'aucune bibliothèque fournisseur. Les seuls hôtes reconnus comme locaux
 sont `localhost` et les adresses IP loopback.
 
-Pour un endpoint distant, configurer **explicitement**
-`enabled=true`, une URL HTTPS et `allow_remote=true`.
-C'est l'autorisation d'envoyer les prompts/documents aux systèmes distants.
+Pour un endpoint distant, utiliser les Paramètres IA avec une URL HTTPS,
+l'activation explicite et l'autorisation distante. La sauvegarde crée un
+profil avec une autorisation liée à sa destination exacte. Un ancien
+`allow_remote=true` dans le format plat ne suffit plus : il faut renouveler
+l'accord dans le formulaire avant redémarrage.
 Les redirections HTTP et les URL comportant des identifiants, query strings ou
 fragments sont refusées. Ne pas inscrire de token dans l'URL ou la configuration :
 `api_key_env` désigne **le nom** d'une variable d'environnement déjà définie.
@@ -97,3 +99,63 @@ disponibilité future du service ni n’autorise des appels automatiques.
 
 Une IA indisponible ne bloque pas le reste de Cifereca. Aucun réseau n’est
 contacté en ouvrant la page ou en sauvegardant les paramètres.
+
+
+## Configurations nommées (P0 #8465)
+
+Le format historique plat reste lisible et utilisable pour les destinations
+locales. Les destinations distantes historiques restent visibles mais
+inactives jusqu'à une nouvelle autorisation explicite. L'action de gestion
+des profils ou une nouvelle sauvegarde distante migre les valeurs vers un
+schéma versionné :
+une activation globale, des profils nommés (32 au plus), un identifiant
+sélectionné ou aucun, et une autorisation distante liée à la destination exacte.
+Il n'existe ni profil de secours ni duplication mutable du profil actif.
+
+Dans le formulaire IA, saisir un nom de profil (lettres ASCII, chiffres, tiret
+ou underscore, 64 caractères au maximum), puis « Créer un profil » à partir
+des champs du formulaire, ou sélectionner/supprimer un nom existant. La liste
+et le profil sélectionné sont affichés. Créer un profil copie les champs
+courants sans modifier le profil précédent ni transférer son autorisation.
+Modifier les champs du profil sélectionné,
+puis enregistrer. Les modifications restent dans le brouillon avant Save ;
+« Annuler les modifications » restaure la configuration sauvegardée. Toute
+sélection différente désactive le service et révoque l'autorisation distante.
+Une ancienne autorisation distante n'est pas transférée lors de la migration.
+
+L'autorisation distante enregistrée lie le nom du profil, le protocole,
+l'endpoint complet (port et chemin inclus), le modèle et la référence de clé.
+Une modification de ces données révoque l'accord ; les confirmations par
+analyse des plugins restent obligatoires. La valeur de clé ne doit jamais
+figurer dans les profils. Le processus courant peut refuser un service révoqué
+mais n'active jamais le nouveau profil à chaud. Enregistrer et redémarrer
+pour construire la nouvelle instance. Une requête déjà transmise ne peut
+pas être rappelée ; son résultat est écarté si l'instance est révoquée
+avant sa remise à l'appelant.
+
+Le Core maintient des compteurs bornés en mémoire par catégorie de résultat
+et destination locale/distante (nombre, durée cumulée et maximale).
+Pas de journal de contenu, de clé, de modèle ou d'URL, ni de comptabilité
+financière. Les compteurs disparaissent au redémarrage.
+
+
+## Réception technique et terrain
+
+Les scénarios existants `llm-settings-1366` et `llm-settings-1600`
+vérifient les opérations sur les profils dans un XDG jetable, puis démarrent
+un nouveau processus avec le seul vrai plugin Diagnostics activé. Les deux
+requêtes texte/JSON vont vers une fixture HTTP loopback synthétique.
+Après désactivation, Diagnostics reste activable sans service IA.
+Les valeurs de clé, prompts utilisateur et journaux réels ne font pas
+partie de ces recettes.
+
+Ce banc ne qualifie ni la qualité d'un modèle d'inférence, ni un serveur
+HTTPS distant réel, ni un lecteur d'écran AT-SPI. Pour les recettes terrain,
+utiliser une installation isolée, un modèle effectivement disponible et
+des données synthétiques ; contrôler texte, JSON objet, indisponibilité,
+annulation et absence de fallback. Pour le distant, autorisation
+propriétaire explicite préalable, endpoint HTTPS maîtrisé, confirmation
+du coût éventuel et secret fourni uniquement par environnement.
+Vérifier également le refus après modification de destination et le
+fonctionnement du plugin sans IA. Ne pas mettre URL réelle, clé,
+prompt, réponse ou données de livre dans les artefacts publiés.

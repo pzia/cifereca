@@ -1,6 +1,7 @@
 """Compose extracted Settings sections and controllers; GTK is injected by the window."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
 from .settings_model import SettingsRevisionState
@@ -118,11 +119,16 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
     })
     # Independent, opt-in Core LLM settings. No backend contact on entry.
     ai_box = sections["ai"]
-    ai_cfg = self.config.get("llm", {})
+    ai_cfg = deepcopy(self.config.get("llm", {}))
     if not isinstance(ai_cfg, dict):
         ai_cfg = {}
+    from ..core.llm_profiles import editor_settings, LLMSettingsError
+    try:
+        ai_view = editor_settings(ai_cfg)
+    except LLMSettingsError:
+        ai_view = {}
     ai_ui = build_ai_settings_section(
-        section=ai_box, settings=ai_cfg,
+        section=ai_box, settings=ai_view,
         Gtk=Gtk, Adw=Adw, add_css=add_css,
     )
     capture_ai_settings = bind_settings_ai_callbacks(

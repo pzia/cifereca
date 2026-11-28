@@ -10,7 +10,8 @@ import math
 import os
 import re
 from ipaddress import ip_address
-from threading import BoundedSemaphore, Event, Thread
+from threading import BoundedSemaphore, Event, Lock, Thread
+from copy import deepcopy
 from time import monotonic
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -118,13 +119,30 @@ def _safe_model_name(value: object) -> str:
 class OptionalLLMService:
     """One bounded generate()/structured-JSON transport, no implicit retries."""
 
-    def __init__(self, config: Mapping[str, Any], *, opener=None):
+    def __init__(self, config: Mapping[str, Any], *, opener=None, admission=None):
         self._config = dict(config)
+        self._admission = admission
+        self._revoked = Event()
+        self._metrics_lock = Lock()
+        self._metrics = {}
         self._opener = opener or build_opener(ProxyHandler({}), _NoRedirect()).open
+
+    def _admitted(self) -> bool:
+        if self._admission is None:
+            return True
+        if self._revoked.is_set():
+            return False
+        try:
+            if self._admission() is True:
+                return not self._revoked.is_set()
+        except Exception:
+            pass
+        self._revoked.set()
+        return False
 
     def _settings(self) -> tuple[bool, bool, str, str, str, float, int, int]:
         cfg = self._config
-        enabled = cfg.get("enabled") is True
+        enabled = cfg.get("enabled") is True and self._admitted()
         provided = cfg.get("provider") or "openai-compatible"
         # Never reflect arbitrary unsupported provider labels from a manually
         # edited config into diagnostics, consent UI or failure envelopes.
@@ -162,7 +180,33 @@ class OptionalLLMService:
     def capabilities(self) -> tuple[str, ...]:
         return ("generate", "structured") if self.available() else ()
 
+    def metrics_snapshot(self) -> dict[str, dict[str, int]]:
+        """Bounded process-local technical counters, never prompt/model/URL data."""
+        with self._metrics_lock:
+            return {key: dict(value) for key, value in self._metrics.items()}
+
     def generate(self, request: LLMRequest, *, control=None) -> LLMResult:
+        started = monotonic()
+        result = self._generate(request, control=control)
+        statuses = {
+            "unavailable", "invalid_request", "cancelled", "request_too_large",
+            "busy", "response_too_large", "invalid_response", "auth_refused",
+            "not_found", "rate_limited", "backend_unavailable", "timeout",
+        }
+        status = "success" if result.ok else (
+            result.reason if result.reason in statuses else "other")
+        key = ("remote" if result.remote else "local") + ":" + status
+        elapsed = min(60_000, max(0, int((monotonic() - started) * 1000)))
+        with self._metrics_lock:
+            metric = self._metrics.setdefault(key, {
+                "count": 0, "total_ms": 0, "max_ms": 0,
+            })
+            metric["count"] = min(2**31 - 1, metric["count"] + 1)
+            metric["total_ms"] = min(2**63 - 1, metric["total_ms"] + elapsed)
+            metric["max_ms"] = max(metric["max_ms"], elapsed)
+        return result
+
+    def _generate(self, request: LLMRequest, *, control=None) -> LLMResult:
         enabled, remote, provider, model, endpoint, timeout, max_input, max_tokens = self._settings()
 
         def failed(reason: str) -> LLMResult:
@@ -217,6 +261,10 @@ class OptionalLLMService:
             raw = json.dumps(payload).encode("utf-8")
             if len(raw) > _MAX_REQUEST_BYTES:
                 return failed("request_too_large")
+            if env_name and not api_key:
+                # A configured credential reference must never silently
+                # turn into an anonymous request carrying private data.
+                return failed("auth_refused")
             headers = {"Content-Type": "application/json", "User-Agent": BROWSER_USER_AGENT}
             if api_key:
                 headers["Authorization"] = "Bearer " + api_key
@@ -224,7 +272,8 @@ class OptionalLLMService:
         except (ValueError, TypeError):
             return failed("invalid_request")
 
-        if not _LLM_SLOTS.acquire(blocking=False):
+        slots = _LLM_SLOTS
+        if not slots.acquire(blocking=False):
             return failed("busy")
         done = Event()
         result: list[LLMResult] = []
@@ -233,8 +282,20 @@ class OptionalLLMService:
             try:
                 # Never emit prompts, responses, URLs, API keys or exception
                 # messages to logs, diagnostics, or user-visible errors.
+                # A persisted configuration change revokes the old runtime
+                # admission before any newly started HTTP exchange.
+                if not self._admitted():
+                    result.append(failed("unavailable"))
+                    return
+                cancelled = cancellation_state()
+                if cancelled is not False:
+                    result.append(failed("cancelled" if cancelled is True else "invalid_request"))
+                    return
                 with self._opener(http_request, timeout=timeout) as response:
                     data = response.read(_MAX_RESPONSE_BYTES + 1)
+                if not self._admitted():
+                    result.append(failed("unavailable"))
+                    return
                 if len(data) > _MAX_RESPONSE_BYTES:
                     result.append(failed("response_too_large"))
                     return
@@ -287,16 +348,18 @@ class OptionalLLMService:
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:
+                slots.release()
                 done.set()
-                _LLM_SLOTS.release()
 
         try:
             Thread(target=worker, daemon=True, name="cifereca-llm",).start()
         except RuntimeError:
-            _LLM_SLOTS.release()
+            slots.release()
             return failed("backend_unavailable")
         deadline = monotonic() + timeout
         while not done.is_set():
+            if not self._admitted():
+                return failed("unavailable")
             cancelled = cancellation_state()
             if cancelled is not False:
                 return failed("cancelled" if cancelled is True else "invalid_request")
@@ -307,15 +370,41 @@ class OptionalLLMService:
         cancelled = cancellation_state()
         if cancelled is not False:
             return failed("cancelled" if cancelled is True else "invalid_request")
+        if not self._admitted():
+            return failed("unavailable")
         return result[0] if result else failed("backend_unavailable")
 
 
 def optional_llm_service(config) -> OptionalLLMService | None:
-    """Absent entirely unless explicitly enabled in Core configuration."""
+    """Resolve exactly one profile at startup, retaining legacy flat support."""
+    from .llm_profiles import (
+        is_profile_config, selected_settings, legacy_remote_destination, LLMSettingsError,
+    )
+
     settings = config.get("llm", {})
     if not isinstance(settings, Mapping) or settings.get("enabled") is not True:
         return None
-    return OptionalLLMService(settings)
+    snapshot = deepcopy(dict(settings))
+    try:
+        if legacy_remote_destination(snapshot):
+            # A flat boolean is not a destination-bound permission. Preserve
+            # the saved values for the editor but never send until reapproved.
+            return None
+        effective = selected_settings(snapshot) if is_profile_config(snapshot) else snapshot
+    except LLMSettingsError:
+        return None
+    if effective.get("enabled") is not True:
+        return None
+    # A running service can be revoked, never silently redirected. A restart
+    # constructs the new service; a config change is not a hot reload.
+    epoch_reader = getattr(config, "llm_admission_epoch", None)
+    epoch = epoch_reader() if callable(epoch_reader) else None
+
+    def admitted() -> bool:
+        return (config.get("llm", {}) == snapshot
+                and (not callable(epoch_reader) or epoch_reader() == epoch))
+
+    return OptionalLLMService(effective, admission=admitted)
 
 
 __all__ = ["OptionalLLMService", "optional_llm_service"]

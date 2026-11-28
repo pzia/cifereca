@@ -150,7 +150,20 @@ class Config:
     def __init__(self, path: Path | None = None):
         self.path = path or config_file()
         self.data = deepcopy(DEFAULT_CONFIG)
+        self._llm_epoch = 0
+        self._llm_snapshot = deepcopy(self.data.get("llm"))
         self.load()
+
+    def _observe_llm_revision(self) -> None:
+        current = self.data.get("llm")
+        if current != self._llm_snapshot:
+            self._llm_snapshot = deepcopy(current)
+            self._llm_epoch += 1
+
+    def llm_admission_epoch(self) -> int:
+        """Process-local revocation generation, independent of other settings."""
+        self._observe_llm_revision()
+        return self._llm_epoch
 
     def load(self) -> None:
         # A reloaded configuration starts a new process-local review epoch.
@@ -165,6 +178,12 @@ class Config:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     self.data = _merge(DEFAULT_CONFIG, raw)
+                    # Versioned LLM profiles are an atomic subtree, not a
+                    # recursive merge with legacy flat defaults. Malformed
+                    # profile markers must not fall back to those defaults.
+                    from .core.llm_profiles import is_profile_config
+                    if is_profile_config(raw.get("llm")):
+                        self.data["llm"] = deepcopy(raw["llm"])
                     # One-time in-memory bridge from 0.2.x: carry the remembered
                     # Paris username into the first provider account. The
                     # password was never stored by 0.2.x and must be entered
@@ -261,6 +280,7 @@ class Config:
         # rewrite the old settings: some manual paths and rollback still read
         # them, and an archived enabled=True is never source consent.
         _archive_legacy_kobo_globals_once(self.data)
+        self._observe_llm_revision()
 
     def save(self) -> None:
         # Contract versions are discovered from Kobo-Adept at runtime and must
@@ -276,6 +296,7 @@ class Config:
         except OSError:
             pass
         tmp.replace(self.path)
+        self._observe_llm_revision()
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -297,6 +318,8 @@ class Config:
                 node[part] = {}
             node = node[part]
         node[parts[-1]] = value
+        if parts[0] == "llm":
+            self._observe_llm_revision()
         # Invalidate old cleanup reviews even across true → false → true.
         # General Settings also writes identities under the acquisition lock.
         if parts[0] in ("maintenance", "library", "identities"):

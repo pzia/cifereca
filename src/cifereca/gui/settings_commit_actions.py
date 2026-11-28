@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .settings_model import SettingsCommitController
 from .settings_draft import build_settings_draft, SettingsValidationError
+from .llm_settings import LLMSettingsError
 
 
 def _refresh_saved_account_test_buttons(config, editors) -> None:
@@ -140,6 +141,9 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
                 has_active_tasks=bool(getattr(self, "_active_tasks", {})),
                 ai_dirty=settings_state.dirty("ai"),
             )
+        except LLMSettingsError as exc:
+            self.show_error(str(exc), "Configuration IA invalide")
+            return False
         except SettingsValidationError as exc:
             if exc.title is None:
                 self.show_error(str(exc))

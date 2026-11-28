@@ -25,6 +25,11 @@ class AISettingsWidgets:
     preset_button: Any
     test_button: Any
     reset_button: Any
+    profile_name: Any = None
+    profile_info: Any = None
+    profile_add: Any = None
+    profile_select: Any = None
+    profile_delete: Any = None
 
 
 def build_ai_settings_section(
@@ -110,10 +115,31 @@ def build_ai_settings_section(
     ai_buttons.append(ai_reset)
     ai_box.append(ai_buttons)
 
+    profile_group = Adw.PreferencesGroup()
+    profile_group.set_title("Configurations IA enregistrées")
+    ai_box.append(profile_group)
+    profile_info = Gtk.Label(label="Aucun profil nommé", xalign=0)
+    profile_info.set_wrap(True)
+    ai_box.append(profile_info)
+    profile_name = Adw.EntryRow()
+    profile_name.set_title("Nom du profil (lettres, chiffres, tiret, underscore)")
+    profile_group.add(profile_name)
+    profile_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    profile_add = Gtk.Button(label="Créer un profil")
+    profile_select = Gtk.Button(label="Sélectionner")
+    profile_delete = Gtk.Button(label="Supprimer")
+    profile_buttons.append(profile_add)
+    profile_buttons.append(profile_select)
+    profile_buttons.append(profile_delete)
+    ai_box.append(profile_buttons)
+
     return AISettingsWidgets(
         enabled=ai_enabled, endpoint=ai_endpoint, model=ai_model,
         remote=ai_remote, key_env=ai_key, timeout=ai_timeout,
         input_limit=ai_input_limit, output_limit=ai_output_limit,
         status=ai_status, preset_button=ai_preset,
         test_button=ai_test, reset_button=ai_reset,
+        profile_name=profile_name, profile_info=profile_info,
+        profile_add=profile_add, profile_select=profile_select,
+        profile_delete=profile_delete,
     )
