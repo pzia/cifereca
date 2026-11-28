@@ -60,3 +60,32 @@ def test_partial_inventory_keeps_positive_count_without_success(tmp_path):
         assert not broker._state(sid).get("inventory_last_success")
     finally:
         service.storage.close()
+
+
+def test_denied_admission_must_not_overwrite_newer_terminal_evidence(tmp_path):
+    service, account, _, _ = _source(tmp_path)
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    broker.set_inventory_refresh_schedule(sid, "on_start")
+    newer = {
+        "status": "ok", "inventory_status": "success",
+        "inventory_last_attempt": "2026-11-28T07:00:00+00:00",
+        "inventory_last_success": "2026-11-28T07:00:00+00:00",
+    }
+
+    def denied(a, **kw):
+        # Deterministic interleaving: the other writer publishes after
+        # our provisional state and before our denial is handled.
+        broker._set_state(sid, newer)
+        try:
+            raise LockBusyError("fixture")
+        except LockBusyError as exc:
+            raise ProviderConfigurationError("fixture") from exc
+
+    service._synchronize_scheduled_account_inventory = denied
+    try:
+        result = broker.synchronize_scheduled_inventory("fixture-identity", "startup")
+        assert result.facts["reason"] == "operation_busy"
+        assert broker._state(sid) == newer
+    finally:
+        service.storage.close()
