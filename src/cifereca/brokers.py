@@ -399,20 +399,18 @@ class SynchronizationBrokerImpl:
         if state.get("status") == "running" and type(value.get("attempt_pid")) is int:
             import os
             pid = value["attempt_pid"]
-            if os.name == "posix" and 0 < pid <= 2**31 - 1 and pid != os.getpid():
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    # No live owner. The remote outcome is unknown, not success.
-                    recovered = dict(state, status="interrupted")
-                    if recovered.get("inventory_status") == "running":
-                        recovered["inventory_status"] = "failed"
-                    encoded = json.dumps(recovered, ensure_ascii=False, sort_keys=True,
-                                         separators=(",", ":"))
-                    if self.service.storage.metadata_compare_publish(key, raw, encoded):
-                        return recovered
-                except OSError:
-                    pass  # Permission/other uncertainty is not proof of death.
+            from .core.process_liveness import owner_proven_dead
+            if owner_proven_dead(pid):
+                # The remote outcome is unknown, not success.
+                recovered = dict(state, status="interrupted")
+                if recovered.get("inventory_status") == "running":
+                    recovered["inventory_status"] = "failed"
+                encoded = json.dumps(recovered, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":"))
+                if self.service.storage.metadata_compare_publish(key, raw, encoded):
+                    return recovered
+                # A concurrent publisher won; never migrate the stale snapshot.
+                return self._state(source_id)
         if legacy:
             self._set_state(source_id, state)
         return state
