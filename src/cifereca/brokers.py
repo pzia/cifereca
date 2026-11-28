@@ -1042,6 +1042,8 @@ class SynchronizationBrokerImpl:
         state_key = "sync.source.state." + source_id
         previous_raw = self.service.storage.metadata_get(state_key)
         state = self._state(source_id)
+        if state.get("status") == "running":
+            return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
 
         def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
@@ -1080,6 +1082,12 @@ class SynchronizationBrokerImpl:
         if not self.service.storage.metadata_compare_publish(state_key, previous_raw, provisional):
             return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
         self._notify()
+
+        def publish_terminal():
+            terminal = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            self.service.storage.metadata_compare_publish(state_key, provisional, terminal)
+            self._notify()
+
         try:
             # A scheduled refresh is not a public source Sync: only its
             # dedicated Core implementation can guarantee no delivery B.
@@ -1105,7 +1113,7 @@ class SynchronizationBrokerImpl:
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
                 if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
                                   facts={"reason": "invalid_response"})
             skip_status = result.get("status")
@@ -1122,7 +1130,7 @@ class SynchronizationBrokerImpl:
                             state[key] = previous_inventory[key]
                         else:
                             state.pop(key, None)
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=True, changed=0, facts={
                     "status": "skipped", "skipped": True,
                 })
@@ -1184,7 +1192,7 @@ class SynchronizationBrokerImpl:
                 state.update(status="partial", error="Synchronisation partielle")
                 if refreshes_private_inventory:
                     state["inventory_status"] = "partial"
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1194,7 +1202,7 @@ class SynchronizationBrokerImpl:
                 state.update(
                     inventory_last_success=success_at, inventory_status="success",
                 )
-            self._set_state(source_id, state); self._notify()
+            publish_terminal()
             return SyncResult(ok=True, changed=changed, facts=facts)
         except Exception as exc:
             # The Core source-sync lock reports an observed operation_busy
@@ -1218,7 +1226,7 @@ class SynchronizationBrokerImpl:
             state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
             if refreshes_private_inventory:
                 state["inventory_status"] = "failed"
-            self._set_state(source_id, state); self._notify()
+            publish_terminal()
             return SyncResult(
                 ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
                 facts={"reason": "source_unavailable"},
