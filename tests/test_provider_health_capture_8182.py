@@ -77,6 +77,7 @@ def test_targeted_archive_positive(tmp_path, monkeypatch):
         port = vault.for_plugin("ui.page.diagnostics")
         capture_id = port.archive_search_trace(exact, ref, consented=True)
         assert health.snapshot(scope)[0].capture_id == capture_id
+        assert vault._storage.pending_ids() == ()
         captured = port.read(exact, capture_id)
         with ZipFile(BytesIO(captured.payload)) as archive:
             index = json.loads(archive.read("index.json"))
@@ -180,9 +181,21 @@ def test_revocation_after_link_and_rollback_failure(tmp_path, monkeypatch):
             port.read(exact, ids[0])
         vault.maintain()
         assert vault._storage.list_ids() == ids
-        monkeypatch.setattr(vault, "_discard_failed_archive", discard)
-        vault.maintain()
-        assert vault._storage.list_ids() == ()
-        assert port.sessions(exact) == ()
+        # Simulate restart without the in-memory quarantine map.
+        vault.close()
+        reopened = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                                    authorize_scope=lambda producer, scope: True, health=health)
+        try:
+            reopened_port = reopened.for_plugin("ui.page.diagnostics")
+            assert reopened._storage.pending_ids() == ids
+            assert reopened_port.sessions(exact) == ()
+            with pytest.raises(VaultError, match="vault_scope_denied"):
+                reopened_port.read(exact, ids[0])
+            reopened.maintain()
+            assert reopened._storage.list_ids() == ()
+            assert reopened._storage.pending_ids() == ()
+            assert reopened_port.sessions(exact) == ()
+        finally:
+            reopened.close()
     finally:
         vault.close()

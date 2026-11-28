@@ -11,6 +11,10 @@ from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 import json
 import os
+import fcntl
+import hmac
+import re
+import stat
 from pathlib import Path
 from threading import Event, RLock, Thread
 
@@ -122,6 +126,81 @@ class _Storage(EncryptedCaptureVault):
     def max_vault_bytes(self):
         return self._policy()[1]
 
+    def pending_ids(self):
+        """Opaque transaction markers, in the same private vault directory."""
+        if not self.path.exists() and not self.path.is_symlink():
+            return ()
+        fd = self._open_dir(create=False)
+        try:
+            ids = tuple(name[:-8] for name in os.listdir(fd)
+                        if re.fullmatch(r"[0-9a-f]{32}\.pending", name))
+            if len(ids) > MAX_SESSIONS:
+                raise VaultError("vault_limit")
+            return ids
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _pending_mac(key, capture_id):
+        return hmac.digest(key, b"cifereca.archive.pending/v1:" +
+                           capture_id.encode("ascii"), "sha256")
+
+    def open_pending(self, capture_id, key, *, create=False):
+        """Hold an exclusive transaction lease; never follow a marker link."""
+        if not re.fullmatch(r"[0-9a-f]{32}", capture_id):
+            raise VaultError("vault_invalid")
+        fd = self._open_dir(create=False)
+        handle = None
+        try:
+            flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+            if create:
+                if len(self.pending_ids()) >= MAX_SESSIONS:
+                    raise VaultError("vault_limit")
+                flags |= os.O_CREAT | os.O_EXCL
+            handle = os.open(capture_id + ".pending", flags, 0o600, dir_fd=fd)
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            info = os.fstat(handle)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600):
+                raise VaultError("vault_unsafe_file")
+            expected = self._pending_mac(key, capture_id)
+            if create:
+                if os.write(handle, expected) != len(expected):
+                    raise VaultError("vault_unsafe_file")
+                os.fsync(handle)
+                os.fsync(fd)
+            elif info.st_size != len(expected) or not hmac.compare_digest(
+                    os.read(handle, len(expected) + 1), expected):
+                raise VaultError("vault_invalid")
+            result = handle
+            handle = None
+            return result
+        except OSError as exc:
+            raise VaultError("vault_archive_pending") from exc
+        finally:
+            if handle is not None:
+                os.close(handle)
+            os.close(fd)
+
+    def clear_pending(self, capture_id, handle):
+        fd = self._open_dir(create=False)
+        try:
+            info = os.stat(capture_id + ".pending", dir_fd=fd, follow_symlinks=False)
+            held = os.fstat(handle)
+            if (info.st_dev, info.st_ino) != (held.st_dev, held.st_ino):
+                raise VaultError("vault_unsafe_file")
+            os.unlink(capture_id + ".pending", dir_fd=fd)
+            # Unlink is the visibility commit point. If directory sync fails,
+            # a crash may resurrect the marker (conservative quarantine).
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass
+        except OSError as exc:
+            raise VaultError("vault_archive_pending") from exc
+        finally:
+            os.close(fd)
+
     @staticmethod
     def _label_value(value):
         # The existing authenticated label sidecar stores both the label and
@@ -216,13 +295,37 @@ class CoreCaptureVault:
         self._storage.delete(capture_id, key, confirmed=True)
 
     def _retry_failed_archives(self):
-        for capture_id, binding in tuple(self._failed_archives.items()):
+        pending = set(self._storage.pending_ids()) | set(self._failed_archives)
+        if not pending:
+            return
+        key = self._key()
+        for capture_id in pending:
+            handle = None
             try:
-                self._discard_failed_archive(capture_id, binding)
+                # A live writer in another process owns the marker lock.
+                handle = self._storage.open_pending(capture_id, key)
+                binding = self._failed_archives.get(capture_id)
+                if capture_id in self._storage.list_ids() and binding is None:
+                    stored = self._storage.open(capture_id, key)
+                    try:
+                        if (stored.producer != "ui.page.diagnostics"
+                                or stored.summary.scope == CaptureScope()
+                                or stored.summary.state != "completed"):
+                            raise VaultError("vault_scope_denied")
+                        binding = (stored.producer, stored.summary.scope,
+                                   stored.summary.source_session_ref)
+                    finally:
+                        self._storage._release(stored)
+                if binding is not None:
+                    self._discard_failed_archive(capture_id, binding)
+                self._storage.clear_pending(capture_id, handle)
+                self._failed_archives.pop(capture_id, None)
             except VaultError:
-                # A physically unsafe/unreadable file must not be bypassed.
+                # Invalid marker, live lease or unsafe ciphertext: fail closed.
                 continue
-            self._failed_archives.pop(capture_id, None)
+            finally:
+                if handle is not None:
+                    os.close(handle)
 
     def _policy(self):
         return validate_retention_policy(*self._policy_source())
@@ -326,8 +429,9 @@ class _Port:
             self._service.start_maintenance()
             return _Writer(self, scope, source_session_ref, writer, key)
 
-    def _open(self, scope, capture_id, key):
-        if capture_id in self._service._failed_archives:
+    def _open(self, scope, capture_id, key, *, pending=False):
+        if not pending and (capture_id in self._service._failed_archives
+                            or capture_id in self._service._storage.pending_ids()):
             raise VaultError("vault_scope_denied")
         stored = self._service._storage.open(capture_id, key)
         if stored.producer != self._producer or stored.summary.scope != scope:
@@ -344,8 +448,9 @@ class _Port:
                 return ()
             key = self._service._key()
             rows = []
+            pending = set(self._service._storage.pending_ids()) | set(self._service._failed_archives)
             for sid in ids:
-                if sid in self._service._failed_archives:
+                if sid in pending:
                     continue
                 stored = self._service._storage.open(sid, key)
                 try:
@@ -357,10 +462,13 @@ class _Port:
             return tuple(sorted(rows, key=lambda row: (row.saved_at, row.capture_id), reverse=True))
 
     def read(self, scope, capture_id):
+        return self._read(scope, capture_id)
+
+    def _read(self, scope, capture_id, *, pending=False):
         self._check(scope)
         with self._service._lock:
             self._check(scope)
-            stored = self._open(scope, capture_id, self._service._key())
+            stored = self._open(scope, capture_id, self._service._key(), pending=pending)
             try:
                 key = self._service._key()
                 label, until = _metadata(self._service._storage.get_label(capture_id, key))
@@ -481,23 +589,34 @@ class _DiagnosticsPort(_Port):
                     raise VaultError("vault_archive_rollback_failed")
                 writer = self._begin(scope, source_ref, consented=True,
                                      reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
+                handle = service._storage.open_pending(writer.capture_id, service._key(), create=True)
+                from types import SimpleNamespace
+                pending_reader = SimpleNamespace(read=lambda exact_scope, capture_id:
+                    self._read(exact_scope, capture_id, pending=True)
+                    if capture_id == writer.capture_id and exact_scope == scope
+                    else self.read(exact_scope, capture_id))
                 try:
                     writer.save(payload, "completed", force=True)
                     self._check(scope)
                     if not health.link_capture(exact, source_ref, writer.capture_id,
-                                               lease=lease, port=self, consented=True):
+                                               lease=lease, port=pending_reader, consented=True):
                         raise VaultError("vault_scope_denied")
                     self._check(scope)
+                    service._storage.clear_pending(writer.capture_id, handle)
                 except Exception:
                     health.unlink_capture(exact, source_ref, writer.capture_id)
                     service._failed_archives[writer.capture_id] = (
                         self._producer, scope, source_ref)
                     try:
                         writer._rollback_completed()
+                        if writer.capture_id in service._storage.pending_ids():
+                            service._storage.clear_pending(writer.capture_id, handle)
                     except Exception as cleanup_error:
                         raise VaultError("vault_archive_rollback_failed") from cleanup_error
                     service._failed_archives.pop(writer.capture_id, None)
                     raise
+                finally:
+                    os.close(handle)
                 return writer.capture_id
 
     def export_http_archive(self, capture_id, destination, *, confirmed=False):
