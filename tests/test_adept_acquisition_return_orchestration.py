@@ -12,8 +12,7 @@ from cifereca.plugin_api import AttentionRequired
 from tests.test_adept_return import _service, _acquisition
 
 
-@pytest.mark.parametrize("legacy_inventory_count", [0, 1, 2])
-def test_legacy_inventory_shape_cannot_start_return(tmp_path, legacy_inventory_count):
+def test_three_legacy_return_attempts_remain_inert(tmp_path):
     service = _service(tmp_path)
     try:
         aid = _acquisition(service, tmp_path)
@@ -27,13 +26,13 @@ def test_legacy_inventory_shape_cannot_start_return(tmp_path, legacy_inventory_c
             raise AssertionError("retired return cannot read ADEPT inventory")
         service._kobo_adapter = forbidden
         service.execute_drm_mutation = forbidden
-        for _ in range(legacy_inventory_count + 1):
+        for _ in range(3):
             with pytest.raises(AttentionRequired) as caught:
                 service.return_adept_acquisition(aid)
             assert caught.value.code == "loan_return_removed"
-        assert events == []
-        assert path.read_bytes() == before_bytes
-        assert service.storage.acquisition_get(aid) == before_row
+            assert events == []
+            assert path.read_bytes() == before_bytes
+            assert service.storage.acquisition_get(aid) == before_row
     finally:
         service.close()
 
