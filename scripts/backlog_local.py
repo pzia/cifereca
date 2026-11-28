@@ -7,7 +7,10 @@ import re
 import sys
 import tempfile
 
-import backlog_compaction as engine
+if __package__:
+    from . import backlog_compaction as engine
+else:
+    import backlog_compaction as engine
 
 BOT = {"login": "github-actions[bot]", "id": 41898282}
 
