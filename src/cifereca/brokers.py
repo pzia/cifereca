@@ -902,7 +902,8 @@ class SynchronizationBrokerImpl:
         if partial:
             facts["partial"] = partial
         if deferred or partial:
-            facts["status"] = ("busy" if not attempted else "partial")
+            facts["status"] = ("busy" if not attempted else
+                               "failed" if failed == attempted else "partial")
             if not attempted:
                 facts["reason"] = "operation_busy"
         return SyncResult(
@@ -1038,9 +1039,9 @@ class SynchronizationBrokerImpl:
             return SyncResult(ok=False, changed=0, warnings=("source sync unsupported",),
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        state = self._state(source_id)
         state_key = "sync.source.state." + source_id
         previous_raw = self.service.storage.metadata_get(state_key)
+        state = self._state(source_id)
 
         def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
@@ -1076,7 +1077,9 @@ class SynchronizationBrokerImpl:
         from secrets import token_hex
         provisional = json.dumps({**state, "attempt_token": token_hex(16)},
                                  ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        self.service.storage.metadata_set(state_key, provisional); self._notify()
+        if not self.service.storage.metadata_compare_publish(state_key, previous_raw, provisional):
+            return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
+        self._notify()
         try:
             # A scheduled refresh is not a public source Sync: only its
             # dedicated Core implementation can guarantee no delivery B.
