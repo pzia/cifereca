@@ -379,9 +379,10 @@ def configure(
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
-                    if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial"}:
+                    if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial", "failed"}:
                         deferred += int(receipt.facts.get("deferred", 0) > 0)
                         partials += int(receipt.facts.get("status") == "partial")
+                        failures += int(receipt.facts.get("status") == "failed" or receipt.facts.get("failed", 0) > 0)
                         continue
                     progressed, failed = _scheduled_inventory_progress(receipt)
                     completed += int(progressed)
@@ -406,6 +407,10 @@ def configure(
                 return SyncResult(ok=False, facts={"status": "partial",
                                                    "completed": completed,
                                                    "failed": failures})
+            if failures and deferred:
+                return SyncResult(ok=False, facts={"status": "failed",
+                                                   "failed": failures,
+                                                   "deferred": deferred})
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
             # TaskRunner treats a bare None as an unexecuted/invalidated
