@@ -274,3 +274,49 @@ def test_live_pending_capture_not_pruned_by_other_core(tmp_path):
             os.close(handle)
         vault.close()
         other.close()
+
+def test_multicapability_archive_and_exact_export(tmp_path, monkeypatch):
+    import pytest
+    import httpx
+    from cifereca import http_trace
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    from cifereca.plugin_api.capture_vault import VaultError
+
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    health = PassiveHealth()
+    health.set_enabled(True)
+    exact = CaptureScope("fixture", "instance", "account", "owner")
+    other = CaptureScope("fixture", "instance", "other", "owner")
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: True, health=health)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        for capability in ("detail", "rights", "loans", "personal_library"):
+            scope = Scope("fixture", "instance", "account", "owner", capability)
+            with diagnostic_task_scope():
+                ref = diagnostic_task_reference()
+                exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
+                exchange.entry["outcome"] = "completed"
+            health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+            with pytest.raises(VaultError, match="vault_confirmation_required"):
+                port.archive_provider_trace(exact, capability, ref)
+            for wrong in ("search", "unsupported"):
+                with pytest.raises(VaultError, match="vault_scope_denied"):
+                    port.archive_provider_trace(exact, wrong, ref, consented=True)
+            with pytest.raises(VaultError, match="vault_scope_denied"):
+                port.archive_provider_trace(other, capability, ref, consented=True)
+            cid = port.archive_provider_trace(exact, capability, ref, consented=True)
+            assert health.snapshot(scope)[0].capture_id == cid
+            destination = tmp_path / (capability + ".zip")
+            with pytest.raises(VaultError, match="vault_confirmation_required"):
+                port.export_http_archive(cid, str(destination), scope=exact)
+            for wrong_scope in (CaptureScope(), other):
+                with pytest.raises(VaultError, match="vault_scope_denied"):
+                    port.export_http_archive(cid, str(destination), scope=wrong_scope, confirmed=True)
+            assert not destination.exists()
+            port.export_http_archive(cid, str(destination), scope=exact, confirmed=True)
+            assert destination.stat().st_mode & 0o777 == 0o600
+    finally:
+        vault.close()

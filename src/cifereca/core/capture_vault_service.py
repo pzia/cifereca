@@ -595,14 +595,20 @@ class _DiagnosticsPort(_Port):
         return writer.capture_id
 
     def archive_search_trace(self, scope, source_ref, *, consented=False):
+        return self.archive_provider_trace(scope, "search", source_ref, consented=consented)
+
+    def archive_provider_trace(self, scope, capability, source_ref, *, consented=False):
         if consented is not True:
             raise VaultError("vault_confirmation_required")
         from .provider_health_projection import Scope
         from ..http_trace import HTTP_TRACE, build_http_trace_zip
         self._check(scope)
         health = self._service._health
+        if type(capability) is not str or capability not in {
+                "search", "detail", "rights", "loans", "personal_library"}:
+            raise VaultError("vault_scope_denied")
         exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
-                      scope.identity_id, "search")
+                      scope.identity_id, capability)
         if scope == CaptureScope() or health is None:
             raise VaultError("vault_scope_denied")
         with health.archive_guard(exact, source_ref) as lease:
@@ -659,12 +665,12 @@ class _DiagnosticsPort(_Port):
                     os.close(handle)
                 return writer.capture_id
 
-    def export_http_archive(self, capture_id, destination, *, confirmed=False):
+    def export_http_archive(self, capture_id, destination, *, confirmed=False,
+                            scope=CaptureScope()):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
         from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
         from .capture_export import write_capture_zip
-        scope = CaptureScope()
         row = self.read(scope, capture_id)
         try:
             payload = project_archived_http_zip(
