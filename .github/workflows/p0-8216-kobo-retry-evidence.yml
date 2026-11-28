@@ -1,0 +1,103 @@
+name: P0 8216 Kobo legacy retry evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-kobo-retry-evidence.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 1a3f791c041db8121b6b1ce253b8e75e0b34a511
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/kobo-evidence"
+          mkdir -p "$out"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          python -m pip install -e . 'pytest>=8,<9' 'pytest-cov>=6,<8' 'Pillow>=10,<12' 'cryptography>=42,<48' pytest-xdist
+          python -m pip freeze > "$out/dependencies.txt"
+          git fetch origin 7cb6ada8a446aa6375689718fc0b2bfdd371885a
+          test "$(git rev-parse FETCH_HEAD)" = 7cb6ada8a446aa6375689718fc0b2bfdd371885a
+          target=tests/test_kobo_executor_retries.py
+          for run in A1 B1 B2 A2; do
+            case "$run" in A*) ref=1a3f791c041db8121b6b1ce253b8e75e0b34a511; blob=be40fb3975cd5006069aa5d71120a6f3d4de1145;; B*) ref=7cb6ada8a446aa6375689718fc0b2bfdd371885a; blob=9d0c2d8d523173f2a543115fff6e84e62e1511c1;; esac
+            git checkout "$ref" -- "$target"
+            test "$(git rev-parse ":$target")" = "$blob"
+            /usr/bin/time -p -o "$out/$run.time" python -m pytest -q "$target" --junitxml="$out/$run.xml"
+          done
+          for mutant in wrong_code provider_call executor_call destination_write; do
+            for arm in A B; do
+              git restore --source=HEAD --worktree src/cifereca/services.py
+              case "$arm" in A) ref=1a3f791c041db8121b6b1ce253b8e75e0b34a511;; B) ref=7cb6ada8a446aa6375689718fc0b2bfdd371885a;; esac
+              git checkout "$ref" -- "$target"
+              MUTANT="$mutant" python - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path("src/cifereca/services.py")
+          s=p.read_text()
+          needle='            raise ProviderConfigurationError("canonical_explicit_action_required")'
+          assert s.count(needle)==1
+          m=os.environ["MUTANT"]
+          replacement={
+              "wrong_code":'            raise ProviderConfigurationError("wrong_refusal")',
+              "provider_call":'            selected_session.resolve_acquisition(item)\n'+needle,
+              "executor_call":'            self.execute_acquisition_request(item)\n'+needle,
+              "destination_write":'            from pathlib import Path\n            candidate = self.library_identity_provider_dir("default", item.source_provider) / "Book One.epub"\n            if candidate.is_file():\n                candidate.write_bytes(b"synthetic mutation")\n'+needle,
+          }[m]
+          p.write_text(s.replace(needle,replacement))
+          PY
+              python -m py_compile src/cifereca/services.py
+              git diff --binary src/cifereca/services.py > "$out/$mutant-$arm.patch"
+              set +e
+              python -m pytest -q "$target" --junitxml="$out/$mutant-$arm.xml" > "$out/$mutant-$arm.log" 2>&1
+              rc=$?
+              set -e
+              test "$rc" = 1
+              MUTANT="$mutant" ARM="$arm" python - <<'PY'
+          import os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"kobo-evidence"
+          m,a=os.environ["MUTANT"],os.environ["ARM"]
+          cases=ET.parse(root/f"{m}-{a}.xml").findall(".//testcase")
+          assert len(cases)==(10 if a=="A" else 4)
+          assert all(c.find("error") is None and c.find("skipped") is None for c in cases)
+          failed=[c for c in cases if c.find("failure") is not None]
+          assert len(failed)==(2 if m=="destination_write" else len(cases))
+          if m=="destination_write":
+              assert all("destination_present" in c.get("name","") for c in failed)
+          print("MUTANT_KILLED",m,a,len(failed),len(cases))
+          PY
+            done
+            cmp "$out/$mutant-A.patch" "$out/$mutant-B.patch"
+          done
+          python - <<'PY'
+          import os,pathlib,xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"kobo-evidence"
+          keys={}
+          for run in ("A1","B1","B2","A2"):
+              cases=ET.parse(root/f"{run}.xml").findall(".//testcase")
+              assert all(not any(c.find(t) is not None for t in ("error","failure","skipped")) for c in cases)
+              keys[run]={(c.get("classname"),c.get("name")) for c in cases}
+              assert len(keys[run])==len(cases)==(10 if run.startswith("A") else 4)
+              print("ABBA",run,len(cases),sum(float(c.get("time","0")) for c in cases),(root/f"{run}.time").read_text().strip())
+          assert keys["A1"]==keys["A2"] and keys["B1"]==keys["B2"]
+          removed=keys["A1"]-keys["B1"]
+          added=keys["B1"]-keys["A1"]
+          assert len(removed)==8 and len(added)==2
+          assert all("destination_absent" in k[1] for k in added)
+          assert all("destination_present" in k[1] for k in keys["A1"] & keys["B1"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kobo-retry-evidence
+          path: ${{ runner.temp }}/kobo-evidence
+          retention-days: 7
