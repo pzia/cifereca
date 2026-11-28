@@ -1,0 +1,87 @@
+name: P0 8216 Core behavioral overlap
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-8216-core-overlap.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46065388826
+          pattern: core-shard-[2356]
+          path: ${{ runner.temp }}/original
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 46066816167
+          name: repaired-core-shard-0
+          path: ${{ runner.temp }}/repaired/core-shard-0
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections, hashlib, json, os, pathlib, sqlite3, xml.etree.ElementTree as ET
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          selected=(0,2,3,5,6)
+          result={"shards":selected,"missing_shards":[1,4,7],"arms":{}}
+          for arm in ("A","B"):
+              signatures=collections.defaultdict(list)
+              all_contexts=0
+              zero_contexts=0
+              for shard in selected:
+                  folder=root/("repaired" if shard==0 else "original")/f"core-shard-{shard}"
+                  db=folder/f"{arm}.coverage"
+                  con=sqlite3.connect(db.as_uri()+"?mode=ro",uri=True)
+                  assert con.execute("select value from meta where key='has_arcs'").fetchone()[0]=="1"
+                  # Stream one ordered SQL cursor, not one full arc list per test.
+                  cur=con.execute("""SELECT context.id,context.context,file.path,arc.fromno,arc.tono
+                      FROM arc JOIN context ON context.id=arc.context_id
+                      JOIN file ON file.id=arc.file_id
+                      WHERE context.context LIKE '%|run'
+                      ORDER BY context.id,file.path,arc.fromno,arc.tono""")
+                  from itertools import groupby
+                  nonempty=0
+                  for (cid,ctx),rows in groupby(cur,key=lambda r:(r[0],r[1])):
+                      h=hashlib.sha256()
+                      count=0
+                      for _,_,path,a,b in rows:
+                          p=path.replace(chr(92),"/")
+                          if "/src/cifereca/" in p:
+                              p="src/cifereca/"+p.split("/src/cifereca/",1)[1]
+                          if not p.startswith("src/cifereca/"):
+                              continue
+                          h.update(json.dumps([p,a,b],separators=(",",":")).encode()+b"\n")
+                          count+=1
+                      if count:
+                          signatures[h.hexdigest()].append({"nodeid":ctx[:-4],"shard":shard,"arc_count":count})
+                          nonempty+=1
+                  total=con.execute("SELECT count(*) FROM context WHERE context LIKE '%|run'").fetchone()[0]
+                  all_contexts+=total
+                  zero_contexts+=total-nonempty
+                  con.close()
+              groups=[members for members in signatures.values() if len(members)>1]
+              groups.sort(key=lambda g:(-len(g),-g[0]["arc_count"],g[0]["nodeid"]))
+              # Same module and multiple modules kept distinct for review.
+              for g in groups:
+                  for m in g:
+                      m["module"]=m["nodeid"].split("::",1)[0]
+              cross=[g for g in groups if len({m["module"] for m in g})>1]
+              stats={"run_contexts":all_contexts,"empty_or_noncore":zero_contexts,"distinct_nonempty_signatures":len(signatures),"repeated_groups":len(groups),"members_of_repeated_groups":sum(map(len,groups)),"cross_module_groups":len(cross),"cross_module_members":sum(map(len,cross))}
+              result["arms"][arm]={"stats":stats,"groups":groups}
+              print("OVERLAP",arm,json.dumps(stats))
+              for g in cross[:10]:
+                  print("CROSS_MODULE_CANDIDATE",arm,len(g),g[0]["arc_count"],json.dumps([m["nodeid"] for m in g[:6]]))
+          (root/"core-overlap-partial.json").write_text(json.dumps(result,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-overlap-partial
+          path: ${{ runner.temp }}/core-overlap-partial.json
+          retention-days: 7
