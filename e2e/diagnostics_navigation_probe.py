@@ -12,6 +12,8 @@ import hashlib
 import importlib
 import json
 import os
+import platform
+import tempfile
 from pathlib import Path
 import shutil
 import statistics
@@ -473,15 +475,119 @@ def compare_recent_render(window, *, pairs=3):
     }
 
 
+def run_performance_campaign(args):
+    """Private, isolated batches; never extend the functional E2E watchdog.
+
+    Each capture state gets ten fresh processes with three retained warm
+    pairs per path. Preserve every attempt and raw local report. No public
+    artifact or performance gate is produced by this command.
+    """
+    from run import materialize_fixture
+
+    out = args.out.resolve()
+    if out.is_relative_to(ROOT.resolve()):
+        raise SystemExit("Performance campaign requires output outside the checkout")
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        raise SystemExit("Run performance campaign on an isolated measurement host")
+    xvfb = shutil.which("xvfb-run")
+    if not xvfb:
+        raise SystemExit("xvfb-run required")
+    out.mkdir(parents=True, exist_ok=True)
+    manifest_path = out / "campaign.json"
+    if manifest_path.exists() or any(out.iterdir()):
+        raise SystemExit("Performance campaign requires an empty output directory")
+    manifest = {
+        "schema": "cifereca.gtk-baseline/1",
+        "git_sha": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "width": args.width,
+        "origin": "synthetic_gtk",
+        "fixture": "search-filters",
+        "rows_per_path": 563,
+        "pairs_per_batch": 3,
+        "batches_per_capture_state": 10,
+        "cold_definition": "fresh process and XDG fixture; OS caches not purged",
+        "warm_definition": "one excluded rebuild pair per batch",
+        "performance_verdict": "not_qualified",
+        "attempts": [],
+    }
+
+    def persist():
+        temporary = manifest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(manifest_path)
+
+    persist()
+    for batch in range(10):
+        for enabled in ((False, True) if batch % 2 == 0 else (True, False)):
+            name = f"batch-{batch:02d}-capture-{'on' if enabled else 'off'}"
+            directory = out / name
+            directory.mkdir()
+            attempt = {"batch": batch, "capture_enabled": enabled,
+                       "directory": name, "status": "RUNNING"}
+            manifest["attempts"].append(attempt)
+            persist()
+            with tempfile.TemporaryDirectory(prefix="cifereca-perf-") as tmp:
+                env = os.environ.copy()
+                env.update(materialize_fixture("search-filters", Path(tmp)))
+                env.update(GDK_BACKEND="x11", PYTHONPATH=str(ROOT / "src"),
+                           CIFERECA_PERF_FIXTURE="1")
+                command = [
+                    xvfb, "-a", "-s",
+                    f"-screen 0 {args.width}x{1000 if args.width == 1600 else 900}x24",
+                    sys.executable, str(Path(__file__).resolve()),
+                    "--out", str(directory), "--width", str(args.width),
+                    "--performance-batch",
+                    *(["--capture-detail"] if enabled else []),
+                ]
+                try:
+                    result = subprocess.run(command, cwd=ROOT, env=env,
+                                            capture_output=True, timeout=120)
+                    attempt["returncode"] = result.returncode
+                    report_path = directory / "screen.json"
+                    if result.returncode == 0 and report_path.is_file():
+                        data = json.loads(report_path.read_text(encoding="utf-8"))
+                        attempt["status"] = (
+                            "PASS" if data.get("status") == "PASS"
+                            and data.get("git_sha") == manifest["git_sha"]
+                            else "FAIL"
+                        )
+                    else:
+                        attempt["status"] = "FAIL"
+                except subprocess.TimeoutExpired:
+                    attempt["status"] = "TIMEOUT"
+                except (OSError, ValueError):
+                    attempt["status"] = "FAIL"
+                persist()
+    # Do not silently drop failed batches or substitute a partial percentile.
+    return 0 if all(a["status"] == "PASS" for a in manifest["attempts"]) else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, choices=(1366, 1600), required=True)
     parser.add_argument("--slow-check", action="store_true")
     parser.add_argument("--window-baseline", action="store_true")
-    parser.add_argument("--performance-pairs", type=int, choices=(3, 30), default=30,
-                        help="Retained warm GTK rebuild pairs per path (one warmup excluded)")
+    parser.add_argument("--performance-pairs", type=int, choices=(3,), default=3,
+                        help="Historical functional recipe: three retained warm pairs")
+    parser.add_argument("--performance-campaign", action="store_true",
+                        help="Private isolated 30-pair campaign per capture state")
+    parser.add_argument("--performance-batch", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--capture-detail", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.performance_campaign:
+        if args.window_baseline or args.slow_check or args.performance_batch or args.capture_detail:
+            parser.error("Performance campaign is independent of functional acceptance")
+        return run_performance_campaign(args)
+    if args.performance_batch and (
+        args.window_baseline or args.slow_check
+        or os.environ.get("CIFERECA_PERF_FIXTURE") != "1"
+    ):
+        parser.error("Performance batches require the isolated campaign launcher")
+    if args.capture_detail and not args.performance_batch:
+        parser.error("Detailed capture is only supported by isolated performance batches")
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("GTK/X11/Xvfb required")
     out = args.out.resolve()
@@ -491,8 +597,10 @@ def main() -> int:
     tasks = StateTasks() if args.slow_check else Tasks()
     page_plugin = importlib.import_module("cifereca_diagnostics_page").DiagnosticsPagePlugin()
     page_plugin.activate(Context(broker, tasks))
+    core_started = monotonic()
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     started = monotonic()
+    core_open_ms = round((started - core_started) * 1000, 3)
     report = {
         "status": "RUNNING",
         "scenario": f"diagnostics-navigation-slow-{args.width}" if args.slow_check
@@ -501,6 +609,19 @@ def main() -> int:
         "scope": "real MainWindow and real Diagnostics page contribution, simulated brokers",
         "checks": {}, "screenshots": [], "pointer_actions": [],
     }
+    if args.performance_batch:
+        report["scenario"] = f"performance-batch-{args.width}"
+        report["performance_provenance"] = {
+            "origin": "synthetic_gtk", "fixture": "search-filters",
+            "python": platform.python_version(),
+            "gtk": [Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version()],
+            "kernel_release": platform.release(),
+            "architecture": platform.machine(),
+            "cpu_count": os.cpu_count(),
+            "capture_enabled": args.capture_detail,
+            "core_open_ms": core_open_ms,
+            "performance_verdict": "not_qualified",
+        }
     window = [None]
     device = [None]
     rc = [1]
@@ -914,6 +1035,20 @@ def main() -> int:
         capture("03b-library-563-real-gtk")
         report["library_563_u0_comparison"] = compare_library_render(w, pairs=args.performance_pairs)
         report["checks"]["P0_library_563_u0_projection_equivalent"] = True
+        if args.performance_batch:
+            report["library_capture"] = w.ui_perf.performance_report()
+            w.library_controls.set_state(
+                replace(w.library_controls.state(), text="Notice volume 562", field="title"),
+                notify=False,
+            )
+            filter_started = monotonic()
+            w._render_library()
+            report["library_filter_sync_ms"] = round((monotonic() - filter_started) * 1000, 3)
+            assert page.store.get_n_items() == 1
+            assert page.store.get_item(0).key == "p0-volume-562"
+            observe_detail_frame(page, lambda: w._open_library_item("p0-volume-562"),
+                                 "library", performance_library_selected)
+            return
         # #1023: keep the historical 563-row fixture unchanged. Extend
         # only the loaded GTK snapshot, then restore it for existing routes.
         entries = list(w._library_entries_cache)
@@ -957,6 +1092,49 @@ def main() -> int:
         assert page.selection.get_selected_item() is None
         w._open_library_item("p0-volume-562")
         later(150, library_volume_selected)
+
+    def observe_detail_frame(page, select, name, done):
+        """First after-paint following selection, not pixel or cover readiness."""
+        clock = page.get_frame_clock()
+        assert clock is not None
+        started_at = monotonic()
+        handler = [None]
+
+        def painted(frame_clock):
+            frame_clock.disconnect(handler[0])
+            handler[0] = None
+            report[name + "_selection_after_paint_ms"] = round(
+                (monotonic() - started_at) * 1000, 3
+            )
+            later(0, done)
+
+        handler[0] = clock.connect("after-paint", painted)
+        try:
+            select()
+            report[name + "_selection_sync_ms"] = round(
+                (monotonic() - started_at) * 1000, 3
+            )
+            page.queue_draw()
+        except Exception:
+            if handler[0] is not None:
+                clock.disconnect(handler[0])
+            raise
+
+        def deadline():
+            if handler[0] is not None:
+                clock.disconnect(handler[0])
+                handler[0] = None
+                raise AssertionError("Performance selection after-paint missing")
+        later(5000, deadline)
+
+    def performance_library_selected():
+        w = window[0]
+        assert w.library_page.selection.get_selected_item().key == "p0-volume-562"
+        assert w.library_page.detail.get_mapped()
+        assert any(isinstance(node, Gtk.Label) and node.get_text() == "Notice volume 562"
+                   for node in walk(w.library_page.detail))
+        report["checks"]["performance_library_detail"] = True
+        restore_volume_snapshot()
 
     def library_volume_selected():
         w = window[0]
@@ -1232,8 +1410,23 @@ def main() -> int:
         report["checks"]["P0_recent_563_real_rows_no_cover_or_autoselection"] = True
         report["recent_563_u0_comparison"] = compare_recent_render(w, pairs=args.performance_pairs)
         report["checks"]["P0_recent_563_u0_projection_equivalent"] = True
+        if args.performance_batch:
+            observe_detail_frame(page, lambda: page.select_key("p0-recent-562"),
+                                 "recent", performance_recent_selected)
+            return
         assert page.select_key("p0-recent-562")
         later(100, recent_volume_selected)
+
+    def performance_recent_selected():
+        w = window[0]
+        assert w.recent_page.selection.get_selected_item().key == "p0-recent-562"
+        assert w.recent_page.detail.get_mapped()
+        assert any(isinstance(node, Gtk.Label) and node.get_text() == "Acquisition fictive 562"
+                   for node in walk(w.recent_page.detail))
+        assert w.service.current_identity.identity_id == "camille"
+        report["checks"]["performance_recent_detail"] = True
+        report["recent_capture"] = w.ui_perf.performance_report()
+        finish()
 
     def recent_volume_selected():
         w = window[0]
@@ -3518,7 +3711,18 @@ def main() -> int:
         def do_activate(self):
             try:
                 gtk_phase_2027("window_start")
-                w = MainWindow(self, core.config, core.library, core.diagnostics)
+                if args.performance_batch:
+                    from cifereca.gui.ui_perf import UiPerfMonitor
+                    monitor = UiPerfMonitor(max_events=1000, measurement_origin="simulated")
+                    monitor.enable_detailed_capture(args.capture_detail)
+                    constructor_started = monotonic()
+                    w = MainWindow(self, core.config, core.library, core.diagnostics,
+                                   ui_perf=monitor)
+                    report["mainwindow_constructor_ms"] = round(
+                        (monotonic() - constructor_started) * 1000, 3
+                    )
+                else:
+                    w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
                 # Observe provenance before TaskRunner's intentional redaction.
                 # Only the exact missing-local-provider fixture can be tagged;
@@ -3535,7 +3739,15 @@ def main() -> int:
                 w.present()
                 gtk_phase_2027("window_shown")
                 device[0] = X11Input()
-                later(500, home_summary_acceptance if args.window_baseline else initial)
+                if args.performance_batch:
+                    report["startup_capture"] = w.ui_perf.performance_report()
+                    def performance_start():
+                        assert w.service.current_identity.identity_id == "camille"
+                        w.navigate("library")
+                        await_route("library", begin_library_volume)
+                    later(500, performance_start)
+                else:
+                    later(500, home_summary_acceptance if args.window_baseline else initial)
             except Exception as exc:
                 fail(f"Activation MainWindow: {type(exc).__name__}: {exc}")
 
@@ -3572,7 +3784,7 @@ def main() -> int:
     # Its old shared 50s watchdog expired during active profile selection
     # (#2203), after all 760px assertions passed. Keep a finite suite budget;
     # individual operation/geometry assertions retain their original bounds.
-    watchdog_seconds = 75 if args.window_baseline else 50
+    watchdog_seconds = 75 if (args.window_baseline or args.performance_batch) else 50
     GLib.timeout_add_seconds(
         watchdog_seconds,
         lambda: (fail(f"Timeout Diagnostics navigation {watchdog_seconds}s"), False)[1]
