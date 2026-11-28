@@ -159,3 +159,81 @@ def test_metrics_have_bounded_labels_and_no_payload(monkeypatch):
     assert "SECRET_SENTINEL" not in repr(metrics)
     metrics["local:backend_unavailable"]["count"] = 99
     assert service.metrics_snapshot()["local:backend_unavailable"]["count"] == 1
+
+
+def test_revocation_drops_inflight_result_and_preserves_no_fallback(monkeypatch):
+    from io import BytesIO
+    from threading import Event, Thread
+
+    cfg = normalize_profiles({**LOCAL, "enabled": True})
+    root = {"llm": cfg}
+    service = optional_llm_service(root)
+    entered, release, exited = Event(), Event(), Event()
+    answers = []
+
+    def delayed(*_args, **_kwargs):
+        entered.set()
+        try:
+            assert release.wait(5)
+            return BytesIO(b'{"choices":[{"message":{"content":"PRIVATE_RESULT"}}]}')
+        finally:
+            exited.set()
+
+    monkeypatch.setattr(service, "_opener", delayed)
+    caller = Thread(target=lambda: answers.append(service.generate(LLMRequest("private"))))
+    caller.start()
+    try:
+        assert entered.wait(2)
+        root["llm"] = select_profile(cfg, None)
+        caller.join(2)
+        assert not caller.is_alive()
+        assert len(answers) == 1 and answers[0].reason == "unavailable"
+        assert not answers[0].text
+        root["llm"] = cfg
+        assert not service.available()
+    finally:
+        release.set()
+        caller.join(5)
+        assert exited.wait(5)
+
+
+def test_two_slots_saturate_without_retry_or_fallback(monkeypatch):
+    from io import BytesIO
+    from threading import Event, Lock, Thread
+
+    cfg = normalize_profiles({**LOCAL, "enabled": True})
+    service = optional_llm_service({"llm": cfg})
+    entered, release = Event(), Event()
+    lock = Lock()
+    calls, results = [], []
+
+    def blocked(request, **_kwargs):
+        with lock:
+            calls.append(request.full_url)
+            if len(calls) == 2:
+                entered.set()
+        assert release.wait(5)
+        return BytesIO(b'{"choices":[{"message":{"content":"OK"}}]}')
+
+    monkeypatch.setattr(service, "_opener", blocked)
+    threads = [Thread(target=lambda: results.append(service.generate(LLMRequest("fixture"))))
+               for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    try:
+        assert entered.wait(2)
+        assert service.generate(LLMRequest("third")).reason == "busy"
+        assert calls == [LOCAL["endpoint"]] * 2
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(5)
+    assert len(results) == 2 and all(r.ok for r in results)
+    assert service.metrics_snapshot()["local:busy"]["count"] == 1
+
+
+@pytest.mark.parametrize("hidden", ["\u061c", "\u200e", "\u200f"])
+def test_profile_disclosure_rejects_hidden_controls(hidden):
+    cfg = normalize_profiles({**LOCAL, "enabled": True})
+    with pytest.raises(LLMSettingsError):
+        store_profile(cfg, "other", {**LOCAL, "model": "model" + hidden})

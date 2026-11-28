@@ -85,7 +85,7 @@ class Window:
         return None
 
 
-def _bind(*, remote=False):
+def _bind(*, remote=False, profiles=False):
     ui = SimpleNamespace(
         enabled=Widget(active=True),
         endpoint=Widget("https://example.org/v1/chat/completions" if remote
@@ -109,9 +109,15 @@ def _bind(*, remote=False):
         "api_key_env": "LOCAL_TEST_KEY",
         "timeout_seconds": "5", "max_input_chars": "4000", "max_output_tokens": "256",
     }
+    if profiles:
+        ui.profile_name = Widget()
+        ui.profile_info = Widget()
+        ui.profile_add = Widget()
+        ui.profile_select = Widget()
+        ui.profile_delete = Widget()
     capture = bind_settings_ai_callbacks(
         window, ai_ui=ui, ai_cfg=saved, page_lifetime=lifetime,
-        settings_state=SimpleNamespace(reset=lambda _tab: None),
+        settings_state=SimpleNamespace(reset=lambda _tab: None, mark_dirty=lambda _tab: True),
         update_settings_actions=lambda: None,
         Adw=SimpleNamespace(MessageDialog=Dialog),
         TaskPriority=SimpleNamespace(USER_ACTION="user"),
@@ -359,3 +365,46 @@ def test_cancelled_probe_result_is_recorded_even_after_page_disposal(
     assert caplog.text.count("operation=llm_connection_probe") == 1
     assert "status=cancelled" in caplog.text
     assert "DO_NOT_EXPORT" not in caplog.text
+
+
+def test_named_profile_create_clone_delete_and_select_without_implicit_activation():
+    window, ui, lifetime, capture = _bind(profiles=True)
+
+    def action(name, button):
+        ui.profile_name.set_text(name)
+        button.emit("clicked", button)
+
+    action("first", ui.profile_add)
+    cfg = capture()
+    assert cfg["active_profile"] == "first" and not cfg["enabled"]
+    assert cfg["profiles"]["legacy"]["model"] == "local-model"
+    ui.model.set_text("second-model")
+    action("second", ui.profile_add)
+    cfg = capture()
+    assert cfg["profiles"]["first"]["model"] == "local-model"
+    assert cfg["profiles"]["second"]["model"] == "second-model"
+    action("second", ui.profile_delete)
+    cfg = capture()
+    assert cfg["active_profile"] is None and not cfg["enabled"]
+    ui.endpoint.set_text("http://127.0.0.1:11434/v1/chat/completions")
+    ui.model.set_text("third-model")
+    action("third", ui.profile_add)
+    assert capture()["active_profile"] == "third"
+    action("first", ui.profile_select)
+    assert ui.model.get_text() == "local-model"
+    assert not capture()["enabled"]
+    assert window.runner.jobs == []
+    lifetime.dispose()
+
+
+def test_queued_probe_of_superseded_profile_never_calls_transport(monkeypatch):
+    window, ui, lifetime, _capture = _bind(profiles=True)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("superseded probe contacted backend")
+    monkeypatch.setattr("cifereca.gui.settings_ai_actions.probe_llm_connection_result", forbidden)
+    ui.test_button.emit("clicked", ui.test_button)
+    job = window.runner.jobs[0][0]
+    ui.profile_name.set_text("copy")
+    ui.profile_add.emit("clicked", ui.profile_add)
+    assert job[1]().status == "cancelled"
+    lifetime.dispose()

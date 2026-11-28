@@ -18,6 +18,7 @@ class LLMSettingsError(ValueError):
 def _text(value: object, field: str, maximum: int, *, required: bool = False) -> str:
     if type(value) is not str or len(value) > maximum or any(
         ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) <= 0x9F
+        or ord(ch) == 0x061C or ord(ch) in (0x200E, 0x200F)
         or 0x202A <= ord(ch) <= 0x202E or 0x2066 <= ord(ch) <= 0x2069
         or 0xD800 <= ord(ch) <= 0xDFFF
         for ch in value

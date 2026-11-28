@@ -110,7 +110,9 @@ Il n'existe ni profil de secours ni duplication mutable du profil actif.
 Dans le formulaire IA, saisir un nom de profil (lettres ASCII, chiffres, tiret
 ou underscore, 64 caractères au maximum), puis « Créer un profil » à partir
 des champs du formulaire, ou sélectionner/supprimer un nom existant. La liste
-et le profil sélectionné sont affichés. Modifier les champs du profil sélectionné,
+et le profil sélectionné sont affichés. Créer un profil copie les champs
+courants sans modifier le profil précédent ni transférer son autorisation.
+Modifier les champs du profil sélectionné,
 puis enregistrer. Les modifications restent dans le brouillon avant Save ;
 « Annuler les modifications » restaure la configuration sauvegardée. Toute
 sélection différente désactive le service et révoque l'autorisation distante.
@@ -123,7 +125,8 @@ analyse des plugins restent obligatoires. La valeur de clé ne doit jamais
 figurer dans les profils. Le processus courant peut refuser un service révoqué
 mais n'active jamais le nouveau profil à chaud. Enregistrer et redémarrer
 pour construire la nouvelle instance. Une requête déjà transmise ne peut
-pas être rappelée.
+pas être rappelée ; son résultat est écarté si l'instance est révoquée
+avant sa remise à l'appelant.
 
 Le Core maintient des compteurs bornés en mémoire par catégorie de résultat
 et destination locale/distante (nombre, durée cumulée et maximale).

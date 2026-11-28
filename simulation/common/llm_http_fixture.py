@@ -21,11 +21,14 @@ class SyntheticLLMFixture:
             def do_POST(self):
                 raw = self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 16384))
                 payload = json.loads(raw)
+                prompt = payload.get('messages', [{}])[-1].get('content')
+                structured = (payload.get('response_format') == {'type': 'json_object'}
+                              and prompt == 'Test JSON synthétique.')
+                plain = (not payload.get('response_format')
+                         and prompt == 'Test de connexion technique. Réponds uniquement OK.')
                 valid = (self.path == '/v1/chat/completions'
                          and payload.get('model') == 'fixture-model'
-                         and payload.get('max_tokens') == 8
-                         and payload.get('messages', [{}])[-1].get('content')
-                         == 'Test de connexion technique. Réponds uniquement OK.')
+                         and payload.get('max_tokens') == 8 and (plain or structured))
                 code = fixture.status if valid else 400
                 fixture.requests.append({'status': code, 'synthetic_only': valid,
                                          'sha256': hashlib.sha256(raw).hexdigest(),
@@ -33,7 +36,8 @@ class SyntheticLLMFixture:
                 time.sleep(fixture.delay)
                 self.send_response(code); self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                body = {'choices': [{'message': {'content': 'OK'}}]} if code == 200 else {'error': 'fixture'}
+                content = '{"ok":true}' if structured else 'OK'
+                body = {'choices': [{'message': {'content': content}}]} if code == 200 else {'error': 'fixture'}
                 try:
                     self.wfile.write(json.dumps(body).encode())
                 except (BrokenPipeError, ConnectionResetError):

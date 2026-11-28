@@ -157,10 +157,17 @@ def bind_settings_ai_callbacks(
             return
         try:
             name = ai_ui.profile_name.get_text().strip()
+            # Creating copies editor values, not the previous profile's
+            # identity or permission; keep the draft collection intact.
             if profile_mode[0]:
-                cfg = capture_ai_settings()
+                cfg = profile_draft[0]
+                if cfg is None:
+                    raise LLMSettingsError("Configuration des profils IA invalide")
+                if (cfg["active_profile"] is not None and action != "add"
+                        and not (action == "delete" and name == cfg["active_profile"])):
+                    cfg = capture_ai_settings()
             else:
-                cfg = normalize_profiles(capture_flat_settings())
+                cfg = normalize_profiles(ai_cfg)
             if action == "add":
                 if name in cfg["profiles"]:
                     raise LLMSettingsError("Ce profil existe déjà")
@@ -179,6 +186,8 @@ def bind_settings_ai_callbacks(
                 return
             profile_mode[0] = True
             profile_draft[0] = cfg
+            # Invalidate even when switching between identical widget values.
+            ai_probe_version[0] += 1
             load_flat(selected_settings(cfg))
             refresh_profile_info()
             settings_state.mark_dirty("ai")

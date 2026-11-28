@@ -288,6 +288,9 @@ class OptionalLLMService:
                     return
                 with self._opener(http_request, timeout=timeout) as response:
                     data = response.read(_MAX_RESPONSE_BYTES + 1)
+                if not self._admitted():
+                    result.append(failed("unavailable"))
+                    return
                 if len(data) > _MAX_RESPONSE_BYTES:
                     result.append(failed("response_too_large"))
                     return
@@ -350,6 +353,8 @@ class OptionalLLMService:
             return failed("backend_unavailable")
         deadline = monotonic() + timeout
         while not done.is_set():
+            if not self._admitted():
+                return failed("unavailable")
             cancelled = cancellation_state()
             if cancelled is not False:
                 return failed("cancelled" if cancelled is True else "invalid_request")
@@ -360,6 +365,8 @@ class OptionalLLMService:
         cancelled = cancellation_state()
         if cancelled is not False:
             return failed("cancelled" if cancelled is True else "invalid_request")
+        if not self._admitted():
+            return failed("unavailable")
         return result[0] if result else failed("backend_unavailable")
 
 

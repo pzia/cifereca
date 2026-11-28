@@ -26,6 +26,8 @@ from PIL import ImageGrab
 from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
+from cifereca.core.llm_profiles import selected_settings
+from cifereca.plugin_api import LLMRequest
 
 
 def walk(widget):
@@ -43,6 +45,7 @@ def main():
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     fixture = SyntheticLLMFixture()
+    restart_fixture = [None]
     requests = fixture.requests
     endpoint = fixture.endpoint
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
@@ -103,6 +106,11 @@ def main():
         controls['key'] = next(w for w in entries if w.get_title().startswith('Nom de variable'))
         controls['timeout'] = next(w for w in entries if w.get_title().startswith('Délai maximum'))
         controls['model'] = next(w for w in entries if w.get_title().startswith('Modèle installé'))
+        controls['profile_name'] = next(w for w in entries if w.get_title().startswith('Nom du profil'))
+        for key, label in (('profile_add', 'Créer un profil'),
+                           ('profile_select', 'Sélectionner'), ('profile_delete', 'Supprimer')):
+            controls[key] = next(w for w in walk(tab)
+                                 if isinstance(w, Gtk.Button) and w.get_label() == label)
         switches = [w for w in walk(tab) if isinstance(w, Gtk.Switch)]
         assert len(switches) == 2
         controls['enabled'], controls['remote'] = switches
@@ -320,7 +328,52 @@ def main():
         assert 'redémarrer' in status().lower(), status()
         report['checks']['saved_requires_restart_without_http'] = True
         capture('03-saved-restart-required')
-        report['status'] = 'PASS'; save(); result[0] = 0; app.quit()
+        later(profile_roundtrip)
+
+    def profile_roundtrip():
+        restart_fixture[0] = SyntheticLLMFixture()
+        controls['endpoint'].set_text(restart_fixture[0].endpoint)
+        controls['model'].set_text('fixture-model')
+        def action(name, key):
+            controls['profile_name'].set_text(name)
+            controls[key].emit('clicked')
+        action('local-one', 'profile_add')
+        assert not controls['enabled'].get_active()
+        controls['model'].set_text('unused-model')
+        action('local-two', 'profile_add')
+        assert not controls['enabled'].get_active()
+        action('local-two', 'profile_delete')
+        assert not controls['enabled'].get_active()
+        assert controls['model'].get_text() == ''
+        action('local-one', 'profile_select')
+        assert controls['model'].get_text() == 'fixture-model'
+        assert not controls['enabled'].get_active() and not controls['remote'].get_active()
+        controls['enabled'].set_active(True)
+        assert restart_fixture[0].requests == []
+        report['checks']['profile_create_delete_select_without_http'] = True
+        saves = [w for w in walk(window._settings_tabs.get_parent())
+                 if isinstance(w, Gtk.Button) and getattr(w, '_cifereca_action_label', '') == 'Enregistrer']
+        assert saves and saves[-1].get_sensitive()
+        save_started_at[0] = monotonic()
+        saves[-1].emit('clicked')
+        later(wait_profile_saved)
+
+    def wait_profile_saved():
+        cfg = core.config.get('llm', {})
+        if cfg.get('active_profile') != 'local-one' or 'redémarrer' not in status().lower():
+            if monotonic() - save_started_at[0] > 12:
+                raise AssertionError('Sauvegarde du profil IA sans confirmation sous 12 s')
+            later(wait_profile_saved, 80)
+            return
+        assert selected_settings(cfg)['model'] == 'fixture-model'
+        assert cfg['enabled'] is True and cfg['remote_approval'] is None
+        assert 'local-two' not in cfg['profiles']
+        assert 'legacy' in cfg['profiles']
+        assert restart_fixture[0].requests == []
+        assert 'synthetic-auth-never-persist' not in json.dumps(cfg)
+        report['checks']['named_profile_persisted_without_http'] = True
+        result[0] = 0
+        app.quit()
 
     class Application(Adw.Application):
         def __init__(self):
@@ -342,8 +395,36 @@ def main():
     GLib.timeout_add_seconds(70, lambda: (fail(TimeoutError('GTK settings recipe timeout')), False)[1])
     app.run([sys.argv[0]])
     fixture.close()
-    if report['status'] == 'RUNNING':
-        report.update(status='FAIL', error='Application exited before proof'); save()
+    try:
+        if result[0] == 0 and restart_fixture[0] is not None:
+            # Close/reopen the entire Core graph; no real user data, backend
+            # or external network. This is not a full process/plugin recipe.
+            with CiferecaCore.open(no_plugins=True, activate_plugins=False) as restarted:
+                llm = restarted.plugins.service('llm')
+                assert llm is not None and llm.available()
+                assert restarted.config.get('llm.active_profile') == 'local-one'
+                assert restart_fixture[0].requests == []
+                plain = llm.generate(LLMRequest(
+                    'Test de connexion technique. Réponds uniquement OK.', max_output_tokens=8))
+                structured = llm.generate(LLMRequest(
+                    'Test JSON synthétique.', task='structured', max_output_tokens=8))
+                assert plain.ok and plain.text == 'OK'
+                assert structured.ok and structured.structured == {'ok': True}
+                assert len(restart_fixture[0].requests) == 2
+                assert all(row['synthetic_only'] for row in restart_fixture[0].requests)
+                assert all(row['authorization_present'] for row in restart_fixture[0].requests)
+                report['checks']['core_restart_named_profile_http_text_json'] = True
+            report['status'] = 'PASS'
+        elif report['status'] == 'RUNNING':
+            result[0] = 1
+            report.update(status='FAIL', error='Application exited before proof')
+    except Exception as exc:
+        result[0] = 1
+        report.update(status='FAIL', error=f'{type(exc).__name__}: {exc}')
+    finally:
+        if restart_fixture[0] is not None:
+            restart_fixture[0].close()
+        save()
     return result[0]
 
 
