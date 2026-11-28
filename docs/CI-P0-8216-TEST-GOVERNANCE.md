@@ -185,3 +185,49 @@ Le premier passage GTK a révélé un témoin obsolète, non une régression pro
 **Deux skips restent non reçus** : `test_core_ui_095.py::test_plugins094_manifest_and_activation` et `test_public_identity_activation`. Le répertoire par défaut `tests/fixtures/plugins-0.9.4` est absent (404, aucun commit pour ce chemin dans l'historique main consulté); les tags de releases testés v0.9.4, 0.9.4, plugins-0.9.4 sont introuvables. Le second test demande spécifiquement Gutenberg 1.1.0. Ne pas substituer des archives actuelles à ces fixtures ni supprimer les tests sur la seule absence de données. Leur conservation ou migration nécessite qualification du contrat de compatibilité historique avec le rôle propriétaire Plugins. Aucun gate désactivé.
 
 Restent aussi les accords sémantiques #8393/#8402, l'instabilité à long terme et le bilan net global. Les 30 enregistrements rapprochés ne signifient pas une exécution exhaustive de main dans un seul environnement.
+
+
+## Réception nette ciblée et arbitrages propriétaire — 28 novembre 2026
+
+Cette section actualise les statuts provisoires ci-dessus, sans assimiler le périmètre mesuré à une recette globale. A historique épinglé `4fd07df843b9d940746bbfe962a1877eec15d431`, B main épinglé `246dc0125e8786d90e259520cc58ed5ccb90e350`. [#8428 / run 46118081253](https://github.com/pzia/cifereca/actions/runs/46118081253), HEAD `24c53fd824198e27238047435ee50afdd22e622e`, job 140896262898. Un runner et environnement partagé, arbre propre au même chemin, ordre A1/B1/B2/A2, processus Core/Numilog/Kobo distincts. Durées externes des sous-processus, B inclut quatre nouveaux tests du détecteur et une analyse incrémentale conservatrice de tout le diff A→B, hors installation et coûts non récurrents. Périmètre : quatre modules Core modifiés, deux modules Numilog, un module Kobo, plus le module qualité en B.
+
+| Mesure (secondes) | A1 | B1 | B2 | A2 |
+|---|---:|---:|---:|---:|
+| Core | 143,055 | 29,967 | 29,995 | 140,907 |
+| Numilog | 3,738 | 0,817 | 0,806 | 3,709 |
+| Kobo | 0,559 | 0,556 | 0,549 | 0,551 |
+| Scanner incrémental | — | 0,278 | 0,276 | — |
+| Total externe | 147,351 | 31,619 | 31,626 | 145,167 |
+
+Moyennes 146,259062 → 31,622439 s : **114,636624 s économisées, 78,38 %**, scanner inclus (0,277188 s moyen). Deux paires de même signe (115,732673 et 113,540574 s); deux observations par bras, pas d'intervalle de confiance robuste. La somme des ABBA des lots précédents n'est pas additive avec cette mesure. Aucun gain du pipeline complet ou en facturation établi, aucune extrapolation à l'instabilité à long terme. Les deux candidats ADEPT/Kobo approuvés ultérieurement ne figurent pas dans B.
+
+### Réconciliation indépendante de l'archive, sans rejouer les tests
+
+Le workflow expérimental est rouge : après les quatre passages réussis, son assertion de delta Kobo strict a rejeté dix changements de noms paramétrés. Conserver ce verdict, ne pas le présenter comme une CI verte. Archive [15252103788](https://github.com/pzia/cifereca/actions/runs/46118081253/artifacts/15252103788), 27 146 octets, SHA256 `41eed26196e32697d0a1789ba3b8c1ed6324480b05a6c5b6debd0810d35375ce` recalculé. Les douze XML ont été parsés indépendamment : multiensembles (classname, name, statut) identiques A1/A2 et B1/B2, tous pass, aucun skip/erreur. Core 51→54 (retrait SourceKey attendu et quatre tests du détecteur), Numilog 63→63 identiques, Kobo 64→64. Total 178→181. Pour les deux fonctions Kobo ci-dessous, les paramètres d'entrée sont inchangés, le nouveau paramètre est un oracle explicite. Blobs A `57992594fbb4038cb5298cb0dfc432ea8a0e4f91`, B `228a583ac73cb02eab15cc31b781ea843b3e9e7b` (#8299). Vérification du multiensemble des dix anciens noms transformés en dix nouveaux noms, même classe/fonction/statut, zéro autre delta. Ne pas normaliser les identités de manière générale.
+
+| Fonction | Entrée inchangée | Valeur attendue ajoutée |
+|---|---|---|
+| test_benign_percent_encoded_cover_paths_remain_valid | https://cdn.example/cover%20name.jpg | identique |
+| idem | https://cdn.example/cover%2520name.jpg | identique |
+| idem | https://cdn.example/cover%25name.jpg | identique |
+| idem | https://cdn.example/cover%GG.jpg | identique |
+| idem | /covers/book%20name.jpg | https://vault.example/covers/book%20name.jpg |
+| test_safe_nested_images_remain_usable_after_route_guard | covers/edition/cover.jpg | https://vault.example/base/covers/edition/cover.jpg |
+| idem | /covers/edition/cover.webp | https://vault.example/covers/edition/cover.webp |
+| idem | https://cdn.example/book/cover%20image.jpg | identique |
+| idem | https://cdn.example/covers/cover%2520image.jpg | identique |
+| idem | https://cdn.example/covers/book%25variant.jpg | identique |
+
+Les deux JSON du scanner donnent les mêmes 16 fichiers, 157 définitions, zéro erreur base/HEAD et un nouveau signal `tests/test_backlog_compaction.py::Tests.test_xl_group_pilot_and_twenty_members` : `no_recognized_assertion`. Revue de source : délégation via boucle/subTest à `exercise_xl_group`, oracles réels de refus, absence d'écriture, snapshots, reprise, compactage et purge. Faux positif de reconnaissance syntaxique, pas suppression de test; conserver la limite explicite du détecteur, sans élargir une exemption automatique.
+
+CI générale du brouillon [46118081203](https://github.com/pzia/cifereca/actions/runs/46118081203) : 29 019 pass, 29 skips, deux échecs exacts des gardes de publication d'artefacts (workflow temporaire hors liste autorisée). Même nature pour #8419 et #8423. Ne pas fusionner ces workflows ni modifier les gardes.
+
+### Coûts ponctuels dédupliqués
+
+Inventaire des 36 runs / 49 jobs précédemment recensés, REST started_at→completed_at, dernière tentative disponible par run, hors autres campagnes non inventoriées. Baseline 25 593 s, consolidation 870 s, diagnostics 793 s, candidats 114 s, CI connexes 891 s = 28 261 s (8 699 succès, 3 843 échecs, 15 719 annulations). Ne pas additionner les anciens instantanés. Ajouter les trois jobs désormais terminés : #8428 preuve 386 s (verdict failure malgré passages réussis), CI #8428 308 s (failure), CI exacte ADEPT 37 s (success). Sous-total 52 jobs / 39 runs, 28 992 s (8 h 03 min 12 s), dont 8 736 s succès, 4 537 s échecs, 15 719 s annulations. Ce sont des temps écoulés par job, pas des minutes facturées, ni le chemin critique; les tentatives antérieures et les autres campagnes ne sont pas exhaustivement recensées.
+
+### Arbitrages et intégration séquentielle
+
+[Arbitrage utilisateur](https://github.com/pzia/cifereca/issues/8216#issuecomment-7235556166) : accepter les deux rationalisations, conserver les tests historiques 0.9.4. ADEPT #8393 : 14→12 cas, trois refus consécutifs et oracles après chacun conservés; trois mutants identiques tués A/B. Réduction des répétitions de fixtures fraîches, non équivalence statistique d'instabilité. HEAD actualisé `44d470e5bda77499d1767fe2678a3a963abcf4a7`, [CI 46118574319](https://github.com/pzia/cifereca/actions/runs/46118574319) verte, squash `d374bd3b47badf341e7554c64019a20c82438d3c`, blob main `fb0fe681689656dec7e438dadfbc02a9bfd6553b` revérifié. Kobo #8402 : accord acquis, HEAD actualisé `88b778a7f50bf99384797c4735a6ffc61dd854f7` sur ce main, blob candidat `9d0c2d8d523173f2a543115fff6e84e62e1511c1` inchangé, [CI 46118667686](https://github.com/pzia/cifereca/actions/runs/46118667686) encore en cours au contrôle; fusion interdite avant verdict exact. Les deux skips historiques restent explicitement non reçus : 14 releases accessibles sans les ZIP requis, Gutenberg source 1.2.21 singleton_public ne remplace pas l'archive 1.1.0; compatibilité du parseur installé v1 maintenue. Aucun abandon du contrat.
+
+Les brouillons de preuve #8419/#8423/#8416/#8382/#8372 ont été fermés sans fusion après capitalisation sur main, branches et archives non supprimées, rétention GitHub inchangée. Restent la réception Kobo, le suivi d'instabilité à long terme, la preuve globale non confondue ou un arbitrage explicite sur le périmètre local, les deux archives historiques et la cadence de maintenance. Le P0 reste ouvert.
