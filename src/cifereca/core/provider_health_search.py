@@ -149,3 +149,48 @@ def observe_detail(service, session, identity, action, original, accept):
         finish("success" if any(getattr(result, name, None) != getattr(original, name, None)
                                 for name in fields) else "unknown")
         return result
+
+
+def begin_account_read(service, session, account, capability):
+    """Reuse exact single-account admission; no reads or navigation lookup."""
+    from types import SimpleNamespace
+    try:
+        identity = SimpleNamespace(identity_id=account.identity_id)
+        call = begin_public_search(service, session, identity, capability=capability)
+        exact = Scope(account.provider_id, account.credential_id, account.unique_id,
+                      account.identity_id, capability)
+        return call if call is not None and call[1] == exact else None
+    except Exception:
+        return None
+
+
+def finish_account_read(service, session, account, call, outcome):
+    if call is None or outcome is None:
+        return
+    from types import SimpleNamespace
+    try:
+        exact = Scope(account.provider_id, account.credential_id, account.unique_id,
+                      account.identity_id, call[1].capability)
+        if exact == call[1]:
+            finish_public_search(service, session,
+                                 SimpleNamespace(identity_id=account.identity_id), call, outcome)
+    except Exception:
+        pass
+
+
+def rights_outcome(snapshot):
+    """Positive evidence only; branch completeness does not attest global zero."""
+    from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
+    if type(snapshot) is not ProviderRightsSnapshot:
+        return None
+    try:
+        snapshot.__post_init__()
+    except (ValueError, TypeError, AttributeError):
+        return "unknown"
+    if snapshot.status == "cancelled":
+        return None
+    if (snapshot.status == "success" and snapshot.coverage == "complete"
+            and snapshot.pagination_complete is True
+            and any(row.provider_attested is True for row in snapshot.rights)):
+        return "success"
+    return "unknown"

@@ -46,13 +46,13 @@ def registered_health(service, health, identity_id):
             for instance, account, owner in coordinates:
                 scope = Scope(provider, instance, account, owner, capability)
                 rows.append((scope, enabled, health.snapshot(scope)[0]))
-        # Detail enrichment has a structural method ABI rather than a declared
-        # ProviderCapabilities flag. Only already observed exact scopes count.
-        for instance, account, owner in coordinates:
-            scope = Scope(provider, instance, account, owner, "detail")
-            latest = health.snapshot(scope)[0]
-            if latest is not None:
-                rows.append((scope, enabled, latest))
+        # Optional structural read ABIs: only already observed exact scopes count.
+        for capability in ("detail", "rights"):
+            for instance, account, owner in coordinates:
+                scope = Scope(provider, instance, account, owner, capability)
+                latest = health.snapshot(scope)[0]
+                if latest is not None:
+                    rows.append((scope, enabled, latest))
     return tuple(rows)
 
 

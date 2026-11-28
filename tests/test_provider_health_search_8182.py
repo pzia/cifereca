@@ -161,3 +161,18 @@ def test_detail_observation_is_separate_and_requires_business_acceptance():
                    lambda result: None)
     assert health.snapshot(scope)[0].outcome is Outcome.UNKNOWN
     assert calls == ["read", "read"]
+
+
+def test_rights_empty_partial_and_cancelled_are_not_positive():
+    from cifereca.plugin_api.provider_rights_observation import (
+        ProviderRightsScope, ProviderRightsSnapshot,
+    )
+    from cifereca.core.provider_health_search import rights_outcome
+    scope = ProviderRightsScope("viewer", "fixture", "instance", "account")
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope)) == "unknown"
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope, status="failed")) == "unknown"
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope, status="cancelled")) is None
+    complete = ProviderRightsSnapshot(
+        scope=scope, status="success", coverage="complete", pagination_complete=True,
+        branch="fixture", observed_at="2026-11-28T12:00:00Z", snapshot_ref="fixture")
+    assert rights_outcome(complete) == "unknown"
