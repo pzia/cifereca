@@ -659,6 +659,7 @@ class DetailPanel(Gtk.Box):
         if current is None:
             current = []
             self._action_buttons = current
+        previous = tuple(current)
         changed = False
         for button in buttons:
             identifier = getattr(button, '_cifereca_action_id', None)
@@ -694,14 +695,26 @@ class DetailPanel(Gtk.Box):
                 if callable(adder):
                     adder('suggested-action')
                 primary_styled = True
+        # A detail selection often contributes several successive batches of
+        # actions. When the native bar already contains the exact unchanged
+        # prefix, append only the tail rather than unparenting and measuring
+        # all earlier buttons again. The bar's overflow layout explicitly
+        # supports late appends. Reorder, replacement, or unknown host still
+        # uses the complete rebuild; no action or permission is cached.
+        existing = getattr(self, '_rendered_action_count', 0)
+        rendered = getattr(self.action_scroll, '_buttons', ())
+        append_only = (
+            bool(previous) and existing == len(previous) == len(rendered)
+            and all(a is b for a, b in zip(previous, rendered))
+            and all(a is b for a, b in zip(previous, current))
+        )
         clear = getattr(self.action_scroll, 'clear', None)
-        if callable(clear):
-            clear()
-        else:
-            existing = getattr(self, '_rendered_action_count', 0)
-            if existing:
+        if not append_only:
+            if callable(clear):
+                clear()
+            elif existing:
                 return
-        for button in current:
+        for button in current[len(previous):] if append_only else current:
             self.action_scroll.append(button)
         self._rendered_action_count = len(current)
         self.action_scroll.set_visible(True)

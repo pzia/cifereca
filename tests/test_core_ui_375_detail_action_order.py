@@ -99,3 +99,40 @@ def test_duplicate_action_id_does_not_change_order_or_add_second_primary_style()
 
     assert [button._cifereca_action_label for button in bar.buttons] == ["Ouvrir", "En ligne"]
     assert opening.classes == {"suggested-action"}
+
+
+def test_native_action_bar_appends_unchanged_prefix_without_reparenting():
+    priority, actions = _methods("_detail_action_priority", "_actions")
+
+    class NativeBar(Bar):
+        def __init__(self):
+            super().__init__()
+            self._buttons = self.buttons
+            self.clears = 0
+            self.appended = []
+
+        def clear(self):
+            self.clears += 1
+            super().clear()
+
+        def append(self, button):
+            self.appended.append(button)
+            super().append(button)
+
+    bar = NativeBar()
+    host = NS(action_scroll=bar, _action_ids=set(), _action_buttons=[],
+              _rendered_action_count=0, _detail_action_priority=priority)
+    opening = Button("Ouvrir", "open-local")
+    online = Button("En ligne", "online")
+    transfer = Button("Envoyer à Alice", "send-local:alice")
+    actions(host, [opening, online])
+    actions(host, [transfer])
+    assert bar.buttons == [opening, online, transfer]
+    assert bar.appended == [opening, online, transfer]
+    assert bar.clears == 1
+    assert opening.classes == {"suggested-action"}
+
+    borrow = Button("Emprunter", "borrow")
+    actions(host, [borrow])
+    assert bar.buttons == [opening, borrow, online, transfer]
+    assert bar.clears == 2  # priority insertion still rebuilds
