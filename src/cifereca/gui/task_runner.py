@@ -747,8 +747,6 @@ class TaskRunner:
                 outcome: tuple[str, Any] = ("ok", value)
             except BaseException as exc:  # noqa: BLE001 - thread/UI boundary
                 outcome = ("error", exc)
-            if outcome[0] == "error":
-                trace_failure("worker", outcome[1])
             from cifereca.plugin_api import Cancelled
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
@@ -764,6 +762,22 @@ class TaskRunner:
                 and callable(lock_classifier)
                 and lock_classifier(outcome[1])
             )
+            # Opening workers propagate typed lifecycle exceptions. They are
+            # not provider failures, even though the Future raised.
+            opening_lifecycle = (
+                trace_kind in {"opening-sync", "deep-sync"}
+                and outcome[0] == "error"
+                and (typed_lock_busy or business_status == "cancelled")
+            )
+            if opening_lifecycle:
+                if business_status != "cancelled":
+                    business_status = "busy"
+                _TRACE_LOG.info(
+                    "TRACE task lifecycle id=%s kind=%s origin=%s business_status=%s",
+                    task_id, trace_kind, origin, business_status,
+                )
+            elif outcome[0] == "error":
+                trace_failure("worker", outcome[1])
             classify_task = getattr(self, "_task_feedback_classification", None)
             task_classification = (
                 classify_task(origin, trace_kind, control)

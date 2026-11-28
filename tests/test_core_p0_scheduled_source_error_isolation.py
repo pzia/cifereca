@@ -68,18 +68,18 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
 
         first, second = sorted(service.accounts, key=broker._source_id)
         failed_key = "sync.source.state." + broker._source_id(first)
-        original = service.storage.metadata_set
+        original = service.storage.metadata_compare_publish
         writes = []
 
-        def fail_first_source_only(key, value):
+        def fail_first_source_only(key, expected, value):
             writes.append(key)
             if key == failed_key:
                 raise RuntimeError(
                     "https://private.invalid/fulfillment?auth=SIGNED_SECRET"
                 )
-            return original(key, value)
+            return original(key, expected, value)
 
-        monkeypatch.setattr(service.storage, "metadata_set", fail_first_source_only)
+        monkeypatch.setattr(service.storage, "metadata_compare_publish", fail_first_source_only)
         result = broker.synchronize_scheduled_inventory("alice", "startup")
 
         assert result.ok is False

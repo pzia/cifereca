@@ -362,6 +362,9 @@ def configure(
         def work():
             failures = 0
             completed = 0
+            deferred = 0
+            partials = 0
+            changed = 0
             interrupted = False
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
@@ -377,6 +380,13 @@ def configure(
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    if type(receipt) is SyncResult and type(receipt.changed) is int and 0 <= receipt.changed <= 256_000_000:
+                        changed += receipt.changed
+                    if type(receipt) is SyncResult and receipt.facts.get("status") in {"busy", "partial", "failed"}:
+                        deferred += int(receipt.facts.get("deferred", 0) > 0)
+                        partials += int(receipt.facts.get("status") == "partial")
+                        failures += int(receipt.facts.get("status") == "failed" or receipt.facts.get("failed", 0) > 0)
+                        continue
                     progressed, failed = _scheduled_inventory_progress(receipt)
                     completed += int(progressed)
                     failures += int(failed)
@@ -387,19 +397,32 @@ def configure(
                 if not scope_current():
                     interrupted = True
                     break
+            if partials or (completed and (failures or deferred)):
+                return SyncResult(ok=False, changed=changed, facts={"status": "partial",
+                                                   "completed": completed,
+                                                   "failed": failures,
+                                                   **({"deferred": deferred} if deferred else {})})
+            if deferred and not failures:
+                return SyncResult(ok=False, changed=changed, facts={"status": "busy",
+                                                   "reason": "operation_busy",
+                                                   "deferred": deferred})
             if completed and failures:
-                return SyncResult(ok=False, facts={"status": "partial",
+                return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                    "completed": completed,
                                                    "failed": failures})
+            if failures and deferred:
+                return SyncResult(ok=False, changed=changed, facts={"status": "failed",
+                                                   "failed": failures,
+                                                   "deferred": deferred})
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
             # TaskRunner treats a bare None as an unexecuted/invalidated
             # source-sync. Carry an explicit positive receipt only after a
             # broker-attested attempt; a skipped batch remains unproven.
             if completed and (interrupted or not scope_current()):
-                return SyncResult(ok=False, facts={"status": "partial",
+                return SyncResult(ok=False, changed=changed, facts={"status": "partial",
                                                    "completed": completed})
-            return SyncResult(ok=True) if completed else None
+            return SyncResult(ok=True, changed=changed) if completed else None
 
         try:
             window.runner.submit(

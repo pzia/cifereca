@@ -279,6 +279,27 @@ class SynchronizationBrokerImpl:
     _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
+    _contention: dict[str, tuple[float, Any]] = field(default_factory=dict, repr=False)
+    _contention_lock: Any = field(default_factory=threading.Lock, repr=False)
+
+    def _mark_contention(self, source_id: str, snapshot: Any) -> None:
+        from time import monotonic
+        with self._contention_lock:
+            now = monotonic()
+            self._contention = {k: v for k, v in self._contention.items() if v[0] > now}
+            self._contention[source_id] = (now + 30, snapshot)
+
+    def _contention_observed(self, source_id: str) -> bool:
+        from time import monotonic
+        raw = self.service.storage.metadata_get("sync.source.state." + source_id)
+        with self._contention_lock:
+            marker = self._contention.get(source_id)
+            if marker is None:
+                return False
+            if marker[0] <= monotonic() or marker[1] != raw:
+                self._contention.pop(source_id, None)
+                return False
+            return True
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -315,7 +336,7 @@ class SynchronizationBrokerImpl:
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
         return source_enabled(raw)
 
-    def _state(self, source_id: str) -> dict[str, Any]:
+    def _state(self, source_id: str, *, _recover: bool = True) -> dict[str, Any]:
         key = "sync.source.state." + source_id
         raw = self.service.storage.metadata_get(key)
         if not raw:
@@ -375,8 +396,24 @@ class SynchronizationBrokerImpl:
         terminal = self._closed_last_cycle(value.get("last_cycle"))
         if terminal is not None:
             state["last_cycle"] = terminal
-        if legacy:
-            self._set_state(source_id, state)
+        if _recover and state.get("status") == "running" and type(value.get("attempt_pid")) is int:
+            pid = value["attempt_pid"]
+            from .core.process_liveness import owner_proven_dead
+            if owner_proven_dead(pid):
+                # The remote outcome is unknown, not success.
+                recovered = dict(state, status="interrupted")
+                if recovered.get("inventory_status") == "running":
+                    recovered["inventory_status"] = "failed"
+                encoded = json.dumps(recovered, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":"))
+                if self.service.storage.metadata_compare_publish(key, raw, encoded):
+                    return recovered
+                # A concurrent publisher won; never migrate the stale snapshot.
+                return self._state(source_id, _recover=False)
+        if legacy and _recover:
+            encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if not self.service.storage.metadata_compare_publish(key, raw, encoded):
+                return self._state(source_id, _recover=False)
         return state
 
     @classmethod
@@ -436,7 +473,11 @@ class SynchronizationBrokerImpl:
         conservatively report partial for every involved source. Keep any
         previously confirmed success, including after failed opening sync.
         """
+        key = "sync.source.state." + source_id
+        observed = self.service.storage.metadata_get(key)
         state = self._state(source_id)
+        if state.get("status") == "running":
+            return  # do not replace an admitted source attempt
         if state.get("last_attempt", "") > attempted_at:
             return  # a more recent manual sync should not be overwritten
         state.update(last_attempt=attempted_at, status=status, error="",
@@ -446,8 +487,9 @@ class SynchronizationBrokerImpl:
         elif status in {"partial", "failed"}:
             state["error"] = ("Ouverture partielle" if status == "partial"
                               else "Échec de synchronisation au démarrage")
-        self._set_state(source_id, state)
-        self._notify()
+        terminal = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if self.service.storage.metadata_compare_publish(key, observed, terminal):
+            self._notify()
 
     def _find_account(self, source_id: str) -> Any:
         # This is a routing key, not an instruction to pick the first
@@ -663,6 +705,7 @@ class SynchronizationBrokerImpl:
                 account, state, tuple(declared_sync_caps),
             ),
             last_cycle=receipt,
+            contention_observed=self._contention_observed(source_id),
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
@@ -789,6 +832,8 @@ class SynchronizationBrokerImpl:
         total = 0
         attempted = 0
         failed = 0
+        deferred = 0
+        partial = 0
         for account in sorted(
             self.service.accounts_for_identity(identity_id),
             key=self._source_id,
@@ -864,6 +909,9 @@ class SynchronizationBrokerImpl:
                     source_id, SyncRequest(identity_id=identity_id), control,
                     inventory_only=True,
                 )
+                if result.facts.get("reason") == "operation_busy":
+                    with self._scheduled_inventory_lock:
+                        self._scheduled_inventory_requested.discard(source_id)
             except Cancelled:
                 # Cancellation is a lifecycle signal, not a provider fault.
                 raise
@@ -882,14 +930,29 @@ class SynchronizationBrokerImpl:
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
             total += result.changed
-            if not result.ok:
+            if result.facts.get("reason") == "operation_busy":
+                deferred += 1
+                attempted -= 1
+            elif result.facts.get("status") == "partial":
+                partial += 1
+            elif not result.ok:
                 failed += 1
+        facts = {"phase": "discover_rights", "trigger": trigger,
+                 "attempted": attempted, "failed": failed,
+                 "acquisition_authorized": False}
+        if deferred:
+            facts["deferred"] = deferred
+        if partial:
+            facts["partial"] = partial
+        if deferred or partial:
+            facts["status"] = ("busy" if not attempted else
+                               "failed" if failed == attempted else "partial")
+            if not attempted:
+                facts["reason"] = "operation_busy"
         return SyncResult(
-            ok=failed == 0, changed=total,
-            warnings=("synchronisation planifiée partielle",) if failed else (),
-            facts={"phase": "discover_rights", "trigger": trigger,
-                   "attempted": attempted, "failed": failed,
-                   "acquisition_authorized": False},
+            ok=not (failed or deferred or partial), changed=total,
+            warnings=("synchronisation planifiée partielle",) if failed or partial else (),
+            facts=facts,
         )
 
     def source_sync_consent(self, source_id: str) -> dict[str, object]:
@@ -1019,7 +1082,11 @@ class SynchronizationBrokerImpl:
             return SyncResult(ok=False, changed=0, warnings=("source sync unsupported",),
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        state_key = "sync.source.state." + source_id
+        previous_raw = self.service.storage.metadata_get(state_key)
         state = self._state(source_id)
+        if state.get("status") == "running":
+            return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
 
         def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
@@ -1052,7 +1119,21 @@ class SynchronizationBrokerImpl:
         refreshes_private_inventory = "personal_library" in current.capabilities
         if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
-        self._set_state(source_id, state); self._notify()
+        from secrets import token_hex
+        import os
+        provisional = json.dumps({**state, "attempt_token": token_hex(16), "attempt_pid": os.getpid()},
+                                 ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if not self.service.storage.metadata_compare_publish(state_key, previous_raw, provisional):
+            return SyncResult(ok=False, facts={"status": "busy", "reason": "operation_busy"})
+        with self._contention_lock:
+            self._contention.pop(source_id, None)
+        self._notify()
+
+        def publish_terminal():
+            terminal = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            self.service.storage.metadata_compare_publish(state_key, provisional, terminal)
+            self._notify()
+
         try:
             # A scheduled refresh is not a public source Sync: only its
             # dedicated Core implementation can guarantee no delivery B.
@@ -1078,7 +1159,7 @@ class SynchronizationBrokerImpl:
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
                 if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
                                   facts={"reason": "invalid_response"})
             skip_status = result.get("status")
@@ -1095,7 +1176,7 @@ class SynchronizationBrokerImpl:
                             state[key] = previous_inventory[key]
                         else:
                             state.pop(key, None)
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=True, changed=0, facts={
                     "status": "skipped", "skipped": True,
                 })
@@ -1157,7 +1238,7 @@ class SynchronizationBrokerImpl:
                 state.update(status="partial", error="Synchronisation partielle")
                 if refreshes_private_inventory:
                     state["inventory_status"] = "partial"
-                self._set_state(source_id, state); self._notify()
+                publish_terminal()
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1167,7 +1248,7 @@ class SynchronizationBrokerImpl:
                 state.update(
                     inventory_last_success=success_at, inventory_status="success",
                 )
-            self._set_state(source_id, state); self._notify()
+            publish_terminal()
             return SyncResult(ok=True, changed=changed, facts=facts)
         except Exception as exc:
             # The Core source-sync lock reports an observed operation_busy
@@ -1178,23 +1259,25 @@ class SynchronizationBrokerImpl:
             from .providers import ProviderConfigurationError
             busy = (isinstance(exc, ProviderConfigurationError)
                     and isinstance(exc.__cause__, LockBusyError))
-            terminal_cycle("busy" if busy else "failed")
-            state.update(
-                status="busy" if busy else "error",
-                error="" if busy else _SYNC_PUBLIC_FAILURE,
-            )
-            if refreshes_private_inventory:
-                state["inventory_status"] = "busy" if busy else "failed"
-            self._set_state(source_id, state); self._notify()
-            return (
-                SyncResult(
+            if busy:
+                # No Core admission: retain prior clocks and terminal evidence.
+                self.service.storage.metadata_compare_restore(
+                    state_key, provisional, previous_raw,
+                )
+                self._mark_contention(source_id, previous_raw)
+                self._notify()
+                return SyncResult(
                     ok=False, warnings=("Synchronisation déjà en cours",),
                     facts={"status": "busy", "reason": "operation_busy"},
                 )
-                if busy else SyncResult(
-                    ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
-                    facts={"reason": "source_unavailable"},
-                )
+            terminal_cycle("failed")
+            state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+            if refreshes_private_inventory:
+                state["inventory_status"] = "failed"
+            publish_terminal()
+            return SyncResult(
+                ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
+                facts={"reason": "source_unavailable"},
             )
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:

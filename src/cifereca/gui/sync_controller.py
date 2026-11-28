@@ -20,7 +20,7 @@ from .sync_view import (
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
 )
 from .task_runner import TaskPriority
-from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
+from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current, schedule_contention_expiry
 from .sync_action_layout import add_sync_action, sync_action_row
 from .sync_source_details import add_sync_detail
 
@@ -349,6 +349,7 @@ def _refresh_sync_page(self) -> None:
         }
         for notice in unavailable_connections
     )
+    schedule_contention_expiry(self, scope, rows, GLib.timeout_add_seconds)
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
     # carry that disclosure state into another identity or retain stale rows.
@@ -1364,7 +1365,14 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             return opening_service.opening_sync(
                 progress=lambda event: progress(event, report), deep=deep,
             )
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, Cancelled):
+                raise Cancelled("opening_sync_cancelled") from None
+            from cifereca.locking import LockBusyError
+            from cifereca.providers import ProviderConfigurationError
+            if (isinstance(exc, ProviderConfigurationError)
+                    and isinstance(exc.__cause__, LockBusyError)):
+                raise LockBusyError("Synchronisation déjà en cours") from None
             # TaskRunner also renders failed worker payloads in global GTK
             # feedback *before* invoking err(). Never enqueue a raw provider
             # exception with a bearer URL/path/account ID into that boundary.
@@ -1432,6 +1440,17 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             dispatch_after_opening(self)
     def err(exc: BaseException) -> None:
         if not opening_scope_current():
+            return
+        from cifereca.locking import LockBusyError
+        if isinstance(exc, LockBusyError):
+            self.diagnostics.add("SYNC", "opening sync", "warning",
+                                 detail={"reason": "operation_busy"})
+            self._render_dashboard()
+            return
+        if isinstance(exc, Cancelled):
+            self.diagnostics.add("SYNC", "opening sync", "warning",
+                                 detail={"reason": "opening_sync_cancelled"})
+            self._render_dashboard()
             return
         self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()

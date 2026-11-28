@@ -44,6 +44,17 @@ class Storage:
     def metadata_set(self, key, value):
         import json
         self.values[key] = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+    def metadata_compare_publish(self, key, expected, value):
+        if self.metadata_get(key) != expected:
+            return False
+        self.metadata_set(key, value)
+        return True
+    def metadata_compare_restore(self, key, expected, previous):
+        if self.metadata_get(key) == expected:
+            if previous is None:
+                self.values.pop(key, None)
+            else:
+                self.metadata_set(key, previous)
     def metadata_set_with_revision(self, key, value, revision_key):
         # In-memory contract double. SQLite transactional rollback and epoch
         # monotonicity are exercised by the dedicated real-Storage P0 tests.

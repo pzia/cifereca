@@ -99,3 +99,14 @@ def sync_action_scope_current(window, scope: SyncActionScope | None) -> bool:
     ):
         return False
     return True
+
+
+def schedule_contention_expiry(window, scope, rows, schedule):
+    """One read-only refresh, restricted to the captured visible generation."""
+    if not any(getattr(row, "contention_observed", False) is True for row in rows):
+        return
+    def expire():
+        if sync_action_scope_current(window, scope):
+            window._refresh_sync_page()
+        return False
+    schedule(30, expire)
