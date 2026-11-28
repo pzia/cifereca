@@ -294,6 +294,15 @@ class DiagnosticsProviderHealthBroker(Protocol):
 
 
 @runtime_checkable
+class DiagnosticsProviderRecipeBroker(Protocol):
+    """Page-only explicit read recipe; no activation, reconnection or mutation."""
+    def provider_health_recipe_options(self) -> tuple[Mapping[str, Any], ...]: ...
+    def run_provider_health_recipe(self, scope: Any, generation: tuple, *,
+                                   confirmed: bool = False,
+                                   control: TaskControl | None = None) -> tuple[Mapping[str, str], ...]: ...
+
+
+@runtime_checkable
 class DiagnosticsCaptureRetentionBroker(Protocol):
     """Optional Core-owned common capture retention settings."""
     def capture_retention_policy(self) -> Mapping[str, int]: ...

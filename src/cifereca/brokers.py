@@ -1942,6 +1942,14 @@ class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
         return diagnostic_health_selection_current(
             self.service, scope, capability, evidence_ref, capture_id, generation)
 
+    def provider_health_recipe_options(self):
+        from .core.provider_health_recipe import recipe_options
+        return recipe_options(self.service)
+
+    def run_provider_health_recipe(self, scope, generation, *, confirmed=False, control=None):
+        from .core.provider_health_recipe import run_recipe
+        return run_recipe(self.service, scope, generation, confirmed=confirmed, control=control)
+
     def set_http_trace_include_binary(self, value: bool) -> bool:
         from copy import deepcopy
         from .http_trace import HTTP_TRACE, HTTP_CAPTURE_INCLUDE_BINARY
