@@ -436,7 +436,11 @@ class SynchronizationBrokerImpl:
         conservatively report partial for every involved source. Keep any
         previously confirmed success, including after failed opening sync.
         """
+        key = "sync.source.state." + source_id
+        observed = self.service.storage.metadata_get(key)
         state = self._state(source_id)
+        if state.get("status") == "running":
+            return  # do not replace an admitted source attempt
         if state.get("last_attempt", "") > attempted_at:
             return  # a more recent manual sync should not be overwritten
         state.update(last_attempt=attempted_at, status=status, error="",
@@ -446,8 +450,9 @@ class SynchronizationBrokerImpl:
         elif status in {"partial", "failed"}:
             state["error"] = ("Ouverture partielle" if status == "partial"
                               else "Échec de synchronisation au démarrage")
-        self._set_state(source_id, state)
-        self._notify()
+        terminal = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if self.service.storage.metadata_compare_publish(key, observed, terminal):
+            self._notify()
 
     def _find_account(self, source_id: str) -> Any:
         # This is a routing key, not an instruction to pick the first
