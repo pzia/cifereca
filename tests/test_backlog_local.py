@@ -1,6 +1,6 @@
 import copy
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from scripts import backlog_local as local
 from scripts import backlog_compaction as engine
@@ -68,6 +68,62 @@ class LocalReadOnlyTests(unittest.TestCase):
                                "user": {"login": "pzia", "id": engine.OWNER_ID}}]}
         with self.assertRaises(engine.Refusal):
             local.journal(snap)
+
+    def test_local_owner_journal_explicit_only(self):
+        snap = {"comments": [{"body": engine.START + self.digest + " " + self.commit,
+                               "user": engine.OWNER_AUTHOR}]}
+        with self.assertRaises(engine.Refusal):
+            local.journal(snap)
+        self.assertEqual(len(local.journal(snap, local.LOCAL_AUTHORS)), 1)
+
+    def test_continue_uses_shared_engine_and_journal_only_checkpoint(self):
+        api, stage = MagicMock(), MagicMock()
+        raw = engine.encode(self.manifest)
+        digest = engine.sha256(raw)
+        stage.read_remote.return_value = raw
+        stage.remote_head.return_value = self.commit
+        receipt = {"status": "READ_ONLY_PREFIX_VERIFIED", "master": 99,
+                   "stage_sha": self.commit, "manifest_sha256": digest,
+                   "cursor": 0, "applied": 10}
+        results = [{"status": "LOT_PENDING", "cursor": 10},
+                   {"status": "STAGED_AND_COMPACTED", "cursor": 13}]
+        with patch.object(local, "local_checkout"), \
+                patch.object(local, "ensure_no_closure_runs"), \
+                patch.object(engine, "main_guard"), \
+                patch.object(local, "reconcile", return_value=receipt), \
+                patch.object(engine, "apply_lot_tranche", side_effect=results) as apply, \
+                patch.object(engine, "verify_compacted_corpus") as verify:
+            result = local.continue_local(api, stage, 100, 99, self.commit, digest, "c" * 40)
+        api.authenticated_owner.assert_called_once()
+        stage.execution_lock.assert_called_once()
+        self.assertEqual([call.args[5:7] for call in apply.call_args_list], [(0, 10), (10, 10)])
+        self.assertTrue(all(call.kwargs["writer_author"] == engine.OWNER_AUTHOR
+                            for call in apply.call_args_list))
+        verify.assert_called_once()
+        self.assertEqual(result["cursor"], 13)
+        self.assertFalse(result["purge_enabled"])
+        self.assertIsNone(api.write_guard)
+
+    def test_local_scope_mismatch_never_applies(self):
+        api, stage = MagicMock(), MagicMock()
+        receipt = {"status": "READ_ONLY_PREFIX_VERIFIED", "master": 98,
+                   "stage_sha": self.commit, "manifest_sha256": self.digest}
+        with patch.object(local, "local_checkout"), \
+                patch.object(local, "ensure_no_closure_runs"), \
+                patch.object(engine, "main_guard"), \
+                patch.object(local, "reconcile", return_value=receipt), \
+                patch.object(engine, "apply_lot_tranche") as apply:
+            with self.assertRaisesRegex(engine.Refusal, "scope mismatch"):
+                local.continue_local(api, stage, 100, 99, self.commit, self.digest, "c" * 40)
+        apply.assert_not_called()
+        self.assertIsNone(api.write_guard)
+
+    def test_local_apply_flag_required(self):
+        with patch.object(engine, "WriteAPI") as writer, self.assertRaises(SystemExit):
+            local.main(["continue", "--anchor", "100", "--master", "99",
+                        "--stage-sha", self.commit, "--manifest-sha256", self.digest,
+                        "--expect-main", "c" * 40])
+        writer.assert_not_called()
 
     def test_no_apply_command(self):
         with patch.object(engine, "ReadOnlyAPI") as reader, self.assertRaises(SystemExit):
