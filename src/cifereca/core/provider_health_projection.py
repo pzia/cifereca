@@ -141,13 +141,18 @@ class PassiveHealth:
                 return
             rows = self._witnesses.setdefault(scope.provider, [])
             for book in books:
-                if len(rows) >= 3:
-                    break
                 if (type(book) is not tuple or len(book) != 2
                         or not all(type(v) is str and 0 < len(v) <= 256
                                    and all(c.isprintable() for c in v) for v in book)):
                     continue
-                if any(old_book == book for _, old_book, _, _ in rows):
+                # Renew only a positively re-observed witness in its original
+                # scope. A missing result never evicts an existing witness.
+                index = next((i for i, (owner, old_book, _, _) in enumerate(rows)
+                              if owner == scope and old_book == book), None)
+                if index is not None:
+                    rows[index] = (scope, book, observation.version, observation.evidence_ref)
+                    continue
+                if len(rows) >= 3 or any(old_book == book for _, old_book, _, _ in rows):
                     continue
                 rows.append((scope, book, observation.version, observation.evidence_ref))
 
