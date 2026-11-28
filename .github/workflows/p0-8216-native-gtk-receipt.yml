@@ -15,42 +15,68 @@ jobs:
           ref: 9bfd3458d61dbb562bf02bcdc0d8958814ee689a
       - name: Install existing GTK E2E runtime
         run: bash scripts/ci-install-gtk-e2e-runtime.sh
-      - name: Execute only the eleven unresolved native GTK cases
+      - name: Corrected native ABA callback and discriminating epoch mutant
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 9bfd3458d61dbb562bf02bcdc0d8958814ee689a
+          test_path=tests/test_core_p0_2975_opening_loan_ui_identity_isolation.py
+          production=src/cifereca/gui/loans_controller.py
+          git fetch origin 97b1aa2b3d0c5fe9b0e71ff3bee1e22a03b26565
+          test "$(git rev-parse FETCH_HEAD)" = 97b1aa2b3d0c5fe9b0e71ff3bee1e22a03b26565
+          test "$(git rev-parse HEAD:$test_path)" = 9b15fbef4c3e37952f13d77ede6a7a1925dd1636
+          git checkout FETCH_HEAD -- "$test_path"
+          test "$(git rev-parse :$test_path)" = 802622f8f94bded4f964920c2a530f5cdc784e30
+          test "$(git diff --cached --name-only)" = "$test_path"
+          test "$(git rev-parse HEAD:$production)" = 9b4abca7583479e5c043a61447d82eb36406972b
+          test -z "$(git diff --name-only)"
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/native-venv"
           py="$RUNNER_TEMP/native-venv/bin/python"
           "$py" -m pip install --disable-pip-version-check -e . 'pytest>=8,<9'
           "$py" -m pip freeze > "$RUNNER_TEMP/native-dependencies.txt"
-          PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo" dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' "$py" -m pytest -q -rA --junitxml="$RUNNER_TEMP/native-gtk.xml" \
-            tests/test_core_p0_1354_exact_source_session.py::test_search_borrow_action_refuses_stale_B_when_A_connected \
-            tests/test_core_p0_2975_opening_loan_ui_identity_isolation.py::test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller \
-            tests/test_core_p0_2975_opening_loan_ui_identity_isolation.py::test_gui_refresh_callback_rejects_old_a_b_a_request \
-            tests/test_core_ui_bnf_acsm_native.py
+          export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+          target="$test_path::test_gui_refresh_callback_rejects_old_a_b_a_request"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' "$py" -m pytest -q -rA --junitxml="$RUNNER_TEMP/native-corrected.xml" "$target"
+          test "$(git hash-object "$production")" = 9b4abca7583479e5c043a61447d82eb36406972b
           "$py" - <<'PY'
-          import collections, os, xml.etree.ElementTree as ET
-          root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "native-gtk.xml"))
-          cases = root.findall(".//testcase")
-          assert len(cases) == 11, len(cases)
-          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases)
-          actual = collections.Counter((c.attrib["classname"], c.attrib["name"].split("[", 1)[0]) for c in cases)
-          expected = {
-              ("tests.test_core_p0_1354_exact_source_session", "test_search_borrow_action_refuses_stale_B_when_A_connected"): 1,
-              ("tests.test_core_p0_2975_opening_loan_ui_identity_isolation", "test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller"): 1,
-              ("tests.test_core_p0_2975_opening_loan_ui_identity_isolation", "test_gui_refresh_callback_rejects_old_a_b_a_request"): 1,
-              ("tests.test_core_ui_bnf_acsm_native", "test_native_bnf_actions_are_distinct_and_explain_safe_failure"): 6,
-              ("tests.test_core_ui_bnf_acsm_native", "test_native_advisory_click_is_read_only_and_scope_bound"): 2,
-          }
-          assert actual == expected, actual
-          print("NATIVE_GTK_RECEIPT", len(cases), "passed; no skip")
+          from pathlib import Path
+          p = Path("src/cifereca/gui/loans_controller.py")
+          s = p.read_text()
+          old = '            if (getattr(service, "_account_context_epoch", None) != account_epoch\n                    or getattr(service, "_source_context_epoch", None) != source_epoch):\n                return\n            rows, cover_rows = payload'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, "            rows, cover_rows = payload"))
+          PY
+          git diff -- "$production" > "$RUNNER_TEMP/epoch-mutant.patch"
+          set +e
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' "$py" -m pytest -q -rA --junitxml="$RUNNER_TEMP/native-mutant.xml" "$target"
+          code=$?
+          set -e
+          test "$code" = 1
+          git restore -- "$production"
+          test "$(git hash-object "$production")" = 9b4abca7583479e5c043a61447d82eb36406972b
+          "$py" - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          def case(name):
+              rows = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], name)).findall(".//testcase")
+              assert len(rows) == 1
+              assert rows[0].attrib["name"] == "test_gui_refresh_callback_rejects_old_a_b_a_request"
+              return rows[0]
+          clean = case("native-corrected.xml")
+          assert all(clean.find(tag) is None for tag in ("failure", "error", "skipped"))
+          mutant = case("native-mutant.xml")
+          fail = mutant.find("failure")
+          assert fail is not None and mutant.find("error") is None and mutant.find("skipped") is None
+          detail = (fail.text or "") + fail.attrib.get("message", "")
+          assert "assert applied == []" in detail and "PRIVATE stale loan" in detail, detail
+          print("NATIVE_ABA_RECEIPT: corrected passes; epoch mutant fails on stale publication")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-gtk-receipt
+          name: native-aba-mutation-receipt
           path: |
-            ${{ runner.temp }}/native-gtk.xml
+            ${{ runner.temp }}/native-corrected.xml
+            ${{ runner.temp }}/native-mutant.xml
+            ${{ runner.temp }}/epoch-mutant.patch
             ${{ runner.temp }}/native-dependencies.txt
           retention-days: 7
