@@ -378,6 +378,204 @@ class Tests(unittest.TestCase):
             with self.assertRaises(c.Refusal):
                 c.continue_lot(self.api,stage,second,HEAD)
 
+    def test_standard_twenty_and_continuation(self):
+        for size in (1, 3, 5, 20, 21):
+            with self.subTest(size=size):
+                self.exercise_standard(size)
+
+    def test_standard_interrupted_at_each_boundary(self):
+        for boundary in (0, 3, 10, 13, 20, 23, 30, 33, 39):
+            with self.subTest(boundary=boundary):
+                self.assertEqual(self.exercise_standard(20, boundary), 39)
+
+    def exercise_standard(self, size, boundary=None):
+        self.api = API()
+        event = self.staging_issue()
+        members = list(range(200, 200 + size - 1))
+        event["body"] = "Evidence #42 " * 100 + "\n<!-- backlog-staging-v1: " + (
+            ",".join(map(str, members)) or "none") + " ; public -->"
+        issues = {123: dict(event, comments=0)}
+        comments = {123: []}
+        template = self.api.comments[0]
+        for n in members:
+            issues[n] = dict(event, number=n, id=n, labels=[], comments=1,
+                             body="Historical evidence #123 " * 100)
+            comments[n] = [dict(template, id=1000+n, body="Repeated proof #123 " * 100)]
+        def get(path):
+            if path == "/git/ref/heads/main":
+                return {"ref":"refs/heads/main","object":{"sha":HEAD}}
+            parts = path.split("/")
+            n = int(parts[2])
+            if len(parts) == 3:
+                return dict(issues[n])
+            if parts[3].startswith("sub_issues?"):
+                return []
+            return [dict(x) for x in comments[n]]
+        def mark(n, body):
+            value = dict(template, id=3000+len(comments[n]), body=body,
+                         user={"id":41898282,"login":"github-actions[bot]"})
+            comments[n].append(value)
+            issues[n]["comments"] += 1
+            return dict(value)
+        writes = []
+        interrupted = False
+        def check_interrupt():
+            nonlocal interrupted
+            if boundary is not None and not interrupted and len(writes) == boundary:
+                interrupted = True
+                raise c.Refusal("simulated standard interruption")
+        def replace_body(n, body):
+            check_interrupt()
+            writes.append((n, None))
+            issues[n]["body"] = body
+        def replace_comment(cid, body):
+            check_interrupt()
+            writes.append((None, cid))
+            next(x for rows in comments.values() for x in rows if x["id"] == cid)["body"] = body
+        def guarded_mark(n, body):
+            if body.startswith((c.PROGRESS, c.DONE)):
+                check_interrupt()
+            return mark(n, body)
+        stage = Stage()
+        with patch.object(self.api, "get", side_effect=get), \
+             patch.object(self.api, "mark", side_effect=guarded_mark), \
+             patch.object(self.api, "replace_body", side_effect=replace_body), \
+             patch.object(self.api, "replace_comment", side_effect=replace_comment):
+            if size == 21:
+                with self.assertRaisesRegex(c.Refusal, "corpus issue limit"):
+                    c.consolidate(self.api, stage, issues[123], HEAD, clock=lambda: NOW)
+                self.assertEqual(stage.published, 0)
+                return
+            control = 900
+            def resume(cursor, applied=None):
+                nonlocal control
+                control += 1
+                data = {"version":1,"p0":123,"stage_sha":STAGE,
+                        "manifest_sha256":c.sha256(stage.raw),"main_sha":HEAD,"cursor":cursor}
+                if applied is not None:
+                    data.update(version=2, applied=applied)
+                issues[control] = dict(event, number=control, id=control, labels=[],
+                    assignees=[], comments=0, title=c.CONTINUE_TITLE+"123",
+                    body=c.encode(data).decode())
+                comments[control] = []
+                result = c.continue_lot(self.api, stage, issues[control], HEAD)
+                with self.assertRaises(c.Refusal):
+                    c.continue_lot(self.api, stage, issues[control], HEAD)
+                return result
+            def recover(cursor):
+                self.assertEqual(len(writes), boundary)
+                self.assertEqual(stage.commit, STAGE)
+                # Refuse a divergent unmodified text before applying another write.
+                n = members[-1]
+                prior = issues[n]["title"]
+                issues[n]["title"] = "External drift"
+                with self.assertRaisesRegex(c.Refusal, "divergent"):
+                    resume(cursor, boundary)
+                issues[n]["title"] = prior
+                self.assertEqual(len(writes), boundary)
+                return resume(cursor, boundary)
+            try:
+                result = c.consolidate(self.api, stage, dict(issues[123]), HEAD, clock=lambda: NOW)
+            except c.Refusal as exc:
+                self.assertEqual(str(exc), "simulated standard interruption")
+                result = recover(0)
+            while result["status"] == "LOT_PENDING":
+                cursor = result["cursor"]
+                try:
+                    result = resume(cursor)
+                except c.Refusal as exc:
+                    self.assertEqual(str(exc), "simulated standard interruption")
+                    result = recover(cursor)
+            self.assertEqual(result["status"], "STAGED_AND_COMPACTED")
+            manifest = c.strict_json(stage.raw)
+            self.assertEqual(len(manifest["snapshots"]), size)
+            c.verify_compacted_corpus(self.api, manifest, c.sha256(stage.raw), STAGE, 999, completed=True)
+            self.assertEqual(len(writes), size * 2 - 1)
+            self.assertEqual(len(set(writes)), len(writes))
+            return len(writes)
+
+    def test_recovery_preview_and_fresh_control(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        clock = lambda: NOW + dt.timedelta(days=2)
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            preview = c.recovery_preview(self.api, stage, 123, HEAD)
+            self.assertEqual(preview["status"], "READ_ONLY_RECOVERY_PREVIEW")
+            self.assertFalse(preview["destruction_enabled"])
+            self.assertEqual(preview["issues"], [123])
+            self.assertEqual(self.api.writes, [])
+            self.assertEqual(stage.published, 0)
+            data = {"version":1, "p0":123, "main_sha":HEAD,
+                    "manifest_sha256":preview["manifest_sha256"], "unstarted_review":True}
+            control = dict(event, number=999, id=999, labels=[], assignees=[], comments=0,
+                           title=c.RECOVER_TITLE+"123", body=c.encode(data).decode(),
+                           closed_at=clock().strftime("%Y-%m-%dT%H:%M:%SZ"))
+            self.api.pilot = control
+            for key, bad in (("main_sha", "b"*40), ("manifest_sha256", "0"*64),
+                             ("unstarted_review", False)):
+                self.api.pilot["body"] = c.encode(dict(data, **{key:bad})).decode()
+                with self.assertRaises(c.Refusal):
+                    c.recover_unstarted(self.api, stage, dict(self.api.pilot), HEAD, clock=clock)
+            self.api.pilot["body"] = c.encode(data).decode()
+            self.api.comments[0]["body"] += " drift"
+            with self.assertRaisesRegex(c.Refusal, "recovery corpus mismatch"):
+                c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            self.api.comments[0]["body"] = self.api.comments[0]["body"][:-6]
+            self.assertEqual(self.api.writes, [])
+            self.assertEqual(stage.published, 0)
+            result = c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            self.assertEqual(result["status"], "STAGED_AND_COMPACTED")
+            with self.assertRaises(c.Refusal):
+                c.recover_unstarted(self.api, stage, dict(control), HEAD, clock=clock)
+            with self.assertRaises(c.Refusal):
+                c.recovery_preview(self.api, stage, 123, HEAD)
+            self.assertEqual(stage.published, 1)
+
+    def test_standard_journal_pagination_capacity_before_staging(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        template = self.api.comments[0]
+        self.api.comments = [dict(template, id=1000+i, body="Short evidence")
+                             for i in range(99)]
+        self.api.issue["comments"] = len(self.api.comments)
+        def get(path):
+            if "/sub_issues?" in path:
+                return []
+            return original_get(path)
+        # One page with a maximum of 99 returned comments; reserve the four
+        # initial/final and purge markers before creating the staging ref.
+        with patch.object(c, "MAX_PAGES", 1), patch.object(self.api, "get", side_effect=get):
+            with self.assertRaisesRegex(c.Refusal, "journal"):
+                c.consolidate(self.api, stage, dict(self.api.issue), HEAD, clock=lambda: NOW)
+        self.assertEqual(self.api.writes, [])
+        self.assertEqual(stage.published, 0)
+        self.api.comments = self.api.comments[:95]
+        self.api.issue["comments"] = 95
+        with patch.object(c, "MAX_PAGES", 1), patch.object(self.api, "get", side_effect=get):
+            manifest = c.collect_closure(self.api, dict(self.api.issue), HEAD)
+        self.assertEqual(len(manifest["snapshots"][0]["comments"]), 95)
+
+    def test_legacy_standard_manifest_without_progress(self):
+        event, stage = self.consolidation_fixture()
+        original_get = self.api.get
+        with patch.object(self.api, "get", side_effect=lambda path: [] if "/sub_issues?" in path else original_get(path)):
+            manifest = c.collect_closure(self.api, event, HEAD)
+            manifest.pop("standard_batches")
+            manifest.pop("batch_size")
+            raw = c.encode(manifest)
+            digest = c.sha256(raw)
+            stage.publish(123, raw)
+            self.api.mark(123, c.START + digest + " " + STAGE)
+            for n, cid, body in c.lot_plan(manifest):
+                if cid is None:
+                    self.api.replace_body(n, body)
+                else:
+                    self.api.replace_comment(cid, body)
+            self.api.mark(123, c.DONE + digest + " " + STAGE)
+            self.assertIn(123, c.verify_compacted_corpus(
+                self.api, manifest, digest, STAGE, 999, completed=True))
+            self.assertFalse(any(row["body"].startswith(c.PROGRESS) for row in self.api.comments))
+
     def test_snapshot_retries_only_stable_timestamp_drift(self):
         self.staging_issue()
         original = self.api.get

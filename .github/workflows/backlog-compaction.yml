@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       issues:
-        description: One to three closed issue numbers (read-only audit)
+        description: One to three closed issues, or recovery:N (read-only preview)
         required: true
         type: string
 
@@ -44,7 +44,8 @@ jobs:
        startsWith(github.event.issue.title, 'Capitalisation #8195 — ') ||
        startsWith(github.event.issue.title, 'Réception consolidation #8195 — ') ||
        startsWith(github.event.issue.title, 'Lot consolidation #8195 — ') ||
-       startsWith(github.event.issue.title, 'Poursuite consolidation #8195 — '))
+       startsWith(github.event.issue.title, 'Poursuite consolidation #8195 — ') ||
+       startsWith(github.event.issue.title, 'Nouvelle consolidation #8195 — '))
     concurrency:
       group: backlog-compaction
       cancel-in-progress: false
@@ -52,7 +53,7 @@ jobs:
       contents: write
       issues: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
         with:
