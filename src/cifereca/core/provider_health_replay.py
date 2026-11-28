@@ -94,15 +94,18 @@ class CapturedReadTransport(httpx.BaseTransport):
         if self._closed or self._failed or self._cursor >= len(self._entries):
             self._failed = True
             raise ReplayUnavailable("replay_unmatched_request")
-        recorded_method, recorded_url, headers, _, _, _ = self._entries[self._cursor]
+        recorded_method, recorded_url, _, status, headers, body = self._entries[self._cursor]
         if (method, url) != (recorded_method, recorded_url):
             self._failed = True
             raise ReplayUnavailable("replay_unmatched_request")
-        response = self.handle_request(httpx.Request(method, url, headers=headers))
-        response.read()
-        # Do not expose cookies or other response credentials to the parser.
-        return httpx.Response(response.status_code, content=response.content,
-                              headers={"content-type": response.headers.get("content-type", "")})
+        self._cursor += 1
+        # Do not reconstruct a request or expose captured credentials.
+        content_types = [value for key, value in headers if key == b"content-type"]
+        if len(content_types) > 1:
+            self._failed = True
+            raise ReplayUnavailable("replay_metadata")
+        return httpx.Response(status, content=body,
+                              headers=[(b"content-type", content_types[0])] if content_types else [])
 
     def require_complete(self):
         if self._closed or self._failed or self._cursor != len(self._entries):

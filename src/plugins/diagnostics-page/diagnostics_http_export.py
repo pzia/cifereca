@@ -558,6 +558,16 @@ class ProviderEvidenceArchive:
                 self.bundle_button, broker=broker, tasks=tasks, host=host, current=current,
                 folder=folder, gtk=gtk, gio=gio, glib=glib, vault=vault,
                 archive_source=self._bundle_source, archive_current=self._bundle_valid, bundle=True)
+        self.replay_button = None
+        self.replay_consent = None
+        if callable(getattr(vault, "replay_provider_health", None)):
+            self.replay_consent = gtk.CheckButton(
+                label="J’autorise le rejeu local de cette preuve privée, sans requête fournisseur.")
+            self.replay_button = gtk.Button(label="Rejouer et comparer la preuve archivée")
+            container.append(self.replay_consent)
+            container.append(self.replay_button)
+            self.replay_consent.connect("toggled", lambda *_: self._controls())
+            self.replay_button.connect("clicked", self._replay)
         self.rows.connect("changed", self._changed)
         self.consent.connect("toggled", lambda *_: self._controls())
         self.reload.connect("clicked", lambda *_: self.refresh())
@@ -625,6 +635,10 @@ class ProviderEvidenceArchive:
         self.rows.set_sensitive(idle)
         self.consent.set_sensitive(allowed)
         self.save.set_sensitive(allowed and self.consent.get_active())
+        if self.replay_button is not None:
+            can_replay = idle and token is not None and bool(token.capture_id) and self._valid(token)
+            self.replay_consent.set_sensitive(can_replay)
+            self.replay_button.set_sensitive(can_replay and self.replay_consent.get_active())
         self.exporter.refresh()
         if self.bundle_exporter is not None:
             self.bundle_exporter.refresh()
@@ -632,6 +646,8 @@ class ProviderEvidenceArchive:
     def _changed(self, *_):
         self._invalidate_exports()
         self.consent.set_active(False)
+        if self.replay_consent is not None:
+            self.replay_consent.set_active(False)
         self._controls()
 
     def refresh(self):
@@ -640,6 +656,8 @@ class ProviderEvidenceArchive:
             return
         self._invalidate_exports()
         self.consent.set_active(False)
+        if self.replay_consent is not None:
+            self.replay_consent.set_active(False)
         self.tokens.clear()
         self.rows.remove_all()
         try:
@@ -700,6 +718,51 @@ class ProviderEvidenceArchive:
                 self.refresh()
                 if not okay:
                     self.status.set_label("Archivage refusé ou annulé.")
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def _replay(self, *_):
+        token = self._selected()
+        if (token is None or not token.capture_id or self.replay_consent is None
+                or not self.replay_consent.get_active() or not self._valid(token)):
+            return
+        self.replay_consent.set_active(False)
+        self._invalidate_exports()
+
+        def execute(control):
+            if control.cancelled() or not self._valid(token):
+                return {"outcome": "unknown"}
+            return self.vault.replay_provider_health(
+                token.scope, token.capability, token.evidence_ref,
+                token.capture_id, token.generation, confirmed=True)
+
+        try:
+            self.handle = self.tasks.submit(execute, label="Rejeu local de preuve fournisseur",
+                                            kind="diagnostics")
+        except Exception:
+            self.status.set_label("Rejeu indisponible.")
+            return
+        self._controls()
+
+        def completed(handle):
+            try:
+                result = handle.result()
+                outcome = result.get("outcome")
+                message = {
+                    "equal": "Rejeu conforme à la référence métier initiale.",
+                    "different": "Écart métier au rejeu ; cause non établie.",
+                }.get(outcome, "Rejeu non qualifiable : preuve ou parseur insuffisant.")
+            except Exception:
+                message = "Rejeu refusé ou annulé."
+
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                valid = self._valid(token) and self._selected() == token
+                self._controls()
+                self.status.set_label(message if valid else "Contexte de rejeu modifié.")
                 return False
             self.glib.idle_add(deliver)
         self.handle.add_done_callback(completed)

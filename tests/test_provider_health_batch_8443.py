@@ -80,3 +80,52 @@ def test_replay_exact_tape_no_fallback(monkeypatch):
         good.handle_request(request)
     with pytest.raises(ReplayUnavailable):
         CapturedReadTransport(payload, evidence_ref=ref, producer="other")
+
+
+def test_generic_replay_matches_initial_digest_and_refuses_extra_reads(monkeypatch):
+    from contextlib import nullcontext
+    from cifereca.core.provider_health_replay import projection_digest, replay_archived_observation
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    capture = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        request = httpx.Request("GET", "https://fixture.invalid/read", headers={"cookie": "private"})
+        exchange = capture.begin(request, "fixture")
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/plain", "set-cookie": "private"}))
+        exchange.observe("response", b"fixture")
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    rows = (("loan", "book", "Title", ""),)
+    snapshot = capture.snapshot()
+    snapshot["session_ref"] = ref
+    snapshot["health_observation"] = {
+        "schema": "cifereca.health-observation/1", "capability": "loans",
+        "version": "1", "business_digest": projection_digest(rows)}
+    payload = http_trace.build_http_trace_zip(snapshot)
+
+    def parse(capability, read):
+        assert capability == "loans"
+        response = read("GET", "https://fixture.invalid/read")
+        assert response.content == b"fixture" and "set-cookie" not in response.headers
+        return rows
+
+    service = SimpleNamespace(health_replay_projection=parse)
+    record = SimpleNamespace(descriptor=SimpleNamespace(id="fixture", type="provider.library", version="2"),
+                             enabled=True, state="ready", service=service)
+    manager = SimpleNamespace(_records={"fixture": record}, hold_descriptive_lifecycle=nullcontext)
+    scope = CaptureScope("fixture", "i", "a", "owner")
+    replay = lambda: replay_archived_observation(manager, scope, "loans", ref, payload)
+    assert replay() == {"outcome": "equal", "observed_version": "1", "replay_version": "2",
+                        "rows": 1, "empty_attested": False}
+    service.health_replay_projection = lambda capability, read: (read("GET", "https://fixture.invalid/read"), ())[1]
+    assert replay()["outcome"] == "different"
+    service.health_replay_projection = lambda capability, read: rows
+    assert replay() == {"outcome": "unknown"}
+    service.health_replay_projection = lambda capability, read: read("GET", "https://fixture.invalid/other")
+    assert replay() == {"outcome": "unknown"}
+    record.enabled = False
+    assert replay() == {"outcome": "unknown"}
+    assert projection_digest(()) is not None
+    assert projection_digest(None) is None

@@ -378,3 +378,37 @@ def test_scoped_bundle_export_exact_selections(setup, change):
             scope, selections, dialog.output, confirmed=True, expected_binary=True)
     else:
         vault.export_provider_health_bundle.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["none", "revoked", "cancelled"])
+def test_generic_replay_worker_revalidates_exact_selection(change):
+    from diagnostics_http_export import ProviderEvidenceArchive, ScopedHTTPArchive
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    token = ScopedHTTPArchive("capture", CaptureScope("fixture", "i", "a", "owner"),
+                              "loans", "ref", (1, 2, "nonce", 3))
+    controller = ProviderEvidenceArchive.__new__(ProviderEvidenceArchive)
+    controller.closed = False
+    controller.current = lambda: True
+    controller.handle = None
+    controller.tasks = Tasks()
+    controller.glib = SimpleNamespace(idle_add=lambda fn: fn())
+    controller.replay_consent = SimpleNamespace(get_active=lambda: True, set_active=Mock())
+    controller.status = SimpleNamespace(set_label=Mock())
+    controller.vault = SimpleNamespace(replay_provider_health=Mock(return_value={"outcome": "equal"}))
+    controller._selected = lambda: token
+    state = {"valid": True}
+    controller._valid = lambda item: item == token and state["valid"]
+    controller._invalidate_exports = Mock()
+    controller._controls = Mock()
+    controller._replay()
+    controller.vault.replay_provider_health.assert_not_called()
+    if change == "revoked":
+        state["valid"] = False
+    controller.tasks.run(cancelled=change == "cancelled")
+    if change == "none":
+        controller.vault.replay_provider_health.assert_called_once_with(
+            token.scope, token.capability, token.evidence_ref, token.capture_id, token.generation, confirmed=True)
+        assert "conforme" in controller.status.set_label.call_args.args[0]
+    else:
+        controller.vault.replay_provider_health.assert_not_called()
+        assert "conforme" not in controller.status.set_label.call_args.args[0]
