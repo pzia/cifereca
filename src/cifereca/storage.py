@@ -618,6 +618,15 @@ class Storage:
                 (str(key), str(value)),
             )
 
+    def metadata_compare_restore(self, key: str, expected: str, previous: str | None) -> None:
+        """Restore only the exact provisional value, atomically across processes."""
+        with self._lock, self._connect() as db:
+            if previous is None:
+                db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, expected))
+            else:
+                db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
+                           (previous, key, expected))
+
     def metadata_set_with_revision(self, key: str, value: str, revision_key: str) -> None:
         """Atomically replace a source acquisition toggle and its CAS epoch.
 
