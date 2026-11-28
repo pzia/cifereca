@@ -29,7 +29,7 @@ def test_retention_and_scope_isolation():
     health.set_enabled(True)
     health.observe(A, obs(Outcome.SUCCESS), lease=health.lease())
     for n in range(5):
-        assert health.observe(A, obs(Outcome.NETWORK, n)) == (n == 0, lease=health.lease())
+        assert health.observe(A, obs(Outcome.NETWORK, n), lease=health.lease()) == (n == 0)
     latest, reference, anomalies = health.snapshot(A)
     assert latest.outcome is Outcome.NETWORK
     assert reference.outcome is Outcome.SUCCESS
