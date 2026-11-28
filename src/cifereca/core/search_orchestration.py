@@ -1430,9 +1430,12 @@ def _search_provider_session(
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
         return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
+    from .provider_health_search import begin_public_search, finish_public_search
+    health_call = begin_public_search(self, session, identity)
     variants = self._search_query_variants(query)
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
+    health_outcome = None
     for attempt, variant in enumerate(variants):
         if request_cancelled is not None and request_cancelled():
             return [], [], "StreamCancelled", "search cancelled"
@@ -1516,10 +1519,16 @@ def _search_provider_session(
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
             if partial_failure:
+                health_outcome = 'unknown'
                 warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                 break
             if terminal_empty:
+                health_outcome = 'attested_empty'
                 break
+            if session_rows:
+                health_outcome = 'success'
+            elif health_outcome is None:
+                health_outcome = 'unknown'
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
         except Exception as exc:
@@ -1560,6 +1569,9 @@ def _search_provider_session(
     if str(scope or "all").casefold() == "unknown":
         from ..core.search import support_kind
         provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
+    if request_cancelled is None or not request_cancelled():
+        finish_public_search(self, session, identity, health_call,
+                             'unknown' if terminal_error_code else health_outcome)
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 

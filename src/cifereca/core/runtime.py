@@ -102,6 +102,9 @@ class CiferecaCore:
         storage.purge_expired()
         library = LibraryService(config, storage, diagnostics)
         library._notice_regression_capture_directory = capture_directory
+        from .provider_health_projection import PassiveHealth
+        library._provider_health = PassiveHealth()
+        library._provider_health.set_enabled(config.get('diagnostics.provider_health_enabled', False) is True)
         package_store = PackageStore(
             (database_path.parent / "plugins" / "packages") if database_path is not None else None
         )
@@ -303,6 +306,9 @@ class CiferecaCore:
 
     def close(self) -> None:
         self._notice_age_hold = None
+        health = getattr(self.library, '_provider_health', None)
+        if health is not None:
+            health.set_enabled(False)
         if self.notice_work is not None:
             self.notice_work.close()
         self.plugins.close()
