@@ -443,10 +443,16 @@ class _DiagnosticsPort(_Port):
             writer = self._begin(scope, source_ref, consented=True,
                                  reserve_bytes=len(payload) + _HEADER_LIMIT + 128)
             writer.save(payload, "completed", force=True)
-            if not health.link_capture(exact, source_ref, writer.capture_id,
-                                       lease=lease, port=self, consented=True):
-                self.delete(scope, writer.capture_id, confirmed=True)
-                raise VaultError("vault_scope_denied")
+            try:
+                self._check(scope)
+                if not health.link_capture(exact, source_ref, writer.capture_id,
+                                           lease=lease, port=self, consented=True):
+                    raise VaultError("vault_scope_denied")
+            except Exception:
+                # Roll back only the authenticated object created by this call.
+                # A revoked consumer cannot use the public delete operation.
+                writer._rollback_completed()
+                raise
             return writer.capture_id
 
     def export_http_archive(self, capture_id, destination, *, confirmed=False):
@@ -477,6 +483,21 @@ class _Writer:
     @property
     def capture_id(self):
         return self._writer.session_id
+
+    def _rollback_completed(self):
+        service = self._port._service
+        with service._lock:
+            key = service._key()
+            if key != self._key:
+                raise VaultError("vault_key_unavailable")
+            stored = self._port._open(self._scope, self.capture_id, key)
+            try:
+                if (stored.summary.source_session_ref != self._source_session_ref
+                        or stored.summary.state != "completed"):
+                    raise VaultError("vault_scope_denied")
+            finally:
+                service._storage._release(stored)
+            service._storage.delete(self.capture_id, key, confirmed=True)
 
     def save(self, payload, state="recording", *, force=False):
         service = self._port._service

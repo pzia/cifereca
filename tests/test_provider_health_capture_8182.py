@@ -86,3 +86,44 @@ def test_targeted_archive_positive(tmp_path, monkeypatch):
             assert index["exchanges"][0]["request"]["url"].endswith("/selected")
     finally:
         vault.close()
+
+
+def test_revoked_archive_rolls_back_only_new_capture(tmp_path, monkeypatch):
+    import pytest
+    import httpx
+    from cifereca import http_trace
+    from cifereca.core import capture_vault_service as module
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    from cifereca.plugin_api.capture_vault import VaultError
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "account", "owner", "search")
+    exact = CaptureScope("fixture", "instance", "account", "owner")
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
+        exchange.entry["outcome"] = "completed"
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+    allowed = [True]
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: allowed[0], health=health)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        old = port.begin(exact, "existing", consented=True)
+        old.save(b"existing", "completed")
+        save = module._Writer.save
+        def revoke_after_save(self, *args, **kwargs):
+            save(self, *args, **kwargs)
+            allowed[0] = False
+        monkeypatch.setattr(module._Writer, "save", revoke_after_save)
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.archive_search_trace(exact, ref, consented=True)
+        allowed[0] = True
+        assert [row.capture_id for row in port.sessions(exact)] == [old.capture_id]
+        assert port.read(exact, old.capture_id).payload == b"existing"
+        assert health.snapshot(scope)[0].capture_id is None
+    finally:
+        vault.close()
