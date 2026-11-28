@@ -360,6 +360,7 @@ jobs:
       - name: Execute both widths sequentially at exact SHA
         env:
           CIFERECA_PERF_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CIFERECA_PERF_EXPECTED_SHA"
