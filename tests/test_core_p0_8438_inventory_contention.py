@@ -89,3 +89,19 @@ def test_denied_admission_must_not_overwrite_newer_terminal_evidence(tmp_path):
         assert broker._state(sid) == newer
     finally:
         service.storage.close()
+
+
+def test_metadata_publication_rejects_stale_snapshot(tmp_path):
+    service, _, _, _ = _source(tmp_path)
+    try:
+        storage = service.storage
+        key = "fixture.cas"
+        assert storage.metadata_compare_publish(key, None, "first")
+        assert not storage.metadata_compare_publish(key, None, "stale")
+        assert storage.metadata_compare_publish(key, "first", "newer")
+        storage.metadata_compare_restore(key, "first", None)
+        assert storage.metadata_get(key) == "newer"
+        storage.metadata_compare_restore(key, "newer", None)
+        assert storage.metadata_get(key) is None
+    finally:
+        service.storage.close()
