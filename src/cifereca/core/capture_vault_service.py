@@ -718,7 +718,8 @@ class _DiagnosticsPort(_Port):
                                  max_bytes=HTTP_TRACE_ZIP_LIMIT,
                                  before_publish=check_publication if guarded else None)
 
-    def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False):
+    def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False,
+                                      expected_binary=None):
         """One explicitly selected private scope; never aggregate across accounts."""
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
@@ -729,6 +730,8 @@ class _DiagnosticsPort(_Port):
         from .capture_export import write_capture_zip
         from .provider_health_bundle import build_health_bundle
         policy = HTTP_TRACE.status()["include_binary"]
+        if expected_binary is not None and (type(expected_binary) is not bool or expected_binary != policy):
+            raise VaultError("vault_scope_denied")
         seen = set()
         for selection in selections:
             if type(selection) is not tuple or len(selection) != 4:

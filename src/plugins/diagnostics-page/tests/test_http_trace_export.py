@@ -346,3 +346,35 @@ def test_manual_archive_keeps_legacy_export_signature(setup):
     s.tasks.run()
     vault.export_http_archive.assert_called_once_with(
         "manual-capture", dialog.output, confirmed=True)
+
+
+@pytest.mark.parametrize("change", ["none", "policy", "revoked"])
+def test_scoped_bundle_export_exact_selections(setup, change):
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    from diagnostics_http_export import ScopedHealthBundle
+    s = setup
+    s.export.close()
+    scope = CaptureScope("fixture", "i", "a", "owner")
+    selections = (("search", "evidence", "capture", (0, 0, "generation", 1)),)
+    token = ScopedHealthBundle(scope, selections)
+    state = {"policy": True, "valid": True}
+    s.broker.http_trace_status = lambda: {"include_binary": state["policy"]}
+    vault = SimpleNamespace(export_provider_health_bundle=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: token, archive_current=lambda _: state["valid"], bundle=True)
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "bundle.zip")
+    s.export.chose_file(dialog, 1)
+    if change == "policy":
+        state["policy"] = False
+    elif change == "revoked":
+        state["valid"] = False
+    s.tasks.run()
+    if change == "none":
+        vault.export_provider_health_bundle.assert_called_once_with(
+            scope, selections, dialog.output, confirmed=True, expected_binary=True)
+    else:
+        vault.export_provider_health_bundle.assert_not_called()

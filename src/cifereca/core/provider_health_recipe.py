@@ -133,7 +133,7 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
             if not current():
                 return report("unknown", "scope_or_trace_unavailable")
             if any(callable(getattr_static(session, name, None)) for name in (
-                    "downloadable_resource_snapshot", "provider_rights_snapshot")):
+                    "downloadable_resource_snapshot", "rights_observation_snapshot")):
                 snapshot = read_account_rights_snapshot(service, account, cancelled=lambda: not current())
                 if not current():
                     return report("unknown", "scope_or_trace_unavailable")

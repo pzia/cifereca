@@ -84,4 +84,5 @@ class DiagnosticsCaptureVaultBroker(CaptureVaultBroker, Protocol):
 class DiagnosticsHealthBundleBroker(Protocol):
     """Explicit local multi-evidence export for one exact private scope."""
     def export_provider_health_bundle(self, scope: CaptureScope, selections: tuple,
-                                      destination: str, *, confirmed: bool = False) -> int: ...
+                                      destination: str, *, confirmed: bool = False,
+                                      expected_binary: bool | None = None) -> int: ...
