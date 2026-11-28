@@ -21,5 +21,10 @@ def test_explicit_exact_capture_link(tmp_path):
         assert health.link_capture(scope, "operation:1", writer.capture_id, consented=True, **args)
         assert health.snapshot(scope)[0].capture_id == writer.capture_id
         assert not health.link_capture(scope, "operation:2", writer.capture_id, consented=True, **args)
+        other = Scope("fixture", "instance", "other", "owner", "search")
+        health.observe(other, Observation(Outcome.AUTH, "1", "now", "operation:1"), lease=lease)
+        assert not health.link_capture(other, "operation:1", writer.capture_id, consented=True, **args)
+        health.set_enabled(False)
+        assert not health.link_capture(scope, "operation:1", writer.capture_id, consented=True, **args)
     finally:
         vault.close()

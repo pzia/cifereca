@@ -1395,6 +1395,10 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
     return tuple(accepted)
 
 
+from .provider_health_search import correlated_search
+
+
+@correlated_search
 def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
@@ -1576,6 +1580,7 @@ def _search_provider_session(
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
+@correlated_search
 def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any, request_scope=None) -> tuple[list[SearchResult], list[str], str, str]:
     """Worker-only optional stream. Gaps/errors do not poison the cache."""
     if request_scope is not None and cancelled():

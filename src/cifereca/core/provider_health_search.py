@@ -1,6 +1,8 @@
 """Observe registered public and exact single-account search sessions."""
 from datetime import datetime, timezone
 from uuid import uuid4
+from functools import wraps
+from ..diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
 
 from .provider_health_projection import Scope, Observation, Outcome
 from .notice_c_public_search_replay import _anonymous_session
@@ -50,20 +52,20 @@ def begin_public_search(service, session, identity):
         scope = _scope(service, session, identity)
         if scope is None:
             return None
-        return lease, scope
+        return lease, scope, diagnostic_task_reference() or ('observation:' + uuid4().hex)
 
 
 def finish_public_search(service, session, identity, call, outcome):
     if call is None or outcome is None:
         return
     with service._source_context_lock:
-        lease, scope = call
+        lease, scope, reference = call
         if _scope(service, session, identity) != scope:
             return
         service._provider_health.observe(
             scope, Observation(Outcome(outcome), "unknown",
                                datetime.now(timezone.utc).isoformat(),
-                               "observation:" + uuid4().hex), lease=lease)
+                               reference), lease=lease)
 
 
 def classify_failure(error):
@@ -78,3 +80,12 @@ def classify_failure(error):
     if code == "SearchProxyUnavailable":
         return "network"
     return "internal" if code is None else "unknown"
+
+
+def correlated_search(function):
+    """Give each existing provider call its own worker-local trace reference."""
+    @wraps(function)
+    def run(*args, **kwargs):
+        with diagnostic_task_scope():
+            return function(*args, **kwargs)
+    return run
