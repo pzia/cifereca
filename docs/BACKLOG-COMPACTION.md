@@ -19,7 +19,7 @@ mentions #n ; aucun lien retour dans le ticket historique n'est requis.
 Les relations natives doivent être compatibles avec l'inventaire. Refuser les
 corpus déjà transférés (journal ou renvoi de compactage).
 Aucun autre agent ne modifie le corpus pendant la clôture. Le pilote reste
-borné à vingt issues (maître inclus), 1 Mio de manifeste ; au-delà, refus sans mutation.
+borné à vingt issues (maître inclus), 8 Mio de manifeste ; au-delà, refus sans mutation.
 
 ## Staging en clair
 
@@ -45,7 +45,7 @@ ce namespace, y compris les suppressions forcées.
 Le journal START (SHA-256 et commit) précède les mutations. Les textes d'au moins 256 octets réellement raccourcissables sont remplacés par des renvois déterministes
 au P0 en conservant les références explicites, les identifiants des
 commentaires et les métadonnées. Aucun commentaire ni issue supprimé.
-Parcours standard : tranches de dix mutations au maximum, avec PROGRESS et continuation explicite selon le protocole ci-dessous ; gain contextuel positif
+Parcours standard : tranches d'au plus dix mutations, dimensionnées de façon déterministe selon le nombre d'issues et de pages de commentaires (taille inscrite dans le manifeste), avec PROGRESS et continuation explicite selon le protocole ci-dessous ; gain contextuel positif
 après START et DONE. Vérifier main, le corpus et le staging avant chaque
 mutation, relire chaque résultat. Toute erreur arrête sans reprise
 automatique ; garder le staging, y compris après échec partiel.
@@ -69,8 +69,12 @@ métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 ## Nouvelle consolidation après refus avant mutation
 
 Après preuve Backlog d'un refus avant toute mutation, absence de ref et de
-journaux, geler le corpus public déjà fermé et calculer le SHA-256 du manifeste
-canonique produit par collect_closure sur main exact (standard_batches=true).
+journaux, geler le corpus public déjà fermé et lancer le dispatch **lecture seule** du workflow avec `issues: recovery:N`.
+Il renvoie le SHA-256 du manifeste canonique sur main exact, les numéros,
+la taille du staging, le nombre de mutations et la taille de tranche, jamais
+les textes. Ne pas modifier le corpus entre cette prévisualisation et la clôture
+du contrôle. Le quota REST partagé et les latences peuvent imposer un arrêt
+sûr et une nouvelle continuation ; ne pas relancer un run.
 Fermer un nouveau contrôle propriétaire sans label ni assignation, titre
 `Nouvelle consolidation #8195 — N`, JSON exact :
 
@@ -82,7 +86,7 @@ La revue explicite atteste le refus initial et l'absence de mutation ; le CLI
 vérifie l'absence de staging, de renvois et de journaux, le manifeste exact,
 le contrôle et main. Nouvelle fenêtre de 24 h liée au contrôle, pas de rerun
 ni réouverture. Exclusion des lots historiques et #8207. Toute dérive refuse.
-Les anciens manifestes standard sans standard_batches conservent leurs
+Les anciens manifestes standard sans `standard_batches` conservent leurs
 journaux historiques sans PROGRESS.
 
 ## Capitalisation différée
@@ -125,7 +129,7 @@ completed sous pzia, séquentiellement après réception et purge du précédent
 est l'ancre technique de staging, journaux, réception et purge existants ; le maître reste
 intact et son empreinte est vérifiée. Le corps du contrôle reste intact. Aucun changement
 historique de priorité, état ou relation. Chaque lot reste borné à 8 Mio de manifeste intégral et à la pagination existante ;
-le parcours standard conserve 1 Mio. Les écritures sont fractionnées en tranches de dix,
+le parcours standard utilise également 8 Mio. Les écritures sont fractionnées en tranches de dix,
 avec un journal PROGRESS lié à l'empreinte et au curseur. Le staging intégral reste
 présent jusqu'à DONE et capitalisation. Ne jamais purger un lot incomplet. Les journaux du
 contrôle et les renvois des membres empêchent le rejeu ; ne pas réutiliser un contrôle.
@@ -142,7 +146,7 @@ Après `LOT_PENDING`, fermer sous pzia un contrôle sans label ni assignation no
 
 La reprise reconstruit le préfixe déterministe depuis le manifeste intégral, vérifie
 le journal exact, tous les textes, les relations et le maître, puis exécute au plus dix
-écritures nouvelles. Un ancien curseur ou un écart entraîne un refus sûr.
+écritures nouvelles (taille effective fixée par le manifeste standard). Un ancien curseur ou un écart entraîne un refus sûr.
 
 Après interruption d'une tranche avant son journal PROGRESS ou DONE, conserver
 le staging et le gel. Backlog qualifie le préfixe déjà appliqué, puis ferme sous
