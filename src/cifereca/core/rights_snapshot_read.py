@@ -186,7 +186,7 @@ def read_account_rights_snapshot(service, account: Account, *,
     reader_kind = "optional_unavailable"
     health_call = None
 
-    def observed(result):
+    def record_health_result(result):
         if health_call is not None:
             try:
                 if not cancelled() and still_bound():
@@ -318,10 +318,10 @@ def read_account_rights_snapshot(service, account: Account, *,
                     purchase_omissions_sink(omissions)
                 except Exception:
                     _LOG.warning("TRACE purchase enrichment code=omission_sink_failed")
-            return observed(result)
+            return record_health_result(result)
         if not result.resume_cursor:
             # Unpaged providers preserve the original Core result contract.
-            return observed(result)
+            return record_health_result(result)
 
         # Collect only positive observations from bounded, exact-account
         # pages. Even reaching the last cursor grants no negative authority.
@@ -379,7 +379,7 @@ def read_account_rights_snapshot(service, account: Account, *,
             accepted.extend(page.rights)
             known.update(keys)
             cursor = page.resume_cursor
-        return observed(ProviderRightsSnapshot(
+        return record_health_result(ProviderRightsSnapshot(
             scope=scope, rights=tuple(accepted), branch=first.branch,
             status="partial", coverage="partial", pagination_complete=False,
             observed_at=first.observed_at, snapshot_ref=first.snapshot_ref,
