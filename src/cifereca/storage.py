@@ -618,6 +618,17 @@ class Storage:
                 (str(key), str(value)),
             )
 
+    def metadata_compare_publish(self, key: str, expected: str | None, value: str) -> bool:
+        """Publish only against the exact observed metadata snapshot."""
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            if (str(row[0]) if row is not None else None) != expected:
+                return False
+            db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       (key, value))
+            return True
+
     def metadata_compare_restore(self, key: str, expected: str, previous: str | None) -> None:
         """Restore only the exact provisional value, atomically across processes."""
         with self._lock, self._connect() as db:
