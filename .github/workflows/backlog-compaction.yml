@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       issues:
-        description: One to three closed issue numbers (read-only audit)
+        description: One to three closed issues, or recovery:N (read-only preview)
         required: true
         type: string
 
