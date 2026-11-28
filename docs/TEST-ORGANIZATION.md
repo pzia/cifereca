@@ -108,17 +108,41 @@ Le plan historique [#110](https://github.com/pzia/cifereca/issues/110) a été l
 
 Le module historique `test_core_0923.py` est absent du tree relu. Le plan de 0.9.23 excluait le choix visuel multi-profils, l'acquisition entièrement perdue, les autres détails d'Artifact sans ledger et la recette GTK réelle : ne pas leur attribuer une validation implicite.
 
-## État historique 0.9.25–0.9.33 à requalifier
+## Rationalisation Core 0.9.25–0.9.29 — capitalisation du 28 novembre 2026
 
-Le compte rendu [#112](https://github.com/pzia/cifereca/issues/112) du 7 octobre 2026 indique le triage 0.9.23–0.9.33 terminé (invariants migrés, déjà couverts ou obsolètes, sans restauration en bloc), à l'exception des invariants ADEPT alors explicitement suspendus par l'arbitrage du 4 octobre. Ce bilan historique ne prouve pas la couverture actuelle. Les sources suivantes restent à requalifier dans la documentation au regard des contrats actifs, **sans restauration transitive** :
+Relecture statique des témoins au commit `35fcbd1cbe6726ff4bcc72b8335398416e26f795`, sans nouvelle exécution des suites. Les index historiques ne valent pas validation fonctionnelle actuelle.
 
-- `test_core_0925.py` ;
-- `test_core_0927.py` ;
-- `test_core_0929.py` ;
+### 0.9.25 (#124)
+
+- OPEN-C01/DETAIL-C05 ([#130](https://github.com/pzia/cifereca/pull/130), [tests](../tests/test_core0925_open_destinations.py)) : fichier exact et identité revérifiés au clic, erreur visible, playlist de bundle, placement unique attesté pour le détail distant/prêt, matérialisation locale entre identités sans acquisition implicite.
+- DETAIL-C06 (#126) est obsolète : DETAIL-C07 remplace la barre basse par une barre haute fixe sur une ligne à défilement horizontal. Ne pas restaurer l'ancien layout.
+- COVER-C01 ([#131](https://github.com/pzia/cifereca/pull/131), [tests](../tests/test_epub_cover_contract.py)) : couvertures EPUB2/3 déclarées, OPF borné, cache par contenu réutilisé après déplacement/reconstruit si corrompu, original intact. La [résolution commune](../tests/test_core_493_cover_provenance.py) priorise la couverture embarquée dans Bibliothèque/Récents.
+- META-C03/DESC-C01 ([#132](https://github.com/pzia/cifereca/pull/132), [tests](../tests/test_core0925_local_metadata.py)) : notice OPF locale et attributs d'origine, titre, contributeurs, identifiants, éditeur, dates, langues, sujets, droits, série et description HTML normalisée en texte ; extraction sans réseau. [Scan](../tests/test_catalog_083.py) : réutilisation du hash si taille/mtime inchangées. Ne pas confondre provenance catalogue et EPUB, ni déduire une preuve exhaustive de non-reparse après déplacement du seul test META-C03.
+
+Hors périmètre historique : COVER-C02/P02, STORE-P01, divergences PDF exhaustives et prêts ADEPT suspendus à cette date.
+
+### 0.9.27 (#133, #150)
+
+- DETAIL-C07 ([#135](https://github.com/pzia/cifereca/pull/135), [tests](../tests/test_core0927_detail_layout.py)) : barre fixe haute, ligne à scroll horizontal, corps vertical extensible et scrollable borné par le parent ; groupes ajoutés sans mutation de la barre. #151 est un doublon de traçabilité.
+- GTK-C08 ([#145](https://github.com/pzia/cifereca/pull/145), [tests](../tests/test_core0927_gtk_lifecycle.py)) et [livraison de tâches #158](../tests/test_core0927_task_delivery.py) : conserver le modèle StringList, décrémenter le compteur, ignorer widgets après fermeture, ne pas réactiver le contrôle détaché tout en livrant le succès si la fenêtre vit. Ne pas déclarer résolus les warnings GTK/Foliate/MESA sans recette réelle.
+- [Refresh prêt #154](../tests/test_core0927_loan_refresh.py) : instance fraîche sur identité complète du prêt, disparition → détail vidé ; résultat vide ne prouve pas l'absence de prêts fournisseur.
+- [LIST-C03/C04/FILTER-C03 #144](../tests/test_core0927_list_filter_contract.py) : QueryState immuable, filtrage local sans réseau, facettes et contexte conservés, état restauré après reconstruction. Le plan prévisionnel #136 a été remplacé par l'index #150 fondé sur le vrai fichier historique ; #138–#142 sont not_planned, pas des livraisons (genre/description, détail, brokers comptes, sync/pages, résolution widgets).
+- ADE-C10/C11 : réconciliation d'inventaire et liaison manuelle couvertes par les témoins 0.9.21/0.9.23 ci-dessus ; les anciens critères de restitution ne prescrivent aucune réactivation après #4048.
+
+### 0.9.29 (#146)
+
+- STATS-C01 ([#149](https://github.com/pzia/cifereca/pull/149), [tests](../tests/test_core0929_statistics.py)) : projection persistée par identité, livres distincts/emplacements, prêts connus et droits observés, inconnu distinct de zéro, répartitions source/format/couverture, sans réseau ; Dashboard/CLI partagent la projection. [Scope strict](../tests/test_core_p0_5851_statistics_identity_scope.py) : identité explicite.
+- COVER-C03 ([#156](https://github.com/pzia/cifereca/pull/156), [tests](../tests/test_core0929_cover_c03.py)) : guide XHTML/SVG et spine à image unique, méthode/provenance, cache par contenu et schéma versionné ; réinspection forcée Bibliothèque/CLI `--refresh-covers`, sans téléchargement ni modification du livre, sans rasterisation de première page. Recette EPUB/GTK réelle hors périmètre.
+- OBS-C29 ([#161](https://github.com/pzia/cifereca/pull/161), [tests](../tests/test_core0929_observations.py)) : fusion persistée multi-comptes, cache ancien ne remplace pas l'observation fournisseur fraîche, amorçage d'un compte manquant, lecture sans réseau, mise à jour atomique et récupération du payload legacy ; la relecture ne démontre pas à elle seule une campagne exhaustive d'injection de panne.
+
+## État historique 0.9.31–0.9.33 à requalifier
+
+Le compte rendu [#112](https://github.com/pzia/cifereca/issues/112) du 7 octobre 2026 indique le triage 0.9.23–0.9.33 terminé (invariants migrés, déjà couverts ou obsolètes, sans restauration en bloc), à l'exception des invariants ADEPT alors suspendus par l'arbitrage du 4 octobre. Ce bilan historique ne prouve pas la couverture actuelle. Les sources suivantes restent à requalifier dans la documentation selon les contrats actifs, sans restauration transitive :
+
 - `test_core_0931.py` ;
 - `test_core_0933.py`.
 
-Ces fichiers ne sont pas présents dans le tree courant au moment de cette documentation. Ils doivent être étudiés depuis leur source/historique, méthode par méthode, puis chaque invariant doit être classé Core, plugin, simulation ou obsolète.
+Ces fichiers historiques sont absents du tree de référence. Classer chaque invariant selon son propriétaire actuel ou son obsolescence.
 
 ## Validation minimale d'une migration de test
 
