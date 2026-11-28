@@ -121,8 +121,13 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
     ai_cfg = self.config.get("llm", {})
     if not isinstance(ai_cfg, dict):
         ai_cfg = {}
+    from ..core.llm_profiles import is_profile_config, selected_settings, LLMSettingsError
+    try:
+        ai_view = selected_settings(ai_cfg) if is_profile_config(ai_cfg) else ai_cfg
+    except LLMSettingsError:
+        ai_view = {}
     ai_ui = build_ai_settings_section(
-        section=ai_box, settings=ai_cfg,
+        section=ai_box, settings=ai_view,
         Gtk=Gtk, Adw=Adw, add_css=add_css,
     )
     capture_ai_settings = bind_settings_ai_callbacks(

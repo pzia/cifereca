@@ -97,3 +97,35 @@ disponibilité future du service ni n’autorise des appels automatiques.
 
 Une IA indisponible ne bloque pas le reste de Cifereca. Aucun réseau n’est
 contacté en ouvrant la page ou en sauvegardant les paramètres.
+
+
+## Configurations nommées (P0 #8465)
+
+Le format historique plat reste lisible et utilisable. L'action explicite de
+gestion des profils dans Paramètres migre les valeurs vers un schéma versionné :
+une activation globale, des profils nommés (32 au plus), un identifiant
+sélectionné ou aucun, et une autorisation distante liée à la destination exacte.
+Il n'existe ni profil de secours ni duplication mutable du profil actif.
+
+Dans le formulaire IA, saisir un nom de profil (lettres ASCII, chiffres, tiret
+ou underscore, 64 caractères au maximum), puis « Créer un profil » à partir
+des champs du formulaire, ou sélectionner/supprimer un nom existant. La liste
+et le profil sélectionné sont affichés. Modifier les champs du profil sélectionné,
+puis enregistrer. Les modifications restent dans le brouillon avant Save ;
+« Annuler les modifications » restaure la configuration sauvegardée. Toute
+sélection différente désactive le service et révoque l'autorisation distante.
+Une ancienne autorisation distante n'est pas transférée lors de la migration.
+
+L'autorisation distante enregistrée lie le nom du profil, le protocole,
+l'endpoint complet (port et chemin inclus), le modèle et la référence de clé.
+Une modification de ces données révoque l'accord ; les confirmations par
+analyse des plugins restent obligatoires. La valeur de clé ne doit jamais
+figurer dans les profils. Le processus courant peut refuser un service révoqué
+mais n'active jamais le nouveau profil à chaud. Enregistrer et redémarrer
+pour construire la nouvelle instance. Une requête déjà transmise ne peut
+pas être rappelée.
+
+Le Core maintient des compteurs bornés en mémoire par catégorie de résultat
+et destination locale/distante (nombre, durée cumulée et maximale).
+Pas de journal de contenu, de clé, de modèle ou d'URL, ni de comptabilité
+financière. Les compteurs disparaissent au redémarrage.

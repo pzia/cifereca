@@ -15,6 +15,7 @@ from ..providers.base import (
     valid_account_option_boolean,
 )
 from .llm_settings import LLMSettingsError, normalize_llm_settings
+from ..core.llm_profiles import is_profile_config, normalize_profiles
 from .borrower_scoped_options import (
     MAX_BORROWERS, _valid_borrower_id, decimal_limit,
     validate_saved_borrower_limits,
@@ -689,7 +690,9 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
     ai_restart_required = False
     if ai_dirty:
         try:
-            new_ai_settings = normalize_llm_settings(values['ai'])
+            new_ai_settings = (normalize_profiles(values['ai'])
+                               if is_profile_config(values['ai'])
+                               else normalize_llm_settings(values['ai']))
         except LLMSettingsError as exc:
             raise SettingsValidationError(str(exc), 'Configuration IA invalide')
         ai_restart_required = new_ai_settings != config.get('llm', {})
