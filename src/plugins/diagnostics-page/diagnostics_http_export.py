@@ -2,6 +2,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, repr=False)
+class ScopedHTTPArchive:
+    capture_id: str | None
+    scope: object
+    capability: str
+    evidence_ref: str
+    generation: tuple | None = None
+
+
+@dataclass(frozen=True, repr=False)
+class ScopedHealthBundle:
+    scope: object
+    selections: tuple
 
 
 class HTTPTraceExport:
@@ -12,7 +28,7 @@ class HTTPTraceExport:
 
     def __init__(self, button, *, broker, tasks, host, current, folder,
                  gtk=None, gio=None, glib=None, include_binary=None,
-                 vault=None, archive_source=None):
+                 vault=None, archive_source=None, archive_current=None, bundle=False):
         if gtk is None:
             from gi.repository import Gtk, Gio, GLib
             gtk, gio, glib = Gtk, Gio, GLib
@@ -24,9 +40,15 @@ class HTTPTraceExport:
         self.timer = None
         self.include_binary = include_binary
         self.vault, self.archive_source = vault, archive_source
+        self.archive_current = archive_current
+        self.bundle = bundle
+        self._submission = None
         self._armed_source = self._chosen_source = None
-        if archive_source is not None:
+        if bundle:
+            self.LABEL = "Exporter le dossier LLM du compte sélectionné…"
+        elif archive_source is not None:
             self.LABEL = "Exporter l’archive HTTP sélectionnée…"
+        self.button.set_label(self.LABEL)
         self._updating_policy = False
         if include_binary is not None:
             include_binary.connect("toggled", self.policy_toggled)
@@ -48,11 +70,42 @@ class HTTPTraceExport:
             return None
         sid = self.archive_source()
         policy = self._status().get("include_binary")
-        return (sid, policy) if sid and type(policy) is bool else None
+        if type(policy) is not bool:
+            return None
+        if self.bundle:
+            from cifereca.plugin_api.capture_vault import CaptureScope
+            if (type(sid) is ScopedHealthBundle and type(sid.scope) is CaptureScope
+                    and type(sid.selections) is tuple and 1 <= len(sid.selections) <= 25
+                    and callable(self.archive_current)):
+                return sid, policy
+            return None
+        if type(sid) is str and sid:
+            return sid, policy
+        if type(sid) is ScopedHTTPArchive:
+            from cifereca.plugin_api.capture_vault import CaptureScope
+            if (type(sid.scope) is CaptureScope
+                    and all(type(value) is str and bool(value) for value in (
+                        sid.capture_id, sid.evidence_ref, sid.scope.provider_id,
+                        sid.scope.instance_id, sid.scope.account_id, sid.scope.identity_id))
+                    and type(sid.capability) is str
+                    and sid.capability in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
+                    and callable(self.archive_current)):
+                return sid, policy
+        return None
+
+    def _archive_still_current(self, source):
+        if source is None or self._status().get("include_binary") != source[1]:
+            return False
+        if type(source[0]) in (ScopedHTTPArchive, ScopedHealthBundle):
+            try:
+                return self.archive_current(source[0]) is True
+            except Exception:
+                return False
+        return True
 
     def invalidate(self):
         self.armed = False
-        self._armed_source = self._chosen_source = None
+        self._armed_source = self._chosen_source = self._submission = None
         self.button.set_label(self.LABEL)
         if self.chooser is not None:
             chooser, self.chooser = self.chooser, None
@@ -61,7 +114,8 @@ class HTTPTraceExport:
     def active(self):
         if self.archive_source is not None:
             return (not self.closed and self.current() and self._source() is not None
-                    and callable(getattr(self.vault, "export_http_archive", None)))
+                    and callable(getattr(self.vault, "export_provider_health_bundle"
+                                         if self.bundle else "export_http_archive", None)))
         return (callable(getattr(self.broker, 'export_http_trace', None))
                 and self._status().get('active') is True)
 
@@ -95,11 +149,7 @@ class HTTPTraceExport:
         value = widget.get_active()
         if value == status["include_binary"]:
             return
-        self.armed = False
-        self.button.set_label(self.LABEL)
-        if self.chooser is not None:
-            chooser, self.chooser = self.chooser, None
-            chooser.destroy()
+        self.invalidate()
         try:
             setter(value)
         except Exception:
@@ -118,7 +168,8 @@ class HTTPTraceExport:
         if self.archive_source is not None:
             source = self._source()
             if ((self.armed and source != self._armed_source)
-                    or (self.chooser is not None and source != self._chosen_source)):
+                    or ((self.chooser is not None or self._submission is not None)
+                        and source != self._chosen_source)):
                 self.invalidate()
         self.button.set_sensitive(active)
         self.button.set_tooltip_text(
@@ -137,8 +188,13 @@ class HTTPTraceExport:
         if not self.active():
             self.refresh()
             return
+        if self.handle is not None and self._submission is not None:
+            return
         if not self.armed:
             self._armed_source = self._source()
+            if self.archive_source is not None and not self._archive_still_current(self._armed_source):
+                self.invalidate()
+                return
             self.armed = True
             button.set_label(self.CONFIRM)
             self.host.toast(
@@ -147,7 +203,9 @@ class HTTPTraceExport:
                 "choisir une destination locale."
             )
             return
-        if self.archive_source is not None and self._source() != self._armed_source:
+        if self.archive_source is not None and (
+                self._source() != self._armed_source
+                or not self._archive_still_current(self._armed_source)):
             self.invalidate()
             return
         if self.chooser is not None:
@@ -185,13 +243,18 @@ class HTTPTraceExport:
                 self.host.toast("Export HTTP indisponible : Trace est désactivé")
                 return
             source = self._chosen_source
-            if self.archive_source is not None and self._source() != source:
+            if self.archive_source is not None and (
+                    self._source() != source or not self._archive_still_current(source)):
+                self.invalidate()
                 return
             output = dialog.get_file()
             destination = output.get_path() if output is not None else None
             if not destination:
                 self.host.toast("Destination locale requise")
                 return
+
+            submission = object()
+            self._submission = submission
 
             def write(control):
                 if control.cancelled() or self.closed or not self.current():
@@ -202,10 +265,22 @@ class HTTPTraceExport:
                     # The worker must not read GTK selection widgets.
                     # Selection changes invalidate the immutable source token
                     # on the GTK thread; the broker reports current policy.
-                    if (self._chosen_source != source
-                            or self._status().get("include_binary") != source[1]):
+                    if (self._submission is not submission
+                            or self._chosen_source != source
+                            or not self._archive_still_current(source)):
                         return False
-                    self.vault.export_http_archive(source[0], destination, confirmed=True)
+                    selected = source[0]
+                    if type(selected) is ScopedHealthBundle:
+                        self.vault.export_provider_health_bundle(
+                            selected.scope, selected.selections, destination,
+                            confirmed=True, expected_binary=source[1])
+                    elif type(selected) is ScopedHTTPArchive:
+                        self.vault.export_http_archive(
+                            selected.capture_id, destination, confirmed=True, scope=selected.scope,
+                            capability=selected.capability, evidence_ref=selected.evidence_ref,
+                            generation=selected.generation)
+                    else:
+                        self.vault.export_http_archive(selected, destination, confirmed=True)
                 return True
 
             try:
@@ -213,6 +288,7 @@ class HTTPTraceExport:
                     write, label="Export local des échanges HTTP", kind="diagnostics",
                 )
             except Exception:
+                self._submission = None
                 self.host.toast("Export HTTP indisponible")
                 return
             self.handle.add_done_callback(self.completed)
@@ -234,6 +310,9 @@ class HTTPTraceExport:
                                   if code == "private_zip_exists" else "Export HTTP impossible")
 
         def show_status():
+            if self.handle is handle:
+                self.handle = None
+                self._submission = None
             if not self.closed and self.current():
                 self.host.toast("Échanges HTTP exportés localement" if okay
                                 else error or "Export HTTP annulé")
@@ -246,6 +325,7 @@ class HTTPTraceExport:
             return
         self.closed = True
         self.armed = False
+        self._submission = None
         if self.include_binary is not None:
             self.include_binary.set_sensitive(False)
         if self.timer is not None:
@@ -318,6 +398,13 @@ class HTTPVaultArchive:
                 self.retention_apply.connect("clicked", self._apply_retention)
             except Exception:
                 self.retention_days = self.retention_mib = self.retention_apply = None
+        self.private = None
+        if all(callable(getattr(broker, name, None)) for name in (
+                "provider_health_active_observations", "provider_health_selection_current")
+                ) and callable(getattr(vault, "archive_provider_trace", None)):
+            self.private = ProviderEvidenceArchive(
+                container, vault=vault, broker=broker, tasks=tasks, host=host,
+                current=current, folder=folder, gtk=gtk, gio=gio, glib=glib)
         self._controls()
 
     def _selected(self):
@@ -431,8 +518,405 @@ class HTTPVaultArchive:
 
     def close(self):
         self.closed = True
+        if self.private is not None:
+            self.private.close()
         self.exporter.close()
         if self.handle is not None:
             self.handle.cancel()
             self.handle = None
+        self.rows.remove_all()
+
+
+
+class ProviderEvidenceArchive:
+    """Separate, explicit private observation selection; no provider requests."""
+
+    def __init__(self, container, *, vault, broker, tasks, host, current, folder,
+                 gtk, gio, glib):
+        self.vault, self.broker, self.tasks = vault, broker, tasks
+        self.current, self.glib = current, glib
+        self.closed = False
+        self.handle = None
+        self.tokens = {}
+        self.rows = gtk.ComboBoxText()
+        self.status = gtk.Label(label="Preuves fournisseurs de l’identité active", xalign=0, wrap=True)
+        self.reload = gtk.Button(label="Actualiser les observations fournisseurs")
+        self.consent = gtk.CheckButton(label="J’autorise l’archivage chiffré de cette observation.")
+        self.save = gtk.Button(label="Archiver la preuve sélectionnée")
+        self.export = gtk.Button(label="Exporter la preuve archivée…")
+        for widget in (self.status, self.reload, self.rows, self.consent, self.save, self.export):
+            container.append(widget)
+        self.exporter = HTTPTraceExport(
+            self.export, broker=broker, tasks=tasks, host=host, current=current, folder=folder,
+            gtk=gtk, gio=gio, glib=glib, vault=vault, archive_source=self._export_source,
+            archive_current=self._valid)
+        self.bundle_exporter = None
+        if callable(getattr(vault, "export_provider_health_bundle", None)):
+            self.bundle_button = gtk.Button(label="Exporter le dossier LLM du compte sélectionné…")
+            container.append(self.bundle_button)
+            self.bundle_exporter = HTTPTraceExport(
+                self.bundle_button, broker=broker, tasks=tasks, host=host, current=current,
+                folder=folder, gtk=gtk, gio=gio, glib=glib, vault=vault,
+                archive_source=self._bundle_source, archive_current=self._bundle_valid, bundle=True)
+        self.replay_button = None
+        self.replay_consent = None
+        if callable(getattr(vault, "replay_provider_health", None)):
+            self.replay_consent = gtk.CheckButton(
+                label="J’autorise le rejeu local de cette preuve privée, sans requête fournisseur.")
+            self.replay_button = gtk.Button(label="Rejouer et comparer la preuve archivée")
+            container.append(self.replay_consent)
+            container.append(self.replay_button)
+            self.replay_consent.connect("toggled", lambda *_: self._controls())
+            self.replay_button.connect("clicked", self._replay)
+        self.rows.connect("changed", self._changed)
+        self.consent.connect("toggled", lambda *_: self._controls())
+        self.reload.connect("clicked", lambda *_: self.refresh())
+        self.save.connect("clicked", self._archive)
+        self.recipe = None
+        if all(callable(getattr(broker, name, None)) for name in (
+                "provider_health_recipe_options", "run_provider_health_recipe")):
+            self.recipe = ProviderRecipeControls(container, broker=broker, tasks=tasks,
+                current=current, gtk=gtk, glib=glib, after=self.refresh,
+                restore=getattr(vault, "restore_provider_health_history", None))
+        self.refresh()
+
+    def _selected(self):
+        if self.closed or not self.current() or self.handle is not None:
+            return None
+        return self.tokens.get(self.rows.get_active_id())
+
+    def _valid(self, token):
+        if self.closed or not self.current() or token is None:
+            return False
+        try:
+            return self.broker.provider_health_selection_current(
+                token.scope, token.capability, token.evidence_ref,
+                token.capture_id, token.generation) is True
+        except Exception:
+            return False
+
+    def _export_source(self):
+        token = self._selected()
+        return token if token is not None and token.capture_id and self._valid(token) else None
+
+    def _bundle_source(self):
+        token = self._selected()
+        if token is None:
+            return None
+        rows = tuple((item.capability, item.evidence_ref, item.capture_id, item.generation)
+                     for item in self.tokens.values()
+                     if item.scope == token.scope and item.capture_id
+                     and item.generation == token.generation)
+        if not 1 <= len(rows) <= 25 or len({row[2] for row in rows}) != len(rows):
+            return None
+        bundle = ScopedHealthBundle(token.scope, rows)
+        return bundle if self._bundle_valid(bundle) else None
+
+    def _bundle_valid(self, bundle):
+        if self.closed or not self.current():
+            return False
+        return all(self._valid(ScopedHTTPArchive(capture, bundle.scope, capability, evidence, generation))
+                   for capability, evidence, capture, generation in bundle.selections)
+
+    def _invalidate_exports(self):
+        self.exporter.invalidate()
+        if self.bundle_exporter is not None:
+            self.bundle_exporter.invalidate()
+
+    def _controls(self):
+        token = self._selected()
+        idle = not self.closed and self.current() and self.handle is None
+        try:
+            trace = self.broker.http_trace_status().get("active") is True
+        except Exception:
+            trace = False
+        allowed = idle and token is not None and not token.capture_id and trace and self._valid(token)
+        self.reload.set_sensitive(idle)
+        self.rows.set_sensitive(idle)
+        self.consent.set_sensitive(allowed)
+        self.save.set_sensitive(allowed and self.consent.get_active())
+        if self.replay_button is not None:
+            can_replay = idle and token is not None and bool(token.capture_id) and self._valid(token)
+            self.replay_consent.set_sensitive(can_replay)
+            self.replay_button.set_sensitive(can_replay and self.replay_consent.get_active())
+        self.exporter.refresh()
+        if self.bundle_exporter is not None:
+            self.bundle_exporter.refresh()
+
+    def _changed(self, *_):
+        self._invalidate_exports()
+        self.consent.set_active(False)
+        if self.replay_consent is not None:
+            self.replay_consent.set_active(False)
+        self._controls()
+
+    def refresh(self):
+        from cifereca.plugin_api.capture_vault import CaptureScope
+        if self.closed or not self.current() or self.handle is not None:
+            return
+        self._invalidate_exports()
+        self.consent.set_active(False)
+        if self.replay_consent is not None:
+            self.replay_consent.set_active(False)
+        self.tokens.clear()
+        self.rows.remove_all()
+        try:
+            observations = self.broker.provider_health_active_observations()
+            for row in observations:
+                if not row["evidence_ref"] or not row["generation"]:
+                    continue
+                scope = CaptureScope(row["provider_id"], row["instance_id"],
+                                     row["account_id"], row["identity_id"])
+                token = ScopedHTTPArchive(row["capture_id"], scope, row["capability"],
+                                          row["evidence_ref"], row["generation"])
+                if not self._valid(token):
+                    continue
+                key = str(len(self.tokens))
+                self.tokens[key] = token
+                # Exact account/instance must be distinguishable before consent.
+                self.rows.append(key, f'{row["provider_id"]} · {row["instance_id"]} · '
+                                      f'{row["account_id"]} · {row["capability"]} · '
+                                      f'{row["observed_at"]} · {row["outcome"]} · '
+                                      + ("archivée" if token.capture_id else "non archivée"))
+            self.status.set_label(f"{len(self.tokens)} preuves privées disponibles ; aucun envoi.")
+        except Exception:
+            self.tokens.clear()
+            self.rows.remove_all()
+            self.status.set_label("Observations fournisseurs indisponibles.")
+        self._controls()
+
+    def _archive(self, *_):
+        token = self._selected()
+        if (token is None or token.capture_id or not self.consent.get_active()
+                or not self._valid(token)):
+            return
+        self.consent.set_active(False)
+        self._invalidate_exports()
+        def execute(control):
+            if control.cancelled() or not self._valid(token):
+                raise RuntimeError("cancelled")
+            return self.vault.archive_provider_trace(
+                token.scope, token.capability, token.evidence_ref,
+                consented=True, generation=token.generation)
+        try:
+            self.handle = self.tasks.submit(execute, label="Archivage de preuve fournisseur",
+                                            kind="diagnostics")
+        except Exception:
+            self.status.set_label("Archivage indisponible.")
+            return
+        self._controls()
+        def completed(handle):
+            try:
+                handle.result()
+                okay = True
+            except Exception:
+                okay = False
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                self.refresh()
+                if not okay:
+                    self.status.set_label("Archivage refusé ou annulé.")
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def _replay(self, *_):
+        token = self._selected()
+        if (token is None or not token.capture_id or self.replay_consent is None
+                or not self.replay_consent.get_active() or not self._valid(token)):
+            return
+        self.replay_consent.set_active(False)
+        self._invalidate_exports()
+
+        def execute(control):
+            if control.cancelled() or not self._valid(token):
+                return {"outcome": "unknown"}
+            return self.vault.replay_provider_health(
+                token.scope, token.capability, token.evidence_ref,
+                token.capture_id, token.generation, confirmed=True)
+
+        try:
+            self.handle = self.tasks.submit(execute, label="Rejeu local de preuve fournisseur",
+                                            kind="diagnostics")
+        except Exception:
+            self.status.set_label("Rejeu indisponible.")
+            return
+        self._controls()
+
+        def completed(handle):
+            try:
+                result = handle.result()
+                outcome = result.get("outcome")
+                message = {
+                    "equal": "Rejeu conforme à la référence métier initiale.",
+                    "different": "Écart métier au rejeu ; cause non établie.",
+                }.get(outcome, "Rejeu non qualifiable : preuve ou parseur insuffisant.")
+            except Exception:
+                message = "Rejeu refusé ou annulé."
+
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                valid = self._valid(token) and self._selected() == token
+                self._controls()
+                self.status.set_label(message if valid else "Contexte de rejeu modifié.")
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def close(self):
+        self.closed = True
+        self.exporter.close()
+        if self.bundle_exporter is not None:
+            self.bundle_exporter.close()
+        if self.recipe is not None:
+            self.recipe.close()
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        self.tokens.clear()
+        self.rows.remove_all()
+
+
+class ProviderRecipeControls:
+    """Explicit, single-account recipe; never starts work on refresh."""
+    def __init__(self, container, *, broker, tasks, current, gtk, glib, after, restore=None):
+        self.broker, self.tasks, self.current = broker, tasks, current
+        self.glib, self.after = glib, after
+        self.restore = restore if callable(restore) else None
+        self.closed = False
+        self.handle = None
+        self.options = {}
+        self.rows = gtk.ComboBoxText()
+        self.reload = gtk.Button(label="Actualiser les comptes de recette")
+        self.consent = gtk.CheckButton(label="J’autorise les lectures de recette, dont la recherche « livre » (Trace actif).")
+        self.run = gtk.Button(label="Lancer la recette manuelle du compte")
+        self.status = gtk.Label(label="Recette en lecture seule ; aucun emprunt, achat ou téléchargement.",
+                                xalign=0, wrap=True)
+        for widget in (self.status, self.reload, self.rows, self.consent, self.run):
+            container.append(widget)
+        self.restore_button = None
+        self.restore_consent = None
+        if self.restore is not None:
+            self.restore_consent = gtk.CheckButton(
+                label="J’autorise la relecture locale des archives chiffrées de ce compte.")
+            self.restore_button = gtk.Button(label="Restaurer les preuves historiques")
+            container.append(self.restore_consent)
+            container.append(self.restore_button)
+            self.restore_consent.connect("toggled", lambda *_: self._controls())
+            self.restore_button.connect("clicked", lambda *_: self._run(restore=True))
+        self.rows.connect("changed", self._changed)
+        self.consent.connect("toggled", lambda *_: self._controls())
+        self.reload.connect("clicked", lambda *_: self.refresh())
+        self.run.connect("clicked", self._run)
+        self.refresh()
+
+    def _selected(self):
+        return self.options.get(self.rows.get_active_id())
+
+    def _controls(self):
+        idle = not self.closed and self.current() and self.handle is None
+        selected = self._selected()
+        allowed = idle and selected is not None and selected["enabled"] is True
+        self.rows.set_sensitive(idle)
+        self.reload.set_sensitive(idle)
+        self.consent.set_sensitive(allowed)
+        self.run.set_sensitive(allowed and self.consent.get_active())
+        if self.restore_button is not None:
+            historical = idle and selected is not None
+            self.restore_consent.set_sensitive(historical)
+            self.restore_button.set_sensitive(historical and self.restore_consent.get_active())
+
+    def _changed(self, *_):
+        self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
+        self._controls()
+
+    def refresh(self):
+        if self.closed or not self.current() or self.handle is not None:
+            return
+        self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
+        self.options.clear()
+        self.rows.remove_all()
+        try:
+            for row in self.broker.provider_health_recipe_options():
+                scope = row["scope"]
+                key = str(len(self.options))
+                self.options[key] = row
+                self.rows.append(key, f"{scope.provider_id} · {scope.instance_id} · {scope.account_id}"
+                                 + ("" if row["enabled"] else " · désactivé"))
+        except Exception:
+            self.options.clear()
+            self.rows.remove_all()
+        self._controls()
+
+    def _run(self, *_, restore=False):
+        option = self._selected()
+        if self.closed or not self.current() or self.handle is not None or option is None:
+            return
+        if restore:
+            if self.restore is None or not self.restore_consent.get_active():
+                return
+        elif option["enabled"] is not True or not self.consent.get_active():
+            return
+        scope, generation = option["scope"], option["generation"]
+        self.consent.set_active(False)
+        if self.restore_consent is not None:
+            self.restore_consent.set_active(False)
+
+        def execute(control):
+            if control.cancelled() or self.closed or not self.current():
+                return ()
+            if restore:
+                return self.restore(scope, generation, confirmed=True)
+            return self.broker.run_provider_health_recipe(
+                scope, generation, confirmed=True, control=control)
+        try:
+            self.handle = self.tasks.submit(execute,
+                label="Restauration historique locale" if restore else "Recette fournisseur en lecture seule",
+                kind="diagnostics")
+        except Exception:
+            self.status.set_label("Recette indisponible.")
+            return
+        self._controls()
+
+        def completed(handle):
+            try:
+                rows = handle.result()
+                if restore:
+                    message = (f"{rows} preuve(s) historique(s) restaurée(s) ; état actuel non vérifié."
+                               if type(rows) is int else "Restauration annulée.")
+                else:
+                    message = " ; ".join(f'{row["capability"]} : {row["outcome"]} ({row["reason"]})'
+                                         for row in rows) or "Recette annulée."
+            except Exception:
+                message = "Recette indisponible."
+            def deliver():
+                if self.closed or not self.current() or self.handle is not handle:
+                    return False
+                self.handle = None
+                try:
+                    valid = any(row["scope"] == scope and row["generation"] == generation
+                                for row in self.broker.provider_health_recipe_options())
+                except Exception:
+                    valid = False
+                self.refresh()
+                self.status.set_label(message if valid else "Contexte de recette modifié.")
+                self.after()
+                return False
+            self.glib.idle_add(deliver)
+        self.handle.add_done_callback(completed)
+
+    def close(self):
+        self.closed = True
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        self.options.clear()
         self.rows.remove_all()

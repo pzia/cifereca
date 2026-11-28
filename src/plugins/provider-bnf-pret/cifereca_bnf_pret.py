@@ -1557,6 +1557,8 @@ class BnfProviderPlugin(ProviderPlugin):
         self._identity_broker = context.broker("identities")
         return self
 
+    health_replay_modules = ("cifereca_bnf_pret_web", "cifereca_bnf_pret_health_replay")
+
     def deactivate(self):
         self._identity_broker = None
 

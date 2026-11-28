@@ -279,3 +279,31 @@ def test_omitted_request_is_not_proof_of_empty_public_get(tmp_path, state):
     assert report["counts"]["unqualified"] == 1
     assert report["counts"].get("eligible_public_get", 0) == 0
     assert report["counts"].get("parser_qualified", 0) == 0
+
+
+def test_common_vault_targeted_archive_uses_existing_parser(tmp_path, monkeypatch):
+    import httpx
+    from cifereca import http_trace
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    trace = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", URL), "provider.numilog.public")
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/html"}))
+        exchange.observe("response", HTML)
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    snapshot = trace.snapshot()
+    snapshot["session_ref"] = ref
+    path = tmp_path / "targeted.zip"
+    path.write_bytes(http_trace.build_http_trace_zip(snapshot))
+    result = analyse_capture(path)
+    assert result["status"] == "reviewed"
+    assert result["counts"]["parser_qualified"] == 1
+    assert result["reasons"] == {}
+    snapshot = trace.snapshot()
+    snapshot["session_ref"] = "wrong-operation"
+    path.write_bytes(http_trace.build_http_trace_zip(snapshot))
+    assert analyse_capture(path) == {"status": "invalid_capture"}

@@ -32,6 +32,8 @@ _FORBIDDEN = (
     "mkdir", "mkdirat", "rmdir", "chmod", "fchmod", "fchmodat",
     "chown", "fchown", "fchownat", "truncate", "ftruncate",
     "mount", "umount2", "link", "linkat", "symlink", "symlinkat",
+    "io_uring_setup", "io_uring_enter", "io_uring_register",
+    "pidfd_getfd", "process_vm_readv", "process_vm_writev",
 )
 _REQUIRED = ("openat", "socket", "connect", "execve", "clone")
 
@@ -121,13 +123,134 @@ def _execute(envelope: dict[str, object]) -> object:
     return consolidate(facts)
 
 
+
+def projection_digest(rows):
+    """Bounded canonical digest, with explicit empty distinct from unknown."""
+    from hashlib import sha256
+    if type(rows) is not tuple or len(rows) > 2048:
+        return None
+    seen = set()
+    for row in rows:
+        if (type(row) is not tuple or len(row) != 4
+                or not all(type(value) is str and len(value) <= 4096 for value in row)
+                or not row[0] or not row[1] or row[0] in seen):
+            return None
+        seen.add(row[0])
+    payload = json.dumps(sorted(rows), ensure_ascii=True, separators=(",", ":")).encode()
+    if len(payload) > 2_000_000:
+        return None
+    return sha256(payload).hexdigest()
+
+
+
+MAX_REPLAY_REQUEST_BYTES = 12 * 1024 * 1024
+
+
+def _execute_replay(envelope):
+    """Load declared pure modules only after the same kernel confinement."""
+    import base64
+    import builtins
+    import dataclasses
+    import datetime
+    import html.parser
+    import re
+    import types
+    import urllib.parse
+    import __future__
+    import _strptime
+    import encodings.ascii
+    import encodings.utf_8
+    import encodings.iso8859_1
+    import encodings.cp1252
+
+    modules = envelope["modules"]
+    entries = envelope["entries"]
+    capability = envelope["capability"]
+    if (type(modules) is not list or not 1 <= len(modules) <= 16
+            or type(entries) is not list or not 1 <= len(entries) <= 32
+            or type(capability) is not str):
+        raise ValueError("replay_envelope")
+    allowed = {name: sys.modules[name] for name in (
+        "dataclasses", "datetime", "html", "html.parser", "re", "urllib",
+        "urllib.parse", "__future__")}
+    sources = []
+    total = 0
+    for name, source in modules:
+        if (type(name) is not str or re.fullmatch(r"[a-zA-Z_][a-zA-Z_0-9]{0,127}", name) is None
+                or name in sys.modules or name in allowed
+                or type(source) is not str):
+            raise ValueError("replay_module")
+        total += len(source.encode("utf-8"))
+        if total > 2_000_000:
+            raise ValueError("replay_source_limit")
+        module = types.ModuleType(name)
+        allowed[name] = module
+        sources.append((module, source))
+    tape = []
+    total = 0
+    for method, url, status, content_type, encoded in entries:
+        if (method not in ("GET", "HEAD") or type(url) is not str
+                or type(status) is not int or not 100 <= status <= 599
+                or type(content_type) is not str or len(content_type) > 1024):
+            raise ValueError("replay_entry")
+        body = base64.b64decode(encoded, validate=True)
+        total += len(body)
+        if total > 4 * 1024 * 1024:
+            raise ValueError("replay_body_limit")
+        match = re.search(r'(?i)(?:^|;)\s*charset\s*=\s*"?([a-z0-9_-]+)', content_type)
+        charset = match.group(1).lower() if match else "utf-8"
+        if charset not in ("utf-8", "us-ascii", "ascii", "iso-8859-1", "windows-1252"):
+            raise ValueError("replay_encoding")
+        tape.append((method, url, status, content_type, charset, body))
+
+    def restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level or name not in allowed:
+            raise ImportError("replay_import_refused")
+        return allowed[name] if fromlist else allowed[name.split(".")[0]]
+
+    namespace = dict(vars(builtins))
+    namespace["__import__"] = restricted_import
+    cursor = 0
+    failed = False
+
+    def read(method, url):
+        nonlocal cursor, failed
+        if failed or cursor >= len(tape) or (method, url) != tape[cursor][:2]:
+            failed = True
+            raise ValueError("replay_unmatched_request")
+        _, _, status, content_type, charset, body = tape[cursor]
+        cursor += 1
+        return types.SimpleNamespace(status_code=status, content=body,
+                                     headers={"content-type": content_type}, encoding=charset)
+
+    _confine()
+    for module, source in sources:
+        sys.modules[module.__name__] = module
+        module.__dict__["__builtins__"] = namespace
+        exec(compile(source, "<installed-replay-module>", "exec", dont_inherit=True), module.__dict__)
+    parser = sources[-1][0].__dict__.get("parse_projection")
+    if not callable(parser):
+        raise ValueError("replay_entrypoint")
+    rows = parser(capability, read)
+    if failed or cursor != len(tape):
+        raise ValueError("replay_incomplete")
+    digest = projection_digest(rows)
+    if digest is None:
+        raise ValueError("replay_projection")
+    return {"digest": digest, "rows": len(rows)}
+
+
 def main() -> None:
     # Keep the wire descriptor private; plugin stdout/stderr cannot pollute
     # structured output even if it attempts print/os.write.
     protocol_fd = os.dup(1)
     try:
-        raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
-        if not raw or len(raw) > MAX_REQUEST_BYTES:
+        replay = sys.argv[1:] == ["--provider-health-replay"]
+        if sys.argv[1:] and not replay:
+            raise ValueError("worker_mode")
+        request_limit = MAX_REPLAY_REQUEST_BYTES if replay else MAX_REQUEST_BYTES
+        raw = sys.stdin.buffer.read(request_limit + 1)
+        if not raw or len(raw) > request_limit:
             raise ValueError("consolidator_request_unbounded")
         envelope = json.loads(raw)
         if type(envelope) is not dict:
@@ -144,7 +267,7 @@ def main() -> None:
         with open(os.devnull, "wb", buffering=0) as null_output:
             os.dup2(null_output.fileno(), 1)
             os.dup2(null_output.fileno(), 2)
-        result = _execute(envelope)
+        result = _execute_replay(envelope) if replay else _execute(envelope)
         response = {"ok": True, "result": result}
         payload = json.dumps(
             response, ensure_ascii=True, separators=(",", ":"), allow_nan=False,

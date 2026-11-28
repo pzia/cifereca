@@ -2009,7 +2009,29 @@ class DiagnosticsBrokerImpl:
 
 
 class DiagnosticsPageBrokerImpl(DiagnosticsBrokerImpl):
-    """Immediate preference write, only supplied to the Diagnostics page."""
+    """Page-only diagnostic preferences and scoped passive observations."""
+
+    def provider_health_observations(self, identity_id: str):
+        from .core.provider_health_inventory import diagnostic_health_observations
+        return diagnostic_health_observations(self.service, identity_id)
+
+    def provider_health_active_observations(self):
+        from .core.provider_health_inventory import diagnostic_health_active_observations
+        return diagnostic_health_active_observations(self.service)
+
+    def provider_health_selection_current(self, scope, capability, evidence_ref,
+                                          capture_id, generation):
+        from .core.provider_health_inventory import diagnostic_health_selection_current
+        return diagnostic_health_selection_current(
+            self.service, scope, capability, evidence_ref, capture_id, generation)
+
+    def provider_health_recipe_options(self):
+        from .core.provider_health_recipe import recipe_options
+        return recipe_options(self.service)
+
+    def run_provider_health_recipe(self, scope, generation, *, confirmed=False, control=None):
+        from .core.provider_health_recipe import run_recipe
+        return run_recipe(self.service, scope, generation, confirmed=confirmed, control=control)
 
     def set_http_trace_include_binary(self, value: bool) -> bool:
         from copy import deepcopy

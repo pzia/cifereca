@@ -1,0 +1,192 @@
+"""Deterministic cross-lot foundations: no supplier I/O."""
+from types import SimpleNamespace
+import pytest
+import httpx
+
+from cifereca.core.provider_health_projection import PassiveHealth, Scope, Observation, Outcome
+from cifereca.gui.provider_health_notifications import notify_health_transitions
+from cifereca.core.provider_health_replay import CapturedReadTransport, ReplayUnavailable
+from cifereca import http_trace
+from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+
+
+def test_grouped_notifications_outside_plugins_and_isolation():
+    health = PassiveHealth()
+    health.set_enabled(True)
+    messages = []
+    service = SimpleNamespace(_provider_health=health, current_identity=SimpleNamespace(identity_id="a"))
+    window = SimpleNamespace(service=service, toast=messages.append)
+    for n in range(5):
+        scope = Scope("p" + str(n), "i", "a", "a", "search")
+        health.observe(scope, Observation(Outcome.NETWORK, "1", "now", str(n)), lease=health.lease())
+    other = Scope("private-other", "i", "b", "b", "search")
+    health.observe(other, Observation(Outcome.AUTH, "1", "now", "other"), lease=health.lease())
+    notify_health_transitions(window)
+    assert len(messages) == 1 and "2 autre" in messages[0] and "private-other" not in messages[0]
+    notify_health_transitions(window)
+    assert len(messages) == 1
+    window._closed = True
+    service.current_identity = SimpleNamespace(identity_id="b")
+    notify_health_transitions(window)
+    assert len(messages) == 1
+    window._closed = False
+    notify_health_transitions(window)
+    assert "private-other" in messages[1]
+
+
+def test_witnesses_bounded_exact_scope_and_no_replacement_on_absence():
+    health = PassiveHealth()
+    health.set_enabled(True)
+    a = Scope("p", "i", "a", "a", "search")
+    b = Scope("p", "j", "b", "b", "search")
+    first = Observation(Outcome.SUCCESS, "1", "now", "a")
+    health.observe(a, first, lease=health.lease())
+    health.retain_book_witnesses(a, first, (("db", "1"), ("db", "2"), ("db", "3"), ("db", "4")),
+                                lease=health.lease())
+    assert len(health.book_witnesses(a)) == 3
+    assert health.book_witnesses(b) == ()
+    later = Observation(Outcome.ATTESTED_EMPTY, "1", "later", "later")
+    health.observe(a, later, lease=health.lease())
+    health.retain_book_witnesses(a, later, (("db", "new"),), lease=health.lease())
+    assert [row[1][1] for row in health.book_witnesses(a)] == ["1", "2", "3"]
+    health.set_enabled(False)
+    assert health.book_witnesses(a) == ()
+
+
+def test_replay_exact_tape_no_fallback(monkeypatch):
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    capture = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        request = httpx.Request("GET", "https://fixture.invalid/read")
+        exchange = capture.begin(request, "fixture")
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/plain"}))
+        exchange.observe("response", b"fixture")
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    snapshot = capture.snapshot()
+    snapshot["session_ref"] = ref
+    payload = http_trace.build_http_trace_zip(snapshot)
+    transport = CapturedReadTransport(payload, evidence_ref=ref, producer="fixture")
+    with pytest.raises(ReplayUnavailable, match="replay_unmatched_request"):
+        transport.handle_request(httpx.Request("GET", "https://fixture.invalid/other"))
+    with pytest.raises(ReplayUnavailable, match="replay_incomplete"):
+        transport.require_complete()
+    good = CapturedReadTransport(payload, evidence_ref=ref, producer="fixture")
+    assert good.handle_request(request).read() == b"fixture"
+    good.require_complete()
+    with pytest.raises(ReplayUnavailable, match="replay_unmatched_request"):
+        good.handle_request(request)
+    with pytest.raises(ReplayUnavailable):
+        CapturedReadTransport(payload, evidence_ref=ref, producer="other")
+
+
+def test_generic_replay_matches_initial_digest_and_refuses_extra_reads(monkeypatch):
+    from contextlib import nullcontext
+    from cifereca.core.provider_health_replay import projection_digest, replay_archived_observation
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    capture = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        request = httpx.Request("GET", "https://fixture.invalid/read", headers={"cookie": "private"})
+        exchange = capture.begin(request, "fixture")
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/plain", "set-cookie": "private"}))
+        exchange.observe("response", b"fixture")
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    rows = (("loan", "book", "Title", ""),)
+    snapshot = capture.snapshot()
+    snapshot["session_ref"] = ref
+    snapshot["health_observation"] = {
+        "schema": "cifereca.health-observation/1", "capability": "loans",
+        "version": "1", "business_digest": projection_digest(rows)}
+    payload = http_trace.build_http_trace_zip(snapshot)
+
+    from cifereca.core import provider_health_source
+    class Plugin:
+        health_replay_modules = ("fixture_parser",)
+
+    source = {"fixture_parser.py": b"""
+def parse_projection(capability, read):
+    assert capability == 'loans'
+    response = read('GET', 'https://fixture.invalid/read')
+    assert response.content == b'fixture' and 'set-cookie' not in response.headers
+    return (('loan', 'book', 'Title', ''),)
+"""}
+    monkeypatch.setattr(provider_health_source, "snapshot_provider_source",
+                        lambda manager, provider_id: {"version": "2", "files": dict(source)})
+    service = Plugin()
+    record = SimpleNamespace(descriptor=SimpleNamespace(id="fixture", type="provider.library", version="2"),
+                             enabled=True, state="ready", service=service)
+    manager = SimpleNamespace(_records={"fixture": record}, hold_descriptive_lifecycle=nullcontext)
+    scope = CaptureScope("fixture", "i", "a", "owner")
+    replay = lambda: replay_archived_observation(manager, scope, "loans", ref, payload)
+    assert replay() == {"outcome": "equal", "observed_version": "1", "replay_version": "2",
+                        "rows": 1, "empty_attested": False}
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    read('GET', 'https://fixture.invalid/read')\n    return ()"
+    assert replay()["outcome"] == "different"
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    read('GET', 'https://fixture.invalid/other')\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    source["fixture_parser.py"] = b"def parse_projection(capability, read):\n    open('/etc/passwd').read()\n    read('GET', 'https://fixture.invalid/read')\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    source["fixture_parser.py"] = b"import socket\ndef parse_projection(capability, read):\n    return ()"
+    assert replay() == {"outcome": "unknown"}
+    record.enabled = False
+    assert replay() == {"outcome": "unknown"}
+    assert projection_digest(()) is not None
+    assert projection_digest(None) is None
+
+
+@pytest.mark.parametrize("html, rows", [
+    ('<section class="active-loans"></section>', ()),
+    ('<section class="active-loans"><div class="js-loan">'
+     '<a href="/loans/loan1">Prêt</a><a href="/resources/book1">Livre</a>'
+     '</div></section>', (("loan1", "book1", "Livre", ""),)),
+    ('<html>login</html>', None),
+])
+def test_installed_real_parser_in_shared_confined_worker(monkeypatch, html, rows):
+    """Use actual installed-source snapshot and actual parser, not a fake callback."""
+    from contextlib import nullcontext
+    from pathlib import Path
+    from cifereca.core.provider_health_replay import projection_digest, replay_archived_observation
+    from cifereca.plugin_api.capture_vault import CaptureScope
+
+    root = Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret"
+    class Plugin:
+        health_replay_modules = ("cifereca_bnf_pret_web", "cifereca_bnf_pret_health_replay")
+
+    provider = "provider.bnf-pret"
+    record = SimpleNamespace(
+        descriptor=SimpleNamespace(id=provider, type="provider.library", version="test"),
+        package=SimpleNamespace(root=root, sha256="test",
+                                manifest=SimpleNamespace(package=SimpleNamespace(version="test"))),
+        enabled=True, state="ready", service=Plugin())
+    manager = SimpleNamespace(_records={provider: record}, hold_descriptive_lifecycle=nullcontext)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    capture = http_trace.HTTPTraceCapture()
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = capture.begin(httpx.Request("GET", "https://pret.bnf.fr/my_profile/activity"), provider)
+        exchange.finish_body("request", "complete")
+        exchange.response(httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}))
+        exchange.observe("response", html.encode("utf-8"))
+        exchange.finish_body("response", "complete")
+        exchange.terminal("complete")
+    snapshot = capture.snapshot()
+    snapshot["session_ref"] = ref
+    snapshot["health_observation"] = {
+        "schema": "cifereca.health-observation/1", "capability": "loans",
+        "version": "test", "business_digest": projection_digest(rows if rows is not None else ())}
+    result = replay_archived_observation(manager, CaptureScope(provider, "i", "a", "owner"),
+                                         "loans", ref, http_trace.build_http_trace_zip(snapshot))
+    if rows is None:
+        assert result == {"outcome": "unknown"}
+    else:
+        assert result == {"outcome": "equal", "observed_version": "test",
+                          "replay_version": "test", "rows": len(rows),
+                          "empty_attested": not rows}

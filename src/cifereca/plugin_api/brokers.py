@@ -266,6 +266,43 @@ class DiagnosticsHttpPolicyBroker(Protocol):
 
 
 @runtime_checkable
+class DiagnosticsProviderHealthBroker(Protocol):
+    """Optional page-only passive projection; never triggers provider I/O."""
+
+    def provider_health_observations(
+        self, identity_id: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Only the current explicit identity and registered public scopes.
+
+        Rows carry scope coordinates, capability, outcome, version, observation
+        time and role. Private uniquely owned evidence may expose opaque
+        evidence/capture references and an opaque generation tuple; none is
+        permission to archive or export.
+        """
+        ...
+
+    def provider_health_active_observations(self) -> tuple[Mapping[str, Any], ...]:
+        """Resolve the current identity only, for the explicit page refresh."""
+        ...
+
+    def provider_health_selection_current(
+        self, scope: Any, capability: str, evidence_ref: str,
+        capture_id: str | None, generation: tuple,
+    ) -> bool:
+        """Revalidate the exact selection before consented local work."""
+        ...
+
+
+@runtime_checkable
+class DiagnosticsProviderRecipeBroker(Protocol):
+    """Page-only explicit read recipe; no activation, reconnection or mutation."""
+    def provider_health_recipe_options(self) -> tuple[Mapping[str, Any], ...]: ...
+    def run_provider_health_recipe(self, scope: Any, generation: tuple, *,
+                                   confirmed: bool = False,
+                                   control: TaskControl | None = None) -> tuple[Mapping[str, str], ...]: ...
+
+
+@runtime_checkable
 class DiagnosticsCaptureRetentionBroker(Protocol):
     """Optional Core-owned common capture retention settings."""
     def capture_retention_policy(self) -> Mapping[str, int]: ...

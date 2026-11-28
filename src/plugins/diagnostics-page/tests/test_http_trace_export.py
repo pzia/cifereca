@@ -284,3 +284,131 @@ def test_binary_policy_is_unavailable_on_legacy_core(setup):
     )
     assert checkbox.active and not checkbox.sensitive
     assert s.button.sensitive
+
+
+@pytest.mark.parametrize("change", ["none", "selection", "policy", "revoked", "invalidated"])
+def test_scoped_archive_pins_exact_scope_and_revokes_queued_consent(setup, change):
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    from diagnostics_http_export import ScopedHTTPArchive
+    s = setup
+    s.export.close()
+    scope = CaptureScope("fixture", "instance", "account", "owner")
+    generation = (0, 0, "fixture", 1)
+    selected = ScopedHTTPArchive("capture", scope, "loans", "evidence", generation)
+    state = {"selected": selected, "policy": True, "authorized": True}
+    s.broker.http_trace_status = lambda: {"active": False, "include_binary": state["policy"]}
+    vault = SimpleNamespace(export_http_archive=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: state["selected"],
+        archive_current=lambda token: token == state["selected"] and state["authorized"],
+    )
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "private.zip")
+    s.export.chose_file(dialog, 1)
+    if change == "selection":
+        state["selected"] = ScopedHTTPArchive(
+            "capture", CaptureScope("fixture", "instance", "other", "owner"),
+            "loans", "evidence")
+        s.export.refresh()
+    elif change == "policy":
+        state["policy"] = False
+    elif change == "revoked":
+        state["authorized"] = False
+    elif change == "invalidated":
+        s.export.invalidate()
+    s.tasks.run()
+    if change == "none":
+        vault.export_http_archive.assert_called_once_with(
+            "capture", dialog.output, confirmed=True, scope=scope,
+            capability="loans", evidence_ref="evidence", generation=generation)
+    else:
+        vault.export_http_archive.assert_not_called()
+    s.broker.export_http_trace.assert_not_called()
+
+
+def test_manual_archive_keeps_legacy_export_signature(setup):
+    s = setup
+    s.export.close()
+    s.broker.http_trace_status = lambda: {"active": False, "include_binary": True}
+    vault = SimpleNamespace(export_http_archive=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: "manual-capture",
+    )
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "manual.zip")
+    s.export.chose_file(dialog, 1)
+    s.tasks.run()
+    vault.export_http_archive.assert_called_once_with(
+        "manual-capture", dialog.output, confirmed=True)
+
+
+@pytest.mark.parametrize("change", ["none", "policy", "revoked"])
+def test_scoped_bundle_export_exact_selections(setup, change):
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    from diagnostics_http_export import ScopedHealthBundle
+    s = setup
+    s.export.close()
+    scope = CaptureScope("fixture", "i", "a", "owner")
+    selections = (("search", "evidence", "capture", (0, 0, "generation", 1)),)
+    token = ScopedHealthBundle(scope, selections)
+    state = {"policy": True, "valid": True}
+    s.broker.http_trace_status = lambda: {"include_binary": state["policy"]}
+    vault = SimpleNamespace(export_provider_health_bundle=Mock())
+    s.export = HTTPTraceExport(
+        s.button, broker=s.broker, tasks=s.tasks, host=s.host,
+        current=lambda: s.state["current"], folder=lambda: str(s.tmp),
+        gtk=s.export.gtk, gio=s.export.gio, glib=s.glib, vault=vault,
+        archive_source=lambda: token, archive_current=lambda _: state["valid"], bundle=True)
+    dialog = open_chooser(s)
+    dialog.output = str(s.tmp / "bundle.zip")
+    s.export.chose_file(dialog, 1)
+    if change == "policy":
+        state["policy"] = False
+    elif change == "revoked":
+        state["valid"] = False
+    s.tasks.run()
+    if change == "none":
+        vault.export_provider_health_bundle.assert_called_once_with(
+            scope, selections, dialog.output, confirmed=True, expected_binary=True)
+    else:
+        vault.export_provider_health_bundle.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["none", "revoked", "cancelled"])
+def test_generic_replay_worker_revalidates_exact_selection(change):
+    from diagnostics_http_export import ProviderEvidenceArchive, ScopedHTTPArchive
+    from cifereca.plugin_api.capture_vault import CaptureScope
+    token = ScopedHTTPArchive("capture", CaptureScope("fixture", "i", "a", "owner"),
+                              "loans", "ref", (1, 2, "nonce", 3))
+    controller = ProviderEvidenceArchive.__new__(ProviderEvidenceArchive)
+    controller.closed = False
+    controller.current = lambda: True
+    controller.handle = None
+    controller.tasks = Tasks()
+    controller.glib = SimpleNamespace(idle_add=lambda fn: fn())
+    controller.replay_consent = SimpleNamespace(get_active=lambda: True, set_active=Mock())
+    controller.status = SimpleNamespace(set_label=Mock())
+    controller.vault = SimpleNamespace(replay_provider_health=Mock(return_value={"outcome": "equal"}))
+    controller._selected = lambda: token
+    state = {"valid": True}
+    controller._valid = lambda item: item == token and state["valid"]
+    controller._invalidate_exports = Mock()
+    controller._controls = Mock()
+    controller._replay()
+    controller.vault.replay_provider_health.assert_not_called()
+    if change == "revoked":
+        state["valid"] = False
+    controller.tasks.run(cancelled=change == "cancelled")
+    if change == "none":
+        controller.vault.replay_provider_health.assert_called_once_with(
+            token.scope, token.capability, token.evidence_ref, token.capture_id, token.generation, confirmed=True)
+        assert "conforme" in controller.status.set_label.call_args.args[0]
+    else:
+        controller.vault.replay_provider_health.assert_not_called()
+        assert "conforme" not in controller.status.set_label.call_args.args[0]

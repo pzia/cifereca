@@ -11,11 +11,15 @@ from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 import json
 import os
+import fcntl
+import hmac
+import re
+import stat
 from pathlib import Path
 from threading import Event, RLock, Thread
 
 from .capture_key import CaptureKey
-from .capture_vault import EncryptedCaptureVault, VaultError, MAX_FILE
+from .capture_vault import EncryptedCaptureVault, VaultError, MAX_FILE, MAX_SESSIONS
 from ..plugin_api.capture_vault import CaptureScope, CaptureSummary, CapturedSession
 
 _ALLOWED = frozenset(("ui.page.browser-recorder", "ui.page.diagnostics"))
@@ -122,6 +126,113 @@ class _Storage(EncryptedCaptureVault):
     def max_vault_bytes(self):
         return self._policy()[1]
 
+    def _reserved_ids(self, fd):
+        ids = frozenset(name[:-8] for name in os.listdir(fd)
+                        if re.fullmatch(r"[0-9a-f]{32}\.pending", name))
+        if len(ids) > MAX_SESSIONS:
+            raise VaultError("vault_limit")
+        return ids
+
+    def _entries(self, fd):
+        count, total = super()._entries(fd)
+        try:
+            for sid in self._reserved_ids(fd):
+                info = os.stat(sid + ".pending", dir_fd=fd, follow_symlinks=False)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600
+                        or not 0 <= info.st_size <= 32):
+                    raise VaultError("vault_unsafe_file")
+                # Even an incomplete marker reserves its full fixed-size slot.
+                total += 32
+                try:
+                    os.stat(sid + ".cbrv", dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    count += 1
+            return count, total
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+
+    def pending_ids(self):
+        """Opaque transaction markers, in the same private vault directory."""
+        if not self.path.exists() and not self.path.is_symlink():
+            return ()
+        fd = self._open_dir(create=False)
+        try:
+            return tuple(sorted(self._reserved_ids(fd)))
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _pending_mac(key, capture_id):
+        return hmac.digest(key, b"cifereca.archive.pending/v1:" +
+                           capture_id.encode("ascii"), "sha256")
+
+    def open_pending(self, capture_id, key, *, create=False):
+        """Hold an exclusive transaction lease; never follow a marker link."""
+        if not re.fullmatch(r"[0-9a-f]{32}", capture_id):
+            raise VaultError("vault_invalid")
+        fd = self._open_dir(create=False)
+        handle = None
+        try:
+            flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+            if create:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                count, total = self._entries(fd)
+                if count >= MAX_SESSIONS or total + 32 > self.max_vault_bytes:
+                    raise VaultError("vault_limit")
+                # A reservation cannot attach to a pre-existing archive.
+                try:
+                    os.stat(capture_id + ".cbrv", dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise VaultError("vault_invalid")
+                flags |= os.O_CREAT | os.O_EXCL
+            handle = os.open(capture_id + ".pending", flags, 0o600, dir_fd=fd)
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            info = os.fstat(handle)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600):
+                raise VaultError("vault_unsafe_file")
+            expected = self._pending_mac(key, capture_id)
+            if create:
+                if os.write(handle, expected) != len(expected):
+                    raise VaultError("vault_unsafe_file")
+                os.fsync(handle)
+                os.fsync(fd)
+            elif info.st_size != len(expected) or not hmac.compare_digest(
+                    os.read(handle, len(expected) + 1), expected):
+                raise VaultError("vault_invalid")
+            result = handle
+            handle = None
+            return result
+        except OSError as exc:
+            raise VaultError("vault_archive_pending") from exc
+        finally:
+            if handle is not None:
+                os.close(handle)
+            os.close(fd)
+
+    def clear_pending(self, capture_id, handle):
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            info = os.stat(capture_id + ".pending", dir_fd=fd, follow_symlinks=False)
+            held = os.fstat(handle)
+            if (info.st_dev, info.st_ino) != (held.st_dev, held.st_ino):
+                raise VaultError("vault_unsafe_file")
+            os.unlink(capture_id + ".pending", dir_fd=fd)
+            # Unlink is the visibility commit point. If directory sync fails,
+            # a crash may resurrect the marker (conservative quarantine).
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass
+        except OSError as exc:
+            raise VaultError("vault_archive_pending") from exc
+        finally:
+            os.close(fd)
+
     @staticmethod
     def _label_value(value):
         # The existing authenticated label sidecar stores both the label and
@@ -187,7 +298,13 @@ class _Storage(EncryptedCaptureVault):
 class CoreCaptureVault:
     """Composition-owned singleton; construction performs no capture I/O."""
     def __init__(self, directory: Path, key_directory: Path, *, authorize_scope,
-                 policy=None):
+                 policy=None, health=None, selection_current=None, restore_current=None,
+                 provider_source=None, provider_replay=None):
+        self._health = health
+        self._selection_current = selection_current
+        self._restore_current = restore_current
+        self._provider_source = provider_source
+        self._provider_replay = provider_replay
         self._policy_source = policy or (lambda: (DEFAULT_RETENTION_DAYS, DEFAULT_VOLUME_BYTES))
         self._storage = _Storage(directory, self._policy)
         self._key_source = CaptureKey(key_directory)
@@ -195,12 +312,64 @@ class CoreCaptureVault:
         self._lock = RLock()
         self._stop = Event()
         self._maintenance = None
+        # Core-owned, bounded quarantine of failed writes in this process.
+        # Only the exact authenticated writer binding can be retried.
+        self._failed_archives = {}
+
+    def _discard_failed_archive(self, capture_id, binding):
+        producer, scope, source_ref = binding
+        if capture_id not in self._storage.list_ids():
+            return
+        key = self._key()
+        stored = self._storage.open(capture_id, key)
+        try:
+            if (stored.producer != producer or stored.summary.scope != scope
+                    or stored.summary.source_session_ref != source_ref
+                    or stored.summary.state != "completed"):
+                raise VaultError("vault_scope_denied")
+        finally:
+            self._storage._release(stored)
+        self._storage.delete(capture_id, key, confirmed=True)
+
+    def _retry_failed_archives(self):
+        pending = set(self._storage.pending_ids()) | set(self._failed_archives)
+        if not pending:
+            return
+        key = self._key()
+        for capture_id in pending:
+            handle = None
+            try:
+                # A live writer in another process owns the marker lock.
+                handle = self._storage.open_pending(capture_id, key)
+                binding = self._failed_archives.get(capture_id)
+                if capture_id in self._storage.list_ids() and binding is None:
+                    stored = self._storage.open(capture_id, key)
+                    try:
+                        if (stored.producer != "ui.page.diagnostics"
+                                or stored.summary.scope == CaptureScope()
+                                or stored.summary.state != "completed"):
+                            raise VaultError("vault_scope_denied")
+                        binding = (stored.producer, stored.summary.scope,
+                                   stored.summary.source_session_ref)
+                    finally:
+                        self._storage._release(stored)
+                if binding is not None:
+                    self._discard_failed_archive(capture_id, binding)
+                self._storage.clear_pending(capture_id, handle)
+                self._failed_archives.pop(capture_id, None)
+            except VaultError:
+                # Invalid marker, live lease or unsafe ciphertext: fail closed.
+                continue
+            finally:
+                if handle is not None:
+                    os.close(handle)
 
     def _policy(self):
         return validate_retention_policy(*self._policy_source())
 
     def maintain(self, *, reserve=False, reserve_bytes=None, now=None):
         with self._lock:
+            self._retry_failed_archives()
             if not self._storage.path.exists() and not self._storage.path.is_symlink():
                 return (0, 0)
             key = self._key()
@@ -297,8 +466,19 @@ class _Port:
             self._service.start_maintenance()
             return _Writer(self, scope, source_session_ref, writer, key)
 
-    def _open(self, scope, capture_id, key):
-        stored = self._service._storage.open(capture_id, key)
+    def _open(self, scope, capture_id, key, *, pending=False):
+        storage = self._service._storage
+        fd = storage._open_dir(create=False)
+        try:
+            # Admission, publish and rollback share the directory writer lock.
+            # Hold the read lock from visibility check through decryption.
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            if not pending and (capture_id in self._service._failed_archives
+                                or capture_id in storage._reserved_ids(fd)):
+                raise VaultError("vault_scope_denied")
+            stored = storage.open(capture_id, key)
+        finally:
+            os.close(fd)
         if stored.producer != self._producer or stored.summary.scope != scope:
             self._service._storage._release(stored)
             raise VaultError("vault_scope_denied")
@@ -313,7 +493,10 @@ class _Port:
                 return ()
             key = self._service._key()
             rows = []
+            pending = set(self._service._storage.pending_ids()) | set(self._service._failed_archives)
             for sid in ids:
+                if sid in pending:
+                    continue
                 stored = self._service._storage.open(sid, key)
                 try:
                     if stored.producer == self._producer and stored.summary.scope == scope:
@@ -324,13 +507,17 @@ class _Port:
             return tuple(sorted(rows, key=lambda row: (row.saved_at, row.capture_id), reverse=True))
 
     def read(self, scope, capture_id):
+        return self._read(scope, capture_id)
+
+    def _read(self, scope, capture_id, *, pending=False):
         self._check(scope)
         with self._service._lock:
             self._check(scope)
-            stored = self._open(scope, capture_id, self._service._key())
+            stored = self._open(scope, capture_id, self._service._key(), pending=pending)
             try:
                 key = self._service._key()
                 label, until = _metadata(self._service._storage.get_label(capture_id, key))
+                self._check(scope)
                 return CapturedSession(replace(stored.summary, label=label, pinned_until=until),
                                        stored.payload)
             finally:
@@ -412,13 +599,129 @@ class _DiagnosticsPort(_Port):
         writer.save(payload, "completed", force=True)
         return writer.capture_id
 
-    def export_http_archive(self, capture_id, destination, *, confirmed=False):
+    def _check_selection(self, scope, capability, source_ref, capture_id, generation):
+        self._check(scope)
+        validator = self._service._selection_current
+        if validator is None and generation is None:
+            return
+        if validator is None or generation is None:
+            raise VaultError("vault_scope_denied")
+        try:
+            valid = validator(scope, capability, source_ref, capture_id, generation)
+        except Exception:
+            valid = False
+        if valid is not True:
+            raise VaultError("vault_scope_denied")
+
+    def archive_search_trace(self, scope, source_ref, *, consented=False, generation=None):
+        return self.archive_provider_trace(scope, "search", source_ref, consented=consented,
+                                           generation=generation)
+
+    def archive_provider_trace(self, scope, capability, source_ref, *, consented=False,
+                               generation=None):
+        if consented is not True:
+            raise VaultError("vault_confirmation_required")
+        from .provider_health_projection import Scope
+        from ..http_trace import HTTP_TRACE, build_http_trace_zip
+        self._check(scope)
+        health = self._service._health
+        if type(capability) is not str or capability not in {
+                "search", "detail", "rights", "loans", "personal_library", "pagination", "availability"}:
+            raise VaultError("vault_scope_denied")
+        exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
+                      scope.identity_id, capability)
+        if scope == CaptureScope() or health is None:
+            raise VaultError("vault_scope_denied")
+        with health.archive_guard(exact, source_ref) as lease:
+            if lease is None:
+                raise VaultError("vault_scope_denied")
+            self._check_selection(scope, capability, source_ref, None, generation)
+            if HTTP_TRACE.status()["active"] is not True:
+                raise VaultError("vault_trace_inactive")
+            snapshot = HTTP_TRACE.snapshot()
+            snapshot["exchanges"] = [entry for entry in snapshot["exchanges"]
+                                     if entry.get("task_ref") == source_ref]
+            if not snapshot["exchanges"] or any(
+                    entry.get("outcome") == "in_progress" for entry in snapshot["exchanges"]):
+                raise VaultError("vault_trace_incomplete")
+            snapshot["session_ref"] = source_ref
+            observation = next((row for row in health.retained_observations(exact)
+                                if row.evidence_ref == source_ref), None)
+            if observation is None:
+                raise VaultError("vault_scope_denied")
+            snapshot["health_observation"] = {
+                "schema": "cifereca.health-observation/1",
+                "capability": capability, "outcome": observation.outcome.value,
+                "version": observation.version, "observed_at": observation.observed_at,
+                "business_digest": observation.business_digest,
+                "book_witnesses": [list(book) for _, book, version, ref
+                                   in health.book_witnesses(exact)
+                                   if version == observation.version and ref == source_ref],
+            }
+            payload = build_http_trace_zip(snapshot)
+            self._check_selection(scope, capability, source_ref, None, generation)
+            if HTTP_TRACE.status()["active"] is not True:
+                raise VaultError("vault_trace_inactive")
+            # Keep the new object private to this operation until commit or
+            # quarantine; neither readers nor maintenance can race rollback.
+            service = self._service
+            with service._lock:
+                if len(service._failed_archives) >= MAX_SESSIONS:
+                    raise VaultError("vault_archive_rollback_failed")
+                writer = self._begin(scope, source_ref, consented=True,
+                                     reserve_bytes=len(payload) + _HEADER_LIMIT + 128 + 32)
+                handle = service._storage.open_pending(writer.capture_id, service._key(), create=True)
+                from types import SimpleNamespace
+                pending_reader = SimpleNamespace(read=lambda exact_scope, capture_id:
+                    self._read(exact_scope, capture_id, pending=True)
+                    if capture_id == writer.capture_id and exact_scope == scope
+                    else self.read(exact_scope, capture_id))
+                try:
+                    writer.save(payload, "completed", force=True)
+                    self._check_selection(scope, capability, source_ref, None, generation)
+                    if not health.link_capture(exact, source_ref, writer.capture_id,
+                                               lease=lease, port=pending_reader, consented=True):
+                        raise VaultError("vault_scope_denied")
+                    self._check_selection(scope, capability, source_ref, writer.capture_id, generation)
+                    service._storage.clear_pending(writer.capture_id, handle)
+                except Exception:
+                    health.unlink_capture(exact, source_ref, writer.capture_id)
+                    service._failed_archives[writer.capture_id] = (
+                        self._producer, scope, source_ref)
+                    try:
+                        writer._rollback_completed()
+                        if writer.capture_id in service._storage.pending_ids():
+                            service._storage.clear_pending(writer.capture_id, handle)
+                    except Exception as cleanup_error:
+                        raise VaultError("vault_archive_rollback_failed") from cleanup_error
+                    service._failed_archives.pop(writer.capture_id, None)
+                    raise
+                finally:
+                    os.close(handle)
+                return writer.capture_id
+
+    def export_http_archive(self, capture_id, destination, *, confirmed=False,
+                            scope=CaptureScope(), capability=None, evidence_ref=None,
+                            generation=None):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
         from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
         from .capture_export import write_capture_zip
-        scope = CaptureScope()
+        guarded = scope != CaptureScope() and (
+            self._service._selection_current is not None or generation is not None)
+        def check_publication():
+            if guarded:
+                self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+            else:
+                self._check(scope)
+        if scope == CaptureScope() and any(
+                value is not None for value in (capability, evidence_ref, generation)):
+            raise VaultError("vault_scope_denied")
+        check_publication()
         row = self.read(scope, capture_id)
+        if guarded and (row.summary.source_session_ref != evidence_ref
+                        or row.summary.state != "completed"):
+            raise VaultError("vault_scope_denied")
         try:
             payload = project_archived_http_zip(
                 row.payload, include_binary=HTTP_TRACE.status()["include_binary"],
@@ -427,9 +730,137 @@ class _DiagnosticsPort(_Port):
             )
         except Exception as exc:
             raise VaultError("vault_invalid") from exc
-        self._check(scope)
+        check_publication()
         return write_capture_zip(Path(destination), payload, confirmed=True,
-                                 max_bytes=HTTP_TRACE_ZIP_LIMIT)
+                                 max_bytes=HTTP_TRACE_ZIP_LIMIT,
+                                 before_publish=check_publication if guarded else None)
+
+    def restore_provider_health_history(self, scope, generation, *, confirmed=False):
+        """Read only retained encrypted archives; never restore a live verdict."""
+        from .provider_health_projection import Scope, Observation, Outcome
+        from ..http_trace import project_archived_http_zip
+        from io import BytesIO
+        from zipfile import ZipFile
+        health = self._service._health
+        validator = self._service._restore_current
+        def current():
+            self._check(scope)
+            if (health is None or not callable(validator) or scope == CaptureScope()
+                    or validator(scope, generation) is not True):
+                raise VaultError("vault_scope_denied")
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        current()
+        lease = health.lease()
+        restored = []
+        # The vault owns retention, authentication and pending-marker filtering.
+        # Missing or legacy metadata never becomes an inferred observation.
+        for summary in self.sessions(scope):
+            current()
+            if summary.state != "completed":
+                continue
+            try:
+                row = self.read(scope, summary.capture_id)
+                payload = project_archived_http_zip(row.payload, include_binary=True,
+                                                     source_session_ref=summary.source_session_ref)
+                with ZipFile(BytesIO(payload)) as archive:
+                    index = json.loads(archive.read("index.json"))
+                meta = index.get("health_observation")
+                if (type(meta) is not dict or meta.get("schema") != "cifereca.health-observation/1"
+                        or meta.get("capability") not in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
+                        or not index.get("exchanges")
+                        or any(entry.get("task_ref") != summary.source_session_ref
+                               for entry in index["exchanges"])):
+                    continue
+                exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
+                              scope.identity_id, meta["capability"])
+                obs = Observation(Outcome(meta["outcome"]), meta["version"],
+                                  meta["observed_at"], summary.source_session_ref,
+                                  summary.capture_id)
+                books = meta.get("book_witnesses", [])
+                if type(books) is not list or len(books) > 3 or any(
+                        type(book) is not list or len(book) != 2 for book in books):
+                    books = []
+                restored.append((exact, obs, tuple(tuple(book) for book in books)))
+            except (VaultError, ValueError, KeyError, TypeError):
+                continue
+        current()
+        return health.restore_history(tuple(restored), lease=lease)
+
+    def replay_provider_health(self, scope, capability, evidence_ref, capture_id, generation, *, confirmed=False):
+        if confirmed is not True or scope == CaptureScope():
+            raise VaultError("vault_confirmation_required")
+        self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+        captured = self.read(scope, capture_id)
+        if captured.summary.state != "completed" or captured.summary.source_session_ref != evidence_ref:
+            raise VaultError("vault_scope_denied")
+        replay = self._service._provider_replay
+        result = replay(scope, capability, evidence_ref, captured.payload) if replay is not None else {"outcome": "unknown"}
+        self._check_selection(scope, capability, evidence_ref, capture_id, generation)
+        return result
+
+    def export_provider_health_bundle(self, scope, selections, destination, *, confirmed=False,
+                                      expected_binary=None):
+        """One explicitly selected private scope; never aggregate across accounts."""
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        if (type(scope) is not CaptureScope or scope == CaptureScope()
+                or type(selections) is not tuple or not 1 <= len(selections) <= 25):
+            raise VaultError("vault_scope_denied")
+        from ..http_trace import HTTP_TRACE, project_archived_http_zip, HTTP_TRACE_ZIP_LIMIT
+        from .capture_export import write_capture_zip
+        from .provider_health_bundle import build_health_bundle
+        policy = HTTP_TRACE.status()["include_binary"]
+        if expected_binary is not None and (type(expected_binary) is not bool or expected_binary != policy):
+            raise VaultError("vault_scope_denied")
+        seen = set()
+        for selection in selections:
+            if type(selection) is not tuple or len(selection) != 4:
+                raise VaultError("vault_scope_denied")
+            capability, evidence, capture, generation = selection
+            if type(capture) is not str or not capture or capture in seen:
+                raise VaultError("vault_scope_denied")
+            seen.add(capture)
+            self._check_selection(scope, capability, evidence, capture, generation)
+
+        def check_publication():
+            if HTTP_TRACE.status()["include_binary"] != policy:
+                raise VaultError("vault_scope_denied")
+            for capability, evidence, capture, generation in selections:
+                self._check_selection(scope, capability, evidence, capture, generation)
+
+        rows = []
+        total = 0
+        for capability, evidence, capture, generation in selections:
+            check_publication()
+            row = self.read(scope, capture)
+            if row.summary.state != "completed" or row.summary.source_session_ref != evidence:
+                raise VaultError("vault_scope_denied")
+            try:
+                payload = project_archived_http_zip(row.payload, include_binary=policy,
+                                                    source_session_ref=evidence)
+            except Exception:
+                raise VaultError("vault_invalid") from None
+            total += len(payload)
+            if total > HTTP_TRACE_ZIP_LIMIT:
+                raise VaultError("private_zip_limit")
+            rows.append((capability, payload))
+        from .diagnostic_journal import provider_health_correlated_journal
+        from ..paths import log_file
+        check_publication()
+        journal = provider_health_correlated_journal(
+            log_file(), provider_id=scope.provider_id,
+            evidence_refs=tuple(selection[1] for selection in selections))
+        source_reader = self._service._provider_source
+        source = source_reader(scope.provider_id) if source_reader is not None else None
+        check_publication()
+        payload = build_health_bundle(tuple(rows), include_binary=policy,
+                                      correlated_journal=journal, provider_source=source,
+                                      scope_provider=scope.provider_id)
+        check_publication()
+        return write_capture_zip(Path(destination), payload, confirmed=True,
+                                 max_bytes=HTTP_TRACE_ZIP_LIMIT,
+                                 before_publish=check_publication)
 
 
 class _Writer:
@@ -440,6 +871,16 @@ class _Writer:
     @property
     def capture_id(self):
         return self._writer.session_id
+
+    def _rollback_completed(self):
+        service = self._port._service
+        with service._lock:
+            key = service._key()
+            if key != self._key:
+                raise VaultError("vault_key_unavailable")
+            service._discard_failed_archive(
+                self.capture_id, (self._port._producer, self._scope,
+                                  self._source_session_ref))
 
     def save(self, payload, state="recording", *, force=False):
         service = self._port._service

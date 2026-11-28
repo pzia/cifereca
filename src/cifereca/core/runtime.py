@@ -102,6 +102,9 @@ class CiferecaCore:
         storage.purge_expired()
         library = LibraryService(config, storage, diagnostics)
         library._notice_regression_capture_directory = capture_directory
+        from .provider_health_projection import PassiveHealth
+        library._provider_health = PassiveHealth()
+        library._provider_health.set_enabled(config.get('diagnostics.provider_health_enabled', False) is True)
         package_store = PackageStore(
             (database_path.parent / "plugins" / "packages") if database_path is not None else None
         )
@@ -116,11 +119,22 @@ class CiferecaCore:
         brokers = (build_public_brokers(library) if notice_work_admission is None
                    else build_public_brokers(library, task_admission=notice_work_admission))
         from .capture_vault_service import CoreCaptureVault, capture_scope_authorizer
+        from .provider_health_inventory import diagnostic_health_selection_current
+        from .provider_health_recipe import recipe_options
         from ..paths import data_dir
         capture_root = database_path.parent if database_path is not None else data_dir(create=False)
+        from .provider_health_source import snapshot_provider_source
+        from .provider_health_replay import replay_archived_observation
         brokers["capture.vault"] = CoreCaptureVault(
             capture_root / "capture-vault-v1", config.path.parent / "capture-secrets",
             authorize_scope=capture_scope_authorizer(library),
+            health=library._provider_health,
+            provider_source=lambda provider_id: snapshot_provider_source(plugins, provider_id),
+            provider_replay=lambda *args: replay_archived_observation(plugins, *args),
+            selection_current=lambda *args: diagnostic_health_selection_current(library, *args),
+            restore_current=lambda scope, generation: any(
+                row["scope"] == scope and row["generation"] == generation
+                for row in recipe_options(library)),
             policy=lambda: (config.get('diagnostics.capture_retention_days', 90),
                             config.get('diagnostics.capture_retention_bytes', 128 * 1024 * 1024)),
         )
@@ -301,8 +315,18 @@ class CiferecaCore:
         with InterProcessLock(acquisition_lock_file()):
             return DirectoryMigration(config, storage, root).abort()
 
+    def provider_health_inventory(self):
+        from .provider_health_inventory import installed_health
+        return installed_health(self.plugins, self.library._provider_health)
+
+    def drain_provider_health_transitions(self):
+        return self.library._provider_health.drain_transitions()
+
     def close(self) -> None:
         self._notice_age_hold = None
+        health = getattr(self.library, '_provider_health', None)
+        if health is not None:
+            health.set_enabled(False)
         if self.notice_work is not None:
             self.notice_work.close()
         self.plugins.close()

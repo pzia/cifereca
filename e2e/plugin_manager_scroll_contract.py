@@ -65,6 +65,7 @@ def verify_plugin_scroll(window, later, done, *, width: int, checkpoint=None):
         # Fixed identifiers from this synthetic acceptance, never widget data.
         if checkpoint is not None:
             checkpoint(stage)
+    verify_health_diagnostics_button()
     changed = []
     shell = Gtk.Stack()
 
@@ -176,6 +177,30 @@ def verify_plugin_scroll(window, later, done, *, width: int, checkpoint=None):
         done()
 
     later(420, initial_scroll)
+
+
+def verify_health_diagnostics_button():
+    """Real GTK signal and explicit unavailable-route behavior, offline."""
+    from contextlib import nullcontext
+    from cifereca.core.provider_health_projection import PassiveHealth
+    health = PassiveHealth()
+    health.set_enabled(True)
+    visited, notices = [], []
+    service = NS(_provider_health=health, current_identity=None)
+    manager = NS(statuses=lambda: (), hold_descriptive_lifecycle=nullcontext,
+                 package_inventory=lambda **kw: ())
+    host = NS(service=service, _pages={"diagnostics": object()},
+              navigate=visited.append, toast=lambda message, timeout: notices.append(message))
+    page = PluginManagerPage(host, manager)
+    widget = page.outer.get_first_child()
+    while widget is not None and widget.get_name() != "provider-health-diagnostics":
+        widget = widget.get_next_sibling()
+    assert isinstance(widget, Gtk.Button), "Health Diagnostics button missing"
+    widget.emit("clicked")
+    assert visited == ["diagnostics"]
+    host._pages.clear()
+    widget.emit("clicked")
+    assert visited == ["diagnostics"] and len(notices) == 1
 
 
 __all__ = ["verify_plugin_scroll"]

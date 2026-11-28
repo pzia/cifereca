@@ -60,7 +60,8 @@ def _open_parent(directory: Path):
 
 
 def write_capture_zip(destination: Path, payload: bytes, *, confirmed=False,
-                      max_bytes: int, require_safe_parent=False) -> int:
+                      max_bytes: int, require_safe_parent=False,
+                      before_publish=None) -> int:
     """Exclusive private local write, only after explicit confirmation."""
     if confirmed is not True:
         raise VaultError("private_zip_confirmation_required")
@@ -87,6 +88,8 @@ def write_capture_zip(destination: Path, payload: bytes, *, confirmed=False,
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if before_publish is not None:
+                before_publish()
             os.link(temporary, destination.name, src_dir_fd=folder_fd,
                     dst_dir_fd=folder_fd, follow_symlinks=False)
             published = True

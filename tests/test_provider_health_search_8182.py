@@ -1,0 +1,265 @@
+from types import SimpleNamespace
+from threading import RLock
+
+from cifereca.core.provider_health_projection import PassiveHealth, Scope, Outcome
+from cifereca.core.provider_health_search import begin_public_search, finish_public_search
+
+
+def test_registered_public_search_and_retirement():
+    session = SimpleNamespace(provider_id="fixture", connected=True,
+                              credential_id="__public__", credentials={}, _accounts=[])
+    identity = SimpleNamespace(identity_id="viewer")
+    health = PassiveHealth()
+    health.set_enabled(True)
+    service = SimpleNamespace(_provider_health=health, _source_context_lock=RLock(),
+                              _sessions={("fixture", "__public__"): session},
+                              _session_key=lambda *args: args,
+                              _provider_enabled_for_identity=lambda *args: True)
+    scope = Scope("fixture", "", "", "", "search")
+    call = begin_public_search(service, session, identity)
+    assert call is not None
+    finish_public_search(service, session, identity, call, "attested_empty")
+    assert health.snapshot(scope)[0].outcome is Outcome.ATTESTED_EMPTY
+    service._sessions.clear()
+    finish_public_search(service, session, identity, call, "success")
+    assert health.snapshot(scope)[0].outcome is Outcome.ATTESTED_EMPTY
+    assert begin_public_search(service, session, identity) is None
+
+
+def test_failure_classification():
+    import httpx
+    from cifereca.core.provider_health_search import classify_failure
+    request = httpx.Request("GET", "https://example.invalid")
+    for status, expected in [(401, "auth"), (403, "auth"), (429, "rate_limit")]:
+        error = httpx.HTTPStatusError("fixture", request=request,
+                                     response=httpx.Response(status, request=request))
+        assert classify_failure(error) == expected
+
+
+def _public_fixture():
+    session = SimpleNamespace(provider_id="fixture", connected=True,
+                              credential_id="__public__", credentials={}, _accounts=[])
+    identity = SimpleNamespace(identity_id="viewer")
+    health = PassiveHealth()
+    health.set_enabled(True)
+    service = SimpleNamespace(_provider_health=health, _source_context_lock=RLock(),
+                              _sessions={("fixture", "__public__"): session},
+                              _session_key=lambda *args: args,
+                              _provider_enabled_for_identity=lambda *args: True,
+                              current_identity=identity)
+    return service, session, health
+
+
+def test_stream_read_path(monkeypatch):
+    from cifereca.core import search_orchestration as search
+    service, session, health = _public_fixture()
+    session.search_stream = lambda *args, **kwargs: iter(())
+    monkeypatch.setattr(search, "_source_in_retry_after", lambda *args: False)
+    monkeypatch.setattr(search, "consume_provider_stream", lambda *args, **kwargs:
+                        SimpleNamespace(rows=[], warnings=[], error_code="", error_message=""))
+    result = search._search_virtual_stream_session(
+        service, session, "fixture", "all", field="all", content_types=(),
+        generation=1, publish=lambda event: None, cancelled=lambda: False, control=None)
+    assert result == ([], [], "", "")
+    assert health.snapshot(Scope("fixture", "", "", "", "search"))[0].outcome is Outcome.UNKNOWN
+
+
+def test_private_scope_refuses_multiple_accounts(monkeypatch):
+    from cifereca.core import loan_action_scope, capture_vault_service
+    from cifereca.models import Account
+    service, session, health = _public_fixture()
+    session.credential_id = "instance"
+    service._sessions = {("fixture", "instance"): session}
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    accounts = [account]
+    monkeypatch.setattr(loan_action_scope, "_inert_session_state", lambda s: vars(s))
+    monkeypatch.setattr(loan_action_scope, "_inert_session_accounts", lambda s: accounts)
+    monkeypatch.setattr(capture_vault_service, "capture_scope_authorizer",
+                        lambda s: lambda producer, scope: True)
+    call = begin_public_search(service, session, service.current_identity)
+    assert call is not None
+    finish_public_search(service, session, service.current_identity, call, "success")
+    scope = Scope("fixture", "instance", "account", "viewer", "search")
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+    accounts.append(Account())
+    assert begin_public_search(service, session, service.current_identity) is None
+    finish_public_search(service, session, service.current_identity, call, "auth")
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+
+
+def test_classic_read_path(monkeypatch):
+    from cifereca.core import search_orchestration as search
+    from cifereca.core import notice_c_private_search_web as private
+    from cifereca.core import borrow_for_identity_public_branch as public
+    from cifereca.core import notice_c_private_series as series
+    from cifereca.core import borrow_for_identity_native_occurrence as native
+    service, session, health = _public_fixture()
+    service._search_query_variants = lambda query: [query]
+    calls = []
+    def read(query, scope, **kwargs):
+        calls.append(query)
+        return []
+    session.search = read
+    monkeypatch.setattr(search, "_effective_search_field", lambda *a, **k: ("all", None))
+    monkeypatch.setattr(search, "_source_in_retry_after", lambda *a: False)
+    for module, names in [
+        (private, ("capture_authenticated_search_call", "stamp_authenticated_search_rows")),
+        (public, ("capture_public_branch_borrow_call", "stamp_public_branch_borrow_occurrences")),
+        (series, ("capture_series_call", "stamp_series_rows")),
+        (native, ("stamp_native_borrow_occurrences",)),
+    ]:
+        for name in names:
+            monkeypatch.setattr(module, name, lambda *a, **k: None)
+    assert search._search_provider_session(service, session, "fixture", "all",
+                                           facade_type=object) == ([], [], "", "")
+    assert calls == ["fixture"]
+    assert health.snapshot(Scope("fixture", "", "", "", "search"))[0].outcome is Outcome.UNKNOWN
+
+
+def test_version_is_installed_supplier_version_and_rebind_is_not_credited():
+    service, session, health = _public_fixture()
+    descriptor = SimpleNamespace(type="provider.library", version="2.4.1")
+    service._provider_plugin_status = lambda provider: SimpleNamespace(
+        descriptor=descriptor, state="ready", enabled=True)
+    identity = service.current_identity
+    scope = Scope("fixture", "", "", "", "search")
+    call = begin_public_search(service, session, identity)
+    finish_public_search(service, session, identity, call, "success")
+    assert health.snapshot(scope)[0].version == "2.4.1"
+    call = begin_public_search(service, session, identity)
+    descriptor.version = "2.5.0"
+    finish_public_search(service, session, identity, call, "auth")
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+    descriptor.type = "provider.collection"
+    call = begin_public_search(service, session, identity)
+    finish_public_search(service, session, identity, call, "success")
+    assert health.snapshot(scope)[0].version == "collection:2.5.0"
+
+
+def test_detail_observation_is_separate_and_requires_business_acceptance():
+    import pytest
+    from cifereca.core.provider_health_search import observe_detail
+    service, session, health = _public_fixture()
+    original = SimpleNamespace(publisher=None)
+    enriched = SimpleNamespace(publisher="fixture")
+    calls = []
+    def action():
+        calls.append("read")
+        return enriched
+    scope = Scope("fixture", "", "", "", "detail")
+    def refuse(result):
+        raise ValueError("scope changed")
+    with pytest.raises(ValueError, match="scope changed"):
+        observe_detail(service, session, service.current_identity, action, original, refuse)
+    assert health.snapshot(scope)[0] is None
+    assert observe_detail(service, session, service.current_identity, action, original,
+                          lambda result: None) is enriched
+    assert health.snapshot(scope)[0].outcome is Outcome.SUCCESS
+    assert health.snapshot(Scope("fixture", "", "", "", "search"))[0] is None
+    observe_detail(service, session, service.current_identity, lambda: original, original,
+                   lambda result: None)
+    assert health.snapshot(scope)[0].outcome is Outcome.UNKNOWN
+    assert calls == ["read", "read"]
+
+
+def test_rights_empty_partial_and_cancelled_are_not_positive():
+    from cifereca.plugin_api.provider_rights_observation import (
+        ProviderRightsScope, ProviderRightsSnapshot,
+    )
+    from cifereca.core.provider_health_search import rights_outcome
+    scope = ProviderRightsScope("viewer", "fixture", "instance", "account")
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope)) == "unknown"
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope, status="failed")) == "unknown"
+    assert rights_outcome(ProviderRightsSnapshot(scope=scope, status="cancelled")) is None
+    complete = ProviderRightsSnapshot(
+        scope=scope, status="success", coverage="complete", pagination_complete=True,
+        branch="fixture", observed_at="2026-11-28T12:00:00Z", snapshot_ref="fixture")
+    assert rights_outcome(complete) == "unknown"
+
+
+def test_loan_inventory_health_refuses_empty_legacy_and_cancelled():
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage
+    from cifereca.core.provider_health_search import loan_inventory_outcome
+    scope = LoanInventoryScope("viewer", "fixture", "instance", "account")
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, ())) == "unknown"
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, (), status="cancelled")) is None
+    assert loan_inventory_outcome(LoanInventorySnapshot(scope, (), status="failed",
+                                                       reason_code="scope_changed")) is None
+    complete = LoanInventorySnapshot(
+        scope, (), status="success", observed_at="2026-11-28T12:00:00Z",
+        branches=(LoanBranchCoverage("fixture", "digital", "complete", True),))
+    assert loan_inventory_outcome(complete) == "unknown"
+
+
+def test_personal_library_health_requires_exact_positive_rows():
+    from cifereca.models import Account, SearchResult
+    from cifereca.core.provider_health_search import personal_library_outcome
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    assert personal_library_outcome([], account) == "unknown"
+    assert personal_library_outcome([object()], account) == "unknown"
+
+def test_sync_loan_reader_observes_once_and_refuses_revoked_scope(monkeypatch):
+    from cifereca.core import sync_coordination, provider_health_search, loan_action_scope
+    from cifereca.core import capture_vault_service
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+    from cifereca.plugin_api import loan_inventory
+    from cifereca.models import Account
+
+    service, session, health = _public_fixture()
+    session.credential_id = "instance"
+    service._sessions = {("fixture", "instance"): session}
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    monkeypatch.setattr(loan_action_scope, "_inert_session_state", lambda s: vars(s))
+    monkeypatch.setattr(loan_action_scope, "_inert_session_accounts", lambda s: [account])
+    monkeypatch.setattr(capture_vault_service, "capture_scope_authorizer",
+                        lambda s: lambda producer, scope: True)
+    calls = []
+    current = [True]
+    envelope = LoanInventorySnapshot(
+        LoanInventoryScope("viewer", "fixture", "instance", "account"), ())
+    def read(*args, **kwargs):
+        calls.append(provider_health_search.diagnostic_task_reference())
+        return envelope
+    monkeypatch.setattr(loan_inventory, "read_loan_inventory", read)
+    scope = Scope("fixture", "instance", "account", "viewer", "loans")
+    def run():
+        return sync_coordination._read_sync_loan_inventory(
+            account, session, scope_current=lambda: current[0], health_service=service)
+    assert run() == (envelope, [])
+    observed = health.snapshot(scope)[0]
+    assert observed.outcome is Outcome.UNKNOWN
+    assert len(calls) == 1 and calls[0]
+    current[0] = False
+    assert run() == (envelope, [])
+    assert len(calls) == 2 and calls[0] != calls[1]
+    assert health.snapshot(scope)[0] == observed
+
+
+def test_sync_loan_reader_preserves_cancellation_and_no_owner(monkeypatch):
+    import pytest
+    from cifereca.core import sync_coordination, provider_health_search
+    from cifereca.models import Account
+    from cifereca.plugin_api import Cancelled, loan_inventory
+    from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+
+    account = Account(provider_id="fixture", credential_id="instance",
+                      unique_id="account", identity_id="viewer")
+    session, service = object(), object()
+    seen = []
+    envelope = LoanInventorySnapshot(
+        LoanInventoryScope("viewer", "fixture", "instance", "account"), (),
+        status="cancelled")
+    monkeypatch.setattr(loan_inventory, "read_loan_inventory", lambda *a, **k: envelope)
+    monkeypatch.setattr(provider_health_search, "begin_account_read",
+                        lambda *a: object())
+    monkeypatch.setattr(provider_health_search, "finish_account_read",
+                        lambda *a: seen.append(a[-1]) if a[-1] is not None else None)
+    with pytest.raises(Cancelled):
+        sync_coordination._read_sync_loan_inventory(
+            account, session, scope_current=lambda: True, health_service=service)
+    with pytest.raises(Cancelled):
+        sync_coordination._read_sync_loan_inventory(account, session)
+    assert seen == []

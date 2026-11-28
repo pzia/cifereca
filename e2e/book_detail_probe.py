@@ -113,7 +113,14 @@ def main():
         "Ouvrir le document", "Ouvrir le document", "Notice du plugin",
     ]
     assert [link.relation for link in links] == ["gallica", "alternate", "related"]
-    core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
+    if args.plugin_scroll_only:
+        core = CiferecaCore.open(
+            no_plugins=True, activate_plugins=True,
+            force_plugins=("core.ui.pages", "core.ui.titlebar", "core.ui.widgets",
+                           "ui.page.diagnostics"),
+        )
+    else:
+        core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     entry = {
         "catalog_entry_id": "ux942-book", "item_id": "ux942-book",
         "identity_id": "camille", "provider_id": "local",
@@ -1103,12 +1110,46 @@ def main():
 
     def complete_plugin_scroll():
         report["checks"]["P0_908_plugin_scroll_independent"] = True
+        save()
+        # The independent transient-window fixture must finish before the
+        # real shell navigates or schedules page/focus restoration.
+        later(150, start_real_health_navigation)
+
+    def start_plugin_scroll():
+        start_synthetic_plugin_scroll()
+
+    def start_real_health_navigation():
+        core.library._provider_health.set_enabled(True)
+        window._plugin_page_widgets["plugins"].refresh()
+        status = core.plugins.status("ui.page.diagnostics")
+        assert status.enabled and status.state == "ready"
+        plugin = core.plugins.service("ui.page.diagnostics")
+        assert plugin is not None
+        contribution = window._pages["diagnostics"]
+        assert getattr(contribution.factory, "__self__", None) is plugin
+        window.navigate("plugins")
+        later(150, verify_real_health_navigation)
+
+    def verify_real_health_navigation():
+        assert window.view_stack.get_visible_child_name() == "plugins"
+        page = window._plugin_page_widgets["plugins"]
+        button = next(widget for widget in walk(page)
+                      if widget.get_name() == "provider-health-diagnostics")
+        assert isinstance(button, Gtk.Button) and button.get_mapped()
+        button.emit("clicked")
+        later(150, verify_real_diagnostics_mounted)
+
+    def verify_real_diagnostics_mounted():
+        assert window.view_stack.get_visible_child_name() == "diagnostics"
+        assert window._plugin_page_widgets["diagnostics"].get_mapped()
+        report["checks"]["P0_8182_real_diagnostics_navigation"] = True
+        core.library._provider_health.set_enabled(False)
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
 
-    def start_plugin_scroll():
+    def start_synthetic_plugin_scroll():
         # Same real MainWindow and synthetic 36-plugin GTK acceptance as before.
         # Run it in a dedicated scenario rather than after the detail fixture.
         from plugin_manager_scroll_contract import verify_plugin_scroll

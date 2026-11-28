@@ -25,12 +25,17 @@ from cifereca.plugin_api.provider_purchase_enrichment import (
     PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation, PurchaseEnrichmentOmission,
 )
 
+from .provider_health_search import (
+    correlated_search, begin_account_read, finish_account_read, rights_outcome,
+)
+
 _LOG = logging.getLogger("cifereca")
 # Bounded positive-only pagination; page count also limits private provider I/O.
 _MAX_INVENTORY_ROWS = 10_000
 _MAX_INVENTORY_PAGES = 128
 
 
+@correlated_search
 def read_account_rights_snapshot(service, account: Account, *,
                                  cancelled=lambda: False,
                                  purchase_candidates_sink=None,
@@ -179,6 +184,18 @@ def read_account_rights_snapshot(service, account: Account, *,
         return exact_bound
 
     reader_kind = "optional_unavailable"
+    health_call = None
+
+    def record_health_result(result):
+        if health_call is not None:
+            try:
+                if not cancelled() and still_bound():
+                    finish_account_read(service, session, account, health_call,
+                                        rights_outcome(result))
+            except Exception:
+                pass  # Never change the existing business result.
+        return result
+
     try:
         if cancelled():
             return unavailable("cancelled")
@@ -236,6 +253,8 @@ def read_account_rights_snapshot(service, account: Account, *,
                 raise ValueError("invalid_rights_snapshot_scope")
             return raw
 
+        if not share:
+            health_call = begin_account_read(service, session, account, "rights")
         raw = (reader(account, loan_inventory=same_cycle_inventory)
                if share else reader(account))
         candidates, omissions = (), ()
@@ -299,10 +318,10 @@ def read_account_rights_snapshot(service, account: Account, *,
                     purchase_omissions_sink(omissions)
                 except Exception:
                     _LOG.warning("TRACE purchase enrichment code=omission_sink_failed")
-            return result
+            return record_health_result(result)
         if not result.resume_cursor:
             # Unpaged providers preserve the original Core result contract.
-            return result
+            return record_health_result(result)
 
         # Collect only positive observations from bounded, exact-account
         # pages. Even reaching the last cursor grants no negative authority.
@@ -360,15 +379,23 @@ def read_account_rights_snapshot(service, account: Account, *,
             accepted.extend(page.rights)
             known.update(keys)
             cursor = page.resume_cursor
-        return ProviderRightsSnapshot(
+        return record_health_result(ProviderRightsSnapshot(
             scope=scope, rights=tuple(accepted), branch=first.branch,
             status="partial", coverage="partial", pagination_complete=False,
             observed_at=first.observed_at, snapshot_ref=first.snapshot_ref,
             resume_cursor=cursor,
-        )
+        ))
     except Cancelled:
         return unavailable("cancelled")
-    except Exception:
+    except Exception as error:
+        if health_call is not None:
+            try:
+                if not cancelled() and still_bound():
+                    from .provider_health_search import classify_failure
+                    finish_account_read(service, session, account, health_call,
+                                        classify_failure(error))
+            except Exception:
+                pass
         # Provider exceptions can contain signed URLs, private account IDs,
         # paths and response bodies. Only report a closed, non-sensitive code.
         _LOG.warning(

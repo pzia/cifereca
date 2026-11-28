@@ -68,5 +68,29 @@ from ..core.capture_devkit_templates import fixture_plugin_files, FIXTURE_MANIFE
 class DiagnosticsCaptureVaultBroker(CaptureVaultBroker, Protocol):
     """Opt-in snapshot of the current HTTP Trace, without extra HTTP activity."""
     def archive_http_trace(self, *, consented: bool = False) -> str: ...
+    def archive_search_trace(self, scope: CaptureScope, source_ref: str, *,
+                             consented: bool = False, generation: tuple | None = None) -> str: ...
+    def archive_provider_trace(self, scope: CaptureScope, capability: str,
+                               source_ref: str, *, consented: bool = False,
+                               generation: tuple | None = None) -> str: ...
+    def restore_provider_health_history(self, scope: CaptureScope, generation: tuple, *,
+                                        confirmed: bool = False) -> int: ...
     def export_http_archive(self, capture_id: str, destination: str, *,
-                            confirmed: bool = False) -> int: ...
+                            confirmed: bool = False,
+                            scope: CaptureScope = CaptureScope(), capability: str | None = None,
+                            evidence_ref: str | None = None,
+                            generation: tuple | None = None) -> int: ...
+
+
+@runtime_checkable
+class DiagnosticsHealthBundleBroker(Protocol):
+    """Explicit local multi-evidence export for one exact private scope."""
+    def export_provider_health_bundle(self, scope: CaptureScope, selections: tuple,
+                                      destination: str, *, confirmed: bool = False,
+                                      expected_binary: bool | None = None) -> int: ...
+
+
+@runtime_checkable
+class DiagnosticsHealthReplayBroker(Protocol):
+    def replay_provider_health(self, scope: CaptureScope, capability: str, evidence_ref: str,
+                               capture_id: str, generation: tuple, *, confirmed: bool = False) -> dict: ...

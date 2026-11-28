@@ -468,3 +468,49 @@ def export_raw_journal(log_path: Path) -> bytes:
     if len(content) > 12_000_000:
         raise ValueError("journal_export_limit")
     return content
+
+
+def provider_health_correlated_journal(log_path, *, provider_id, evidence_refs):
+    """Bounded exact correlation from the existing journal, never free-text search.
+
+    Caller has already authorized each private capture. A structured event
+    must attest the same provider; the exact Core terminal line may have no
+    provider field. Retention gaps and absent references remain explicit.
+    """
+    if (not valid_provider_identifier(provider_id)
+            or type(evidence_refs) is not tuple or not 1 <= len(evidence_refs) <= 25
+            or any(type(ref) is not str for ref in evidence_refs)):
+        raise ValueError("invalid_health_journal_scope")
+    wanted = {ref for ref in evidence_refs if re.fullmatch(r"[0-9a-f]{12}", ref)}
+    events, gaps, missing = _events(Path(log_path))
+    selected = []
+    matched = set()
+    size = 0
+    truncated = False
+    for event in events:
+        ref = event.get("task_ref")
+        if ref not in wanted:
+            continue
+        terminal = _TASK_CORRELATION.fullmatch(event["message"])
+        if event.get("provider_id") != provider_id and not (
+                "provider_id" not in event and event["logger"] == "cifereca"
+                and terminal is not None and terminal.group(1) == ref
+                and event["severity"] == _TASK_SEVERITY[terminal.group(2)]):
+            continue
+        encoded = json.dumps(event, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(selected) >= 512 or size + len(encoded) > 1_000_000:
+            truncated = True
+            break
+        selected.append(event)
+        matched.add(ref)
+        size += len(encoded)
+    absent = len(set(evidence_refs) - matched)
+    return {
+        "schema": "cifereca.provider-health-journal/1",
+        "coverage": "partial" if gaps or missing or absent or truncated else "retained_matches",
+        "unmatched_references": absent,
+        "truncated": truncated,
+        "rotation_gaps": gaps,
+        "active_log_missing": missing,
+        "events": selected,
+    }

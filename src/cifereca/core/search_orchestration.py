@@ -1395,6 +1395,10 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
     return tuple(accepted)
 
 
+from .provider_health_search import correlated_search
+
+
+@correlated_search
 def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
@@ -1430,9 +1434,12 @@ def _search_provider_session(
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
         return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
+    from .provider_health_search import begin_public_search, finish_public_search, classify_failure
+    health_call = begin_public_search(self, session, identity)
     variants = self._search_query_variants(query)
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
+    health_outcome = None
     for attempt, variant in enumerate(variants):
         if request_cancelled is not None and request_cancelled():
             return [], [], "StreamCancelled", "search cancelled"
@@ -1516,10 +1523,16 @@ def _search_provider_session(
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
             if partial_failure:
+                health_outcome = 'unknown'
                 warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                 break
             if terminal_empty:
+                health_outcome = 'attested_empty'
                 break
+            if session_rows:
+                health_outcome = 'success'
+            elif health_outcome is None:
+                health_outcome = 'unknown'
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
         except Exception as exc:
@@ -1542,6 +1555,7 @@ def _search_provider_session(
             # terminal outage for the source, even when it is variant N>1,
             # so the caller can use the same bounded, read-only public
             # catalogue fallback as for a failure on the first attempt.
+            health_outcome = classify_failure(exc)
             terminal_error_code = failure_code
             terminal_error_message = _search_problem_label(failure_code)
             warnings.append(
@@ -1560,9 +1574,14 @@ def _search_provider_session(
     if str(scope or "all").casefold() == "unknown":
         from ..core.search import support_kind
         provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
+    if request_cancelled is None or not request_cancelled():
+        finish_public_search(self, session, identity, health_call,
+                             health_outcome if not terminal_error_code or health_outcome not in ('success', 'attested_empty') else 'unknown',
+                             rows=provider_rows)
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
+@correlated_search
 def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any, request_scope=None) -> tuple[list[SearchResult], list[str], str, str]:
     """Worker-only optional stream. Gaps/errors do not poison the cache."""
     if request_scope is not None and cancelled():
@@ -1573,6 +1592,8 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         code = "SearchTemporarilyUnavailable"
         message = _search_problem_label(code)
         return [], [message], code, message
+    from .provider_health_search import begin_public_search, finish_public_search, classify_failure
+    health_call = begin_public_search(self, session, identity)
     try:
         outcome = consume_provider_stream(
             session.search_stream(
@@ -1588,10 +1609,16 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         if str(scope or "all").casefold() == "unknown":
             from ..core.search import support_kind
             rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call,
+                                 'success' if outcome.rows and not outcome.warnings
+                                 and not outcome.error_code else 'unknown', rows=rows)
         return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
     except SearchStreamCancelled:
         return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
     except SearchStreamFailure as exc:
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call, 'unknown')
         _log_observed_stream_failure(
             session.provider_id, "stream_validation", exc,
         )
@@ -1610,6 +1637,8 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
             session, query, scope, field=field, content_types=content_types,
         )
     except Exception as exc:
+        if not cancelled():
+            finish_public_search(self, session, identity, health_call, classify_failure(exc))
         _log_observed_stream_failure(
             session.provider_id, "stream_delivery", exc,
         )

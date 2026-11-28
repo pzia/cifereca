@@ -134,6 +134,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         )
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
+        self._append_health_summary()
         inventory = self.manager.package_inventory(include_expected=True)
 
         filters = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -187,6 +188,45 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             None if reset_scroll else anchor_offset,
             restore_focus and not reset_scroll,
         )
+
+    def _append_health_summary(self):
+        service = getattr(self.window, "service", None)
+        health = getattr(service, "_provider_health", None)
+        if health is None or health.lease() is None:
+            return
+        from ..core.provider_health_inventory import (installed_health, registered_health,
+                                                     cached_virtual_health, provider_health_count)
+        from ..core.provider_health_projection import Outcome
+        identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+        installed = installed_health(self.manager, health)
+        scopes = registered_health(service, health, identity)
+        storage = getattr(service, 'storage', None)
+        cached = cached_virtual_health(self.manager, storage) if storage is not None else ()
+        total = provider_health_count(installed, scopes, cached)
+        anomalies = sum(row is not None and row.outcome not in
+                        (Outcome.SUCCESS, Outcome.ATTESTED_EMPTY, Outcome.UNKNOWN)
+                        for _, enabled, row in scopes if enabled)
+        unknown = sum(row is None or row.outcome is Outcome.UNKNOWN
+                      for _, enabled, row in scopes if enabled)
+        label = Gtk.Label(label=f"Santé : {total} fournisseurs installés · "
+                                f"{anomalies} anomalies · {unknown} non qualifiés", xalign=0)
+        if health.notifications_saturated():
+            label.set_text(label.get_text() + " · historique des notifications incomplet")
+        label.set_wrap(True)
+        self.outer.append(label)
+        button = action_button("Diagnostics", "dialog-information-symbolic")
+        button.set_name("provider-health-diagnostics")
+        button.connect("clicked", self._open_health_diagnostics)
+        self.outer.append(button)
+        from .provider_health_notifications import notify_health_transitions
+        notify_health_transitions(self.window)
+
+    def _open_health_diagnostics(self, _button):
+        # The plugin may be disabled or may have failed to mount since refresh.
+        if "diagnostics" not in getattr(self.window, "_pages", {}):
+            self._toast("Diagnostics indisponible : vérifiez l’activation du plugin.")
+            return
+        self.window.navigate("diagnostics")
 
     def _restore_viewport(
         self, scroll: float, anchor_id: str | None, offset: float | None,
