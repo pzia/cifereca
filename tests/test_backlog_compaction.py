@@ -224,7 +224,7 @@ class Tests(unittest.TestCase):
             issues[n]["body"] = body
         def control(n, title, data):
             issues[n] = dict(group, number=n, id=n, title=title+"999",
-                             body=c.encode(data).decode())
+                             body=c.encode(data).decode(), comments=0)
             comments[n] = []
             return dict(issues[n])
         stage = Stage()
