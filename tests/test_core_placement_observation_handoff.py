@@ -5,6 +5,7 @@ import json
 import errno
 import os
 import sqlite3
+import sys
 
 import pytest
 
@@ -194,10 +195,28 @@ def test_bound_is_explicit_and_projection_performs_no_new_io(scoped, monkeypatch
     count = MAX_OBSERVATIONS + 2
     add_rows(database, [(str(i), "same-artifact", root / "a" / f"missing-{i}.epub", "alice", "missing") for i in range(count)])
     audit = audit_library(database, {"alice": (root / "a",)})
-    monkeypatch.setattr(os, "stat", lambda *_a, **_kw: pytest.fail("projection must not stat"))
-    monkeypatch.setattr(os, "open", lambda *_a, **_kw: pytest.fail("projection must not open"))
-    monkeypatch.setattr(sqlite3, "connect", lambda *_a, **_kw: pytest.fail("projection must not query SQLite"))
-    batch = placement_observations(audit, "alice")
+    def forbid_projection_io(original, operation):
+        def checked(*args, **kwargs):
+            # Coverage/pytest may stat their own files while tracing the
+            # projection. Classify the nearest framework or production frame,
+            # also catching indirect production I/O through stdlib helpers.
+            frame = sys._getframe(1)
+            while frame is not None:
+                package = frame.f_globals.get("__name__", "").split(".")[0]
+                if package in {"coverage", "pytest_cov", "_pytest", "pytest",
+                               "xdist", "pluggy", "execnet"}:
+                    break
+                if package == "cifereca":
+                    pytest.fail(f"projection must not {operation}")
+                frame = frame.f_back
+            return original(*args, **kwargs)
+        return checked
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "stat", forbid_projection_io(os.stat, "stat"))
+        patch.setattr(os, "open", forbid_projection_io(os.open, "open"))
+        patch.setattr(sqlite3, "connect", forbid_projection_io(sqlite3.connect, "query SQLite"))
+        batch = placement_observations(audit, "alice")
     assert batch["total_rows"] == count and batch["emitted_rows"] == MAX_OBSERVATIONS
     assert batch["truncated"] is True
     assert len(batch["observation_ref"]) == 32
