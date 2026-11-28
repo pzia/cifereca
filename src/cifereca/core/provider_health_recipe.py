@@ -6,7 +6,7 @@ currently selected identity with an exact registered account can execute.
 """
 from inspect import getattr_static
 
-from ..models import Account, SearchResult
+from ..models import Account, SearchResult, ItemDetail, Holding
 from ..plugin_api import ProviderSearchResponse, Cancelled
 from ..providers.base import ProviderDescriptor
 from .private_inventory_row_scope import declared_private_inventory_batch_valid
@@ -91,6 +91,19 @@ def _qualified_search_outcome(response, scope):
     return ("success", tuple(response.results)) if response.results else ("unknown", ())
 
 
+def _availability_outcome(detail, item):
+    """Positive exact holding evidence only; no inferred quota or global zero."""
+    if (type(detail) is not ItemDetail
+            or (detail.record_id, detail.docbase, detail.source_provider, detail.source_credential)
+            != (item.record_id, item.docbase, item.source_provider, item.source_credential)
+            or type(detail.holdings) is not list or not 1 <= len(detail.holdings) <= 10000
+            or not all(type(row) is Holding and type(row.is_available) is bool
+                       for row in detail.holdings)):
+        return "unknown"
+    return ("success" if detail.availability_status == "available"
+            and any(row.is_available is True for row in detail.holdings) else "unknown")
+
+
 def run_recipe(service, scope, generation, *, confirmed=False, control=None):
     """One explicit account; all steps reported, unsupported never success."""
     def report(status, reason):
@@ -154,6 +167,7 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
             # Do not retry, switch identity, authenticate or synthesize pages.
             caps = descriptor.capabilities
             search_caps = descriptor.search_capabilities
+            search_rows = ()
             if (caps.search is True and search_caps.supports_field("all")
                     and search_caps.supports_scope("all")
                     and callable(getattr_static(session, "search_with_response_facets", None))):
@@ -172,6 +186,8 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                             return report("unknown", "scope_or_trace_unavailable")
                         finish_account_read(service, session, account, call, outcome, rows=rows)
                         put("search", outcome, "typed_search")
+                        if outcome == "success":
+                            search_rows = rows
                         # A single bounded second page, only after a positive
                         # first page and an explicit page-index contract.
                         if (outcome == "success" and response.catalogue_complete is False
@@ -180,6 +196,9 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                                 and search_caps.max_pages >= 2
                                 and current()):
                             with diagnostic_task_scope():
+                                page_call = begin_account_read(service, session, account, "pagination")
+                                if page_call is None or not current():
+                                    return report("unknown", "scope_or_trace_unavailable")
                                 try:
                                     page_rows = session.search(_INITIAL_QUERY, "all", page=1, field="all")
                                     first = {(row.docbase, row.record_id) for row in rows}
@@ -188,13 +207,39 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                                                      for row in page_rows))
                                     if not current():
                                         return report("unknown", "scope_or_trace_unavailable")
-                                    put("pagination", "success" if valid else "unknown",
-                                        "bounded_second_page")
+                                    page_outcome = "success" if valid else "unknown"
+                                    finish_account_read(service, session, account, page_call, page_outcome)
+                                    put("pagination", page_outcome, "bounded_second_page")
                                 except Cancelled:
                                     return report("unknown", "cancelled")
-                                except Exception:
-                                    put("pagination", "unknown", "page_unavailable")
+                                except Exception as exc:
+                                    if not current():
+                                        return report("unknown", "scope_or_trace_unavailable")
+                                    page_outcome = classify_failure(exc)
+                                    finish_account_read(service, session, account, page_call, page_outcome)
+                                    put("pagination", page_outcome, "page_unavailable")
 
+            if not current():
+                return report("unknown", "scope_or_trace_unavailable")
+            # The declared holdings ABI is read-only. Work on a copy because
+            # some historical implementations enrich their input DTO in place.
+            if caps.holdings is True and search_rows:
+                from copy import deepcopy
+                with diagnostic_task_scope():
+                    call = begin_account_read(service, session, account, "availability")
+                    if call is not None and current():
+                        candidate = search_rows[0]
+                        try:
+                            detail = session.holdings(deepcopy(candidate), search_terms=_INITIAL_QUERY)
+                            outcome = _availability_outcome(detail, candidate)
+                        except Cancelled:
+                            return report("unknown", "cancelled")
+                        except Exception as exc:
+                            outcome = classify_failure(exc)
+                        if not current():
+                            return report("unknown", "scope_or_trace_unavailable")
+                        finish_account_read(service, session, account, call, outcome)
+                        put("availability", outcome, "declared_holdings")
             if not current():
                 return report("unknown", "scope_or_trace_unavailable")
             # Existing read ABI; never mirror into the catalogue or fetch a file.

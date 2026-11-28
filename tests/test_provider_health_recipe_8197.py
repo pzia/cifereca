@@ -41,3 +41,17 @@ def test_recipe_search_only_accepts_exact_positive_typed_response():
     other = replace(row, source_account_id="other")
     assert recipe._qualified_search_outcome(ProviderSearchResponse([row, other]), scope) == ("unknown", ())
     assert recipe._qualified_search_outcome([row], scope) == ("unknown", ())
+
+
+def test_availability_never_infers_from_empty_or_wrong_source():
+    from cifereca.models import ItemDetail, Holding
+    from dataclasses import replace
+    item = SimpleNamespace(record_id="id", docbase="db", source_provider="fixture", source_credential="i")
+    holding = Holding("h", None, None, None, None, "available", "available",
+                      True, True, False, 0, None)
+    detail = ItemDetail("id", "db", "Book", None, None, None, None,
+                        "available", "available", [holding], "fixture", "i")
+    assert recipe._availability_outcome(detail, item) == "success"
+    assert recipe._availability_outcome(replace(detail, holdings=[]), item) == "unknown"
+    assert recipe._availability_outcome(replace(detail, source_credential="other"), item) == "unknown"
+    assert recipe._availability_outcome(replace(detail, availability_status="unknown"), item) == "unknown"

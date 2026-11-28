@@ -88,7 +88,7 @@ class HTTPTraceExport:
                         sid.capture_id, sid.evidence_ref, sid.scope.provider_id,
                         sid.scope.instance_id, sid.scope.account_id, sid.scope.identity_id))
                     and type(sid.capability) is str
-                    and sid.capability in ("search", "detail", "rights", "loans", "personal_library")
+                    and sid.capability in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
                     and callable(self.archive_current)):
                 return sid, policy
         return None

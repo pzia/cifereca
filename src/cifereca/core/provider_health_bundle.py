@@ -17,7 +17,7 @@ def build_health_bundle(rows, *, include_binary):
     manifest = []
     total = 0
     for number, (capability, payload) in enumerate(rows, 1):
-        if (capability not in ("search", "detail", "rights", "loans", "personal_library")
+        if (capability not in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
                 or type(payload) is not bytes):
             raise VaultError("vault_invalid")
         total += len(payload)

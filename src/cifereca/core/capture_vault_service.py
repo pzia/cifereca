@@ -623,7 +623,7 @@ class _DiagnosticsPort(_Port):
         self._check(scope)
         health = self._service._health
         if type(capability) is not str or capability not in {
-                "search", "detail", "rights", "loans", "personal_library"}:
+                "search", "detail", "rights", "loans", "personal_library", "pagination", "availability"}:
             raise VaultError("vault_scope_denied")
         exact = Scope(scope.provider_id, scope.instance_id, scope.account_id,
                       scope.identity_id, capability)
@@ -763,7 +763,7 @@ class _DiagnosticsPort(_Port):
                     index = json.loads(archive.read("index.json"))
                 meta = index.get("health_observation")
                 if (type(meta) is not dict or meta.get("schema") != "cifereca.health-observation/1"
-                        or meta.get("capability") not in ("search", "detail", "rights", "loans", "personal_library")
+                        or meta.get("capability") not in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
                         or not index.get("exchanges")
                         or any(entry.get("task_ref") != summary.source_session_ref
                                for entry in index["exchanges"])):

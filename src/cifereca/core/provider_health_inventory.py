@@ -47,7 +47,7 @@ def registered_health(service, health, identity_id):
                 scope = Scope(provider, instance, account, owner, capability)
                 rows.append((scope, enabled, health.snapshot(scope)[0]))
         # Optional structural read ABIs: only already observed exact scopes count.
-        for capability in ("detail", "rights"):
+        for capability in ("detail", "rights", "pagination", "availability"):
             for instance, account, owner in coordinates:
                 scope = Scope(provider, instance, account, owner, capability)
                 latest = health.snapshot(scope)[0]
@@ -161,7 +161,7 @@ def diagnostic_health_selection_current(service, scope, capability, evidence_ref
                 scope.provider_id, scope.instance_id, scope.account_id, scope.identity_id,
                 evidence_ref))
             or type(capability) is not str
-            or capability not in ("search", "detail", "rights", "loans", "personal_library")
+            or capability not in ("search", "detail", "rights", "loans", "personal_library", "pagination", "availability")
             or (capture_id is not None and (type(capture_id) is not str or not capture_id))
             or type(generation) is not tuple or len(generation) != 4
             or not all(type(generation[i]) is int and generation[i] >= 0 for i in (0, 1, 3))
