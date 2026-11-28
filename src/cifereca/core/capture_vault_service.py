@@ -332,6 +332,7 @@ class _Port:
             try:
                 key = self._service._key()
                 label, until = _metadata(self._service._storage.get_label(capture_id, key))
+                self._check(scope)
                 return CapturedSession(replace(stored.summary, label=label, pinned_until=until),
                                        stored.payload)
             finally:
@@ -448,10 +449,15 @@ class _DiagnosticsPort(_Port):
                 if not health.link_capture(exact, source_ref, writer.capture_id,
                                            lease=lease, port=self, consented=True):
                     raise VaultError("vault_scope_denied")
+                self._check(scope)
             except Exception:
-                # Roll back only the authenticated object created by this call.
-                # A revoked consumer cannot use the public delete operation.
-                writer._rollback_completed()
+                # Remove any link published just before revocation, then
+                # roll back only the authenticated object created by this call.
+                health.unlink_capture(exact, source_ref, writer.capture_id)
+                try:
+                    writer._rollback_completed()
+                except Exception as cleanup_error:
+                    raise VaultError("vault_archive_rollback_failed") from cleanup_error
                 raise
             return writer.capture_id
 

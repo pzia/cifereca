@@ -163,6 +163,20 @@ class PassiveHealth:
                                  deque((link(row) for row in anomalies), maxlen=3))
             return True
 
+    def unlink_capture(self, scope, observation_ref, capture_id):
+        """Remove only a failed archival link; never discard observations."""
+        with self._lock:
+            if scope not in self._rows:
+                return
+            latest, baseline, anomalies = self._rows[scope]
+            def unlink(row):
+                if (row is not None and row.evidence_ref == observation_ref
+                        and row.capture_id == capture_id):
+                    return replace(row, capture_id=None)
+                return row
+            self._rows[scope] = (unlink(latest), unlink(baseline),
+                                 deque((unlink(row) for row in anomalies), maxlen=3))
+
     def owns_reference(self, scope, reference):
         with self._lock:
             return _unique_owner(self._rows, self._enabled, scope, reference)

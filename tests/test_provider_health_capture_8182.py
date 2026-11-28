@@ -127,3 +127,49 @@ def test_revoked_archive_rolls_back_only_new_capture(tmp_path, monkeypatch):
         assert health.snapshot(scope)[0].capture_id is None
     finally:
         vault.close()
+
+
+def test_revocation_after_link_and_rollback_failure(tmp_path, monkeypatch):
+    import pytest
+    import httpx
+    from cifereca import http_trace
+    from cifereca.core import capture_vault_service as module
+    from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
+    from cifereca.plugin_api.capture_vault import VaultError
+    trace = http_trace.HTTPTraceCapture()
+    monkeypatch.setattr(http_trace, "HTTP_TRACE", trace)
+    monkeypatch.setattr(http_trace, "_trace_active", lambda: True)
+    health = PassiveHealth()
+    health.set_enabled(True)
+    scope = Scope("fixture", "instance", "account", "owner", "search")
+    exact = CaptureScope("fixture", "instance", "account", "owner")
+    with diagnostic_task_scope():
+        ref = diagnostic_task_reference()
+        exchange = trace.begin(httpx.Request("GET", "https://example.invalid/read"), "fixture")
+        exchange.entry["outcome"] = "completed"
+    health.observe(scope, Observation(Outcome.AUTH, "1", "now", ref), lease=health.lease())
+    allowed = [True]
+    vault = CoreCaptureVault(tmp_path / "vault", tmp_path / "keys",
+                             authorize_scope=lambda producer, scope: allowed[0], health=health)
+    try:
+        port = vault.for_plugin("ui.page.diagnostics")
+        link = health.link_capture
+        def revoke_after_link(*args, **kwargs):
+            result = link(*args, **kwargs)
+            assert result
+            allowed[0] = False
+            return result
+        monkeypatch.setattr(health, "link_capture", revoke_after_link)
+        with pytest.raises(VaultError, match="vault_scope_denied"):
+            port.archive_search_trace(exact, ref, consented=True)
+        allowed[0] = True
+        assert port.sessions(exact) == ()
+        assert health.snapshot(scope)[0].capture_id is None
+        def fail_cleanup(self):
+            raise VaultError("vault_unsafe_file")
+        monkeypatch.setattr(module._Writer, "_rollback_completed", fail_cleanup)
+        with pytest.raises(VaultError, match="vault_archive_rollback_failed"):
+            port.archive_search_trace(exact, ref, consented=True)
+        assert health.snapshot(scope)[0].capture_id is None
+    finally:
+        vault.close()
