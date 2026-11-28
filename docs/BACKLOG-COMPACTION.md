@@ -66,6 +66,25 @@ publique et les relations ; elle n'écrit que DONE. Elle refuse un corpus
 incomplet, un START absent ou un rejeu. La revue Backlog couvre les
 métadonnées non présentes dans le manifeste. Aucun nettoyage de reprise.
 
+## Nouvelle consolidation après refus avant mutation
+
+Après preuve Backlog d'un refus avant toute mutation, absence de ref et de
+journaux, geler le corpus public déjà fermé et calculer le SHA-256 du manifeste
+canonique produit par collect_closure sur main exact (standard_batches=true).
+Fermer un nouveau contrôle propriétaire sans label ni assignation, titre
+`Nouvelle consolidation #8195 — N`, JSON exact :
+
+```json
+{"version":1,"p0":123,"main_sha":"<main>","manifest_sha256":"<sha256>","unstarted_review":true}
+```
+
+La revue explicite atteste le refus initial et l'absence de mutation ; le CLI
+vérifie l'absence de staging, de renvois et de journaux, le manifeste exact,
+le contrôle et main. Nouvelle fenêtre de 24 h liée au contrôle, pas de rerun
+ni réouverture. Exclusion des lots historiques et #8207. Toute dérive refuse.
+Les anciens manifestes standard sans standard_batches conservent leurs
+journaux historiques sans PROGRESS.
+
 ## Capitalisation différée
 
 Sur demande, les LLM des rôles propriétaires inventorient
@@ -112,10 +131,10 @@ présent jusqu'à DONE et capitalisation. Ne jamais purger un lot incomplet. Les
 contrôle et les renvois des membres empêchent le rejeu ; ne pas réutiliser un contrôle.
 La clôture du maître ne vaut pas réception des lots : inventorier leurs journaux.
 
-### Poursuite d'un gros lot
+### Poursuite standard ou historique
 
 Après `LOT_PENDING`, fermer sous pzia un contrôle sans label ni assignation nommé
-`Poursuite consolidation #8195 — N` (N = contrôle de lot), avec JSON exact :
+`Poursuite consolidation #8195 — N` (N = P0 standard ou contrôle de lot), avec JSON exact :
 
 ```json
 {"version":1,"p0":123,"stage_sha":"<commit>","manifest_sha256":"<sha256>","main_sha":"<main>","cursor":10}
