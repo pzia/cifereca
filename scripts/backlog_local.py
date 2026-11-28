@@ -76,8 +76,10 @@ def reconcile(api, stage, anchor, current, authors=LOCAL_AUTHORS):
     manifest = engine.strict_json(raw)
     engine.require(manifest["version"] == 1 and manifest["repository"] == engine.REPO
                    and manifest["p0"] == anchor and "master" in manifest, "invalid historical manifest")
-    engine.issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
-                         engine.XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
+    numbers = engine.issue_numbers([x["issue"]["number"] for x in manifest["snapshots"]],
+                                   engine.XL_CORPUS_LIMIT if "xl_controls" in manifest else 3)
+    engine.require(anchor in numbers and 8195 not in numbers
+                   and manifest["master"] not in numbers, "invalid staged corpus")
     plan = engine.lot_plan(manifest)
     if markers[-1] == engine.DONE + digest + " " + commit:
         engine.verify_compacted_corpus(api, manifest, digest, commit, 8195,
