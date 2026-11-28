@@ -186,7 +186,7 @@ def begin_account_read(service, session, account, capability):
         return None
 
 
-def finish_account_read(service, session, account, call, outcome):
+def finish_account_read(service, session, account, call, outcome, *, rows=()):
     if call is None or outcome is None:
         return
     from types import SimpleNamespace
@@ -195,7 +195,7 @@ def finish_account_read(service, session, account, call, outcome):
                       account.identity_id, call[1].capability)
         if exact == call[1]:
             finish_public_search(service, session,
-                                 SimpleNamespace(identity_id=account.identity_id), call, outcome)
+                                 SimpleNamespace(identity_id=account.identity_id), call, outcome, rows=rows)
     except Exception:
         pass
 

@@ -6,7 +6,11 @@ currently selected identity with an exact registered account can execute.
 """
 from inspect import getattr_static
 
-from ..models import Account
+from ..models import Account, SearchResult
+from ..plugin_api import ProviderSearchResponse, Cancelled
+from ..providers.base import ProviderDescriptor
+from .private_inventory_row_scope import declared_private_inventory_batch_valid
+from .provider_explicit_enrichment import admit_provider_detail_enrichment, can_enrich_provider_detail_result
 from ..plugin_api.capture_vault import CaptureScope
 from ..plugin_api.loan_inventory import read_loan_inventory
 from ..diagnostic_task_context import diagnostic_task_scope
@@ -14,11 +18,14 @@ from ..http_trace import HTTP_TRACE
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from .provider_health_inventory import _diagnostic_generation
-from .provider_health_search import begin_account_read, finish_account_read, loan_inventory_outcome, rights_outcome
+from .provider_health_search import (begin_account_read, finish_account_read, loan_inventory_outcome,
+                                     rights_outcome, personal_library_outcome, classify_failure)
 from .rights_snapshot_read import read_account_rights_snapshot
 from .private_inventory_binding import private_inventory_binding_current
 from .loan_action_scope import _inert_session_state, _inert_session_accounts
 from .capture_vault_service import capture_scope_authorizer
+
+_INITIAL_QUERY = "livre"
 
 _STEPS = ("search", "detail", "pagination", "availability", "personal_library",
           "loans", "quotas", "rights")
@@ -62,6 +69,28 @@ def recipe_options(service):
         return ()
 
 
+def _exact_recipe_rows(rows, scope):
+    """No private record or account may be borrowed from another scope."""
+    return (type(rows) is list and len(rows) <= 10000
+            and all(type(row) is SearchResult
+                    and row.source_provider == scope.provider_id
+                    and row.source_credential == scope.instance_id
+                    and row.source_account_id == scope.account_id
+                    and type(row.record_id) is str and bool(row.record_id)
+                    and type(row.docbase) is str and bool(row.docbase)
+                    for row in rows))
+
+
+def _qualified_search_outcome(response, scope):
+    # The current terminal_empty contract attests anonymous responses only.
+    # An empty authenticated search is unknown, even if a legacy flag is set.
+    if (type(response) is not ProviderSearchResponse
+            or response.partial is not False
+            or not _exact_recipe_rows(response.results, scope)):
+        return "unknown", ()
+    return ("success", tuple(response.results)) if response.results else ("unknown", ())
+
+
 def run_recipe(service, scope, generation, *, confirmed=False, control=None):
     """One explicit account; all steps reported, unsupported never success."""
     def report(status, reason):
@@ -89,6 +118,8 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
         if state is None or upstream is None or len(upstream) != 1 or upstream[0] is not account:
             return report("unknown", "unqualified_session")
         descriptor = state.get("descriptor")
+        if type(descriptor) is not ProviderDescriptor or descriptor.id != scope.provider_id:
+            return report("unknown", "unqualified_descriptor")
         session_epoch = state.get("_epoch")
         coordinates = (scope.identity_id, scope.provider_id, scope.instance_id, scope.account_id)
 
@@ -103,6 +134,9 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
                         and current_state is not None
                         and current_state.get("_epoch") == session_epoch
                         and current_state.get("descriptor") is descriptor
+                        and service._provider_enabled_for_identity(scope.provider_id, scope.identity_id) is True
+                        and (upstream_now := _inert_session_accounts(session)) is not None
+                        and len(upstream_now) == 1 and upstream_now[0] is account
                         and private_inventory_binding_current(service, account, session,
                                                              scope=coordinates, epoch=generation[0]))
             except Exception:
@@ -114,6 +148,74 @@ def run_recipe(service, scope, generation, *, confirmed=False, control=None):
             results[name] = {"capability": name, "outcome": outcome or "unknown", "reason": reason}
 
         with InterProcessLock(acquisition_lock_file()):
+            if not current():
+                return report("unknown", "scope_or_trace_unavailable")
+            # One explicit query through the public optional typed ABI.
+            # Do not retry, switch identity, authenticate or synthesize pages.
+            caps = descriptor.capabilities
+            search_caps = descriptor.search_capabilities
+            if (caps.search is True and search_caps.supports_field("all")
+                    and search_caps.supports_scope("all")
+                    and callable(getattr_static(session, "search_with_response_facets", None))):
+                with diagnostic_task_scope():
+                    call = begin_account_read(service, session, account, "search")
+                    if call is not None and current():
+                        try:
+                            response = session.search_with_response_facets(
+                                _INITIAL_QUERY, "all", field="all", content_types=())
+                            outcome, rows = _qualified_search_outcome(response, scope)
+                        except Cancelled:
+                            return report("unknown", "cancelled")
+                        except Exception as exc:
+                            outcome, rows = classify_failure(exc), ()
+                        if not current():
+                            return report("unknown", "scope_or_trace_unavailable")
+                        finish_account_read(service, session, account, call, outcome, rows=rows)
+                        put("search", outcome, "typed_search")
+            if not current():
+                return report("unknown", "scope_or_trace_unavailable")
+            # Existing read ABI; never mirror into the catalogue or fetch a file.
+            library_rows = ()
+            if caps.personal_library is True and callable(getattr_static(session, "library", None)):
+                with diagnostic_task_scope():
+                    call = begin_account_read(service, session, account, "personal_library")
+                    if call is not None and current():
+                        try:
+                            rows = session.library()
+                            valid = (_exact_recipe_rows(rows, scope)
+                                     and declared_private_inventory_batch_valid(
+                                         rows, session=session, provider_id=scope.provider_id,
+                                         credential_id=scope.instance_id))
+                            outcome = personal_library_outcome(rows, account) if valid else "unknown"
+                            if outcome == "success":
+                                library_rows = tuple(rows)
+                        except Cancelled:
+                            return report("unknown", "cancelled")
+                        except Exception as exc:
+                            outcome = classify_failure(exc)
+                        if not current():
+                            return report("unknown", "scope_or_trace_unavailable")
+                        finish_account_read(service, session, account, call, outcome)
+                        put("personal_library", outcome, "private_inventory")
+            if not current():
+                return report("unknown", "scope_or_trace_unavailable")
+            # Reuse the explicit descriptive-only enrichment admission.
+            candidate = next((row for row in library_rows
+                              if can_enrich_provider_detail_result(row)), None)
+            if candidate is not None and callable(getattr_static(session, "enrich_owned_public_detail", None)):
+                try:
+                    work = admit_provider_detail_enrichment(
+                        service, candidate, identity_id=scope.identity_id, user_confirmed=True)
+                    if not current():
+                        return report("unknown", "scope_or_trace_unavailable")
+                    result = work()
+                    if not current():
+                        return report("unknown", "scope_or_trace_unavailable")
+                    fields = ("title", "author", "publisher", "description", "thumbnail_url", "published_at")
+                    changed = any(getattr(result, name) != getattr(candidate, name) for name in fields)
+                    put("detail", "success" if changed else "unknown", "descriptive_enrichment")
+                except Exception:
+                    put("detail", "unknown", "detail_unavailable")
             if not current():
                 return report("unknown", "scope_or_trace_unavailable")
             # Deliberately typed-only: a list-only legacy fallback does not

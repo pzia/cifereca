@@ -727,7 +727,7 @@ class ProviderRecipeControls:
         self.options = {}
         self.rows = gtk.ComboBoxText()
         self.reload = gtk.Button(label="Actualiser les comptes de recette")
-        self.consent = gtk.CheckButton(label="J’autorise les lectures fournisseur de cette recette (Trace actif).")
+        self.consent = gtk.CheckButton(label="J’autorise les lectures de recette, dont la recherche « livre » (Trace actif).")
         self.run = gtk.Button(label="Lancer la recette manuelle du compte")
         self.status = gtk.Label(label="Recette en lecture seule ; aucun emprunt, achat ou téléchargement.",
                                 xalign=0, wrap=True)
