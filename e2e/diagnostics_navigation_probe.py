@@ -179,7 +179,32 @@ def baseline_render_library(self, entries: list[dict[str, Any]] | None = None) -
         self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
 
-def compare_library_render(window):
+def perf_distribution(values):
+    """Report observed sample statistics, not a population or timing gate."""
+    ordered = sorted(values)
+    count = len(ordered)
+    return {
+        "count": count,
+        "p50_ms": round(statistics.median(ordered), 3),
+        "p95_ms": round(ordered[(95 * count + 99) // 100 - 1], 3),
+        "max_ms": round(ordered[-1], 3),
+    }
+
+
+def perf_comparison_metadata(window, pairs):
+    return {
+        "measurement_origin": "synthetic_gtk",
+        "temperature": "warm_same_process_full_rebuild",
+        "retained_pairs": pairs,
+        "warmup_pairs_excluded": 1,
+        "order": "alternating",
+        "percentile_method": "nearest_rank_p95_median_p50",
+        "detailed_capture_enabled": window.ui_perf.detailed_capture_enabled,
+        "performance_verdict": "not_qualified",
+    }
+
+
+def compare_library_render(window, *, pairs=3):
     """Compare the real GTK rebuild against frozen U0, attributing its phases.
 
     Timings are inclusive, measured on both paths in the same process, widget
@@ -209,7 +234,7 @@ def compare_library_render(window):
         "extracted": lambda: window._render_library(entries),
     }
     reference = None
-    for iteration in range(4):
+    for iteration in range(pairs + 1):
         order = ("baseline_u0", "extracted") if iteration % 2 == 0 else ("extracted", "baseline_u0")
         for name in order:
             window.library_page.clear_rows()
@@ -335,10 +360,19 @@ def compare_library_render(window):
         "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
         "rows": len(entries), "mode": "synchronous_full_rebuild_same_current_widgets",
         "samples_ms": samples, "median_ms": medians,
+        "distribution_ms": {name: perf_distribution(values) for name, values in samples.items()},
+        "protocol": perf_comparison_metadata(window, pairs),
         "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
         "row_projection_equal": True,
         "phase_samples_ms": phase_samples,
         "phase_median_ms": phase_medians,
+        "phase_distribution_ms": {
+            name: {phase: perf_distribution(values) for phase, values in by_phase.items()}
+            for name, by_phase in phase_samples.items()
+        },
+        "process_cpu_distribution_ms": {
+            name: perf_distribution(values) for name, values in cpu_samples.items()
+        },
         "phase_call_counts": phase_calls,
         "process_cpu_samples_ms": cpu_samples,
         "gc_pause_events": gc_pause_samples,
@@ -348,7 +382,7 @@ def compare_library_render(window):
             "Measured spans are inclusive; GTK show_rows includes signals; selection_callback "
             "may be nested. GObject row constructors and ListStore items-changed "
             "are observed symmetrically, but row timing is inclusive and GC callbacks "
-            "perturb timing. Three pairs only; no frame, network or live provider "
+            "perturb timing. No frame, network or live provider "
             "latency; no causal conclusion from a single sampling campaign."
         ),
         "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
@@ -396,7 +430,7 @@ def baseline_render_recent(self, items: list[dict[str, Any]] | None = None) -> N
     self.recent_page.show_rows(rows)
     self.ui_perf.record("render_recent", (time.perf_counter() - _perf_started) * 1000.0)
 
-def compare_recent_render(window):
+def compare_recent_render(window, *, pairs=3):
     """Same full-rebuild protocol as Library, without a timing success gate."""
     items = list(window._recent_entries_cache)
     assert len(items) == 563
@@ -406,7 +440,7 @@ def compare_recent_render(window):
         "extracted": lambda: window._render_recent(items),
     }
     reference = None
-    for iteration in range(4):
+    for iteration in range(pairs + 1):
         order = ("baseline_u0", "extracted") if iteration % 2 == 0 else ("extracted", "baseline_u0")
         for name in order:
             window.recent_page.clear_rows()
@@ -431,6 +465,8 @@ def compare_recent_render(window):
         "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
         "rows": len(items), "mode": "synchronous_full_rebuild_same_current_widgets",
         "samples_ms": samples, "median_ms": medians,
+        "distribution_ms": {name: perf_distribution(values) for name, values in samples.items()},
+        "protocol": perf_comparison_metadata(window, pairs),
         "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
         "row_projection_equal": True,
         "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
@@ -443,6 +479,8 @@ def main() -> int:
     parser.add_argument("--width", type=int, choices=(1366, 1600), required=True)
     parser.add_argument("--slow-check", action="store_true")
     parser.add_argument("--window-baseline", action="store_true")
+    parser.add_argument("--performance-pairs", type=int, choices=(3, 30), default=30,
+                        help="Retained warm GTK rebuild pairs per path (one warmup excluded)")
     args = parser.parse_args()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("GTK/X11/Xvfb required")
@@ -874,9 +912,9 @@ def main() -> int:
         report["checks"]["P0_library_563_real_rows_no_autoselection"] = True
         report["library_563_render_perf"] = w.ui_perf.snapshot()["render_library"]
         capture("03b-library-563-real-gtk")
-        report["library_563_u0_comparison"] = compare_library_render(w)
+        report["library_563_u0_comparison"] = compare_library_render(w, pairs=args.performance_pairs)
         report["checks"]["P0_library_563_u0_projection_equivalent"] = True
-        # #1023: keep the historical 563-row comparison unchanged. Extend
+        # #1023: keep the historical 563-row fixture unchanged. Extend
         # only the loaded GTK snapshot, then restore it for existing routes.
         entries = list(w._library_entries_cache)
         extra = [dict(
@@ -1192,7 +1230,7 @@ def main() -> int:
         assert page.selection.get_selected_item() is None
         assert all(page.store.get_item(i).thumbnail_url is None for i in range(563))
         report["checks"]["P0_recent_563_real_rows_no_cover_or_autoselection"] = True
-        report["recent_563_u0_comparison"] = compare_recent_render(w)
+        report["recent_563_u0_comparison"] = compare_recent_render(w, pairs=args.performance_pairs)
         report["checks"]["P0_recent_563_u0_projection_equivalent"] = True
         assert page.select_key("p0-recent-562")
         later(100, recent_volume_selected)
