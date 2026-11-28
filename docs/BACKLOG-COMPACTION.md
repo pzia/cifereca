@@ -19,7 +19,7 @@ mentions #n ; aucun lien retour dans le ticket historique n'est requis.
 Les relations natives doivent être compatibles avec l'inventaire. Refuser les
 corpus déjà transférés (journal ou renvoi de compactage).
 Aucun autre agent ne modifie le corpus pendant la clôture. Le pilote reste
-borné à trois issues, 1 Mio de manifeste ; au-delà, refus sans mutation.
+borné à vingt issues (maître inclus), 1 Mio de manifeste ; au-delà, refus sans mutation.
 
 ## Staging en clair
 
@@ -45,7 +45,7 @@ ce namespace, y compris les suppressions forcées.
 Le journal START (SHA-256 et commit) précède les mutations. Les textes d'au moins 256 octets réellement raccourcissables sont remplacés par des renvois déterministes
 au P0 en conservant les références explicites, les identifiants des
 commentaires et les métadonnées. Aucun commentaire ni issue supprimé.
-Pilote : dix commentaires modifiables au maximum ; gain contextuel positif
+Parcours standard : tranches de dix mutations au maximum, avec PROGRESS et continuation explicite selon le protocole ci-dessous ; gain contextuel positif
 après START et DONE. Vérifier main, le corpus et le staging avant chaque
 mutation, relire chaque résultat. Toute erreur arrête sans reprise
 automatique ; garder le staging, y compris après échec partiel.
