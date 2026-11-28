@@ -105,3 +105,39 @@ def test_metadata_publication_rejects_stale_snapshot(tmp_path):
         assert storage.metadata_get(key) is None
     finally:
         service.storage.close()
+
+
+def test_dead_owner_is_interrupted_without_minting_success(tmp_path, monkeypatch):
+    import os
+    service, account, _, _ = _source(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker._set_state(sid, {
+            "status": "running", "inventory_status": "running",
+            "attempt_pid": os.getpid() + 1,
+            "inventory_last_attempt": "2026-11-28T07:00:00+00:00",
+        })
+        def dead(pid, signal):
+            raise ProcessLookupError()
+        monkeypatch.setattr(os, "kill", dead)
+        state = broker._state(sid)
+        assert state["status"] == "interrupted"
+        assert state["inventory_status"] == "failed"
+        assert not state.get("inventory_last_success")
+    finally:
+        service.storage.close()
+
+
+def test_opening_projection_does_not_replace_running_attempt(tmp_path):
+    service, account, _, _ = _source(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        before = {"status": "running", "inventory_status": "running"}
+        broker._set_state(sid, before)
+        broker.record_opening_state(sid, identity_id="fixture-identity",
+                                    status="success", attempted_at="2026-11-28T07:00:00+00:00")
+        assert broker._state(sid) == before
+    finally:
+        service.storage.close()
