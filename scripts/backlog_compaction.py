@@ -445,6 +445,7 @@ def collect_closure(api, event_issue, current):
     if not lot:
         manifest["standard_batches"] = True
         manifest["batch_size"] = standard_batch_size(manifest)
+        verify_standard_journal_capacity(manifest)
     if lot:
         require(snapshot(api, lot[0]) == lot[2], "master inventory drift")
         manifest["master"] = lot[0]
@@ -603,6 +604,16 @@ def batch_size(manifest):
             require(size == standard_batch_size(manifest), "standard batch size mismatch")
         return size
     return LOT_BATCH
+
+
+def verify_standard_journal_capacity(manifest):
+    """Refuse before staging if START/PROGRESS/DONE and purge exceed pagination."""
+    parent = next(s for s in manifest["snapshots"] if s["issue"]["number"] == manifest["p0"])
+    mutations = len(lot_plan(manifest))
+    progress = max(0, (mutations - 1) // batch_size(manifest))
+    # scan_snapshot requires a final short page, even at an exact multiple of 100.
+    require(len(parent["comments"]) + progress + 4 < MAX_PAGES * 100,
+            "insufficient pagination capacity for standard journals")
 
 
 def lot_plan(manifest):
